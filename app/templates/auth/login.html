@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Anmelden{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h1 class="h4 mb-4">Anmelden</h1>
+        {% if password_enabled %}
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label">E-Mail</label>
+            <input class="form-control" type="email" name="email" autocomplete="username" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Kennwort</label>
+            <input class="form-control" type="password" name="password" autocomplete="current-password" required>
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Anmelden</button>
+        </form>
+        {% endif %}
+        {% if microsoft_enabled %}
+        <hr>
+        <a class="btn btn-outline-primary w-100" href="{{ url_for('auth.microsoft_login') }}">Mit Microsoft anmelden</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Dashboard</h1>
+<div class="row g-3">
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="text-muted">Offene Aufträge</div>
+        <div class="display-6">{{ open_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="text-muted">Zu prüfende Stundenzettel</div>
+        <div class="display-6">{{ review_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="text-muted">Artikel unter Mindestbestand</div>
+        <div class="display-6">{{ low_stock_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

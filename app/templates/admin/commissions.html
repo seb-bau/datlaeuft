@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Aufträge{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Aufträge</h1>
+<div class="card shadow-sm">
+  <div class="card-body">
+    <table class="table table-striped datatable">
+      <thead>
+        <tr>
+          <th>ERP-ID</th>
+          <th>Nummer</th>
+          <th>Titel</th>
+          <th>Adresse</th>
+          <th>Lage</th>
+          <th>Mieter</th>
+          <th>Status</th>
+          <th>Monteur</th>
+          <th>Ausführung</th>
+          <th>Lokal</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.erp_id }}</td>
+          <td>{{ item.erp_idnum or item.code or "" }}</td>
+          <td>{{ item.title or "" }}</td>
+          <td>{{ item.apartment_address or "" }}</td>
+          <td>{{ item.apartment_location or "" }}</td>
+          <td>{{ item.tenant_name or "" }}</td>
+          <td>{{ item.status_code or item.status_id or "" }}</td>
+          <td>{{ item.user.display_name if item.user else item.craftsman_erp_id or "" }}</td>
+          <td>{{ item.execution_from.strftime("%d.%m.%Y") if item.execution_from else "" }}</td>
+          <td>{{ item.local_status }}</td>
+          <td class="text-end">
+            <form method="post" action="{{ url_for('admin.commission_sync', commission_id=item.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-secondary" type="submit">Sync</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

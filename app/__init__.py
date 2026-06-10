@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+from flask import Flask
+from sqlalchemy.exc import SQLAlchemyError
+
+from . import models
+from .admin import admin_bp
+from .api import api_bp
+from .auth import auth_bp
+from .cli import register_cli
+from .extensions import cors, csrf, db, jwt, login_manager, migrate
+from .logging_service import configure_logging
+from .settings import SettingKeys, settings
+from .webhooks import webhooks_bp
+
+
+def create_app() -> Flask:
+    app = Flask(__name__, instance_relative_config=True)
+    app.config.from_mapping(
+        SQLALCHEMY_DATABASE_URI="sqlite:///datlaeuft-dev.sqlite",
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        SECRET_KEY="bootstrap",
+        JWT_SECRET_KEY="bootstrap",
+        JWT_ACCESS_TOKEN_EXPIRES=False,
+        JSON_SORT_KEYS=False,
+    )
+    app.config.from_pyfile("config.py", silent=True)
+
+    db.init_app(app)
+    migrate.init_app(app, db)
+    login_manager.init_app(app)
+    jwt.init_app(app)
+    csrf.init_app(app)
+    login_manager.login_view = "auth.login"
+    login_manager.login_message = "Bitte anmelden."
+
+    with app.app_context():
+        load_runtime_config(app)
+        try:
+            configure_logging(app)
+        except Exception as exc:
+            app.logger.warning("logging_configuration_fallback %s", exc)
+
+    cors.init_app(app, resources={r"/api/*": {"origins": cors_origins()}})
+
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(admin_bp)
+    app.register_blueprint(api_bp)
+    app.register_blueprint(webhooks_bp)
+    csrf.exempt(api_bp)
+    csrf.exempt(webhooks_bp)
+    register_cli(app)
+    return app
+
+
+def load_runtime_config(app: Flask) -> None:
+    try:
+        app.config["SECRET_KEY"] = settings.get(SettingKeys.APP_SECRET_KEY)
+        app.config["JWT_SECRET_KEY"] = settings.get(SettingKeys.JWT_SECRET_KEY)
+        app.config["JWT_ACCESS_TOKEN_EXPIRES"] = False if settings.get(SettingKeys.MOBILE_TOKEN_NEVER_EXPIRES) else 43_200
+    except SQLAlchemyError:
+        pass
+    except Exception:
+        pass
+
+
+def cors_origins() -> list[str] | str:
+    try:
+        raw = settings.get(SettingKeys.CORS_ORIGINS)
+    except Exception:
+        return "*"
+    if raw.strip() == "*":
+        return "*"
+    return [item.strip() for item in raw.split(",") if item.strip()]

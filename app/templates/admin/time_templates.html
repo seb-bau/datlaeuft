@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Leistungspositionen{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Leistungspositionen</h1>
+  <form method="post" action="{{ url_for('admin.service_catalog_sync') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-outline-primary" type="submit">Aus Wowiport synchronisieren</button>
+  </form>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-4">
+    <form method="post" class="card shadow-sm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="card-header">Leistungsposition anlegen</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Code</label>
+          <input class="form-control" name="code" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Bezeichnung</label>
+          <input class="form-control" name="title" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Gewerk</label>
+          <select class="form-select" name="craft_activity_id">
+            <option value="">Keine Zuordnung</option>
+            {% for activity in craft_activities %}
+            <option value="{{ activity.id }}">{{ activity.name }}{% if activity.code %} ({{ activity.code }}){% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">SOLL-Zeit in Minuten</label>
+          <input class="form-control" type="number" name="suggested_minutes" value="0">
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="active" checked>
+          <label class="form-check-label">Aktiv</label>
+        </div>
+      </div>
+      <div class="card-footer text-end">
+        <button class="btn btn-primary" type="submit">Speichern</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label">Suche</label>
+            <input class="form-control" name="q" value="{{ search_text or '' }}" placeholder="Code, Bezeichnung, Gewerk">
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">Gewerk</label>
+            <select class="form-select" name="craft_activity_id">
+              <option value="">Alle Gewerke</option>
+              {% for activity in craft_activities %}
+              <option value="{{ activity.id }}" {% if selected_craft_activity_id == activity.id|string %}selected{% endif %}>
+                {{ activity.name }}{% if activity.code %} ({{ activity.code }}){% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-2">
+            <label class="form-label">Status</label>
+            <select class="form-select" name="status">
+              <option value="active" {% if status_filter == "active" %}selected{% endif %}>Aktiv</option>
+              <option value="inactive" {% if status_filter == "inactive" %}selected{% endif %}>Inaktiv</option>
+              <option value="all" {% if status_filter == "all" %}selected{% endif %}>Alle</option>
+            </select>
+          </div>
+
+          <div class="col-md-2">
+            <label class="form-label">Quelle</label>
+            <select class="form-select" name="source">
+              <option value="">Alle</option>
+              <option value="manual" {% if source_filter == "manual" %}selected{% endif %}>Manuell</option>
+              <option value="wowiport" {% if source_filter == "wowiport" %}selected{% endif %}>Wowiport</option>
+            </select>
+          </div>
+
+          <div class="col-md-1 d-grid">
+            <button class="btn btn-primary" type="submit">Filtern</button>
+          </div>
+
+          <div class="col-12">
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.time_templates') }}">Filter zurücksetzen</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="text-muted small">
+            {{ items|length }} Leistungspositionen
+          </div>
+          {% if status_filter == "active" %}
+          <div class="text-muted small">
+            Inaktive Positionen sind ausgeblendet.
+          </div>
+          {% endif %}
+        </div>
+
+        <table class="table table-striped datatable">
+          <thead>
+            <tr>
+              <th>Gewerk</th>
+              <th>Code</th>
+              <th>Bezeichnung</th>
+              <th>Quelle</th>
+              <th>SOLL-Zeit</th>
+              <th>Aktiv</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+            <tr class="{% if not item.active %}table-secondary{% endif %}">
+              <td>{{ item.craft_activity.name if item.craft_activity else "" }}</td>
+              <td>{{ item.code }}</td>
+              <td>{{ item.title }}</td>
+              <td>{{ item.source }}</td>
+              <td>{{ item.suggested_minutes }} Min.</td>
+              <td>{{ "Ja" if item.active else "Nein" }}</td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.time_template_edit', item_id=item.id) }}">Bearbeiten</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        {% if not items %}
+        <div class="text-center text-muted py-4">
+          Keine Leistungspositionen gefunden.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

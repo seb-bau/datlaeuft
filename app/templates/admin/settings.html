@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Einstellungen{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Einstellungen</h1>
+<form method="post" class="card shadow-sm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card-body">
+    {% for group, definitions in groups.items() %}
+    <h2 class="h5 mt-3">{{ group }}</h2>
+    <div class="row g-3">
+      {% for definition in definitions %}
+      <div class="col-md-6">
+        <label class="form-label">{{ definition.label }}</label>
+        {% set value = settings.get(definition) %}
+        {% if definition.value_type.value == "bool" %}
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="{{ definition.key }}" value="true" {% if value %}checked{% endif %}>
+          <label class="form-check-label">Aktiv</label>
+        </div>
+        {% elif definition.secret %}
+        <input class="form-control" type="password" name="{{ definition.key }}" placeholder="Leer lassen, um den Wert beizubehalten">
+        {% else %}
+        <input class="form-control" type="text" name="{{ definition.key }}" value="{{ value }}">
+        {% endif %}
+        <div class="form-text">{{ definition.key }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="card-footer text-end">
+    <button class="btn btn-primary" type="submit">Speichern</button>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,362 @@
+from __future__ import annotations
+
+from io import BytesIO
+from typing import Any
+
+import qrcode
+from flask import Blueprint, Response, current_app, flash, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
+
+from .audit import audit
+from .auth import admin_required, foreman_required
+from .entra import import_entra_users
+from .extensions import db
+from .logging_service import configure_logging
+from .models import Commission, InventoryItem, InventoryMovement, InventoryMovementType, TimeEntry, TimeReviewStatus, TimeTaskTemplate, User, utc_now, CraftActivity
+from .settings import all_definitions, grouped_definitions, settings
+from .wowiport import sync_commission_from_erp
+from .catalog import sync_catalogs_from_wowiport
+from sqlalchemy import or_
+
+admin_bp = Blueprint("admin", __name__)
+
+
+@admin_bp.get("/")
+@login_required
+def root() -> Any:
+    return redirect(url_for("admin.dashboard"))
+
+
+@admin_bp.get("/admin")
+@login_required
+def dashboard() -> Any:
+    open_count = Commission.query.filter(Commission.deleted_at.is_(None), Commission.local_status != "done").count()
+    review_count = TimeEntry.query.filter_by(review_status=TimeReviewStatus.NEEDS_REVIEW.value).count()
+    low_stock_count = InventoryItem.query.filter(InventoryItem.stock_quantity <= InventoryItem.reorder_level).count()
+    return render_template("admin/dashboard.html", open_count=open_count, review_count=review_count, low_stock_count=low_stock_count)
+
+
+@admin_bp.route("/admin/settings", methods=["GET", "POST"])
+@admin_required
+def settings_page() -> Any:
+    if request.method == "POST":
+        for definition in all_definitions():
+            settings.set_from_form(definition, request.form.get(definition.key))
+        audit("settings.update")
+        db.session.commit()
+        configure_logging(current_app._get_current_object())
+        flash("Einstellungen gespeichert.", "success")
+        return redirect(url_for("admin.settings_page"))
+    return render_template("admin/settings.html", groups=grouped_definitions(), settings=settings)
+
+
+@admin_bp.get("/admin/users")
+@admin_required
+def users() -> Any:
+    items = User.query.order_by(User.display_name.asc()).all()
+    return render_template("admin/users.html", items=items)
+
+
+@admin_bp.route("/admin/users/import-entra", methods=["POST"])
+@admin_required
+def import_users_from_entra() -> Any:
+    result = import_entra_users()
+    audit("users.import_entra", metadata={"created": result.created, "updated": result.updated, "skipped": result.skipped})
+    db.session.commit()
+    flash(f"Import abgeschlossen: {result.created} neu, {result.updated} aktualisiert, {result.skipped} uebersprungen.", "success")
+    return redirect(url_for("admin.users"))
+
+
+@admin_bp.route("/admin/users/new", methods=["GET", "POST"])
+@admin_required
+def user_create() -> Any:
+    item = User(email="", display_name="")
+    craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+
+    if request.method == "POST":
+        db.session.add(item)
+        save_user_form(item)
+        save_user_craft_activities(item)
+        db.session.flush()
+        audit("user.create", "user", item.id)
+        db.session.commit()
+        flash("Benutzer gespeichert.", "success")
+        return redirect(url_for("admin.users"))
+
+    return render_template("admin/user_form.html", item=item, craft_activities=craft_activities)
+
+
+@admin_bp.route("/admin/users/<int:user_id>", methods=["GET", "POST"])
+@admin_required
+def user_edit(user_id: int) -> Any:
+    item = db.get_or_404(User, user_id)
+    craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+
+    if request.method == "POST":
+        save_user_form(item)
+        save_user_craft_activities(item)
+        audit("user.update", "user", item.id)
+        db.session.commit()
+        flash("Benutzer gespeichert.", "success")
+        return redirect(url_for("admin.users"))
+
+    return render_template("admin/user_form.html", item=item, craft_activities=craft_activities)
+
+
+@admin_bp.get("/admin/commissions")
+@foreman_required
+def commissions() -> Any:
+    items = Commission.query.order_by(Commission.synced_at.desc()).all()
+    return render_template("admin/commissions.html", items=items)
+
+
+@admin_bp.post("/admin/commissions/<int:commission_id>/sync")
+@foreman_required
+def commission_sync(commission_id: int) -> Any:
+    item = db.get_or_404(Commission, commission_id)
+    sync_commission_from_erp(item.erp_id)
+    audit("commission.sync", "commission", item.id)
+    db.session.commit()
+    flash("Auftrag synchronisiert.", "success")
+    return redirect(url_for("admin.commissions"))
+
+
+@admin_bp.route("/admin/inventory", methods=["GET", "POST"])
+@foreman_required
+def inventory() -> Any:
+    if request.method == "POST":
+        item = InventoryItem()
+        save_inventory_form(item)
+        db.session.add(item)
+        db.session.flush()
+        audit("inventory.create", "inventory_item", item.id)
+        db.session.commit()
+        flash("Artikel gespeichert.", "success")
+        return redirect(url_for("admin.inventory"))
+    items = InventoryItem.query.order_by(InventoryItem.name.asc()).all()
+    return render_template("admin/inventory.html", items=items)
+
+
+@admin_bp.route("/admin/inventory/<int:item_id>", methods=["GET", "POST"])
+@foreman_required
+def inventory_item(item_id: int) -> Any:
+    item = db.get_or_404(InventoryItem, item_id)
+    if request.method == "POST":
+        if request.form.get("form_name") == "movement":
+            movement = InventoryMovement(item=item, user=current_user, movement_type=request.form.get("movement_type", InventoryMovementType.STORED.value), quantity=float(request.form.get("quantity", 0)), note=request.form.get("note"))
+            apply_inventory_movement(item, movement)
+            db.session.add(movement)
+            audit("inventory.movement", "inventory_item", item.id, {"movement_type": movement.movement_type, "quantity": movement.quantity})
+        else:
+            save_inventory_form(item)
+            audit("inventory.update", "inventory_item", item.id)
+        db.session.commit()
+        flash("Artikel gespeichert.", "success")
+        return redirect(url_for("admin.inventory_item", item_id=item.id))
+    movements = InventoryMovement.query.filter_by(item_id=item.id).order_by(InventoryMovement.occurred_at.desc()).all()
+    return render_template("admin/inventory_item.html", item=item, movements=movements, movement_types=InventoryMovementType)
+
+
+@admin_bp.get("/admin/inventory/<int:item_id>/qr.png")
+@foreman_required
+def inventory_qr(item_id: int) -> Response:
+    item = db.get_or_404(InventoryItem, item_id)
+    image = qrcode.make(item.qr_code_payload)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    return Response(buffer.getvalue(), mimetype="image/png")
+
+
+@admin_bp.route("/admin/time-templates", methods=["GET", "POST"])
+@foreman_required
+def time_templates() -> Any:
+    craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+
+    if request.method == "POST":
+        item = TimeTaskTemplate()
+        save_time_template_form(item)
+        db.session.add(item)
+        db.session.flush()
+        audit("service_position.create", "time_task_template", item.id)
+        db.session.commit()
+        flash("Leistungsposition gespeichert.", "success")
+        return redirect(url_for("admin.time_templates"))
+
+    search_text = request.args.get("q", "").strip()
+    raw_craft_activity_id = request.args.get("craft_activity_id", "").strip()
+    status_filter = request.args.get("status", "active").strip()
+    source_filter = request.args.get("source", "").strip()
+
+    query = TimeTaskTemplate.query.outerjoin(
+        CraftActivity,
+        TimeTaskTemplate.craft_activity_id == CraftActivity.id,
+    )
+
+    if search_text:
+        for term in [item.strip() for item in search_text.split() if item.strip()]:
+            like_term = f"%{term}%"
+            query = query.filter(or_(
+                TimeTaskTemplate.code.ilike(like_term),
+                TimeTaskTemplate.title.ilike(like_term),
+                TimeTaskTemplate.erp_idnum.ilike(like_term),
+                CraftActivity.code.ilike(like_term),
+                CraftActivity.name.ilike(like_term),
+            ))
+
+    if raw_craft_activity_id:
+        query = query.filter(TimeTaskTemplate.craft_activity_id == int(raw_craft_activity_id))
+
+    if status_filter == "active":
+        query = query.filter(TimeTaskTemplate.active.is_(True))
+    elif status_filter == "inactive":
+        query = query.filter(TimeTaskTemplate.active.is_(False))
+
+    if source_filter:
+        query = query.filter(TimeTaskTemplate.source == source_filter)
+
+    items = query.order_by(
+        CraftActivity.name.asc().nulls_last(),
+        TimeTaskTemplate.title.asc(),
+        TimeTaskTemplate.code.asc(),
+    ).all()
+
+    return render_template(
+        "admin/time_templates.html",
+        items=items,
+        craft_activities=craft_activities,
+        search_text=search_text,
+        selected_craft_activity_id=raw_craft_activity_id,
+        status_filter=status_filter,
+        source_filter=source_filter,
+    )
+
+
+@admin_bp.route("/admin/time-templates/<int:item_id>", methods=["GET", "POST"])
+@foreman_required
+def time_template_edit(item_id: int) -> Any:
+    item = db.get_or_404(TimeTaskTemplate, item_id)
+    craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+
+    if request.method == "POST":
+        save_time_template_form(item)
+        audit("service_position.update", "time_task_template", item.id)
+        db.session.commit()
+        flash("Leistungsposition gespeichert.", "success")
+        return redirect(url_for("admin.time_templates"))
+
+    return render_template("admin/time_template_form.html", item=item, craft_activities=craft_activities)
+
+
+@admin_bp.get("/admin/time-entries")
+@foreman_required
+def time_entries() -> Any:
+    items = TimeEntry.query.order_by(TimeEntry.created_at.desc()).all()
+    return render_template("admin/time_entries.html", items=items)
+
+
+@admin_bp.post("/admin/time-entries/<int:item_id>/<string:decision>")
+@foreman_required
+def time_entry_review(item_id: int, decision: str) -> Any:
+    item = db.get_or_404(TimeEntry, item_id)
+    if decision == "approve":
+        item.review_status = TimeReviewStatus.APPROVED.value
+    elif decision == "reject":
+        item.review_status = TimeReviewStatus.REJECTED.value
+    item.reviewed_by_user_id = current_user.id
+    item.reviewed_at = utc_now()
+    audit("time.review", "time_entry", item.id, {"decision": decision})
+    db.session.commit()
+    flash("Stundenzettel aktualisiert.", "success")
+    return redirect(url_for("admin.time_entries"))
+
+
+@admin_bp.post("/admin/service-catalog/sync")
+@foreman_required
+def service_catalog_sync() -> Any:
+    result = sync_catalogs_from_wowiport()
+    audit("service_catalog.sync", metadata={
+        "craft_activities_created": result.craft_activities_created,
+        "craft_activities_updated": result.craft_activities_updated,
+        "service_positions_created": result.service_positions_created,
+        "service_positions_updated": result.service_positions_updated,
+        "service_positions_skipped_unassigned_craft_activity": result.service_positions_skipped_unassigned_craft_activity,
+        "service_positions_without_craft_activity": result.service_positions_without_craft_activity,
+        "service_positions_deactivated": result.service_positions_deactivated,
+    })
+    db.session.commit()
+    flash(
+        f"Sync abgeschlossen: {result.craft_activities_created} Gewerke neu, "
+        f"{result.craft_activities_updated} Gewerke aktualisiert, "
+        f"{result.service_positions_created} Leistungspositionen neu, "
+        f"{result.service_positions_updated} Leistungspositionen aktualisiert, "
+        f"{result.service_positions_skipped_unassigned_craft_activity} wegen nicht zugeordnetem Gewerk übersprungen, "
+        f"{result.service_positions_without_craft_activity} ohne Gewerk, "
+        f"{result.service_positions_deactivated} deaktiviert.",
+        "success",
+    )
+    return redirect(url_for("admin.time_templates"))
+
+
+def save_user_form(item: User) -> None:
+    item.email = request.form.get("email", "").strip().lower()
+    item.display_name = request.form.get("display_name", "").strip()
+    item.entra_oid = request.form.get("entra_oid") or None
+    raw_craftsman_id = request.form.get("craftsman_erp_id", "").strip()
+    item.craftsman_erp_id = int(raw_craftsman_id) if raw_craftsman_id else None
+    item.is_admin = "is_admin" in request.form
+    item.is_foreman = "is_foreman" in request.form
+    item.is_active_flag = "is_active_flag" in request.form
+    password = request.form.get("password", "")
+    if password:
+        item.set_password(password)
+
+
+def save_user_craft_activities(item: User) -> None:
+    selected_activity_ids = []
+
+    for value in request.form.getlist("craft_activity_ids"):
+        try:
+            selected_activity_ids.append(int(value))
+        except ValueError:
+            continue
+
+    if not selected_activity_ids:
+        item.craft_activities = []
+        return
+
+    item.craft_activities = CraftActivity.query.filter(
+        CraftActivity.id.in_(selected_activity_ids),
+        CraftActivity.active.is_(True),
+    ).order_by(CraftActivity.name.asc()).all()
+
+
+def save_inventory_form(item: InventoryItem) -> None:
+    item.item_number = request.form.get("item_number", "").strip()
+    item.name = request.form.get("name", "").strip()
+    item.unit = request.form.get("unit", "Stk").strip()
+    item.ean = request.form.get("ean") or None
+    item.reorder_level = float(request.form.get("reorder_level", 0))
+    item.active = "active" in request.form
+
+
+def save_time_template_form(item: TimeTaskTemplate) -> None:
+    item.code = request.form.get("code", "").strip()
+    item.title = request.form.get("title", "").strip()
+    item.suggested_minutes = int(request.form.get("suggested_minutes", 0) or 0)
+    item.active = "active" in request.form
+
+    raw_craft_activity_id = request.form.get("craft_activity_id", "").strip()
+    item.craft_activity_id = int(raw_craft_activity_id) if raw_craft_activity_id else None
+
+    if not item.source:
+        item.source = "manual"
+
+
+def apply_inventory_movement(item: InventoryItem, movement: InventoryMovement) -> None:
+    if movement.movement_type == InventoryMovementType.WITHDRAWAL.value:
+        item.stock_quantity -= movement.quantity
+    if movement.movement_type == InventoryMovementType.STORED.value:
+        item.stock_quantity += movement.quantity
+    if movement.movement_type == InventoryMovementType.CORRECTION.value:
+        item.stock_quantity += movement.quantity

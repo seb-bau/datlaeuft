@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Leistungsposition{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Leistungsposition</h1>
+<form method="post" class="card shadow-sm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card-body row g-3">
+    <div class="col-md-4">
+      <label class="form-label">Code</label>
+      <input class="form-control" name="code" value="{{ item.code }}" required>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Bezeichnung</label>
+      <input class="form-control" name="title" value="{{ item.title }}" required>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Gewerk</label>
+      <select class="form-select" name="craft_activity_id">
+        <option value="">Keine Zuordnung</option>
+        {% for activity in craft_activities %}
+        <option value="{{ activity.id }}" {% if item.craft_activity_id == activity.id %}selected{% endif %}>
+          {{ activity.name }}{% if activity.code %} ({{ activity.code }}){% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">SOLL-Zeit in Minuten</label>
+      <input class="form-control" type="number" name="suggested_minutes" value="{{ item.suggested_minutes }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Quelle</label>
+      <input class="form-control" value="{{ item.source }}" disabled>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Wowiport-ID</label>
+      <input class="form-control" value="{{ item.erp_service_catalogue_id or '' }}" disabled>
+    </div>
+    <div class="col-12">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="active" {% if item.active %}checked{% endif %}>
+        <label class="form-check-label">Aktiv</label>
+      </div>
+    </div>
+  </div>
+  <div class="card-footer text-end">
+    <button class="btn btn-primary" type="submit">Speichern</button>
+  </div>
+</form>
+{% endblock %}

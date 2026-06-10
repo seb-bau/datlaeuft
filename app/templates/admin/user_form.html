@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Benutzer{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Benutzer</h1>
+
+<form method="post" class="card shadow-sm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="card-body row g-3">
+    <div class="col-md-6">
+      <label class="form-label">Name</label>
+      <input class="form-control" name="display_name" value="{{ item.display_name or '' }}" required>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">E-Mail</label>
+      <input class="form-control" type="email" name="email" value="{{ item.email or '' }}" required>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">ERP-Handwerker-ID</label>
+      <input class="form-control" type="number" name="craftsman_erp_id" value="{{ item.craftsman_erp_id or '' }}">
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">Kennwort</label>
+      <input class="form-control" type="password" name="password" autocomplete="new-password">
+      <div class="form-text">Leer lassen, wenn das Kennwort nicht geändert werden soll.</div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" name="is_admin" {% if item.is_admin %}checked{% endif %}>
+        <label class="form-check-label">Admin</label>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" name="is_foreman" {% if item.is_foreman %}checked{% endif %}>
+        <label class="form-check-label">Vorarbeiter</label>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" name="is_active_flag" {% if item.is_active_flag %}checked{% endif %}>
+        <label class="form-check-label">Aktiv</label>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <hr>
+    </div>
+
+    <div class="col-lg-5">
+      <label class="form-label">Zugeordnete Gewerke</label>
+      <div id="selectedCraftActivities" class="border rounded p-3 bg-light min-vh-10">
+        {% if item.craft_activities %}
+          <div class="d-flex flex-wrap gap-2">
+            {% for activity in item.craft_activities|sort(attribute="name") %}
+            <span class="badge text-bg-primary">
+              {{ activity.name }}{% if activity.code %} · {{ activity.code }}{% endif %}
+            </span>
+            {% endfor %}
+          </div>
+        {% else %}
+          <span class="text-muted">Keine Gewerke zugeordnet.</span>
+        {% endif %}
+      </div>
+      <div class="form-text">Diese Gewerke bestimmen, welche Leistungspositionen der Benutzer in der App auswählen kann.</div>
+    </div>
+
+    <div class="col-lg-7">
+      <label class="form-label">Gewerke auswählen</label>
+
+      <input id="craftActivitySearch" class="form-control mb-2" type="search" placeholder="Gewerk suchen">
+
+      <div class="border rounded p-2" style="max-height: 340px; overflow-y: auto;">
+        {% for activity in craft_activities %}
+        <label class="craft-activity-option d-flex align-items-start gap-2 py-2 px-2 rounded" data-search="{{ activity.name|lower }} {{ activity.code|lower if activity.code else '' }}">
+          <input class="form-check-input mt-1 craft-activity-checkbox" type="checkbox" name="craft_activity_ids" value="{{ activity.id }}" {% if activity in item.craft_activities %}checked{% endif %}>
+          <span>
+            <span class="d-block fw-semibold">{{ activity.name }}</span>
+            {% if activity.code %}
+            <span class="d-block small text-muted">{{ activity.code }}</span>
+            {% endif %}
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+
+      <div class="form-text">Mehrere Gewerke können ausgewählt werden. Die Liste ist durchsuchbar.</div>
+    </div>
+  </div>
+
+  <div class="card-footer d-flex justify-content-between">
+    <a class="btn btn-outline-secondary" href="{{ url_for('admin.users') }}">Zurück</a>
+    <button class="btn btn-primary" type="submit">Speichern</button>
+  </div>
+</form>
+
+<script>
+  const craftActivitySearch = document.getElementById("craftActivitySearch");
+  const craftActivityOptions = Array.from(document.querySelectorAll(".craft-activity-option"));
+  const craftActivityCheckboxes = Array.from(document.querySelectorAll(".craft-activity-checkbox"));
+  const selectedCraftActivities = document.getElementById("selectedCraftActivities");
+
+  function updateCraftActivityVisibility() {
+    const query = craftActivitySearch.value.trim().toLowerCase();
+
+    craftActivityOptions.forEach((option) => {
+      const searchText = option.dataset.search || "";
+      option.classList.toggle("d-none", query.length > 0 && !searchText.includes(query));
+    });
+  }
+
+  function updateSelectedCraftActivities() {
+    const selectedItems = craftActivityOptions.filter((option) => {
+      const checkbox = option.querySelector(".craft-activity-checkbox");
+      return checkbox && checkbox.checked;
+    });
+
+    if (selectedItems.length === 0) {
+      selectedCraftActivities.innerHTML = '<span class="text-muted">Keine Gewerke zugeordnet.</span>';
+      return;
+    }
+
+    const badges = selectedItems.map((option) => {
+      const name = option.querySelector(".fw-semibold")?.textContent?.trim() || "";
+      const code = option.querySelector(".small")?.textContent?.trim() || "";
+      const label = code ? `${name} · ${code}` : name;
+      return `<span class="badge text-bg-primary">${escapeHtml(label)}</span>`;
+    }).join("");
+
+    selectedCraftActivities.innerHTML = `<div class="d-flex flex-wrap gap-2">${badges}</div>`;
+  }
+
+  function escapeHtml(value) {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  craftActivitySearch.addEventListener("input", updateCraftActivityVisibility);
+
+  craftActivityCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener("change", updateSelectedCraftActivities);
+  });
+</script>
+{% endblock %}

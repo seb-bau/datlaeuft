@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Benutzer{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Benutzer</h1>
+  <a class="btn btn-primary" href="{{ url_for('admin.user_create') }}">Benutzer anlegen</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <table class="table table-striped datatable align-middle">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>E-Mail</th>
+          <th>ERP-Handwerker-ID</th>
+          <th>Gewerke</th>
+          <th>Rollen</th>
+          <th>Aktiv</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.display_name }}</td>
+          <td>{{ item.email }}</td>
+          <td>{{ item.craftsman_erp_id or "" }}</td>
+          <td>
+            {% if item.craft_activities %}
+              <div class="d-flex flex-wrap gap-1">
+                {% for activity in item.craft_activities|sort(attribute="name") %}
+                <span class="badge text-bg-light border">
+                  {{ activity.name }}{% if activity.code %} · {{ activity.code }}{% endif %}
+                </span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <span class="text-muted">Keine Gewerke</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if item.is_admin %}
+            <span class="badge text-bg-danger">Admin</span>
+            {% endif %}
+            {% if item.is_foreman %}
+            <span class="badge text-bg-warning">Vorarbeiter</span>
+            {% endif %}
+            {% if not item.is_admin and not item.is_foreman %}
+            <span class="text-muted">Handwerker</span>
+            {% endif %}
+          </td>
+          <td>{{ "Ja" if item.is_active_flag else "Nein" }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.user_edit', user_id=item.id) }}">Bearbeiten</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not items %}
+    <div class="text-center text-muted py-4">
+      Keine Benutzer vorhanden.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

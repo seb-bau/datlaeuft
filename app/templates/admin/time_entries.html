@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Stundenzettel{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Stundenzettel</h1>
+<div class="card shadow-sm">
+  <div class="card-body">
+    <table class="table table-striped datatable">
+      <thead>
+        <tr>
+          <th>Zeitpunkt</th>
+          <th>Auftrag</th>
+          <th>Benutzer</th>
+          <th>Position</th>
+          <th>Minuten</th>
+          <th>Abweichung</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.created_at.strftime("%d.%m.%Y %H:%M") }}</td>
+          <td>{{ item.commission.erp_id }}</td>
+          <td>{{ item.user.display_name }}</td>
+          <td>{{ item.task_template.title if item.task_template else "" }}</td>
+          <td>{{ item.minutes }}</td>
+          <td>{{ item.deviation_minutes }} Minuten / {{ "%.1f"|format(item.deviation_percent) }} %</td>
+          <td>{{ item.review_status }}</td>
+          <td class="text-end">
+            {% if item.review_status == "needs_review" %}
+            <div class="d-flex gap-2 justify-content-end">
+              <form method="post" action="{{ url_for('admin.time_entry_review', item_id=item.id, decision='approve') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-success" type="submit">Freigeben</button>
+              </form>
+              <form method="post" action="{{ url_for('admin.time_entry_review', item_id=item.id, decision='reject') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Ablehnen</button>
+              </form>
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
