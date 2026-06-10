@@ -210,17 +210,31 @@ class WowiportService:
             user_agent="datlaeuft/1.0",
         )
 
-    def get_commission(self, erp_id: int) -> CommissioningCommission | None:
-        commission_list = self.client.get_commissioning_commissions(
-            id_=erp_id,
-            include_commission_items=True,
-            include_commission_details=True,
-            show_null_values=True,
-            limit=1,
-        )
+    def get_commission(self, erp_id: int) -> wowipy.CommissioningCommission | None:
+        try:
+            commission_list = self.client.get_commissioning_commissions(
+                id_=erp_id,
+                include_commission_items=True,
+                include_commission_details=True,
+                show_null_values=True,
+                limit=1,
+            )
+        except TypeError as exc:
+            current_app.logger.warning(
+                "get_commission with items failed for commission %s, retrying without items: %s",
+                erp_id,
+                exc,
+            )
+            commission_list = self.client.get_commissioning_commissions(
+                id_=erp_id,
+                include_commission_items=False,
+                include_commission_details=True,
+                show_null_values=True,
+                limit=1,
+            )
 
         if not commission_list:
-            current_app.logger.error("get_commission failed. commission id %s not found", erp_id)
+            current_app.logger.error("get_commission: Cannot find commission %s in erp", erp_id)
             return None
 
         return commission_list[0]
@@ -409,7 +423,7 @@ class WowiportService:
             limit=limit,
             offset=offset,
             craftsman_id=craftsman_erp_id,
-            include_commission_items=True,
+            include_commission_items=False,
             include_commission_details=True,
             show_null_values=True,
             add_args=add_args,
@@ -627,7 +641,7 @@ def current_business_year_range() -> tuple[datetime, datetime]:
         start = datetime(now.year - 1, start_month, 1)
         end = datetime(now.year, start_month, 1)
 
-    return start, end
+    return _as_naive_datetime(start), _as_naive_datetime(end)
 
 
 def get_commission_business_year_date(
@@ -635,12 +649,12 @@ def get_commission_business_year_date(
     date_field: str,
 ) -> datetime | None:
     if date_field == "release_date":
-        return parse_datetime(payload.release_date)
+        return _as_naive_datetime(parse_datetime(payload.release_date))
 
     if date_field == "execution_from":
-        return parse_datetime(payload.execution_from)
+        return _as_naive_datetime(parse_datetime(payload.execution_from))
 
-    return parse_datetime(payload.recording_date)
+    return _as_naive_datetime(parse_datetime(payload.recording_date))
 
 
 def mark_missing_regular_sync_commissions_deleted(
@@ -688,7 +702,7 @@ def mark_missing_regular_sync_commissions_deleted(
             result["deleted_marked"] += 1
 
 
-def upsert_commission(payload: CommissioningCommission) -> Commission:
+def upsert_commission(payload: wowipy.models.CommissioningCommission) -> Commission:
     erp_id = int(payload.id_)
     commission = db.session.query(Commission).filter_by(erp_id=erp_id).one_or_none()
 
@@ -696,8 +710,8 @@ def upsert_commission(payload: CommissioningCommission) -> Commission:
         commission = Commission(erp_id=erp_id)
         db.session.add(commission)
 
-    craftsman = _attr(payload, "craftsman")
-    craftsman_erp_id = _as_int(_attr(craftsman, "id_"))
+    craftsman = getattr(payload, "craftsman", None)
+    craftsman_erp_id = getattr(craftsman, "id_", None)
 
     user = (
         db.session.query(User)
@@ -707,38 +721,46 @@ def upsert_commission(payload: CommissioningCommission) -> Commission:
         else None
     )
 
-    commission_items = list(_attr(payload, "commission_items") or [])
+    commission_items = list(getattr(payload, "commission_items", None) or [])
     first_item = commission_items[0] if commission_items else None
-    commission_status = _attr(payload, "commission_status")
+    commission_status = getattr(payload, "commission_status", None)
 
-    commission.erp_idnum = _attr(payload, "id_num")
-    commission.code = _attr(payload, "code")
+    commission.erp_idnum = getattr(payload, "id_num", None)
+    commission.code = getattr(payload, "code", None)
+
     commission.title = _first_text(
-        _attr(first_item, "internal_description"),
-        _attr(first_item, "code"),
-        _attr(payload, "short_description_crafts_process"),
-        _attr(payload, "id_num"),
+        getattr(first_item, "internal_description", None),
+        getattr(first_item, "code", None),
+        getattr(payload, "short_description_crafts_process", None),
+        getattr(payload, "description", None),
+        getattr(payload, "id_num", None),
         f"Auftrag {erp_id}",
     )
+
     commission.description = _first_text(
-        _attr(first_item, "commission_text"),
-        _attr(first_item, "internal_description"),
-        _attr(payload, "description"),
-        _attr(payload, "short_description_crafts_process"),
+        getattr(first_item, "commission_text", None),
+        getattr(first_item, "internal_description", None),
+        getattr(payload, "description", None),
+        getattr(payload, "short_description_crafts_process", None),
     )
-    commission.damage_location = _attr(payload, "damage_location")
+
+    commission.damage_location = getattr(payload, "damage_location", None)
+
     commission.contact_person = _first_text(
-        _attr(payload, "contact_person_on_site"),
-        _attr(payload, "contact_person_engineering"),
+        getattr(payload, "contact_person_on_site", None),
+        getattr(payload, "contact_person_engineering", None),
     )
-    commission.status_id = _as_int(_attr(commission_status, "id_"))
-    commission.status_code = _attr(commission_status, "code")
+
+    commission.status_id = getattr(commission_status, "id_", None)
+    commission.status_code = getattr(commission_status, "code", None)
     commission.craftsman_erp_id = craftsman_erp_id
     commission.user = user
-    commission.recording_date = parse_datetime(_attr(payload, "recording_date"))
-    commission.release_date = parse_datetime(_attr(payload, "release_date"))
-    commission.execution_from = parse_datetime(_attr(payload, "execution_from"))
-    commission.execution_to = parse_datetime(_attr(payload, "execution_to"))
+
+    commission.recording_date = parse_datetime(getattr(payload, "recording_date", None))
+    commission.release_date = parse_datetime(getattr(payload, "release_date", None))
+    commission.execution_from = parse_datetime(getattr(payload, "execution_from", None))
+    commission.execution_to = parse_datetime(getattr(payload, "execution_to", None))
+
     commission.deleted_at = None
     commission.synced_at = utc_now()
 
@@ -854,3 +876,13 @@ def _prepare_comment_for_display(value: Any) -> str | None:
         return None
 
     return " ".join(str(value).split())
+
+
+def _as_naive_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        return value
+
+    return value.astimezone().replace(tzinfo=None)
