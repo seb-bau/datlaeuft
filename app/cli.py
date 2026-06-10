@@ -10,6 +10,7 @@ from .extensions import db
 from .models import User
 from .settings import SettingKeys, settings
 from .wowiport import sync_commission_from_erp
+from .wowiport import sync_commissions_from_wowiport_regular
 from .catalog import sync_catalogs_from_wowiport
 
 
@@ -79,4 +80,18 @@ def register_cli(app: Flask) -> None:
             f"service_positions_skipped_unassigned_craft_activity={result.service_positions_skipped_unassigned_craft_activity} "
             f"service_positions_without_craft_activity={result.service_positions_without_craft_activity} "
             f"service_positions_deactivated={result.service_positions_deactivated}"
+        )
+
+    @app.cli.command("datlaeuft-sync-commissions")
+    def sync_commissions() -> None:
+        result = sync_commissions_from_wowiport_regular()
+        click.echo(
+            f"craftsmen={result['craftsmen']} "
+            f"seen={result['seen']} "
+            f"synced={result['synced']} "
+            f"ignored_status={result['ignored_status']} "
+            f"ignored_business_year={result['ignored_business_year']} "
+            f"ignored_unknown_craftsman={result['ignored_unknown_craftsman']} "
+            f"deleted_marked={result['deleted_marked']} "
+            f"errors={result['errors']}"
         )

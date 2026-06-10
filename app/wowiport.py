@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from flask import current_app
+from wowipy import wowipy
 from wowipy.models import CommissioningCommission, Communication, Contractor, LicenseAgreement, UseUnit
 from wowipy.wowipy import WowiPy
 
@@ -389,6 +390,31 @@ class WowiportService:
             fetch_all=True,
         )
 
+    def get_commissions_for_regular_sync(
+        self,
+        status_id: int,
+        craftsman_erp_id: int,
+        date_from: datetime,
+        date_to: datetime,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[wowipy.CommissioningCommission]:
+        add_args = {
+            "commissionStatusId": status_id,
+            "recordingDateFrom": date_from.strftime("%Y-%m-%d"),
+            "recordingDateTo": date_to.strftime("%Y-%m-%d"),
+        }
+
+        return self.client.get_commissioning_commissions(
+            limit=limit,
+            offset=offset,
+            craftsman_id=craftsman_erp_id,
+            include_commission_items=True,
+            include_commission_details=True,
+            show_null_values=True,
+            add_args=add_args,
+        )
+
 
 def sync_commission_from_erp(erp_id: int) -> Commission | None:
     service = WowiportService()
@@ -415,6 +441,251 @@ def sync_commission_from_erp(erp_id: int) -> Commission | None:
         current_app.logger.exception("commission_context_sync_failed erp_id=%s exc:%s", erp_id, str(ex))
 
     return commission
+
+
+def sync_commissions_from_wowiport_regular() -> dict[str, int]:
+    service = WowiportService()
+
+    status_id = settings.get(SettingKeys.WOWI_APPROVED_STATUS_ID)
+    date_from, date_to = current_business_year_range()
+    date_field = settings.get(SettingKeys.SYNC_COMMISSION_DATE_FIELD)
+
+    craftsman_erp_ids = [
+        row[0]
+        for row in db.session.query(User.craftsman_erp_id)
+        .filter(
+            User.is_active_flag.is_(True),
+            User.craftsman_erp_id.isnot(None),
+        )
+        .distinct()
+        .all()
+    ]
+
+    result = {
+        "craftsmen": len(craftsman_erp_ids),
+        "seen": 0,
+        "synced": 0,
+        "ignored_status": 0,
+        "ignored_business_year": 0,
+        "ignored_unknown_craftsman": 0,
+        "deleted_marked": 0,
+        "errors": 0,
+    }
+
+    synced_erp_ids = set()
+    limit = 100
+
+    for craftsman_erp_id in craftsman_erp_ids:
+        offset = 0
+
+        while True:
+            current_app.logger.info(
+                "regular_commission_sync_page craftsman_erp_id=%s offset=%s limit=%s status_id=%s date_from=%s date_to=%s",
+                craftsman_erp_id,
+                offset,
+                limit,
+                status_id,
+                date_from.date(),
+                date_to.date(),
+            )
+
+            try:
+                payloads = service.get_commissions_for_regular_sync(
+                    status_id=status_id,
+                    craftsman_erp_id=craftsman_erp_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                    limit=limit,
+                    offset=offset,
+                )
+            except Exception:
+                current_app.logger.exception(
+                    "regular_commission_sync_page_failed craftsman_erp_id=%s offset=%s",
+                    craftsman_erp_id,
+                    offset,
+                )
+                result["errors"] += 1
+                break
+
+            if not payloads:
+                break
+
+            for payload in payloads:
+                result["seen"] += 1
+
+                try:
+                    sync_result = sync_commission_payload_from_erp(
+                        payload=payload,
+                        approved_status_id=status_id,
+                        date_from=date_from,
+                        date_to=date_to,
+                        date_field=date_field,
+                        allowed_craftsman_erp_ids=set(craftsman_erp_ids),
+                        service=service,
+                    )
+
+                    erp_id = getattr(payload, "id_", None)
+                    if sync_result == "synced" and erp_id is not None:
+                        synced_erp_ids.add(int(erp_id))
+
+                    if sync_result == "synced":
+                        result["synced"] += 1
+                    elif sync_result == "ignored_status":
+                        result["ignored_status"] += 1
+                    elif sync_result == "ignored_business_year":
+                        result["ignored_business_year"] += 1
+                    elif sync_result == "ignored_unknown_craftsman":
+                        result["ignored_unknown_craftsman"] += 1
+                    elif sync_result == "deleted_marked":
+                        result["deleted_marked"] += 1
+
+                except Exception:
+                    current_app.logger.exception(
+                        "regular_commission_sync_item_failed erp_id=%s",
+                        getattr(payload, "id_", None),
+                    )
+                    result["errors"] += 1
+
+            db.session.commit()
+
+            if len(payloads) < limit:
+                break
+
+            offset += limit
+
+    mark_missing_regular_sync_commissions_deleted(
+        date_from=date_from,
+        date_to=date_to,
+        date_field=date_field,
+        allowed_craftsman_erp_ids=set(craftsman_erp_ids),
+        synced_erp_ids=synced_erp_ids,
+        result=result,
+    )
+
+    db.session.commit()
+    return result
+
+
+def sync_commission_payload_from_erp(
+    payload: wowipy.CommissioningCommission,
+    approved_status_id: int,
+    date_from: datetime,
+    date_to: datetime,
+    date_field: str,
+    allowed_craftsman_erp_ids: set[int],
+    service: WowiportService,
+) -> str:
+    erp_id = int(payload.id_)
+
+    status_id = payload.commission_status.id_ if payload.commission_status else None
+    existing = db.session.query(Commission).filter_by(erp_id=erp_id).one_or_none()
+
+    craftsman_erp_id = None
+    if payload.craftsman is not None:
+        craftsman_erp_id = payload.craftsman.id_
+
+    if craftsman_erp_id not in allowed_craftsman_erp_ids:
+        if existing is not None:
+            mark_commission_deleted(erp_id)
+            return "deleted_marked"
+        return "ignored_unknown_craftsman"
+
+    if status_id != approved_status_id:
+        if existing is not None:
+            mark_commission_deleted(erp_id)
+            return "deleted_marked"
+        return "ignored_status"
+
+    commission_date = get_commission_business_year_date(payload, date_field)
+
+    if commission_date is None or not (date_from <= commission_date < date_to):
+        if existing is not None:
+            mark_commission_deleted(erp_id)
+            return "deleted_marked"
+        return "ignored_business_year"
+
+    commission = upsert_commission(payload)
+
+    try:
+        context = service.get_commission_context(erp_id, payload)
+        apply_commission_context(commission, context)
+    except Exception:
+        current_app.logger.exception("commission_context_sync_failed erp_id=%s", erp_id)
+
+    return "synced"
+
+
+def current_business_year_range() -> tuple[datetime, datetime]:
+    start_month = settings.get(SettingKeys.SYNC_BUSINESS_YEAR_START_MONTH)
+
+    now = datetime.now()
+
+    if now.month >= start_month:
+        start = datetime(now.year, start_month, 1)
+        end = datetime(now.year + 1, start_month, 1)
+    else:
+        start = datetime(now.year - 1, start_month, 1)
+        end = datetime(now.year, start_month, 1)
+
+    return start, end
+
+
+def get_commission_business_year_date(
+    payload: wowipy.CommissioningCommission,
+    date_field: str,
+) -> datetime | None:
+    if date_field == "release_date":
+        return parse_datetime(payload.release_date)
+
+    if date_field == "execution_from":
+        return parse_datetime(payload.execution_from)
+
+    return parse_datetime(payload.recording_date)
+
+
+def mark_missing_regular_sync_commissions_deleted(
+    date_from: datetime,
+    date_to: datetime,
+    date_field: str,
+    allowed_craftsman_erp_ids: set[int],
+    synced_erp_ids: set[int],
+    result: dict[str, int],
+) -> None:
+    if not allowed_craftsman_erp_ids:
+        return
+
+    query = Commission.query.filter(
+        Commission.local_status != CommissionLocalStatus.DELETED.value,
+        Commission.craftsman_erp_id.in_(allowed_craftsman_erp_ids),
+    )
+
+    if synced_erp_ids:
+        query = query.filter(Commission.erp_id.notin_(synced_erp_ids))
+
+    if date_field == "release_date":
+        query = query.filter(
+            Commission.release_date >= date_from,
+            Commission.release_date < date_to,
+        )
+    elif date_field == "execution_from":
+        query = query.filter(
+            Commission.execution_from >= date_from,
+            Commission.execution_from < date_to,
+        )
+    else:
+        query = query.filter(
+            Commission.recording_date >= date_from,
+            Commission.recording_date < date_to,
+        )
+
+    approved_status_id = settings.get(SettingKeys.WOWI_APPROVED_STATUS_ID)
+
+    for commission in query.all():
+        if commission.status_id == approved_status_id:
+            commission.local_status = CommissionLocalStatus.DELETED.value
+            commission.deleted_at = utc_now()
+            commission.synced_at = utc_now()
+            result["deleted_marked"] += 1
 
 
 def upsert_commission(payload: CommissioningCommission) -> Commission:

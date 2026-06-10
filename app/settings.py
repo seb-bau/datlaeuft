@@ -52,6 +52,21 @@ class SettingKeys:
     MOBILE_MICROSOFT_CLIENT_ID = SettingDefinition[str]("mobile.microsoft_client_id", SettingValueType.STRING, "", "Microsoft Client-ID der iOS-App", "Mobile App")
     MOBILE_MICROSOFT_REDIRECT_URI = SettingDefinition[str]("mobile.microsoft_redirect_uri", SettingValueType.STRING, "", "Microsoft Redirect-URI der iOS-App", "Mobile App")
     MOBILE_MICROSOFT_SCOPES = SettingDefinition[str]("mobile.microsoft_scopes", SettingValueType.STRING, "User.Read", "Microsoft Scopes der iOS-App", "Mobile App")
+    SYNC_BUSINESS_YEAR_START_MONTH = SettingDefinition[int](
+        "sync.business_year_start_month",
+        SettingValueType.INT,
+        1,
+        "Startmonat des Geschäftsjahres",
+        "Synchronisierung",
+    )
+
+    SYNC_COMMISSION_DATE_FIELD = SettingDefinition[str](
+        "sync.commission_date_field",
+        SettingValueType.STRING,
+        "recording_date",
+        "Datumsfeld für Auftragssync-Geschäftsjahr",
+        "Synchronisierung",
+    )
 
 
 def all_definitions() -> list[SettingDefinition[Any]]:
