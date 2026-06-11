@@ -12,6 +12,7 @@ from .extensions import db
 from .models import Commission, CommissionLocalStatus, User, utc_now
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
+from .models import WowiBuilding
 
 
 def _format_use_unit_location(use_unit: UseUnit | None) -> str | None:
@@ -774,14 +775,27 @@ def upsert_commission(payload: wowipy.models.CommissioningCommission) -> Commiss
 
 
 def apply_commission_context(commission: Commission, context: dict[str, Any]) -> None:
-    use_unit_id = _as_int(context.get("use_unit_id"))
-    license_agreement_id = _as_int(context.get("license_agreement_id"))
+    if context.get("use_unit_id"):
+        commission.use_unit_id = int(context["use_unit_id"])
 
-    if use_unit_id:
-        commission.use_unit_id = use_unit_id
+        try:
+            from .location_sync import sync_wowi_use_unit
 
-    if license_agreement_id:
-        commission.license_agreement_id = license_agreement_id
+            use_unit_location = sync_wowi_use_unit(commission.use_unit_id)
+
+            if use_unit_location and use_unit_location.building:
+                commission.building_erp_id = use_unit_location.building.erp_id
+                commission.latitude = use_unit_location.building.latitude
+                commission.longitude = use_unit_location.building.longitude
+        except Exception:
+            current_app.logger.exception(
+                "commission_location_sync_failed commission_id=%s use_unit_id=%s",
+                commission.id,
+                commission.use_unit_id,
+            )
+
+    if context.get("license_agreement_id"):
+        commission.license_agreement_id = int(context["license_agreement_id"])
 
     if context.get("apartment_address"):
         commission.apartment_address = context["apartment_address"]

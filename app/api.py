@@ -463,6 +463,9 @@ def serialize_commission(commission: Commission, include_details: bool = False, 
         "execution_from": iso_datetime(commission.execution_from),
         "execution_to": iso_datetime(commission.execution_to),
         "completed_at": iso_datetime(commission.completed_at),
+        "latitude": commission.latitude,
+        "longitude": commission.longitude,
+        "has_coordinates": commission.latitude is not None and commission.longitude is not None,
     }
 
     if viewer is not None:

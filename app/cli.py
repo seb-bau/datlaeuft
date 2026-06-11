@@ -12,6 +12,7 @@ from .settings import SettingKeys, settings
 from .wowiport import sync_commission_from_erp
 from .wowiport import sync_commissions_from_wowiport_regular
 from .catalog import sync_catalogs_from_wowiport
+from .location_sync import sync_wowi_buildings
 
 
 def register_cli(app: Flask) -> None:
@@ -94,4 +95,17 @@ def register_cli(app: Flask) -> None:
             f"ignored_unknown_craftsman={result['ignored_unknown_craftsman']} "
             f"deleted_marked={result['deleted_marked']} "
             f"errors={result['errors']}"
+        )
+
+    @app.cli.command("datlaeuft-sync-buildings")
+    def sync_buildings() -> None:
+        result = sync_wowi_buildings()
+        click.echo(
+            f"seen={result['seen']} "
+            f"created={result['created']} "
+            f"updated={result['updated']} "
+            f"kept_existing_coordinates={result['kept_existing_coordinates']} "
+            f"geocoded={result['geocoded']} "
+            f"without_coordinates={result['without_coordinates']} "
+            f"skipped={result['skipped']}"
         )

@@ -152,6 +152,9 @@ class Commission(db.Model):
     completed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     synced_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    building_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    latitude: Mapped[float | None] = mapped_column(db.Float)
+    longitude: Mapped[float | None] = mapped_column(db.Float)
 
     user: Mapped[User | None] = relationship(back_populates="commissions")
     inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="commission")
@@ -270,3 +273,39 @@ class ApiTokenBlocklist(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     jti: Mapped[str] = mapped_column(db.String(80), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class WowiBuilding(db.Model):
+    __tablename__ = "wowi_building"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(db.Integer, unique=True, index=True, nullable=False)
+    id_num: Mapped[str | None] = mapped_column(db.String(100), index=True)
+    street: Mapped[str | None] = mapped_column(db.String(255))
+    zip_code: Mapped[str | None] = mapped_column(db.String(20))
+    town: Mapped[str | None] = mapped_column(db.String(255))
+    address: Mapped[str | None] = mapped_column(db.String(500))
+    latitude: Mapped[float | None] = mapped_column(db.Float)
+    longitude: Mapped[float | None] = mapped_column(db.Float)
+    coordinate_source: Mapped[str | None] = mapped_column(db.String(40))
+    geocoded_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    exit_date: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    active: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+
+
+class WowiUseUnit(db.Model):
+    __tablename__ = "wowi_use_unit"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(db.Integer, unique=True, index=True, nullable=False)
+    id_num: Mapped[str | None] = mapped_column(db.String(100), index=True)
+    building_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    building_id: Mapped[int | None] = mapped_column(db.ForeignKey("wowi_building.id"), index=True)
+    floor_name: Mapped[str | None] = mapped_column(db.String(255))
+    position_name: Mapped[str | None] = mapped_column(db.String(255))
+    description_of_position: Mapped[str | None] = mapped_column(db.String(255))
+    address: Mapped[str | None] = mapped_column(db.String(500))
+    synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+
+    building: Mapped[WowiBuilding | None] = relationship()

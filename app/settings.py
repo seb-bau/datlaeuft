@@ -68,6 +68,30 @@ class SettingKeys:
         "Synchronisierung",
     )
 
+    GEOAPIFY_API_KEY = SettingDefinition[str](
+        "geoapify.api_key",
+        SettingValueType.STRING,
+        "",
+        "Geoapify API-Key",
+        "Geocoding",
+    )
+
+    GEOCODING_ENABLED = SettingDefinition[bool](
+        "geocoding.enabled",
+        SettingValueType.BOOL,
+        True,
+        "Geocoding aktivieren",
+        "Geocoding",
+    )
+
+    GEOCODING_REQUEST_INTERVAL_SECONDS = SettingDefinition[float](
+        "geocoding.request_interval_seconds",
+        SettingValueType.FLOAT,
+        0.25,
+        "Mindestabstand zwischen Geocoding-Anfragen",
+        "Geocoding",
+    )
+
 
 def all_definitions() -> list[SettingDefinition[Any]]:
     definitions: list[SettingDefinition[Any]] = []
