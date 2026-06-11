@@ -34,6 +34,7 @@ class InventoryMovementType(str, Enum):
     ORDERED = "ordered"
     STORED = "stored"
     CORRECTION = "correction"
+    CANCELLATION = "cancellation"
 
 
 class TimeReviewStatus(str, Enum):
@@ -176,6 +177,13 @@ class InventoryItem(db.Model):
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
 
     movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="item")
+
+    @property
+    def is_below_reorder_level(self) -> bool:
+        if self.reorder_level <= 0:
+            return False
+
+        return self.stock_quantity < self.reorder_level
 
 
 class InventoryMovement(db.Model):

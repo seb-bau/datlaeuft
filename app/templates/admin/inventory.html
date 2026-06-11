@@ -41,9 +41,10 @@
   <div class="col-lg-8">
     <div class="card shadow-sm">
       <div class="card-body">
-        <table class="table table-striped datatable">
+        <table class="table table-striped datatable align-middle">
           <thead>
             <tr>
+              <th></th>
               <th>Artikelnummer</th>
               <th>Name</th>
               <th>EAN</th>
@@ -55,10 +56,19 @@
           <tbody>
             {% for item in items %}
             <tr>
+              <td class="text-center" style="width: 2.5rem;">
+                {% if item.is_below_reorder_level %}
+                <span class="text-danger fw-bold fs-5" title="Mindestbestand unterschritten">!</span>
+                {% endif %}
+              </td>
               <td>{{ item.item_number }}</td>
               <td>{{ item.name }}</td>
               <td>{{ item.ean or "" }}</td>
-              <td>{{ item.stock_quantity }} {{ item.unit }}</td>
+              <td>
+                <span class="{% if item.is_below_reorder_level %}text-danger fw-bold{% endif %}">
+                  {{ item.stock_quantity }} {{ item.unit }}
+                </span>
+              </td>
               <td>{{ item.reorder_level }} {{ item.unit }}</td>
               <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.inventory_item', item_id=item.id) }}">Details</a></td>
             </tr>

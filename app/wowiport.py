@@ -12,7 +12,6 @@ from .extensions import db
 from .models import Commission, CommissionLocalStatus, User, utc_now
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
-from .models import WowiBuilding
 
 
 def _format_use_unit_location(use_unit: UseUnit | None) -> str | None:
@@ -424,7 +423,7 @@ class WowiportService:
             limit=limit,
             offset=offset,
             craftsman_id=craftsman_erp_id,
-            include_commission_items=False,
+            include_commission_items=True,
             include_commission_details=True,
             show_null_values=True,
             add_args=add_args,
@@ -495,7 +494,8 @@ def sync_commissions_from_wowiport_regular() -> dict[str, int]:
 
         while True:
             current_app.logger.info(
-                "regular_commission_sync_page craftsman_erp_id=%s offset=%s limit=%s status_id=%s date_from=%s date_to=%s",
+                "regular_commission_sync_page craftsman_erp_id=%s offset=%s "
+                "limit=%s status_id=%s date_from=%s date_to=%s",
                 craftsman_erp_id,
                 offset,
                 limit,
@@ -513,11 +513,12 @@ def sync_commissions_from_wowiport_regular() -> dict[str, int]:
                     limit=limit,
                     offset=offset,
                 )
-            except Exception:
+            except Exception as exc:
                 current_app.logger.exception(
-                    "regular_commission_sync_page_failed craftsman_erp_id=%s offset=%s",
+                    "regular_commission_sync_page_failed craftsman_erp_id=%s offset=%s ex %s",
                     craftsman_erp_id,
                     offset,
+                    str(exc)
                 )
                 result["errors"] += 1
                 break
@@ -554,10 +555,10 @@ def sync_commissions_from_wowiport_regular() -> dict[str, int]:
                     elif sync_result == "deleted_marked":
                         result["deleted_marked"] += 1
 
-                except Exception:
+                except Exception as ex:
                     current_app.logger.exception(
-                        "regular_commission_sync_item_failed erp_id=%s",
-                        getattr(payload, "id_", None),
+                        "regular_commission_sync_item_failed erp_id=%s ex %s",
+                        getattr(payload, "id_", None), str(ex)
                     )
                     result["errors"] += 1
 
@@ -624,8 +625,8 @@ def sync_commission_payload_from_erp(
     try:
         context = service.get_commission_context(erp_id, payload)
         apply_commission_context(commission, context)
-    except Exception:
-        current_app.logger.exception("commission_context_sync_failed erp_id=%s", erp_id)
+    except Exception as ex:
+        current_app.logger.exception("commission_context_sync_failed erp_id=%s ex %s", erp_id, ex)
 
     return "synced"
 
@@ -669,7 +670,7 @@ def mark_missing_regular_sync_commissions_deleted(
     if not allowed_craftsman_erp_ids:
         return
 
-    query = Commission.query.filter(
+    query = db.session.query(Commission).filter(
         Commission.local_status != CommissionLocalStatus.DELETED.value,
         Commission.craftsman_erp_id.in_(allowed_craftsman_erp_ids),
     )
@@ -703,16 +704,16 @@ def mark_missing_regular_sync_commissions_deleted(
             result["deleted_marked"] += 1
 
 
-def upsert_commission(payload: wowipy.models.CommissioningCommission) -> Commission:
-    erp_id = int(payload.id_)
+def upsert_commission(payload: Any) -> Commission:
+    erp_id = int(_read_first(payload, "id_", "id", "Id"))
     commission = db.session.query(Commission).filter_by(erp_id=erp_id).one_or_none()
 
     if commission is None:
         commission = Commission(erp_id=erp_id)
         db.session.add(commission)
 
-    craftsman = getattr(payload, "craftsman", None)
-    craftsman_erp_id = getattr(craftsman, "id_", None)
+    craftsman = _read_first(payload, "craftsman", "Craftsman")
+    craftsman_erp_id = _read_first(craftsman, "id_", "id", "Id")
 
     user = (
         db.session.query(User)
@@ -722,45 +723,59 @@ def upsert_commission(payload: wowipy.models.CommissioningCommission) -> Commiss
         else None
     )
 
-    commission_items = list(getattr(payload, "commission_items", None) or [])
+    commission_items = _read_first(payload, "commission_items", "CommissionItems") or []
     first_item = commission_items[0] if commission_items else None
-    commission_status = getattr(payload, "commission_status", None)
+    commission_status = _read_first(payload, "commission_status", "CommissionStatus")
 
-    commission.erp_idnum = getattr(payload, "id_num", None)
-    commission.code = getattr(payload, "code", None)
+    item_internal_description = _read_first(
+        first_item,
+        "internal_description",
+        "InternalDescription",
+    )
+    item_commission_text = _read_first(
+        first_item,
+        "commission_text",
+        "CommissionText",
+    )
+    item_code = _read_first(
+        first_item,
+        "code",
+        "Code",
+    )
+
+    commission.erp_idnum = _read_first(payload, "id_num", "idNum", "IdNum")
+    commission.code = _read_first(payload, "code", "Code")
 
     commission.title = _first_text(
-        getattr(first_item, "internal_description", None),
-        getattr(first_item, "code", None),
-        getattr(payload, "short_description_crafts_process", None),
-        getattr(payload, "description", None),
-        getattr(payload, "id_num", None),
+        item_internal_description,
+        item_commission_text,
+        item_code,
+        _read_first(payload, "id_num", "idNum", "IdNum"),
         f"Auftrag {erp_id}",
     )
 
     commission.description = _first_text(
-        getattr(first_item, "commission_text", None),
-        getattr(first_item, "internal_description", None),
-        getattr(payload, "description", None),
-        getattr(payload, "short_description_crafts_process", None),
+        item_commission_text,
+        item_internal_description,
+        _read_first(payload, "description", "Description"),
     )
 
-    commission.damage_location = getattr(payload, "damage_location", None)
+    commission.damage_location = _read_first(payload, "damage_location", "DamageLocation")
 
     commission.contact_person = _first_text(
-        getattr(payload, "contact_person_on_site", None),
-        getattr(payload, "contact_person_engineering", None),
+        _read_first(payload, "contact_person_on_site", "ContactPersonOnSite"),
+        _read_first(payload, "contact_person_engineering", "ContactPersonEngineering"),
     )
 
-    commission.status_id = getattr(commission_status, "id_", None)
-    commission.status_code = getattr(commission_status, "code", None)
+    commission.status_id = _read_first(commission_status, "id_", "id", "Id")
+    commission.status_code = _read_first(commission_status, "code", "Code")
     commission.craftsman_erp_id = craftsman_erp_id
     commission.user = user
 
-    commission.recording_date = parse_datetime(getattr(payload, "recording_date", None))
-    commission.release_date = parse_datetime(getattr(payload, "release_date", None))
-    commission.execution_from = parse_datetime(getattr(payload, "execution_from", None))
-    commission.execution_to = parse_datetime(getattr(payload, "execution_to", None))
+    commission.recording_date = parse_datetime(_read_first(payload, "recording_date", "RecordingDate"))
+    commission.release_date = parse_datetime(_read_first(payload, "release_date", "ReleaseDate"))
+    commission.execution_from = parse_datetime(_read_first(payload, "execution_from", "ExecutionFrom"))
+    commission.execution_to = parse_datetime(_read_first(payload, "execution_to", "ExecutionTo"))
 
     commission.deleted_at = None
     commission.synced_at = utc_now()
@@ -787,11 +802,12 @@ def apply_commission_context(commission: Commission, context: dict[str, Any]) ->
                 commission.building_erp_id = use_unit_location.building.erp_id
                 commission.latitude = use_unit_location.building.latitude
                 commission.longitude = use_unit_location.building.longitude
-        except Exception:
+        except Exception as ex:
             current_app.logger.exception(
-                "commission_location_sync_failed commission_id=%s use_unit_id=%s",
+                "commission_location_sync_failed commission_id=%s use_unit_id=%s ex %s",
                 commission.id,
                 commission.use_unit_id,
+                str(ex)
             )
 
     if context.get("license_agreement_id"):
@@ -900,3 +916,17 @@ def _as_naive_datetime(value: datetime | None) -> datetime | None:
         return value
 
     return value.astimezone().replace(tzinfo=None)
+
+
+def _read_first(source: Any, *names: str) -> Any:
+    if source is None:
+        return None
+
+    for name in names:
+        if isinstance(source, dict):
+            if name in source:
+                return source.get(name)
+        elif hasattr(source, name):
+            return getattr(source, name)
+
+    return None

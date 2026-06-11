@@ -16,6 +16,7 @@ from .wowiport import WowiportService
 from .catalog import get_user_visible_time_task, service_position_query_for_user
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
+CANCELLATION_NOTE_PREFIX = "Storno zu Buchung #"
 
 @api_bp.get("/mobile/config")
 def mobile_config() -> Any:
@@ -229,8 +230,25 @@ def inventory_search() -> Any:
 def commission_materials(commission_id: int) -> Any:
     user = current_api_user()
     commission = viewable_commission(commission_id, user)
-    movements = InventoryMovement.query.filter_by(commission_id=commission.id).order_by(InventoryMovement.occurred_at.desc()).all()
-    return jsonify({"items": [serialize_inventory_movement(item) for item in movements]})
+    cancelled_ids = cancelled_inventory_movement_ids(commission.id)
+
+    movements = (
+        InventoryMovement.query
+        .filter_by(commission_id=commission.id)
+        .order_by(InventoryMovement.occurred_at.desc())
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_inventory_movement(
+                item,
+                cancelled_ids=cancelled_ids,
+                can_edit=can_edit_commission(commission, user),
+            )
+            for item in movements
+        ]
+    })
 
 
 @api_bp.post("/commissions/<int:commission_id>/materials")
@@ -251,6 +269,69 @@ def add_commission_material(commission_id: int) -> Any:
     audit("inventory.withdrawal", "inventory_item", item.id, {"commission_id": commission.id, "quantity": quantity})
     db.session.commit()
     return jsonify({"item": serialize_inventory_movement(movement), "inventory_item": serialize_inventory_item(item)}), 201
+
+
+@api_bp.post("/commissions/<int:commission_id>/materials/<int:movement_id>/cancel")
+@jwt_required()
+def cancel_commission_material(commission_id: int, movement_id: int) -> Any:
+    user = current_api_user()
+    commission = editable_commission(commission_id, user)
+
+    movement = (
+        InventoryMovement.query
+        .filter_by(id=movement_id, commission_id=commission.id)
+        .one_or_none()
+    )
+
+    if movement is None:
+        abort(404)
+
+    if movement.movement_type != InventoryMovementType.WITHDRAWAL.value:
+        return jsonify({"message": "Nur Entnahmen können storniert werden."}), 400
+
+    if movement.id in cancelled_inventory_movement_ids(commission.id):
+        return jsonify({"message": "Diese Materialbuchung wurde bereits storniert."}), 409
+
+    item = movement.item
+    item.stock_quantity += movement.quantity
+
+    note_parts = [f"{CANCELLATION_NOTE_PREFIX}{movement.id}"]
+
+    if movement.note:
+        note_parts.append(f"Originalnotiz: {movement.note}")
+
+    cancellation = InventoryMovement(
+        item=item,
+        user=user,
+        commission=commission,
+        movement_type=InventoryMovementType.CANCELLATION.value,
+        quantity=movement.quantity,
+        note=" · ".join(note_parts),
+    )
+
+    db.session.add(cancellation)
+    audit(
+        "inventory.cancel_withdrawal",
+        "inventory_item",
+        item.id,
+        {
+            "commission_id": commission.id,
+            "movement_id": movement.id,
+            "quantity": movement.quantity,
+        },
+    )
+    db.session.commit()
+
+    cancelled_ids = cancelled_inventory_movement_ids(commission.id)
+
+    return jsonify({
+        "item": serialize_inventory_movement(
+            cancellation,
+            cancelled_ids=cancelled_ids,
+            can_edit=can_edit_commission(commission, user),
+        ),
+        "inventory_item": serialize_inventory_item(item),
+    }), 201
 
 
 @api_bp.get("/time-tasks")
@@ -405,6 +486,35 @@ def editable_commission(commission_id: int, user: User) -> Commission:
     return commission
 
 
+def cancelled_inventory_movement_ids(commission_id: int) -> set[int]:
+    notes = (
+        db.session.query(InventoryMovement.note)
+        .filter(
+            InventoryMovement.commission_id == commission_id,
+            InventoryMovement.movement_type == InventoryMovementType.CANCELLATION.value,
+            InventoryMovement.note.ilike(f"{CANCELLATION_NOTE_PREFIX}%"),
+        )
+        .all()
+    )
+
+    result = set()
+
+    for row in notes:
+        note = row[0] or ""
+
+        if not note.startswith(CANCELLATION_NOTE_PREFIX):
+            continue
+
+        number_text = note.removeprefix(CANCELLATION_NOTE_PREFIX).split(" ", 1)[0].split("·", 1)[0].strip()
+
+        try:
+            result.add(int(number_text))
+        except ValueError:
+            continue
+
+    return result
+
+
 def find_inventory_item(code: str) -> InventoryItem | None:
     if not code:
         return None
@@ -482,8 +592,31 @@ def serialize_inventory_item(item: InventoryItem) -> dict[str, Any]:
     return {"id": item.id, "item_number": item.item_number, "name": item.name, "unit": item.unit, "ean": item.ean, "qr_code_payload": item.qr_code_payload, "stock_quantity": item.stock_quantity, "reorder_level": item.reorder_level}
 
 
-def serialize_inventory_movement(item: InventoryMovement) -> dict[str, Any]:
-    return {"id": item.id, "item": serialize_inventory_item(item.item), "user": serialize_user(item.user) if item.user else None, "commission_id": item.commission_id, "movement_type": item.movement_type, "quantity": item.quantity, "note": item.note, "occurred_at": iso_datetime(item.occurred_at)}
+def serialize_inventory_movement(
+    item: InventoryMovement,
+    cancelled_ids: set[int] | None = None,
+    can_edit: bool = False,
+) -> dict[str, Any]:
+    cancelled_ids = cancelled_ids or set()
+    is_cancelled = item.id in cancelled_ids
+    can_cancel = (
+        can_edit
+        and item.movement_type == InventoryMovementType.WITHDRAWAL.value
+        and not is_cancelled
+    )
+
+    return {
+        "id": item.id,
+        "item": serialize_inventory_item(item.item),
+        "user": serialize_user(item.user) if item.user else None,
+        "commission_id": item.commission_id,
+        "movement_type": item.movement_type,
+        "quantity": item.quantity,
+        "note": item.note,
+        "occurred_at": iso_datetime(item.occurred_at),
+        "is_cancelled": is_cancelled,
+        "can_cancel": can_cancel,
+    }
 
 
 def serialize_time_task(item: TimeTaskTemplate, include_suggested: bool = False) -> dict[str, Any]:
