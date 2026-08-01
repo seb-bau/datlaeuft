@@ -2,6 +2,41 @@
 {% block title %}Stundenzettel{% endblock %}
 {% block content %}
 <h1 class="h3 mb-4">Stundenzettel</h1>
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Suche</label>
+        <input class="form-control" name="q" value="{{ search_text or '' }}" placeholder="Auftrag, Position, Benutzer">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Status</label>
+        <select class="form-select" name="status">
+          <option value="needs_review" {% if status_filter == "needs_review" %}selected{% endif %}>Zu prüfen</option>
+          <option value="ok" {% if status_filter == "ok" %}selected{% endif %}>OK</option>
+          <option value="approved" {% if status_filter == "approved" %}selected{% endif %}>Freigegeben</option>
+          <option value="rejected" {% if status_filter == "rejected" %}selected{% endif %}>Abgelehnt</option>
+          <option value="all" {% if status_filter == "all" %}selected{% endif %}>Alle</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Ampel</label>
+        <select class="form-select" name="review_level">
+          <option value="" {% if not review_level_filter %}selected{% endif %}>Alle</option>
+          <option value="red" {% if review_level_filter == "red" %}selected{% endif %}>Rot</option>
+          <option value="yellow" {% if review_level_filter == "yellow" %}selected{% endif %}>Gelb</option>
+          <option value="green" {% if review_level_filter == "green" %}selected{% endif %}>Grün</option>
+        </select>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-primary" type="submit">Filtern</button>
+      </div>
+      <div class="col-md-1 d-grid">
+        <a class="btn btn-outline-secondary" href="{{ url_for('admin.time_entries') }}">Reset</a>
+      </div>
+    </form>
+  </div>
+</div>
 <div class="card shadow-sm">
   <div class="card-body">
     <table class="table table-striped datatable">
@@ -11,9 +46,12 @@
           <th>Auftrag</th>
           <th>Benutzer</th>
           <th>Position</th>
-          <th>Minuten</th>
+          <th>Gesamt</th>
+          <th>Bausteine</th>
           <th>Abweichung</th>
+          <th>Ampel</th>
           <th>Status</th>
+          <th>Grund / Notiz</th>
           <th></th>
         </tr>
       </thead>
@@ -24,9 +62,19 @@
           <td>{{ item.commission.erp_id }}</td>
           <td>{{ item.user.display_name }}</td>
           <td>{{ item.task_template.title if item.task_template else "" }}</td>
-          <td>{{ item.minutes }}</td>
-          <td>{{ item.deviation_minutes }} Minuten / {{ "%.1f"|format(item.deviation_percent) }} %</td>
+          <td>{{ item.minutes }} Min.</td>
+          <td class="small">
+            Arbeit {{ item.work_minutes }} · Warten {{ item.waiting_minutes }} · Material {{ item.material_minutes }} · Fahrt {{ item.travel_minutes }} · Doku {{ item.documentation_minutes }} · Zusatz {{ item.extra_minutes }}
+          </td>
+          <td>{{ item.deviation_minutes }} Min. / {{ "%.1f"|format(item.deviation_percent) }} %</td>
+          <td>
+            <span class="badge text-bg-{% if item.review_level == 'red' %}danger{% elif item.review_level == 'yellow' %}warning{% else %}success{% endif %}">{{ item.review_level }}</span>
+          </td>
           <td>{{ item.review_status }}</td>
+          <td class="small">
+            {% if item.deviation_reason %}<div>{{ item.deviation_reason }}</div>{% endif %}
+            {% if item.note %}<div>{{ item.note }}</div>{% endif %}
+          </td>
           <td class="text-end">
             {% if item.review_status == "needs_review" %}
             <div class="d-flex gap-2 justify-content-end">

@@ -9,7 +9,7 @@ from sqlalchemy import or_
 from .audit import audit
 from .auth import resolve_microsoft_user, validate_microsoft_id_token
 from .extensions import db
-from .models import Commission, CommissionLocalStatus, InventoryItem, InventoryMovement, InventoryMovementType, TimeEntry, TimeReviewStatus, TimeTaskTemplate, User, utc_now, CraftActivity
+from .models import Commission, CommissionLocalStatus, InventoryItem, InventoryMovement, InventoryMovementType, MaterialSource, MaterialUsageStatus, ReviewLevel, TimeEntry, TimeReviewStatus, TimeTaskExpectedMaterial, TimeTaskTemplate, User, utc_now, CraftActivity
 from .settings import SettingKeys, settings
 from .utils import iso_datetime
 from .wowiport import WowiportService
@@ -260,13 +260,43 @@ def add_commission_material(commission_id: int) -> Any:
     item = find_inventory_item(str(data.get("code", "")).strip())
     if item is None:
         abort(404)
-    quantity = float(data.get("quantity", 1))
+    try:
+        quantity = float(data.get("quantity", 1))
+    except (TypeError, ValueError):
+        abort(400)
     if quantity <= 0:
         abort(400)
-    movement = InventoryMovement(item=item, user=user, commission=commission, movement_type=InventoryMovementType.WITHDRAWAL.value, quantity=quantity, note=data.get("note"))
-    item.stock_quantity -= quantity
+    task = None
+    if data.get("task_template_id"):
+        task = get_user_visible_time_task(user, int(data["task_template_id"]))
+        if task is None:
+            abort(403)
+    source = str(data.get("source") or MaterialSource.WAREHOUSE.value).strip()
+    if source not in {item.value for item in MaterialSource}:
+        abort(400)
+    usage_status = str(data.get("usage_status") or MaterialUsageStatus.INSTALLED.value).strip()
+    if usage_status not in {item.value for item in MaterialUsageStatus}:
+        abort(400)
+    movement = InventoryMovement(
+        item=item,
+        user=user,
+        commission=commission,
+        task_template=task,
+        movement_type=InventoryMovementType.WITHDRAWAL.value,
+        quantity=quantity,
+        note=data.get("note"),
+        source=source,
+        usage_status=usage_status,
+        deviation_reason=data.get("deviation_reason"),
+    )
     db.session.add(movement)
-    audit("inventory.withdrawal", "inventory_item", item.id, {"commission_id": commission.id, "quantity": quantity})
+    if source == MaterialSource.WAREHOUSE.value:
+        item.stock_quantity -= quantity
+    with db.session.no_autoflush:
+        apply_material_review(movement)
+    audit("inventory.withdrawal", "inventory_item", item.id,
+          {"commission_id": commission.id, "quantity": quantity, "task_template_id": task.id if task else None,
+           "source": source})
     db.session.commit()
     return jsonify({"item": serialize_inventory_movement(movement), "inventory_item": serialize_inventory_item(item)}), 201
 
@@ -293,7 +323,8 @@ def cancel_commission_material(commission_id: int, movement_id: int) -> Any:
         return jsonify({"message": "Diese Materialbuchung wurde bereits storniert."}), 409
 
     item = movement.item
-    item.stock_quantity += movement.quantity
+    if movement.source == MaterialSource.WAREHOUSE.value:
+        item.stock_quantity += movement.quantity
 
     note_parts = [f"{CANCELLATION_NOTE_PREFIX}{movement.id}"]
 
@@ -304,9 +335,14 @@ def cancel_commission_material(commission_id: int, movement_id: int) -> Any:
         item=item,
         user=user,
         commission=commission,
+        task_template=movement.task_template,
         movement_type=InventoryMovementType.CANCELLATION.value,
         quantity=movement.quantity,
         note=" · ".join(note_parts),
+        source=movement.source,
+        usage_status=MaterialUsageStatus.RETURNED.value,
+        review_status=TimeReviewStatus.OK.value,
+        review_level=ReviewLevel.GREEN.value,
     )
 
     db.session.add(cancellation)
@@ -399,7 +435,7 @@ def commission_time_entries(commission_id: int) -> Any:
         query = query.filter_by(user_id=user.id)
 
     entries = query.order_by(TimeEntry.created_at.desc()).all()
-    return jsonify({"items": [serialize_time_entry(item) for item in entries]})
+    return jsonify({"items": [serialize_time_entry(item, viewer=user) for item in entries]})
 
 
 @api_bp.post("/commissions/<int:commission_id>/time")
@@ -408,20 +444,175 @@ def add_time_entry(commission_id: int) -> Any:
     user = current_api_user()
     commission = editable_commission(commission_id, user)
     data = request.get_json(silent=True) or {}
-    minutes = int(data.get("minutes", 0))
-    if minutes <= 0:
-        abort(400)
-    task = None
-    if data.get("task_template_id"):
-        task = get_user_visible_time_task(user, int(data["task_template_id"]))
-        if task is None:
-            abort(403)
-    entry = TimeEntry(commission=commission, user=user, task_template=task, minutes=minutes, note=data.get("note"))
-    apply_time_review(entry)
+    values = time_entry_values_from_payload(data, user)
+    entry = TimeEntry(
+        commission=commission,
+        user=user,
+        task_template=values["task"],
+        minutes=values["minutes"],
+        work_minutes=values["work_minutes"],
+        waiting_minutes=values["waiting_minutes"],
+        material_minutes=values["material_minutes"],
+        travel_minutes=values["travel_minutes"],
+        documentation_minutes=values["documentation_minutes"],
+        extra_minutes=values["extra_minutes"],
+        deviation_reason=values["deviation_reason"],
+        note=values["note"],
+    )
     db.session.add(entry)
-    audit("time.create", "commission", commission.id, {"minutes": minutes, "task_template_id": task.id if task else None})
+    with db.session.no_autoflush:
+        apply_time_review(entry)
+    audit("time.create", "commission", commission.id,
+          {"minutes": entry.minutes, "task_template_id": entry.task_template_id})
     db.session.commit()
-    return jsonify({"item": serialize_time_entry(entry)}), 201
+    return jsonify({"item": serialize_time_entry(entry, viewer=user)}), 201
+
+
+@api_bp.patch("/commissions/<int:commission_id>/time/<int:entry_id>")
+@jwt_required()
+def update_time_entry(commission_id: int, entry_id: int) -> Any:
+    user = current_api_user()
+    commission, entry = editable_time_entry(commission_id, entry_id, user)
+    data = request.get_json(silent=True) or {}
+    values = time_entry_values_from_payload(data, user)
+    entry.task_template = values["task"]
+    entry.minutes = values["minutes"]
+    entry.work_minutes = values["work_minutes"]
+    entry.waiting_minutes = values["waiting_minutes"]
+    entry.material_minutes = values["material_minutes"]
+    entry.travel_minutes = values["travel_minutes"]
+    entry.documentation_minutes = values["documentation_minutes"]
+    entry.extra_minutes = values["extra_minutes"]
+    entry.deviation_reason = values["deviation_reason"]
+    entry.note = values["note"]
+    entry.reviewed_by_user_id = None
+    entry.reviewed_at = None
+    apply_time_review(entry)
+    audit("time.update", "time_entry", entry.id, {"commission_id": commission.id, "minutes": entry.minutes, "task_template_id": entry.task_template_id})
+    db.session.commit()
+    return jsonify({"item": serialize_time_entry(entry, viewer=user)})
+
+
+@api_bp.delete("/commissions/<int:commission_id>/time/<int:entry_id>")
+@jwt_required()
+def delete_time_entry(commission_id: int, entry_id: int) -> Any:
+    user = current_api_user()
+    commission, entry = editable_time_entry(commission_id, entry_id, user)
+    audit("time.delete", "time_entry", entry.id, {"commission_id": commission.id, "minutes": entry.minutes, "task_template_id": entry.task_template_id})
+    db.session.delete(entry)
+    db.session.commit()
+    return jsonify({})
+
+
+@api_bp.get("/commissions/<int:commission_id>/material-review")
+@jwt_required()
+def commission_material_review(commission_id: int) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(commission_id, user)
+    entries = TimeEntry.query.filter_by(commission_id=commission.id).all()
+    task_ids = {entry.task_template_id for entry in entries if entry.task_template_id}
+    if not task_ids:
+        return jsonify({"items": []})
+    expectations = TimeTaskExpectedMaterial.query.filter(TimeTaskExpectedMaterial.task_template_id.in_(task_ids)).all()
+    movements = InventoryMovement.query.filter_by(
+        commission_id=commission.id,
+        movement_type=InventoryMovementType.WITHDRAWAL.value,
+    ).all()
+    result = []
+    for expectation in expectations:
+        installed_quantity = sum(
+            movement.quantity
+            for movement in movements
+            if movement.task_template_id == expectation.task_template_id
+            and movement.item_id == expectation.item_id
+            and movement.usage_status == MaterialUsageStatus.INSTALLED.value
+        )
+        is_ok = installed_quantity + 0.0001 >= expectation.quantity
+        result.append({
+            "task_template": serialize_time_task(expectation.task_template),
+            "expected_material": serialize_expected_material(expectation),
+            "installed_quantity": installed_quantity,
+            "missing_quantity": max(expectation.quantity - installed_quantity, 0),
+            "review_status": TimeReviewStatus.OK.value if is_ok else TimeReviewStatus.NEEDS_REVIEW.value,
+            "review_level": ReviewLevel.GREEN.value if is_ok else ReviewLevel.RED.value,
+        })
+    return jsonify({"items": result})
+
+
+@api_bp.get("/review/time-entries")
+@jwt_required()
+def review_time_entries() -> Any:
+    user = current_api_user()
+    require_review_permission(user)
+    query = TimeEntry.query.join(Commission, TimeEntry.commission_id == Commission.id).join(User, TimeEntry.user_id == User.id).outerjoin(TimeTaskTemplate, TimeEntry.task_template_id == TimeTaskTemplate.id)
+    status = request.args.get("status", TimeReviewStatus.NEEDS_REVIEW.value).strip()
+    review_level = request.args.get("review_level", request.args.get("risk", "")).strip()
+    user_id = request.args.get("user_id", "").strip()
+    commission_id = request.args.get("commission_id", "").strip()
+    search_text = request.args.get("q", "").strip()
+    if status and status != "all":
+        query = query.filter(TimeEntry.review_status == status)
+    if review_level and review_level != "all":
+        query = query.filter(TimeEntry.review_level == review_level)
+    if user_id.isdigit():
+        query = query.filter(TimeEntry.user_id == int(user_id))
+    if commission_id.isdigit():
+        query = query.filter(TimeEntry.commission_id == int(commission_id))
+    if search_text:
+        for term in [item.strip() for item in search_text.split() if item.strip()]:
+            like_term = f"%{term}%"
+            query = query.filter(or_(
+                Commission.code.ilike(like_term),
+                Commission.erp_idnum.ilike(like_term),
+                Commission.title.ilike(like_term),
+                TimeTaskTemplate.code.ilike(like_term),
+                TimeTaskTemplate.title.ilike(like_term),
+                User.display_name.ilike(like_term),
+            ))
+    items = query.order_by(TimeEntry.created_at.desc()).limit(query_limit()).all()
+    return jsonify({"items": [serialize_time_entry(item, viewer=user) for item in items]})
+
+
+@api_bp.get("/review/materials")
+@jwt_required()
+def review_materials() -> Any:
+    user = current_api_user()
+    require_review_permission(user)
+    query = InventoryMovement.query.join(InventoryItem, InventoryMovement.item_id == InventoryItem.id).outerjoin(Commission, InventoryMovement.commission_id == Commission.id).outerjoin(User, InventoryMovement.user_id == User.id).outerjoin(TimeTaskTemplate, InventoryMovement.task_template_id == TimeTaskTemplate.id)
+    status = request.args.get("status", TimeReviewStatus.NEEDS_REVIEW.value).strip()
+    review_level = request.args.get("review_level", request.args.get("risk", "")).strip()
+    user_id = request.args.get("user_id", "").strip()
+    commission_id = request.args.get("commission_id", "").strip()
+    movement_type = request.args.get("movement_type", "").strip()
+    source = request.args.get("source", "").strip()
+    search_text = request.args.get("q", "").strip()
+    if status and status != "all":
+        query = query.filter(InventoryMovement.review_status == status)
+    if review_level and review_level != "all":
+        query = query.filter(InventoryMovement.review_level == review_level)
+    if user_id.isdigit():
+        query = query.filter(InventoryMovement.user_id == int(user_id))
+    if commission_id.isdigit():
+        query = query.filter(InventoryMovement.commission_id == int(commission_id))
+    if movement_type:
+        query = query.filter(InventoryMovement.movement_type == movement_type)
+    if source:
+        query = query.filter(InventoryMovement.source == source)
+    if search_text:
+        for term in [item.strip() for item in search_text.split() if item.strip()]:
+            like_term = f"%{term}%"
+            query = query.filter(or_(
+                InventoryItem.item_number.ilike(like_term),
+                InventoryItem.name.ilike(like_term),
+                Commission.code.ilike(like_term),
+                Commission.erp_idnum.ilike(like_term),
+                Commission.title.ilike(like_term),
+                TimeTaskTemplate.code.ilike(like_term),
+                TimeTaskTemplate.title.ilike(like_term),
+                User.display_name.ilike(like_term),
+            ))
+    items = query.order_by(InventoryMovement.occurred_at.desc()).limit(query_limit()).all()
+    return jsonify({"items": [serialize_inventory_movement(item, can_edit=True) for item in items]})
 
 
 def _issue_token(user: User, action: str) -> Any:
@@ -470,6 +661,10 @@ def can_edit_commission(commission: Commission, user: User) -> bool:
     return user.is_admin or user.is_foreman or commission.user_id == user.id
 
 
+def can_edit_time_entry(entry: TimeEntry, user: User) -> bool:
+    return user.is_admin or user.is_foreman or entry.user_id == user.id
+
+
 def viewable_commission(commission_id: int, user: User) -> Commission:
     commission = db.session.get(Commission, commission_id)
     if commission is None or commission.local_status == CommissionLocalStatus.DELETED.value:
@@ -484,6 +679,16 @@ def editable_commission(commission_id: int, user: User) -> Commission:
     if not can_edit_commission(commission, user):
         abort(403)
     return commission
+
+
+def editable_time_entry(commission_id: int, entry_id: int, user: User) -> tuple[Commission, TimeEntry]:
+    commission = editable_commission(commission_id, user)
+    entry = TimeEntry.query.filter_by(id=entry_id, commission_id=commission.id).one_or_none()
+    if entry is None:
+        abort(404)
+    if not can_edit_time_entry(entry, user):
+        abort(403)
+    return commission, entry
 
 
 def cancelled_inventory_movement_ids(commission_id: int) -> set[int]:
@@ -529,8 +734,62 @@ def find_inventory_item(code: str) -> InventoryItem | None:
     ).one_or_none()
 
 
+def int_payload(data: dict[str, Any], key: str) -> int:
+    try:
+        return int(data.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        abort(400)
+
+
+def query_limit() -> int:
+    try:
+        limit = int(request.args.get("limit", 100))
+    except ValueError:
+        limit = 100
+    return min(max(limit, 1), 500)
+
+
+def time_entry_values_from_payload(data: dict[str, Any], user: User) -> dict[str, Any]:
+    work_minutes = int_payload(data, "work_minutes")
+    waiting_minutes = int_payload(data, "waiting_minutes")
+    material_minutes = int_payload(data, "material_minutes")
+    travel_minutes = int_payload(data, "travel_minutes")
+    documentation_minutes = int_payload(data, "documentation_minutes")
+    extra_minutes = int_payload(data, "extra_minutes")
+    for value in [work_minutes, waiting_minutes, material_minutes, travel_minutes, documentation_minutes, extra_minutes]:
+        if value < 0:
+            abort(400)
+    component_sum = work_minutes + waiting_minutes + material_minutes + travel_minutes + documentation_minutes + extra_minutes
+    minutes = component_sum if component_sum > 0 else int_payload(data, "minutes")
+    if minutes <= 0:
+        abort(400)
+    task = None
+    if data.get("task_template_id"):
+        task = get_user_visible_time_task(user, int(data["task_template_id"]))
+        if task is None:
+            abort(403)
+    return {
+        "task": task,
+        "minutes": minutes,
+        "work_minutes": work_minutes,
+        "waiting_minutes": waiting_minutes,
+        "material_minutes": material_minutes,
+        "travel_minutes": travel_minutes,
+        "documentation_minutes": documentation_minutes,
+        "extra_minutes": extra_minutes,
+        "deviation_reason": data.get("deviation_reason"),
+        "note": data.get("note"),
+    }
+
+
+def require_review_permission(user: User) -> None:
+    if not (user.is_admin or user.is_foreman):
+        abort(403)
+
+
 def apply_time_review(entry: TimeEntry) -> None:
     task = entry.task_template
+    entry.review_level = ReviewLevel.GREEN.value
     if task is None or task.suggested_minutes <= 0:
         entry.review_status = TimeReviewStatus.OK.value
         return
@@ -540,8 +799,39 @@ def apply_time_review(entry: TimeEntry) -> None:
     entry.deviation_percent = percent
     if difference > settings.get(SettingKeys.TIME_DEVIATION_MINUTES) or percent > settings.get(SettingKeys.TIME_DEVIATION_PERCENT):
         entry.review_status = TimeReviewStatus.NEEDS_REVIEW.value
+        entry.review_level = ReviewLevel.YELLOW.value if entry.deviation_reason or entry.note else ReviewLevel.RED.value
     else:
         entry.review_status = TimeReviewStatus.OK.value
+        entry.review_level = ReviewLevel.GREEN.value
+
+
+def apply_material_review(movement: InventoryMovement) -> None:
+    movement.review_status = TimeReviewStatus.OK.value
+    movement.review_level = ReviewLevel.GREEN.value
+    if movement.movement_type != InventoryMovementType.WITHDRAWAL.value:
+        return
+    has_reason = bool(movement.deviation_reason or movement.note)
+    if movement.usage_status != MaterialUsageStatus.INSTALLED.value:
+        movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
+        movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
+        return
+    task = movement.task_template
+    if task is None:
+        movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
+        movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
+        return
+    expectations = list(task.expected_materials)
+    if not expectations:
+        return
+    matching = [item for item in expectations if item.item_id == movement.item_id]
+    if not matching:
+        movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
+        movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
+        return
+    expected_quantity = sum(item.quantity for item in matching)
+    if movement.quantity > expected_quantity + 0.0001:
+        movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
+        movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
 
 
 def serialize_user(user: User) -> dict[str, Any]:
@@ -610,27 +900,43 @@ def serialize_inventory_movement(
         "item": serialize_inventory_item(item.item),
         "user": serialize_user(item.user) if item.user else None,
         "commission_id": item.commission_id,
+        "task_template": serialize_time_task(item.task_template) if item.task_template else None,
         "movement_type": item.movement_type,
         "quantity": item.quantity,
+        "source": item.source,
+        "usage_status": item.usage_status,
+        "deviation_reason": item.deviation_reason,
         "note": item.note,
+        "review_status": item.review_status,
+        "review_level": item.review_level,
         "occurred_at": iso_datetime(item.occurred_at),
         "is_cancelled": is_cancelled,
         "can_cancel": can_cancel,
     }
 
 
-def serialize_time_task(item: TimeTaskTemplate, include_suggested: bool = False) -> dict[str, Any]:
-    data = {
+def serialize_time_task(item: TimeTaskTemplate | None, include_suggested: bool = True) -> dict[str, Any] | None:
+    if item is None:
+        return None
+    return {
         "id": item.id,
         "code": item.code,
         "title": item.title,
+        "suggested_minutes": item.suggested_minutes,
         "craft_activity": serialize_craft_activity(item.craft_activity) if item.craft_activity else None,
+        "expected_materials": [serialize_expected_material(material) for material in item.expected_materials],
     }
 
-    if include_suggested:
-        data["suggested_minutes"] = item.suggested_minutes
 
-    return data
+def serialize_expected_material(item: TimeTaskExpectedMaterial) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "task_template_id": item.task_template_id,
+        "item": serialize_inventory_item(item.item),
+        "quantity": item.quantity,
+        "required": item.required,
+        "note": item.note,
+    }
 
 
 def serialize_craft_activity(item: CraftActivity) -> dict[str, Any]:
@@ -642,5 +948,28 @@ def serialize_craft_activity(item: CraftActivity) -> dict[str, Any]:
     }
 
 
-def serialize_time_entry(item: TimeEntry) -> dict[str, Any]:
-    return {"id": item.id, "commission_id": item.commission_id, "user": serialize_user(item.user), "task_template": serialize_time_task(item.task_template) if item.task_template else None, "minutes": item.minutes, "note": item.note, "deviation_minutes": item.deviation_minutes, "deviation_percent": item.deviation_percent, "review_status": item.review_status, "created_at": iso_datetime(item.created_at)}
+def serialize_time_entry(item: TimeEntry, viewer: User | None = None) -> dict[str, Any]:
+    can_edit = False
+    if viewer is not None:
+        can_edit = can_edit_commission(item.commission, viewer) and can_edit_time_entry(item, viewer)
+    return {
+        "id": item.id,
+        "commission_id": item.commission_id,
+        "user": serialize_user(item.user),
+        "task_template": serialize_time_task(item.task_template) if item.task_template else None,
+        "minutes": item.minutes,
+        "work_minutes": item.work_minutes,
+        "waiting_minutes": item.waiting_minutes,
+        "material_minutes": item.material_minutes,
+        "travel_minutes": item.travel_minutes,
+        "documentation_minutes": item.documentation_minutes,
+        "extra_minutes": item.extra_minutes,
+        "deviation_reason": item.deviation_reason,
+        "note": item.note,
+        "deviation_minutes": item.deviation_minutes,
+        "deviation_percent": item.deviation_percent,
+        "review_status": item.review_status,
+        "review_level": item.review_level,
+        "created_at": iso_datetime(item.created_at),
+        "can_edit": can_edit,
+    }

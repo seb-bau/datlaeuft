@@ -42,6 +42,67 @@
         <label class="form-check-label">Aktiv</label>
       </div>
     </div>
+    <div class="col-12">
+      <hr>
+      <h2 class="h5">Erwartetes Material</h2>
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th>Artikel</th>
+              <th style="width: 140px;">Menge</th>
+              <th style="width: 130px;">Pflicht</th>
+              <th>Hinweis</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for material in item.expected_materials %}
+            {% set row_index = loop.index0 %}
+            <tr>
+              <td>
+                <select class="form-select" name="expected_item_id">
+                  <option value="">Kein Artikel</option>
+                  {% for inventory_item in inventory_items %}
+                  <option value="{{ inventory_item.id }}" {% if material.item_id == inventory_item.id %}selected{% endif %}>{{ inventory_item.name }} ({{ inventory_item.item_number }})</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td><input class="form-control" type="number" step="0.01" name="expected_quantity" value="{{ material.quantity }}"></td>
+              <td>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="expected_required_{{ row_index }}" {% if material.required %}checked{% endif %}>
+                  <label class="form-check-label">Ja</label>
+                </div>
+              </td>
+              <td><input class="form-control" name="expected_note" value="{{ material.note or '' }}"></td>
+            </tr>
+            {% endfor %}
+            {% set offset = item.expected_materials|length %}
+            {% for i in range(3) %}
+            {% set row_index = offset + loop.index0 %}
+            <tr>
+              <td>
+                <select class="form-select" name="expected_item_id">
+                  <option value="">Kein Artikel</option>
+                  {% for inventory_item in inventory_items %}
+                  <option value="{{ inventory_item.id }}">{{ inventory_item.name }} ({{ inventory_item.item_number }})</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td><input class="form-control" type="number" step="0.01" name="expected_quantity" value="1"></td>
+              <td>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="expected_required_{{ row_index }}" checked>
+                  <label class="form-check-label">Ja</label>
+                </div>
+              </td>
+              <td><input class="form-control" name="expected_note"></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
   <div class="card-footer text-end">
     <button class="btn btn-primary" type="submit">Speichern</button>

@@ -44,6 +44,27 @@ class TimeReviewStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class ReviewLevel(str, Enum):
+    GREEN = "green"
+    YELLOW = "yellow"
+    RED = "red"
+
+
+class MaterialUsageStatus(str, Enum):
+    INSTALLED = "installed"
+    NOT_INSTALLED = "not_installed"
+    RETURNED = "returned"
+    DEFECTIVE = "defective"
+    IN_VEHICLE = "in_vehicle"
+
+
+class MaterialSource(str, Enum):
+    WAREHOUSE = "warehouse"
+    VEHICLE = "vehicle"
+    DIRECT_PURCHASE = "direct_purchase"
+    ON_SITE = "on_site"
+
+
 user_craft_activity = db.Table(
     "user_craft_activity",
     db.Column("user_id", db.ForeignKey("user_account.id"), primary_key=True),
@@ -103,7 +124,7 @@ class User(UserMixin, db.Model):
     last_login_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
     commissions: Mapped[list["Commission"]] = relationship(back_populates="user")
-    inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="user")
+    inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="user", foreign_keys="InventoryMovement.user_id")
     time_entries: Mapped[list["TimeEntry"]] = relationship(back_populates="user", foreign_keys="TimeEntry.user_id")
     craft_activities: Mapped[list["CraftActivity"]] = relationship(
         "CraftActivity",
@@ -177,6 +198,7 @@ class InventoryItem(db.Model):
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
 
     movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="item")
+    expected_task_materials: Mapped[list["TimeTaskExpectedMaterial"]] = relationship(back_populates="item")
 
     @property
     def is_below_reorder_level(self) -> bool:
@@ -193,14 +215,24 @@ class InventoryMovement(db.Model):
     item_id: Mapped[int] = mapped_column(db.ForeignKey("inventory_item.id"), nullable=False, index=True)
     user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
     commission_id: Mapped[int | None] = mapped_column(db.ForeignKey("commission.id"), index=True)
+    task_template_id: Mapped[int | None] = mapped_column(db.ForeignKey("time_task_template.id"), index=True)
     movement_type: Mapped[str] = mapped_column(db.String(40), nullable=False, index=True)
     quantity: Mapped[float] = mapped_column(db.Float, nullable=False)
     note: Mapped[str | None] = mapped_column(db.Text)
+    usage_status: Mapped[str] = mapped_column(db.String(40), default=MaterialUsageStatus.INSTALLED.value, server_default=MaterialUsageStatus.INSTALLED.value, nullable=False, index=True)
+    source: Mapped[str] = mapped_column(db.String(40), default=MaterialSource.WAREHOUSE.value, server_default=MaterialSource.WAREHOUSE.value, nullable=False, index=True)
+    deviation_reason: Mapped[str | None] = mapped_column(db.String(120))
+    review_status: Mapped[str] = mapped_column(db.String(40), default=TimeReviewStatus.OK.value, server_default=TimeReviewStatus.OK.value, nullable=False, index=True)
+    review_level: Mapped[str] = mapped_column(db.String(20), default=ReviewLevel.GREEN.value, server_default=ReviewLevel.GREEN.value, nullable=False, index=True)
     occurred_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
     item: Mapped[InventoryItem] = relationship(back_populates="movements")
-    user: Mapped[User | None] = relationship(back_populates="inventory_movements")
+    user: Mapped[User | None] = relationship(back_populates="inventory_movements", foreign_keys=[user_id])
     commission: Mapped[Commission | None] = relationship(back_populates="inventory_movements")
+    task_template: Mapped[TimeTaskTemplate | None] = relationship()
+    reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_user_id])
 
 
 class TimeTaskTemplate(db.Model):
@@ -218,6 +250,22 @@ class TimeTaskTemplate(db.Model):
     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
     craft_activity: Mapped[CraftActivity | None] = relationship(back_populates="service_positions")
+    expected_materials: Mapped[list["TimeTaskExpectedMaterial"]] = relationship(back_populates="task_template", cascade="all, delete-orphan")
+
+
+class TimeTaskExpectedMaterial(db.Model):
+    __tablename__ = "time_task_expected_material"
+    __table_args__ = (UniqueConstraint("task_template_id", "item_id", name="uq_time_task_expected_material_task_item"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_template_id: Mapped[int] = mapped_column(db.ForeignKey("time_task_template.id"), nullable=False, index=True)
+    item_id: Mapped[int] = mapped_column(db.ForeignKey("inventory_item.id"), nullable=False, index=True)
+    quantity: Mapped[float] = mapped_column(db.Float, default=1, server_default="1", nullable=False)
+    required: Mapped[bool] = mapped_column(db.Boolean, default=True, server_default="1", nullable=False)
+    note: Mapped[str | None] = mapped_column(db.Text)
+
+    task_template: Mapped[TimeTaskTemplate] = relationship(back_populates="expected_materials")
+    item: Mapped[InventoryItem] = relationship(back_populates="expected_task_materials")
 
 
 class TimeEntry(db.Model):
@@ -230,10 +278,18 @@ class TimeEntry(db.Model):
     started_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     minutes: Mapped[int] = mapped_column(db.Integer, nullable=False)
+    work_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    waiting_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    material_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    travel_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    documentation_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    extra_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    deviation_reason: Mapped[str | None] = mapped_column(db.String(120))
     note: Mapped[str | None] = mapped_column(db.Text)
     deviation_minutes: Mapped[int] = mapped_column(db.Integer, default=0, nullable=False)
     deviation_percent: Mapped[float] = mapped_column(db.Float, default=0, nullable=False)
     review_status: Mapped[str] = mapped_column(db.String(40), default=TimeReviewStatus.OK.value, nullable=False, index=True)
+    review_level: Mapped[str] = mapped_column(db.String(20), default=ReviewLevel.GREEN.value, server_default=ReviewLevel.GREEN.value, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
     reviewed_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))

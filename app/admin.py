@@ -12,7 +12,7 @@ from .auth import admin_required, foreman_required
 from .entra import import_entra_users
 from .extensions import db
 from .logging_service import configure_logging
-from .models import Commission, InventoryItem, InventoryMovement, InventoryMovementType, TimeEntry, TimeReviewStatus, TimeTaskTemplate, User, utc_now, CraftActivity
+from .models import Commission, InventoryItem, InventoryMovement, InventoryMovementType, MaterialSource, MaterialUsageStatus, ReviewLevel, TimeEntry, TimeReviewStatus, TimeTaskExpectedMaterial, TimeTaskTemplate, User, utc_now, CraftActivity
 from .settings import all_definitions, grouped_definitions, settings
 from .wowiport import sync_commission_from_erp
 from .catalog import sync_catalogs_from_wowiport
@@ -32,8 +32,9 @@ def root() -> Any:
 def dashboard() -> Any:
     open_count = Commission.query.filter(Commission.deleted_at.is_(None), Commission.local_status != "done").count()
     review_count = TimeEntry.query.filter_by(review_status=TimeReviewStatus.NEEDS_REVIEW.value).count()
+    material_review_count = InventoryMovement.query.filter_by(review_status=TimeReviewStatus.NEEDS_REVIEW.value).count()
     low_stock_count = InventoryItem.query.filter(InventoryItem.stock_quantity <= InventoryItem.reorder_level).count()
-    return render_template("admin/dashboard.html", open_count=open_count, review_count=review_count, low_stock_count=low_stock_count)
+    return render_template("admin/dashboard.html", open_count=open_count, review_count=review_count, material_review_count=material_review_count, low_stock_count=low_stock_count)
 
 
 @admin_bp.route("/admin/settings", methods=["GET", "POST"])
@@ -237,22 +238,36 @@ def time_templates() -> Any:
 def time_template_edit(item_id: int) -> Any:
     item = db.get_or_404(TimeTaskTemplate, item_id)
     craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+    inventory_items = InventoryItem.query.filter_by(active=True).order_by(InventoryItem.name.asc()).all()
 
     if request.method == "POST":
         save_time_template_form(item)
+        save_expected_materials_form(item)
         audit("service_position.update", "time_task_template", item.id)
         db.session.commit()
         flash("Leistungsposition gespeichert.", "success")
         return redirect(url_for("admin.time_templates"))
 
-    return render_template("admin/time_template_form.html", item=item, craft_activities=craft_activities)
+    return render_template("admin/time_template_form.html", item=item, craft_activities=craft_activities, inventory_items=inventory_items)
 
 
 @admin_bp.get("/admin/time-entries")
 @foreman_required
 def time_entries() -> Any:
-    items = TimeEntry.query.order_by(TimeEntry.created_at.desc()).all()
-    return render_template("admin/time_entries.html", items=items)
+    status_filter = request.args.get("status", "needs_review").strip()
+    review_level_filter = request.args.get("review_level", "").strip()
+    search_text = request.args.get("q", "").strip()
+    query = TimeEntry.query.join(Commission, TimeEntry.commission_id == Commission.id).join(User, TimeEntry.user_id == User.id).outerjoin(TimeTaskTemplate, TimeEntry.task_template_id == TimeTaskTemplate.id)
+    if status_filter and status_filter != "all":
+        query = query.filter(TimeEntry.review_status == status_filter)
+    if review_level_filter:
+        query = query.filter(TimeEntry.review_level == review_level_filter)
+    if search_text:
+        for term in [item.strip() for item in search_text.split() if item.strip()]:
+            like_term = f"%{term}%"
+            query = query.filter(or_(Commission.code.ilike(like_term), Commission.erp_idnum.ilike(like_term), Commission.title.ilike(like_term), TimeTaskTemplate.code.ilike(like_term), TimeTaskTemplate.title.ilike(like_term), User.display_name.ilike(like_term)))
+    items = query.order_by(TimeEntry.created_at.desc()).all()
+    return render_template("admin/time_entries.html", items=items, status_filter=status_filter, review_level_filter=review_level_filter, search_text=search_text)
 
 
 @admin_bp.post("/admin/time-entries/<int:item_id>/<string:decision>")
@@ -269,6 +284,44 @@ def time_entry_review(item_id: int, decision: str) -> Any:
     db.session.commit()
     flash("Stundenzettel aktualisiert.", "success")
     return redirect(url_for("admin.time_entries"))
+
+
+@admin_bp.get("/admin/material-movements")
+@foreman_required
+def material_movements() -> Any:
+    status_filter = request.args.get("status", "needs_review").strip()
+    review_level_filter = request.args.get("review_level", "").strip()
+    source_filter = request.args.get("source", "").strip()
+    search_text = request.args.get("q", "").strip()
+    query = InventoryMovement.query.join(InventoryItem, InventoryMovement.item_id == InventoryItem.id).outerjoin(Commission, InventoryMovement.commission_id == Commission.id).outerjoin(User, InventoryMovement.user_id == User.id).outerjoin(TimeTaskTemplate, InventoryMovement.task_template_id == TimeTaskTemplate.id)
+    if status_filter and status_filter != "all":
+        query = query.filter(InventoryMovement.review_status == status_filter)
+    if review_level_filter:
+        query = query.filter(InventoryMovement.review_level == review_level_filter)
+    if source_filter:
+        query = query.filter(InventoryMovement.source == source_filter)
+    if search_text:
+        for term in [item.strip() for item in search_text.split() if item.strip()]:
+            like_term = f"%{term}%"
+            query = query.filter(or_(InventoryItem.item_number.ilike(like_term), InventoryItem.name.ilike(like_term), Commission.code.ilike(like_term), Commission.erp_idnum.ilike(like_term), Commission.title.ilike(like_term), TimeTaskTemplate.code.ilike(like_term), TimeTaskTemplate.title.ilike(like_term), User.display_name.ilike(like_term)))
+    items = query.order_by(InventoryMovement.occurred_at.desc()).all()
+    return render_template("admin/material_movements.html", items=items, status_filter=status_filter, review_level_filter=review_level_filter, source_filter=source_filter, search_text=search_text, material_sources=MaterialSource)
+
+
+@admin_bp.post("/admin/material-movements/<int:item_id>/<string:decision>")
+@foreman_required
+def material_movement_review(item_id: int, decision: str) -> Any:
+    item = db.get_or_404(InventoryMovement, item_id)
+    if decision == "approve":
+        item.review_status = TimeReviewStatus.APPROVED.value
+    elif decision == "reject":
+        item.review_status = TimeReviewStatus.REJECTED.value
+    item.reviewed_by_user_id = current_user.id
+    item.reviewed_at = utc_now()
+    audit("material.review", "inventory_movement", item.id, {"decision": decision})
+    db.session.commit()
+    flash("Materialbuchung aktualisiert.", "success")
+    return redirect(url_for("admin.material_movements"))
 
 
 @admin_bp.post("/admin/service-catalog/sync")
@@ -351,6 +404,32 @@ def save_time_template_form(item: TimeTaskTemplate) -> None:
 
     if not item.source:
         item.source = "manual"
+
+
+def save_expected_materials_form(item: TimeTaskTemplate) -> None:
+    item.expected_materials.clear()
+    item_ids = request.form.getlist("expected_item_id")
+    quantities = request.form.getlist("expected_quantity")
+    notes = request.form.getlist("expected_note")
+    seen_item_ids: set[int] = set()
+    for index, raw_item_id in enumerate(item_ids):
+        raw_item_id = raw_item_id.strip()
+        if not raw_item_id:
+            continue
+        try:
+            item_id = int(raw_item_id)
+            quantity = float((quantities[index] if index < len(quantities) else "1") or 1)
+        except (TypeError, ValueError):
+            continue
+        if item_id in seen_item_ids or quantity <= 0:
+            continue
+        seen_item_ids.add(item_id)
+        item.expected_materials.append(TimeTaskExpectedMaterial(
+            item_id=item_id,
+            quantity=quantity,
+            required=f"expected_required_{index}" in request.form,
+            note=(notes[index].strip() if index < len(notes) and notes[index].strip() else None),
+        ))
 
 
 def apply_inventory_movement(item: InventoryItem, movement: InventoryMovement) -> None:

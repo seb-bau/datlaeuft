@@ -1,0 +1,1069 @@
+diff -ruN a/app/admin.py b/app/admin.py
+--- a/app/admin.py	2026-06-11 20:37:30.000000000 +0000
++++ b/app/admin.py	2026-07-02 09:55:45.343588663 +0000
+@@ -12,7 +12,7 @@
+ from .entra import import_entra_users
+ from .extensions import db
+ from .logging_service import configure_logging
+-from .models import Commission, InventoryItem, InventoryMovement, InventoryMovementType, TimeEntry, TimeReviewStatus, TimeTaskTemplate, User, utc_now, CraftActivity
++from .models import Commission, InventoryItem, InventoryMovement, InventoryMovementType, MaterialSource, MaterialUsageStatus, ReviewLevel, TimeEntry, TimeReviewStatus, TimeTaskExpectedMaterial, TimeTaskTemplate, User, utc_now, CraftActivity
+ from .settings import all_definitions, grouped_definitions, settings
+ from .wowiport import sync_commission_from_erp
+ from .catalog import sync_catalogs_from_wowiport
+@@ -32,8 +32,9 @@
+ def dashboard() -> Any:
+     open_count = Commission.query.filter(Commission.deleted_at.is_(None), Commission.local_status != "done").count()
+     review_count = TimeEntry.query.filter_by(review_status=TimeReviewStatus.NEEDS_REVIEW.value).count()
++    material_review_count = InventoryMovement.query.filter_by(review_status=TimeReviewStatus.NEEDS_REVIEW.value).count()
+     low_stock_count = InventoryItem.query.filter(InventoryItem.stock_quantity <= InventoryItem.reorder_level).count()
+-    return render_template("admin/dashboard.html", open_count=open_count, review_count=review_count, low_stock_count=low_stock_count)
++    return render_template("admin/dashboard.html", open_count=open_count, review_count=review_count, material_review_count=material_review_count, low_stock_count=low_stock_count)
+ 
+ 
+ @admin_bp.route("/admin/settings", methods=["GET", "POST"])
+@@ -237,22 +238,36 @@
+ def time_template_edit(item_id: int) -> Any:
+     item = db.get_or_404(TimeTaskTemplate, item_id)
+     craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
++    inventory_items = InventoryItem.query.filter_by(active=True).order_by(InventoryItem.name.asc()).all()
+ 
+     if request.method == "POST":
+         save_time_template_form(item)
++        save_expected_materials_form(item)
+         audit("service_position.update", "time_task_template", item.id)
+         db.session.commit()
+         flash("Leistungsposition gespeichert.", "success")
+         return redirect(url_for("admin.time_templates"))
+ 
+-    return render_template("admin/time_template_form.html", item=item, craft_activities=craft_activities)
++    return render_template("admin/time_template_form.html", item=item, craft_activities=craft_activities, inventory_items=inventory_items)
+ 
+ 
+ @admin_bp.get("/admin/time-entries")
+ @foreman_required
+ def time_entries() -> Any:
+-    items = TimeEntry.query.order_by(TimeEntry.created_at.desc()).all()
+-    return render_template("admin/time_entries.html", items=items)
++    status_filter = request.args.get("status", "needs_review").strip()
++    review_level_filter = request.args.get("review_level", "").strip()
++    search_text = request.args.get("q", "").strip()
++    query = TimeEntry.query.join(Commission, TimeEntry.commission_id == Commission.id).join(User, TimeEntry.user_id == User.id).outerjoin(TimeTaskTemplate, TimeEntry.task_template_id == TimeTaskTemplate.id)
++    if status_filter and status_filter != "all":
++        query = query.filter(TimeEntry.review_status == status_filter)
++    if review_level_filter:
++        query = query.filter(TimeEntry.review_level == review_level_filter)
++    if search_text:
++        for term in [item.strip() for item in search_text.split() if item.strip()]:
++            like_term = f"%{term}%"
++            query = query.filter(or_(Commission.code.ilike(like_term), Commission.erp_idnum.ilike(like_term), Commission.title.ilike(like_term), TimeTaskTemplate.code.ilike(like_term), TimeTaskTemplate.title.ilike(like_term), User.display_name.ilike(like_term)))
++    items = query.order_by(TimeEntry.created_at.desc()).all()
++    return render_template("admin/time_entries.html", items=items, status_filter=status_filter, review_level_filter=review_level_filter, search_text=search_text)
+ 
+ 
+ @admin_bp.post("/admin/time-entries/<int:item_id>/<string:decision>")
+@@ -271,6 +286,44 @@
+     return redirect(url_for("admin.time_entries"))
+ 
+ 
++@admin_bp.get("/admin/material-movements")
++@foreman_required
++def material_movements() -> Any:
++    status_filter = request.args.get("status", "needs_review").strip()
++    review_level_filter = request.args.get("review_level", "").strip()
++    source_filter = request.args.get("source", "").strip()
++    search_text = request.args.get("q", "").strip()
++    query = InventoryMovement.query.join(InventoryItem, InventoryMovement.item_id == InventoryItem.id).outerjoin(Commission, InventoryMovement.commission_id == Commission.id).outerjoin(User, InventoryMovement.user_id == User.id).outerjoin(TimeTaskTemplate, InventoryMovement.task_template_id == TimeTaskTemplate.id)
++    if status_filter and status_filter != "all":
++        query = query.filter(InventoryMovement.review_status == status_filter)
++    if review_level_filter:
++        query = query.filter(InventoryMovement.review_level == review_level_filter)
++    if source_filter:
++        query = query.filter(InventoryMovement.source == source_filter)
++    if search_text:
++        for term in [item.strip() for item in search_text.split() if item.strip()]:
++            like_term = f"%{term}%"
++            query = query.filter(or_(InventoryItem.item_number.ilike(like_term), InventoryItem.name.ilike(like_term), Commission.code.ilike(like_term), Commission.erp_idnum.ilike(like_term), Commission.title.ilike(like_term), TimeTaskTemplate.code.ilike(like_term), TimeTaskTemplate.title.ilike(like_term), User.display_name.ilike(like_term)))
++    items = query.order_by(InventoryMovement.occurred_at.desc()).all()
++    return render_template("admin/material_movements.html", items=items, status_filter=status_filter, review_level_filter=review_level_filter, source_filter=source_filter, search_text=search_text, material_sources=MaterialSource)
++
++
++@admin_bp.post("/admin/material-movements/<int:item_id>/<string:decision>")
++@foreman_required
++def material_movement_review(item_id: int, decision: str) -> Any:
++    item = db.get_or_404(InventoryMovement, item_id)
++    if decision == "approve":
++        item.review_status = TimeReviewStatus.APPROVED.value
++    elif decision == "reject":
++        item.review_status = TimeReviewStatus.REJECTED.value
++    item.reviewed_by_user_id = current_user.id
++    item.reviewed_at = utc_now()
++    audit("material.review", "inventory_movement", item.id, {"decision": decision})
++    db.session.commit()
++    flash("Materialbuchung aktualisiert.", "success")
++    return redirect(url_for("admin.material_movements"))
++
++
+ @admin_bp.post("/admin/service-catalog/sync")
+ @foreman_required
+ def service_catalog_sync() -> Any:
+@@ -353,6 +406,32 @@
+         item.source = "manual"
+ 
+ 
++def save_expected_materials_form(item: TimeTaskTemplate) -> None:
++    item.expected_materials.clear()
++    item_ids = request.form.getlist("expected_item_id")
++    quantities = request.form.getlist("expected_quantity")
++    notes = request.form.getlist("expected_note")
++    seen_item_ids: set[int] = set()
++    for index, raw_item_id in enumerate(item_ids):
++        raw_item_id = raw_item_id.strip()
++        if not raw_item_id:
++            continue
++        try:
++            item_id = int(raw_item_id)
++            quantity = float((quantities[index] if index < len(quantities) else "1") or 1)
++        except (TypeError, ValueError):
++            continue
++        if item_id in seen_item_ids or quantity <= 0:
++            continue
++        seen_item_ids.add(item_id)
++        item.expected_materials.append(TimeTaskExpectedMaterial(
++            item_id=item_id,
++            quantity=quantity,
++            required=f"expected_required_{index}" in request.form,
++            note=(notes[index].strip() if index < len(notes) and notes[index].strip() else None),
++        ))
++
++
+ def apply_inventory_movement(item: InventoryItem, movement: InventoryMovement) -> None:
+     if movement.movement_type == InventoryMovementType.WITHDRAWAL.value:
+         item.stock_quantity -= movement.quantity
+diff -ruN a/app/api.py b/app/api.py
+--- a/app/api.py	2026-06-11 20:37:30.000000000 +0000
++++ b/app/api.py	2026-07-02 09:54:13.492845824 +0000
+@@ -9,7 +9,7 @@
+ from .audit import audit
+ from .auth import resolve_microsoft_user, validate_microsoft_id_token
+ from .extensions import db
+-from .models import Commission, CommissionLocalStatus, InventoryItem, InventoryMovement, InventoryMovementType, TimeEntry, TimeReviewStatus, TimeTaskTemplate, User, utc_now, CraftActivity
++from .models import Commission, CommissionLocalStatus, InventoryItem, InventoryMovement, InventoryMovementType, MaterialSource, MaterialUsageStatus, ReviewLevel, TimeEntry, TimeReviewStatus, TimeTaskExpectedMaterial, TimeTaskTemplate, User, utc_now, CraftActivity
+ from .settings import SettingKeys, settings
+ from .utils import iso_datetime
+ from .wowiport import WowiportService
+@@ -260,13 +260,40 @@
+     item = find_inventory_item(str(data.get("code", "")).strip())
+     if item is None:
+         abort(404)
+-    quantity = float(data.get("quantity", 1))
++    try:
++        quantity = float(data.get("quantity", 1))
++    except (TypeError, ValueError):
++        abort(400)
+     if quantity <= 0:
+         abort(400)
+-    movement = InventoryMovement(item=item, user=user, commission=commission, movement_type=InventoryMovementType.WITHDRAWAL.value, quantity=quantity, note=data.get("note"))
+-    item.stock_quantity -= quantity
++    task = None
++    if data.get("task_template_id"):
++        task = get_user_visible_time_task(user, int(data["task_template_id"]))
++        if task is None:
++            abort(403)
++    source = str(data.get("source") or MaterialSource.WAREHOUSE.value).strip()
++    if source not in {item.value for item in MaterialSource}:
++        abort(400)
++    usage_status = str(data.get("usage_status") or MaterialUsageStatus.INSTALLED.value).strip()
++    if usage_status not in {item.value for item in MaterialUsageStatus}:
++        abort(400)
++    movement = InventoryMovement(
++        item=item,
++        user=user,
++        commission=commission,
++        task_template=task,
++        movement_type=InventoryMovementType.WITHDRAWAL.value,
++        quantity=quantity,
++        note=data.get("note"),
++        source=source,
++        usage_status=usage_status,
++        deviation_reason=data.get("deviation_reason"),
++    )
++    if source == MaterialSource.WAREHOUSE.value:
++        item.stock_quantity -= quantity
++    apply_material_review(movement)
+     db.session.add(movement)
+-    audit("inventory.withdrawal", "inventory_item", item.id, {"commission_id": commission.id, "quantity": quantity})
++    audit("inventory.withdrawal", "inventory_item", item.id, {"commission_id": commission.id, "quantity": quantity, "task_template_id": task.id if task else None, "source": source})
+     db.session.commit()
+     return jsonify({"item": serialize_inventory_movement(movement), "inventory_item": serialize_inventory_item(item)}), 201
+ 
+@@ -293,7 +320,8 @@
+         return jsonify({"message": "Diese Materialbuchung wurde bereits storniert."}), 409
+ 
+     item = movement.item
+-    item.stock_quantity += movement.quantity
++    if movement.source == MaterialSource.WAREHOUSE.value:
++        item.stock_quantity += movement.quantity
+ 
+     note_parts = [f"{CANCELLATION_NOTE_PREFIX}{movement.id}"]
+ 
+@@ -304,9 +332,14 @@
+         item=item,
+         user=user,
+         commission=commission,
++        task_template=movement.task_template,
+         movement_type=InventoryMovementType.CANCELLATION.value,
+         quantity=movement.quantity,
+         note=" · ".join(note_parts),
++        source=movement.source,
++        usage_status=MaterialUsageStatus.RETURNED.value,
++        review_status=TimeReviewStatus.OK.value,
++        review_level=ReviewLevel.GREEN.value,
+     )
+ 
+     db.session.add(cancellation)
+@@ -408,7 +441,17 @@
+     user = current_api_user()
+     commission = editable_commission(commission_id, user)
+     data = request.get_json(silent=True) or {}
+-    minutes = int(data.get("minutes", 0))
++    work_minutes = int_payload(data, "work_minutes")
++    waiting_minutes = int_payload(data, "waiting_minutes")
++    material_minutes = int_payload(data, "material_minutes")
++    travel_minutes = int_payload(data, "travel_minutes")
++    documentation_minutes = int_payload(data, "documentation_minutes")
++    extra_minutes = int_payload(data, "extra_minutes")
++    for value in [work_minutes, waiting_minutes, material_minutes, travel_minutes, documentation_minutes, extra_minutes]:
++        if value < 0:
++            abort(400)
++    component_sum = work_minutes + waiting_minutes + material_minutes + travel_minutes + documentation_minutes + extra_minutes
++    minutes = component_sum if component_sum > 0 else int_payload(data, "minutes")
+     if minutes <= 0:
+         abort(400)
+     task = None
+@@ -416,7 +459,20 @@
+         task = get_user_visible_time_task(user, int(data["task_template_id"]))
+         if task is None:
+             abort(403)
+-    entry = TimeEntry(commission=commission, user=user, task_template=task, minutes=minutes, note=data.get("note"))
++    entry = TimeEntry(
++        commission=commission,
++        user=user,
++        task_template=task,
++        minutes=minutes,
++        work_minutes=work_minutes,
++        waiting_minutes=waiting_minutes,
++        material_minutes=material_minutes,
++        travel_minutes=travel_minutes,
++        documentation_minutes=documentation_minutes,
++        extra_minutes=extra_minutes,
++        deviation_reason=data.get("deviation_reason"),
++        note=data.get("note"),
++    )
+     apply_time_review(entry)
+     db.session.add(entry)
+     audit("time.create", "commission", commission.id, {"minutes": minutes, "task_template_id": task.id if task else None})
+@@ -424,6 +480,117 @@
+     return jsonify({"item": serialize_time_entry(entry)}), 201
+ 
+ 
++@api_bp.get("/commissions/<int:commission_id>/material-review")
++@jwt_required()
++def commission_material_review(commission_id: int) -> Any:
++    user = current_api_user()
++    commission = viewable_commission(commission_id, user)
++    entries = TimeEntry.query.filter_by(commission_id=commission.id).all()
++    task_ids = {entry.task_template_id for entry in entries if entry.task_template_id}
++    if not task_ids:
++        return jsonify({"items": []})
++    expectations = TimeTaskExpectedMaterial.query.filter(TimeTaskExpectedMaterial.task_template_id.in_(task_ids)).all()
++    movements = InventoryMovement.query.filter_by(
++        commission_id=commission.id,
++        movement_type=InventoryMovementType.WITHDRAWAL.value,
++    ).all()
++    result = []
++    for expectation in expectations:
++        installed_quantity = sum(
++            movement.quantity
++            for movement in movements
++            if movement.task_template_id == expectation.task_template_id
++            and movement.item_id == expectation.item_id
++            and movement.usage_status == MaterialUsageStatus.INSTALLED.value
++        )
++        is_ok = installed_quantity + 0.0001 >= expectation.quantity
++        result.append({
++            "task_template": serialize_time_task(expectation.task_template),
++            "expected_material": serialize_expected_material(expectation),
++            "installed_quantity": installed_quantity,
++            "missing_quantity": max(expectation.quantity - installed_quantity, 0),
++            "review_status": TimeReviewStatus.OK.value if is_ok else TimeReviewStatus.NEEDS_REVIEW.value,
++            "review_level": ReviewLevel.GREEN.value if is_ok else ReviewLevel.RED.value,
++        })
++    return jsonify({"items": result})
++
++
++@api_bp.get("/review/time-entries")
++@jwt_required()
++def review_time_entries() -> Any:
++    user = current_api_user()
++    require_review_permission(user)
++    query = TimeEntry.query.join(Commission, TimeEntry.commission_id == Commission.id).join(User, TimeEntry.user_id == User.id).outerjoin(TimeTaskTemplate, TimeEntry.task_template_id == TimeTaskTemplate.id)
++    status = request.args.get("status", TimeReviewStatus.NEEDS_REVIEW.value).strip()
++    review_level = request.args.get("review_level", request.args.get("risk", "")).strip()
++    user_id = request.args.get("user_id", "").strip()
++    commission_id = request.args.get("commission_id", "").strip()
++    search_text = request.args.get("q", "").strip()
++    if status and status != "all":
++        query = query.filter(TimeEntry.review_status == status)
++    if review_level and review_level != "all":
++        query = query.filter(TimeEntry.review_level == review_level)
++    if user_id.isdigit():
++        query = query.filter(TimeEntry.user_id == int(user_id))
++    if commission_id.isdigit():
++        query = query.filter(TimeEntry.commission_id == int(commission_id))
++    if search_text:
++        for term in [item.strip() for item in search_text.split() if item.strip()]:
++            like_term = f"%{term}%"
++            query = query.filter(or_(
++                Commission.code.ilike(like_term),
++                Commission.erp_idnum.ilike(like_term),
++                Commission.title.ilike(like_term),
++                TimeTaskTemplate.code.ilike(like_term),
++                TimeTaskTemplate.title.ilike(like_term),
++                User.display_name.ilike(like_term),
++            ))
++    items = query.order_by(TimeEntry.created_at.desc()).limit(query_limit()).all()
++    return jsonify({"items": [serialize_time_entry(item) for item in items]})
++
++
++@api_bp.get("/review/materials")
++@jwt_required()
++def review_materials() -> Any:
++    user = current_api_user()
++    require_review_permission(user)
++    query = InventoryMovement.query.join(InventoryItem, InventoryMovement.item_id == InventoryItem.id).outerjoin(Commission, InventoryMovement.commission_id == Commission.id).outerjoin(User, InventoryMovement.user_id == User.id).outerjoin(TimeTaskTemplate, InventoryMovement.task_template_id == TimeTaskTemplate.id)
++    status = request.args.get("status", TimeReviewStatus.NEEDS_REVIEW.value).strip()
++    review_level = request.args.get("review_level", request.args.get("risk", "")).strip()
++    user_id = request.args.get("user_id", "").strip()
++    commission_id = request.args.get("commission_id", "").strip()
++    movement_type = request.args.get("movement_type", "").strip()
++    source = request.args.get("source", "").strip()
++    search_text = request.args.get("q", "").strip()
++    if status and status != "all":
++        query = query.filter(InventoryMovement.review_status == status)
++    if review_level and review_level != "all":
++        query = query.filter(InventoryMovement.review_level == review_level)
++    if user_id.isdigit():
++        query = query.filter(InventoryMovement.user_id == int(user_id))
++    if commission_id.isdigit():
++        query = query.filter(InventoryMovement.commission_id == int(commission_id))
++    if movement_type:
++        query = query.filter(InventoryMovement.movement_type == movement_type)
++    if source:
++        query = query.filter(InventoryMovement.source == source)
++    if search_text:
++        for term in [item.strip() for item in search_text.split() if item.strip()]:
++            like_term = f"%{term}%"
++            query = query.filter(or_(
++                InventoryItem.item_number.ilike(like_term),
++                InventoryItem.name.ilike(like_term),
++                Commission.code.ilike(like_term),
++                Commission.erp_idnum.ilike(like_term),
++                Commission.title.ilike(like_term),
++                TimeTaskTemplate.code.ilike(like_term),
++                TimeTaskTemplate.title.ilike(like_term),
++                User.display_name.ilike(like_term),
++            ))
++    items = query.order_by(InventoryMovement.occurred_at.desc()).limit(query_limit()).all()
++    return jsonify({"items": [serialize_inventory_movement(item, can_edit=True) for item in items]})
++
++
+ def _issue_token(user: User, action: str) -> Any:
+     user.last_login_at = utc_now()
+     expires_delta = False if settings.get(SettingKeys.MOBILE_TOKEN_NEVER_EXPIRES) else None
+@@ -529,8 +696,29 @@
+     ).one_or_none()
+ 
+ 
++def int_payload(data: dict[str, Any], key: str) -> int:
++    try:
++        return int(data.get(key, 0) or 0)
++    except (TypeError, ValueError):
++        abort(400)
++
++
++def query_limit() -> int:
++    try:
++        limit = int(request.args.get("limit", 100))
++    except ValueError:
++        limit = 100
++    return min(max(limit, 1), 500)
++
++
++def require_review_permission(user: User) -> None:
++    if not (user.is_admin or user.is_foreman):
++        abort(403)
++
++
+ def apply_time_review(entry: TimeEntry) -> None:
+     task = entry.task_template
++    entry.review_level = ReviewLevel.GREEN.value
+     if task is None or task.suggested_minutes <= 0:
+         entry.review_status = TimeReviewStatus.OK.value
+         return
+@@ -540,8 +728,39 @@
+     entry.deviation_percent = percent
+     if difference > settings.get(SettingKeys.TIME_DEVIATION_MINUTES) or percent > settings.get(SettingKeys.TIME_DEVIATION_PERCENT):
+         entry.review_status = TimeReviewStatus.NEEDS_REVIEW.value
++        entry.review_level = ReviewLevel.YELLOW.value if entry.deviation_reason or entry.note else ReviewLevel.RED.value
+     else:
+         entry.review_status = TimeReviewStatus.OK.value
++        entry.review_level = ReviewLevel.GREEN.value
++
++
++def apply_material_review(movement: InventoryMovement) -> None:
++    movement.review_status = TimeReviewStatus.OK.value
++    movement.review_level = ReviewLevel.GREEN.value
++    if movement.movement_type != InventoryMovementType.WITHDRAWAL.value:
++        return
++    has_reason = bool(movement.deviation_reason or movement.note)
++    if movement.usage_status != MaterialUsageStatus.INSTALLED.value:
++        movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
++        movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
++        return
++    task = movement.task_template
++    if task is None:
++        movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
++        movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
++        return
++    expectations = list(task.expected_materials)
++    if not expectations:
++        return
++    matching = [item for item in expectations if item.item_id == movement.item_id]
++    if not matching:
++        movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
++        movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
++        return
++    expected_quantity = sum(item.quantity for item in matching)
++    if movement.quantity > expected_quantity + 0.0001:
++        movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
++        movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
+ 
+ 
+ def serialize_user(user: User) -> dict[str, Any]:
+@@ -610,27 +829,43 @@
+         "item": serialize_inventory_item(item.item),
+         "user": serialize_user(item.user) if item.user else None,
+         "commission_id": item.commission_id,
++        "task_template": serialize_time_task(item.task_template) if item.task_template else None,
+         "movement_type": item.movement_type,
+         "quantity": item.quantity,
++        "source": item.source,
++        "usage_status": item.usage_status,
++        "deviation_reason": item.deviation_reason,
+         "note": item.note,
++        "review_status": item.review_status,
++        "review_level": item.review_level,
+         "occurred_at": iso_datetime(item.occurred_at),
+         "is_cancelled": is_cancelled,
+         "can_cancel": can_cancel,
+     }
+ 
+ 
+-def serialize_time_task(item: TimeTaskTemplate, include_suggested: bool = False) -> dict[str, Any]:
+-    data = {
++def serialize_time_task(item: TimeTaskTemplate | None, include_suggested: bool = True) -> dict[str, Any] | None:
++    if item is None:
++        return None
++    return {
+         "id": item.id,
+         "code": item.code,
+         "title": item.title,
++        "suggested_minutes": item.suggested_minutes,
+         "craft_activity": serialize_craft_activity(item.craft_activity) if item.craft_activity else None,
++        "expected_materials": [serialize_expected_material(material) for material in item.expected_materials],
+     }
+ 
+-    if include_suggested:
+-        data["suggested_minutes"] = item.suggested_minutes
+ 
+-    return data
++def serialize_expected_material(item: TimeTaskExpectedMaterial) -> dict[str, Any]:
++    return {
++        "id": item.id,
++        "task_template_id": item.task_template_id,
++        "item": serialize_inventory_item(item.item),
++        "quantity": item.quantity,
++        "required": item.required,
++        "note": item.note,
++    }
+ 
+ 
+ def serialize_craft_activity(item: CraftActivity) -> dict[str, Any]:
+@@ -643,4 +878,23 @@
+ 
+ 
+ def serialize_time_entry(item: TimeEntry) -> dict[str, Any]:
+-    return {"id": item.id, "commission_id": item.commission_id, "user": serialize_user(item.user), "task_template": serialize_time_task(item.task_template) if item.task_template else None, "minutes": item.minutes, "note": item.note, "deviation_minutes": item.deviation_minutes, "deviation_percent": item.deviation_percent, "review_status": item.review_status, "created_at": iso_datetime(item.created_at)}
+\ No newline at end of file
++    return {
++        "id": item.id,
++        "commission_id": item.commission_id,
++        "user": serialize_user(item.user),
++        "task_template": serialize_time_task(item.task_template) if item.task_template else None,
++        "minutes": item.minutes,
++        "work_minutes": item.work_minutes,
++        "waiting_minutes": item.waiting_minutes,
++        "material_minutes": item.material_minutes,
++        "travel_minutes": item.travel_minutes,
++        "documentation_minutes": item.documentation_minutes,
++        "extra_minutes": item.extra_minutes,
++        "deviation_reason": item.deviation_reason,
++        "note": item.note,
++        "deviation_minutes": item.deviation_minutes,
++        "deviation_percent": item.deviation_percent,
++        "review_status": item.review_status,
++        "review_level": item.review_level,
++        "created_at": iso_datetime(item.created_at),
++    }
+diff -ruN a/app/models.py b/app/models.py
+--- a/app/models.py	2026-06-11 20:37:30.000000000 +0000
++++ b/app/models.py	2026-07-02 09:57:16.443781296 +0000
+@@ -44,6 +44,27 @@
+     REJECTED = "rejected"
+ 
+ 
++class ReviewLevel(str, Enum):
++    GREEN = "green"
++    YELLOW = "yellow"
++    RED = "red"
++
++
++class MaterialUsageStatus(str, Enum):
++    INSTALLED = "installed"
++    NOT_INSTALLED = "not_installed"
++    RETURNED = "returned"
++    DEFECTIVE = "defective"
++    IN_VEHICLE = "in_vehicle"
++
++
++class MaterialSource(str, Enum):
++    WAREHOUSE = "warehouse"
++    VEHICLE = "vehicle"
++    DIRECT_PURCHASE = "direct_purchase"
++    ON_SITE = "on_site"
++
++
+ user_craft_activity = db.Table(
+     "user_craft_activity",
+     db.Column("user_id", db.ForeignKey("user_account.id"), primary_key=True),
+@@ -103,7 +124,7 @@
+     last_login_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+ 
+     commissions: Mapped[list["Commission"]] = relationship(back_populates="user")
+-    inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="user")
++    inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="user", foreign_keys="InventoryMovement.user_id")
+     time_entries: Mapped[list["TimeEntry"]] = relationship(back_populates="user", foreign_keys="TimeEntry.user_id")
+     craft_activities: Mapped[list["CraftActivity"]] = relationship(
+         "CraftActivity",
+@@ -177,6 +198,7 @@
+     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+ 
+     movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="item")
++    expected_task_materials: Mapped[list["TimeTaskExpectedMaterial"]] = relationship(back_populates="item")
+ 
+     @property
+     def is_below_reorder_level(self) -> bool:
+@@ -193,14 +215,24 @@
+     item_id: Mapped[int] = mapped_column(db.ForeignKey("inventory_item.id"), nullable=False, index=True)
+     user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
+     commission_id: Mapped[int | None] = mapped_column(db.ForeignKey("commission.id"), index=True)
++    task_template_id: Mapped[int | None] = mapped_column(db.ForeignKey("time_task_template.id"), index=True)
+     movement_type: Mapped[str] = mapped_column(db.String(40), nullable=False, index=True)
+     quantity: Mapped[float] = mapped_column(db.Float, nullable=False)
+     note: Mapped[str | None] = mapped_column(db.Text)
++    usage_status: Mapped[str] = mapped_column(db.String(40), default=MaterialUsageStatus.INSTALLED.value, server_default=MaterialUsageStatus.INSTALLED.value, nullable=False, index=True)
++    source: Mapped[str] = mapped_column(db.String(40), default=MaterialSource.WAREHOUSE.value, server_default=MaterialSource.WAREHOUSE.value, nullable=False, index=True)
++    deviation_reason: Mapped[str | None] = mapped_column(db.String(120))
++    review_status: Mapped[str] = mapped_column(db.String(40), default=TimeReviewStatus.OK.value, server_default=TimeReviewStatus.OK.value, nullable=False, index=True)
++    review_level: Mapped[str] = mapped_column(db.String(20), default=ReviewLevel.GREEN.value, server_default=ReviewLevel.GREEN.value, nullable=False, index=True)
+     occurred_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False, index=True)
++    reviewed_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
++    reviewed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+ 
+     item: Mapped[InventoryItem] = relationship(back_populates="movements")
+-    user: Mapped[User | None] = relationship(back_populates="inventory_movements")
++    user: Mapped[User | None] = relationship(back_populates="inventory_movements", foreign_keys=[user_id])
+     commission: Mapped[Commission | None] = relationship(back_populates="inventory_movements")
++    task_template: Mapped[TimeTaskTemplate | None] = relationship()
++    reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_user_id])
+ 
+ 
+ class TimeTaskTemplate(db.Model):
+@@ -218,6 +250,22 @@
+     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+ 
+     craft_activity: Mapped[CraftActivity | None] = relationship(back_populates="service_positions")
++    expected_materials: Mapped[list["TimeTaskExpectedMaterial"]] = relationship(back_populates="task_template", cascade="all, delete-orphan")
++
++
++class TimeTaskExpectedMaterial(db.Model):
++    __tablename__ = "time_task_expected_material"
++    __table_args__ = (UniqueConstraint("task_template_id", "item_id", name="uq_time_task_expected_material_task_item"),)
++
++    id: Mapped[int] = mapped_column(primary_key=True)
++    task_template_id: Mapped[int] = mapped_column(db.ForeignKey("time_task_template.id"), nullable=False, index=True)
++    item_id: Mapped[int] = mapped_column(db.ForeignKey("inventory_item.id"), nullable=False, index=True)
++    quantity: Mapped[float] = mapped_column(db.Float, default=1, server_default="1", nullable=False)
++    required: Mapped[bool] = mapped_column(db.Boolean, default=True, server_default="1", nullable=False)
++    note: Mapped[str | None] = mapped_column(db.Text)
++
++    task_template: Mapped[TimeTaskTemplate] = relationship(back_populates="expected_materials")
++    item: Mapped[InventoryItem] = relationship(back_populates="expected_task_materials")
+ 
+ 
+ class TimeEntry(db.Model):
+@@ -230,10 +278,18 @@
+     started_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+     ended_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+     minutes: Mapped[int] = mapped_column(db.Integer, nullable=False)
++    work_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
++    waiting_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
++    material_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
++    travel_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
++    documentation_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
++    extra_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
++    deviation_reason: Mapped[str | None] = mapped_column(db.String(120))
+     note: Mapped[str | None] = mapped_column(db.Text)
+     deviation_minutes: Mapped[int] = mapped_column(db.Integer, default=0, nullable=False)
+     deviation_percent: Mapped[float] = mapped_column(db.Float, default=0, nullable=False)
+     review_status: Mapped[str] = mapped_column(db.String(40), default=TimeReviewStatus.OK.value, nullable=False, index=True)
++    review_level: Mapped[str] = mapped_column(db.String(20), default=ReviewLevel.GREEN.value, server_default=ReviewLevel.GREEN.value, nullable=False, index=True)
+     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+     reviewed_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
+     reviewed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+diff -ruN a/app/templates/admin/dashboard.html b/app/templates/admin/dashboard.html
+--- a/app/templates/admin/dashboard.html	2026-06-11 20:37:30.000000000 +0000
++++ b/app/templates/admin/dashboard.html	2026-07-02 09:55:59.483591719 +0000
+@@ -22,6 +22,14 @@
+   <div class="col-md-4">
+     <div class="card shadow-sm">
+       <div class="card-body">
++        <div class="text-muted">Zu prüfende Materialbuchungen</div>
++        <div class="display-6">{{ material_review_count }}</div>
++      </div>
++    </div>
++  </div>
++  <div class="col-md-4">
++    <div class="card shadow-sm">
++      <div class="card-body">
+         <div class="text-muted">Artikel unter Mindestbestand</div>
+         <div class="display-6">{{ low_stock_count }}</div>
+       </div>
+diff -ruN a/app/templates/admin/material_movements.html b/app/templates/admin/material_movements.html
+--- a/app/templates/admin/material_movements.html	1970-01-01 00:00:00.000000000 +0000
++++ b/app/templates/admin/material_movements.html	2026-07-02 09:57:05.107190635 +0000
+@@ -0,0 +1,107 @@
++{% extends "base.html" %}
++{% block title %}Materialprüfung{% endblock %}
++{% block content %}
++<h1 class="h3 mb-4">Materialprüfung</h1>
++<div class="card shadow-sm mb-3">
++  <div class="card-body">
++    <form method="get" class="row g-3 align-items-end">
++      <div class="col-md-3">
++        <label class="form-label">Suche</label>
++        <input class="form-control" name="q" value="{{ search_text or '' }}" placeholder="Artikel, Auftrag, Position, Benutzer">
++      </div>
++      <div class="col-md-2">
++        <label class="form-label">Status</label>
++        <select class="form-select" name="status">
++          <option value="needs_review" {% if status_filter == "needs_review" %}selected{% endif %}>Zu prüfen</option>
++          <option value="ok" {% if status_filter == "ok" %}selected{% endif %}>OK</option>
++          <option value="approved" {% if status_filter == "approved" %}selected{% endif %}>Freigegeben</option>
++          <option value="rejected" {% if status_filter == "rejected" %}selected{% endif %}>Abgelehnt</option>
++          <option value="all" {% if status_filter == "all" %}selected{% endif %}>Alle</option>
++        </select>
++      </div>
++      <div class="col-md-2">
++        <label class="form-label">Ampel</label>
++        <select class="form-select" name="review_level">
++          <option value="" {% if not review_level_filter %}selected{% endif %}>Alle</option>
++          <option value="red" {% if review_level_filter == "red" %}selected{% endif %}>Rot</option>
++          <option value="yellow" {% if review_level_filter == "yellow" %}selected{% endif %}>Gelb</option>
++          <option value="green" {% if review_level_filter == "green" %}selected{% endif %}>Grün</option>
++        </select>
++      </div>
++      <div class="col-md-2">
++        <label class="form-label">Quelle</label>
++        <select class="form-select" name="source">
++          <option value="" {% if not source_filter %}selected{% endif %}>Alle</option>
++          {% for source in material_sources %}
++          <option value="{{ source.value }}" {% if source_filter == source.value %}selected{% endif %}>{{ source.value }}</option>
++          {% endfor %}
++        </select>
++      </div>
++      <div class="col-md-2 d-grid">
++        <button class="btn btn-primary" type="submit">Filtern</button>
++      </div>
++      <div class="col-md-1 d-grid">
++        <a class="btn btn-outline-secondary" href="{{ url_for('admin.material_movements') }}">Reset</a>
++      </div>
++    </form>
++  </div>
++</div>
++<div class="card shadow-sm">
++  <div class="card-body">
++    <table class="table table-striped datatable">
++      <thead>
++        <tr>
++          <th>Zeitpunkt</th>
++          <th>Artikel</th>
++          <th>Menge</th>
++          <th>Auftrag</th>
++          <th>Position</th>
++          <th>Quelle</th>
++          <th>Nutzung</th>
++          <th>Ampel</th>
++          <th>Status</th>
++          <th>Benutzer</th>
++          <th>Grund / Notiz</th>
++          <th></th>
++        </tr>
++      </thead>
++      <tbody>
++        {% for item in items %}
++        <tr>
++          <td>{{ item.occurred_at.strftime("%d.%m.%Y %H:%M") }}</td>
++          <td>{{ item.item.name }}<br><span class="text-muted small">{{ item.item.item_number }}</span></td>
++          <td>{{ item.quantity }} {{ item.item.unit }}</td>
++          <td>{{ item.commission.erp_id if item.commission else "" }}</td>
++          <td>{{ item.task_template.title if item.task_template else "" }}</td>
++          <td>{{ item.source }}</td>
++          <td>{{ item.usage_status }}</td>
++          <td>
++            <span class="badge text-bg-{% if item.review_level == 'red' %}danger{% elif item.review_level == 'yellow' %}warning{% else %}success{% endif %}">{{ item.review_level }}</span>
++          </td>
++          <td>{{ item.review_status }}</td>
++          <td>{{ item.user.display_name if item.user else "" }}</td>
++          <td class="small">
++            {% if item.deviation_reason %}<div>{{ item.deviation_reason }}</div>{% endif %}
++            {% if item.note %}<div>{{ item.note }}</div>{% endif %}
++          </td>
++          <td class="text-end">
++            {% if item.review_status == "needs_review" %}
++            <div class="d-flex gap-2 justify-content-end">
++              <form method="post" action="{{ url_for('admin.material_movement_review', item_id=item.id, decision='approve') }}">
++                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
++                <button class="btn btn-sm btn-success" type="submit">Freigeben</button>
++              </form>
++              <form method="post" action="{{ url_for('admin.material_movement_review', item_id=item.id, decision='reject') }}">
++                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
++                <button class="btn btn-sm btn-outline-danger" type="submit">Ablehnen</button>
++              </form>
++            </div>
++            {% endif %}
++          </td>
++        </tr>
++        {% endfor %}
++      </tbody>
++    </table>
++  </div>
++</div>
++{% endblock %}
+diff -ruN a/app/templates/admin/time_entries.html b/app/templates/admin/time_entries.html
+--- a/app/templates/admin/time_entries.html	2026-06-11 20:37:30.000000000 +0000
++++ b/app/templates/admin/time_entries.html	2026-07-02 09:56:47.641448662 +0000
+@@ -2,6 +2,41 @@
+ {% block title %}Stundenzettel{% endblock %}
+ {% block content %}
+ <h1 class="h3 mb-4">Stundenzettel</h1>
++<div class="card shadow-sm mb-3">
++  <div class="card-body">
++    <form method="get" class="row g-3 align-items-end">
++      <div class="col-md-3">
++        <label class="form-label">Suche</label>
++        <input class="form-control" name="q" value="{{ search_text or '' }}" placeholder="Auftrag, Position, Benutzer">
++      </div>
++      <div class="col-md-3">
++        <label class="form-label">Status</label>
++        <select class="form-select" name="status">
++          <option value="needs_review" {% if status_filter == "needs_review" %}selected{% endif %}>Zu prüfen</option>
++          <option value="ok" {% if status_filter == "ok" %}selected{% endif %}>OK</option>
++          <option value="approved" {% if status_filter == "approved" %}selected{% endif %}>Freigegeben</option>
++          <option value="rejected" {% if status_filter == "rejected" %}selected{% endif %}>Abgelehnt</option>
++          <option value="all" {% if status_filter == "all" %}selected{% endif %}>Alle</option>
++        </select>
++      </div>
++      <div class="col-md-3">
++        <label class="form-label">Ampel</label>
++        <select class="form-select" name="review_level">
++          <option value="" {% if not review_level_filter %}selected{% endif %}>Alle</option>
++          <option value="red" {% if review_level_filter == "red" %}selected{% endif %}>Rot</option>
++          <option value="yellow" {% if review_level_filter == "yellow" %}selected{% endif %}>Gelb</option>
++          <option value="green" {% if review_level_filter == "green" %}selected{% endif %}>Grün</option>
++        </select>
++      </div>
++      <div class="col-md-2 d-grid">
++        <button class="btn btn-primary" type="submit">Filtern</button>
++      </div>
++      <div class="col-md-1 d-grid">
++        <a class="btn btn-outline-secondary" href="{{ url_for('admin.time_entries') }}">Reset</a>
++      </div>
++    </form>
++  </div>
++</div>
+ <div class="card shadow-sm">
+   <div class="card-body">
+     <table class="table table-striped datatable">
+@@ -11,9 +46,12 @@
+           <th>Auftrag</th>
+           <th>Benutzer</th>
+           <th>Position</th>
+-          <th>Minuten</th>
++          <th>Gesamt</th>
++          <th>Bausteine</th>
+           <th>Abweichung</th>
++          <th>Ampel</th>
+           <th>Status</th>
++          <th>Grund / Notiz</th>
+           <th></th>
+         </tr>
+       </thead>
+@@ -24,9 +62,19 @@
+           <td>{{ item.commission.erp_id }}</td>
+           <td>{{ item.user.display_name }}</td>
+           <td>{{ item.task_template.title if item.task_template else "" }}</td>
+-          <td>{{ item.minutes }}</td>
+-          <td>{{ item.deviation_minutes }} Minuten / {{ "%.1f"|format(item.deviation_percent) }} %</td>
++          <td>{{ item.minutes }} Min.</td>
++          <td class="small">
++            Arbeit {{ item.work_minutes }} · Warten {{ item.waiting_minutes }} · Material {{ item.material_minutes }} · Fahrt {{ item.travel_minutes }} · Doku {{ item.documentation_minutes }} · Zusatz {{ item.extra_minutes }}
++          </td>
++          <td>{{ item.deviation_minutes }} Min. / {{ "%.1f"|format(item.deviation_percent) }} %</td>
++          <td>
++            <span class="badge text-bg-{% if item.review_level == 'red' %}danger{% elif item.review_level == 'yellow' %}warning{% else %}success{% endif %}">{{ item.review_level }}</span>
++          </td>
+           <td>{{ item.review_status }}</td>
++          <td class="small">
++            {% if item.deviation_reason %}<div>{{ item.deviation_reason }}</div>{% endif %}
++            {% if item.note %}<div>{{ item.note }}</div>{% endif %}
++          </td>
+           <td class="text-end">
+             {% if item.review_status == "needs_review" %}
+             <div class="d-flex gap-2 justify-content-end">
+@@ -47,4 +95,4 @@
+     </table>
+   </div>
+ </div>
+-{% endblock %}
+\ No newline at end of file
++{% endblock %}
+diff -ruN a/app/templates/admin/time_template_form.html b/app/templates/admin/time_template_form.html
+--- a/app/templates/admin/time_template_form.html	2026-06-11 20:37:30.000000000 +0000
++++ b/app/templates/admin/time_template_form.html	2026-07-02 09:56:22.666680530 +0000
+@@ -42,9 +42,70 @@
+         <label class="form-check-label">Aktiv</label>
+       </div>
+     </div>
++    <div class="col-12">
++      <hr>
++      <h2 class="h5">Erwartetes Material</h2>
++      <div class="table-responsive">
++        <table class="table align-middle">
++          <thead>
++            <tr>
++              <th>Artikel</th>
++              <th style="width: 140px;">Menge</th>
++              <th style="width: 130px;">Pflicht</th>
++              <th>Hinweis</th>
++            </tr>
++          </thead>
++          <tbody>
++            {% for material in item.expected_materials %}
++            {% set row_index = loop.index0 %}
++            <tr>
++              <td>
++                <select class="form-select" name="expected_item_id">
++                  <option value="">Kein Artikel</option>
++                  {% for inventory_item in inventory_items %}
++                  <option value="{{ inventory_item.id }}" {% if material.item_id == inventory_item.id %}selected{% endif %}>{{ inventory_item.name }} ({{ inventory_item.item_number }})</option>
++                  {% endfor %}
++                </select>
++              </td>
++              <td><input class="form-control" type="number" step="0.01" name="expected_quantity" value="{{ material.quantity }}"></td>
++              <td>
++                <div class="form-check">
++                  <input class="form-check-input" type="checkbox" name="expected_required_{{ row_index }}" {% if material.required %}checked{% endif %}>
++                  <label class="form-check-label">Ja</label>
++                </div>
++              </td>
++              <td><input class="form-control" name="expected_note" value="{{ material.note or '' }}"></td>
++            </tr>
++            {% endfor %}
++            {% set offset = item.expected_materials|length %}
++            {% for i in range(3) %}
++            {% set row_index = offset + loop.index0 %}
++            <tr>
++              <td>
++                <select class="form-select" name="expected_item_id">
++                  <option value="">Kein Artikel</option>
++                  {% for inventory_item in inventory_items %}
++                  <option value="{{ inventory_item.id }}">{{ inventory_item.name }} ({{ inventory_item.item_number }})</option>
++                  {% endfor %}
++                </select>
++              </td>
++              <td><input class="form-control" type="number" step="0.01" name="expected_quantity" value="1"></td>
++              <td>
++                <div class="form-check">
++                  <input class="form-check-input" type="checkbox" name="expected_required_{{ row_index }}" checked>
++                  <label class="form-check-label">Ja</label>
++                </div>
++              </td>
++              <td><input class="form-control" name="expected_note"></td>
++            </tr>
++            {% endfor %}
++          </tbody>
++        </table>
++      </div>
++    </div>
+   </div>
+   <div class="card-footer text-end">
+     <button class="btn btn-primary" type="submit">Speichern</button>
+   </div>
+ </form>
+-{% endblock %}
+\ No newline at end of file
++{% endblock %}
+diff -ruN a/app/templates/admin/time_templates.html b/app/templates/admin/time_templates.html
+--- a/app/templates/admin/time_templates.html	2026-06-11 20:37:30.000000000 +0000
++++ b/app/templates/admin/time_templates.html	2026-07-02 09:56:32.379694211 +0000
+@@ -118,6 +118,7 @@
+               <th>Bezeichnung</th>
+               <th>Quelle</th>
+               <th>SOLL-Zeit</th>
++              <th>Material</th>
+               <th>Aktiv</th>
+               <th></th>
+             </tr>
+@@ -130,6 +131,7 @@
+               <td>{{ item.title }}</td>
+               <td>{{ item.source }}</td>
+               <td>{{ item.suggested_minutes }} Min.</td>
++              <td>{{ item.expected_materials|length }}</td>
+               <td>{{ "Ja" if item.active else "Nein" }}</td>
+               <td class="text-end">
+                 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.time_template_edit', item_id=item.id) }}">Bearbeiten</a>
+diff -ruN a/app/templates/base.html b/app/templates/base.html
+--- a/app/templates/base.html	2026-06-11 20:37:30.000000000 +0000
++++ b/app/templates/base.html	2026-07-02 09:55:59.483123931 +0000
+@@ -21,6 +21,7 @@
+         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.commissions') }}">Aufträge</a></li>
+         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.inventory') }}">Lager</a></li>
+         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_entries') }}">Stundenzettel</a></li>
++        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.material_movements') }}">Materialprüfung</a></li>
+         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_templates') }}">Leistungspositionen</a></li>
+         {% if current_user.is_admin %}
+         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.users') }}">Benutzer</a></li>
+diff -ruN a/migrations/versions/c1d2e3f4a5b6_add_time_material_review.py b/migrations/versions/c1d2e3f4a5b6_add_time_material_review.py
+--- a/migrations/versions/c1d2e3f4a5b6_add_time_material_review.py	1970-01-01 00:00:00.000000000 +0000
++++ b/migrations/versions/c1d2e3f4a5b6_add_time_material_review.py	2026-07-02 09:54:55.774815336 +0000
+@@ -0,0 +1,99 @@
++"""Add time and material review fields
++
++Revision ID: c1d2e3f4a5b6
++Revises: bf1f7c402f2c
++Create Date: 2026-07-02 10:00:00.000000
++
++"""
++from alembic import op
++import sqlalchemy as sa
++
++
++revision = 'c1d2e3f4a5b6'
++down_revision = 'bf1f7c402f2c'
++branch_labels = None
++depends_on = None
++
++
++def upgrade():
++    op.create_table(
++        'time_task_expected_material',
++        sa.Column('id', sa.Integer(), nullable=False),
++        sa.Column('task_template_id', sa.Integer(), nullable=False),
++        sa.Column('item_id', sa.Integer(), nullable=False),
++        sa.Column('quantity', sa.Float(), server_default='1', nullable=False),
++        sa.Column('required', sa.Boolean(), server_default='1', nullable=False),
++        sa.Column('note', sa.Text(), nullable=True),
++        sa.ForeignKeyConstraint(['item_id'], ['inventory_item.id']),
++        sa.ForeignKeyConstraint(['task_template_id'], ['time_task_template.id']),
++        sa.PrimaryKeyConstraint('id'),
++        sa.UniqueConstraint('task_template_id', 'item_id', name='uq_time_task_expected_material_task_item'),
++    )
++    with op.batch_alter_table('time_task_expected_material', schema=None) as batch_op:
++        batch_op.create_index(batch_op.f('ix_time_task_expected_material_item_id'), ['item_id'], unique=False)
++        batch_op.create_index(batch_op.f('ix_time_task_expected_material_task_template_id'), ['task_template_id'], unique=False)
++
++    with op.batch_alter_table('inventory_movement', schema=None) as batch_op:
++        batch_op.add_column(sa.Column('task_template_id', sa.Integer(), nullable=True))
++        batch_op.add_column(sa.Column('usage_status', sa.String(length=40), server_default='installed', nullable=False))
++        batch_op.add_column(sa.Column('source', sa.String(length=40), server_default='warehouse', nullable=False))
++        batch_op.add_column(sa.Column('deviation_reason', sa.String(length=120), nullable=True))
++        batch_op.add_column(sa.Column('review_status', sa.String(length=40), server_default='ok', nullable=False))
++        batch_op.add_column(sa.Column('review_level', sa.String(length=20), server_default='green', nullable=False))
++        batch_op.add_column(sa.Column('reviewed_by_user_id', sa.Integer(), nullable=True))
++        batch_op.add_column(sa.Column('reviewed_at', sa.DateTime(timezone=True), nullable=True))
++        batch_op.create_index(batch_op.f('ix_inventory_movement_task_template_id'), ['task_template_id'], unique=False)
++        batch_op.create_index(batch_op.f('ix_inventory_movement_usage_status'), ['usage_status'], unique=False)
++        batch_op.create_index(batch_op.f('ix_inventory_movement_source'), ['source'], unique=False)
++        batch_op.create_index(batch_op.f('ix_inventory_movement_review_status'), ['review_status'], unique=False)
++        batch_op.create_index(batch_op.f('ix_inventory_movement_review_level'), ['review_level'], unique=False)
++        batch_op.create_index(batch_op.f('ix_inventory_movement_reviewed_by_user_id'), ['reviewed_by_user_id'], unique=False)
++        batch_op.create_foreign_key('fk_inventory_movement_task_template_id_time_task_template', 'time_task_template', ['task_template_id'], ['id'])
++        batch_op.create_foreign_key('fk_inventory_movement_reviewed_by_user_id_user_account', 'user_account', ['reviewed_by_user_id'], ['id'])
++
++    with op.batch_alter_table('time_entry', schema=None) as batch_op:
++        batch_op.add_column(sa.Column('work_minutes', sa.Integer(), server_default='0', nullable=False))
++        batch_op.add_column(sa.Column('waiting_minutes', sa.Integer(), server_default='0', nullable=False))
++        batch_op.add_column(sa.Column('material_minutes', sa.Integer(), server_default='0', nullable=False))
++        batch_op.add_column(sa.Column('travel_minutes', sa.Integer(), server_default='0', nullable=False))
++        batch_op.add_column(sa.Column('documentation_minutes', sa.Integer(), server_default='0', nullable=False))
++        batch_op.add_column(sa.Column('extra_minutes', sa.Integer(), server_default='0', nullable=False))
++        batch_op.add_column(sa.Column('deviation_reason', sa.String(length=120), nullable=True))
++        batch_op.add_column(sa.Column('review_level', sa.String(length=20), server_default='green', nullable=False))
++        batch_op.create_index(batch_op.f('ix_time_entry_review_level'), ['review_level'], unique=False)
++
++
++def downgrade():
++    with op.batch_alter_table('time_entry', schema=None) as batch_op:
++        batch_op.drop_index(batch_op.f('ix_time_entry_review_level'))
++        batch_op.drop_column('review_level')
++        batch_op.drop_column('deviation_reason')
++        batch_op.drop_column('extra_minutes')
++        batch_op.drop_column('documentation_minutes')
++        batch_op.drop_column('travel_minutes')
++        batch_op.drop_column('material_minutes')
++        batch_op.drop_column('waiting_minutes')
++        batch_op.drop_column('work_minutes')
++
++    with op.batch_alter_table('inventory_movement', schema=None) as batch_op:
++        batch_op.drop_constraint('fk_inventory_movement_reviewed_by_user_id_user_account', type_='foreignkey')
++        batch_op.drop_constraint('fk_inventory_movement_task_template_id_time_task_template', type_='foreignkey')
++        batch_op.drop_index(batch_op.f('ix_inventory_movement_reviewed_by_user_id'))
++        batch_op.drop_index(batch_op.f('ix_inventory_movement_review_level'))
++        batch_op.drop_index(batch_op.f('ix_inventory_movement_review_status'))
++        batch_op.drop_index(batch_op.f('ix_inventory_movement_source'))
++        batch_op.drop_index(batch_op.f('ix_inventory_movement_usage_status'))
++        batch_op.drop_index(batch_op.f('ix_inventory_movement_task_template_id'))
++        batch_op.drop_column('reviewed_at')
++        batch_op.drop_column('reviewed_by_user_id')
++        batch_op.drop_column('review_level')
++        batch_op.drop_column('review_status')
++        batch_op.drop_column('deviation_reason')
++        batch_op.drop_column('source')
++        batch_op.drop_column('usage_status')
++        batch_op.drop_column('task_template_id')
++
++    with op.batch_alter_table('time_task_expected_material', schema=None) as batch_op:
++        batch_op.drop_index(batch_op.f('ix_time_task_expected_material_task_template_id'))
++        batch_op.drop_index(batch_op.f('ix_time_task_expected_material_item_id'))
++    op.drop_table('time_task_expected_material')

@@ -118,6 +118,7 @@
               <th>Bezeichnung</th>
               <th>Quelle</th>
               <th>SOLL-Zeit</th>
+              <th>Material</th>
               <th>Aktiv</th>
               <th></th>
             </tr>
@@ -130,6 +131,7 @@
               <td>{{ item.title }}</td>
               <td>{{ item.source }}</td>
               <td>{{ item.suggested_minutes }} Min.</td>
+              <td>{{ item.expected_materials|length }}</td>
               <td>{{ "Ja" if item.active else "Nein" }}</td>
               <td class="text-end">
                 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.time_template_edit', item_id=item.id) }}">Bearbeiten</a>

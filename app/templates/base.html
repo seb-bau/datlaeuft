@@ -21,6 +21,7 @@
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.commissions') }}">Aufträge</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.inventory') }}">Lager</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_entries') }}">Stundenzettel</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.material_movements') }}">Materialprüfung</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_templates') }}">Leistungspositionen</a></li>
         {% if current_user.is_admin %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.users') }}">Benutzer</a></li>
