@@ -39,6 +39,41 @@ class SettingKeys:
     WOWI_API_VERSION = SettingDefinition[str]("wowi.api_version", SettingValueType.STRING, "v1.2", "OPENWOWI Version", "Wowiport")
     WOWI_APPROVED_STATUS_ID = SettingDefinition[int]("wowi.approved_status_id", SettingValueType.INT, 6, "Status-ID Freigegeben", "Wowiport")
     WOWI_WEBHOOK_TOKEN = SettingDefinition[str]("wowi.webhook_bearer_token", SettingValueType.SECRET, "change-me", "Webhook Bearer Token", "Wowiport", True)
+    WOWI_ALLOWED_COMMISSION_TYPE_IDS = SettingDefinition[list](
+        "wowi.allowed_commission_type_ids",
+        SettingValueType.JSON,
+        [],
+        "Erlaubte Auftragsarten",
+        "Wowiport",
+    )
+    WOWI_VISIBLE_COMMISSION_STATUS_IDS = SettingDefinition[list](
+        "wowi.visible_commission_status_ids",
+        SettingValueType.JSON,
+        [12, 7, 9, 11],
+        "Zu synchronisierende Auftragsstatus",
+        "Wowiport",
+    )
+    SMTP_HOST = SettingDefinition[str](
+        "smtp.host",
+        SettingValueType.STRING,
+        "",
+        "SMTP-Server",
+        "E-Mail",
+    )
+    SMTP_PORT = SettingDefinition[int](
+        "smtp.port",
+        SettingValueType.INT,
+        25,
+        "SMTP-Port",
+        "E-Mail",
+    )
+    SMTP_SENDER = SettingDefinition[str](
+        "smtp.sender",
+        SettingValueType.STRING,
+        "",
+        "Absenderadresse",
+        "E-Mail",
+    )
     TIME_DEVIATION_PERCENT = SettingDefinition[float]("time.deviation_percent", SettingValueType.FLOAT, 20.0, "Abweichung in Prozent", "Zeiterfassung")
     TIME_DEVIATION_MINUTES = SettingDefinition[int]("time.deviation_minutes", SettingValueType.INT, 15, "Abweichung in Minuten", "Zeiterfassung")
     LOG_LEVEL = SettingDefinition[str]("logging.level", SettingValueType.STRING, "INFO", "Log-Level", "Logging")
@@ -65,6 +100,23 @@ class SettingKeys:
         SettingValueType.STRING,
         "recording_date",
         "Datumsfeld für Auftragssync-Geschäftsjahr",
+        "Synchronisierung",
+    )
+
+
+    SYNC_QUICK_RECONCILIATION_LOOKBACK_DAYS = SettingDefinition[int](
+        "sync.quick_reconciliation_lookback_days",
+        SettingValueType.INT,
+        14,
+        "Zeitraum des schnellen Auftragsabgleichs in Tagen",
+        "Synchronisierung",
+    )
+
+    SYNC_FULL_RECONCILIATION_INTERVAL_HOURS = SettingDefinition[int](
+        "sync.full_reconciliation_interval_hours",
+        SettingValueType.INT,
+        24,
+        "Intervall des vollständigen Auftragsabgleichs in Stunden",
         "Synchronisierung",
     )
 

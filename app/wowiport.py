@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import datetime, timedelta, timezone
+
 from datetime import datetime
 from typing import Any
 
@@ -7,11 +11,29 @@ from flask import current_app
 from wowipy import wowipy
 from wowipy.models import CommissioningCommission, Communication, Contractor, LicenseAgreement, UseUnit
 from wowipy.wowipy import WowiPy
+from wowipy.models import Result
 
 from .extensions import db
-from .models import Commission, CommissionLocalStatus, User, utc_now
+from .models import (
+    Commission,
+    CommissionLocalStatus,
+    CommissionPosition,
+    CommissionSource,
+    CommissionSyncState,
+    User,
+    WowiCommissionType,
+    utc_now,
+)
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
+
+
+ERP_LOCAL_STATUS = {
+    12: CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
+    7: CommissionLocalStatus.IN_PROGRESS.value,
+    9: CommissionLocalStatus.DONE.value,
+    11: CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
+}
 
 
 def _format_use_unit_location(use_unit: UseUnit | None) -> str | None:
@@ -242,6 +264,886 @@ class WowiportService:
     def mark_commission_done(self, erp_id: int) -> None:
         self.client.set_commissioning_commission_to_done(commission_id=erp_id)
 
+    @staticmethod
+    def _row_value(row: dict[str, Any], *names: str) -> Any:
+        normalized = {
+            str(key).replace("_", "").lower(): value
+            for key, value in row.items()
+        }
+
+        for name in names:
+            value = normalized.get(name.replace("_", "").lower())
+            if value is not None:
+                return value
+
+        return None
+
+    @staticmethod
+    def _result_rows(result: Any) -> list[dict[str, Any]]:
+        data = getattr(result, "data", result)
+
+        if isinstance(data, dict):
+            rows = [data]
+
+            for key in ("CraftsProcess", "Commission", "Data"):
+                nested = data.get(key)
+                if isinstance(nested, dict):
+                    rows.append(nested)
+
+            return rows
+
+        if isinstance(data, list):
+            return [
+                row
+                for row in data
+                if isinstance(row, dict)
+            ]
+
+        if isinstance(data, int):
+            return [{"Id": data}]
+
+        return []
+
+    def _identity_from_rows(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        for row in rows:
+            raw_id = self._row_value(
+                row,
+                "Id",
+                "CraftsProcessId",
+                "CommissionId",
+            )
+
+            try:
+                erp_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+
+            if erp_id <= 0:
+                continue
+
+            raw_idnum = self._row_value(
+                row,
+                "IdNum",
+                "CraftsProcessIdNum",
+                "CommissionIdNum",
+            )
+
+            return {
+                "id": erp_id,
+                "id_num": str(raw_idnum) if raw_idnum else None,
+            }
+
+        return None
+
+    def _force_read_rows(
+        self,
+        endpoint: str,
+        params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        result = self.client._rest_adapter.get(
+            endpoint=endpoint,
+            ep_params=params,
+            force_refresh=True,
+        )
+
+        if isinstance(result.data, dict):
+            return [result.data]
+
+        if isinstance(result.data, list):
+            return [
+                row
+                for row in result.data
+                if isinstance(row, dict)
+            ]
+
+        return []
+
+    def _resolve_sales_tax_id(
+        self,
+        company_code_id: int,
+        sales_tax_code: str,
+    ) -> int:
+        normalized_code = sales_tax_code.strip()
+
+        commissions = self._force_read_rows(
+            "CommissioningRead/Commissions",
+            {
+                "companyCodeId": company_code_id,
+                "limit": 100,
+                "offset": 0,
+                "includeCommissionItems": "true",
+                "showNullValues": "true",
+            },
+        )
+
+        matching_ids = set()
+
+        for commission in commissions:
+            positions = (
+                commission.get("CommissionItems")
+                or []
+            )
+
+            for position in positions:
+                sales_tax = position.get("SalesTax")
+
+                if not isinstance(sales_tax, dict):
+                    continue
+
+                code = str(
+                    self._row_value(
+                        sales_tax,
+                        "Code",
+                    )
+                    or ""
+                ).strip()
+
+                if code.casefold() != normalized_code.casefold():
+                    continue
+
+                raw_id = self._row_value(
+                    sales_tax,
+                    "Id",
+                )
+
+                try:
+                    matching_ids.add(int(raw_id))
+                except (TypeError, ValueError):
+                    continue
+
+        if not matching_ids:
+            raise RuntimeError(
+                f"Der Umsatzsteuercode {normalized_code} wurde im Buchwerk nicht gefunden"
+            )
+
+        if len(matching_ids) > 1:
+            raise RuntimeError(
+                f"Der Umsatzsteuercode {normalized_code} ist in Wowiport nicht eindeutig"
+            )
+
+        return matching_ids.pop()
+
+    def _resolve_creditor_id(
+        self,
+        commission: Commission,
+        company_code_id: int,
+    ) -> int:
+        craftsman_id = getattr(
+            commission,
+            "craftsman_erp_id",
+            None,
+        )
+
+        if not craftsman_id:
+            assigned_user = getattr(
+                commission,
+                "user",
+                None,
+            )
+            craftsman_id = getattr(
+                assigned_user,
+                "craftsman_erp_id",
+                None,
+            )
+
+        if not craftsman_id:
+            raise RuntimeError(
+                "Dem Auftrag ist kein Wowiport-Handwerker zugeordnet"
+            )
+
+        craftsmen = (
+            self.client.get_commissioning_craftsmen(
+                company_code_id=company_code_id,
+                craftsman_id=craftsman_id,
+                limit=10,
+                show_null_values=True,
+            )
+        )
+
+        matches = [
+            craftsman
+            for craftsman in craftsmen
+            if int(craftsman.id_) == int(craftsman_id)
+        ]
+
+        if not matches:
+            raise RuntimeError(
+                f"Der Wowiport-Handwerker {craftsman_id} wurde im ausgewählten Buchwerk nicht gefunden"
+            )
+
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Der Wowiport-Handwerker {craftsman_id} ist nicht eindeutig"
+            )
+
+        raw_creditor_id = getattr(
+            matches[0],
+            "creditor_id",
+            None,
+        )
+
+        try:
+            creditor_id = int(raw_creditor_id)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Dem Wowiport-Handwerker {craftsman_id} ist kein Kreditor zugeordnet"
+            ) from exc
+
+        if creditor_id <= 0:
+            raise RuntimeError(
+                f"Dem Wowiport-Handwerker {craftsman_id} ist kein gültiger Kreditor zugeordnet"
+            )
+
+        commission.creditor_erp_id = creditor_id
+
+        return creditor_id
+
+    def _resolve_company_code_id(
+        self,
+        company_code_code: str,
+    ) -> int:
+        normalized_code = company_code_code.strip()
+
+        rows = self._force_read_rows(
+            "AccountancyMasterData/CompanyCodes",
+            {
+                "companyCodeCode": normalized_code,
+                "limit": 10,
+                "offset": 0,
+                "showNullValues": "true",
+            },
+        )
+
+        matches = [
+            row
+            for row in rows
+            if str(
+                self._row_value(row, "Code")
+                or ""
+            ).strip()
+            == normalized_code
+        ]
+
+        if not matches:
+            raise RuntimeError(
+                f"Das Buchwerk {normalized_code} ist für diesen OPENWOWI-Zugang nicht freigegeben"
+            )
+
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Das Buchwerk {normalized_code} ist in Wowiport nicht eindeutig"
+            )
+
+        raw_id = self._row_value(
+            matches[0],
+            "Id",
+        )
+
+        try:
+            company_code_id = int(raw_id)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Wowiport hat für das Buchwerk {normalized_code} keine gültige ID geliefert"
+            ) from exc
+
+        return company_code_id
+
+    def _resolve_craft_process_type_id(
+        self,
+        process_type_code: str,
+    ) -> int:
+        normalized_code = process_type_code.strip()
+
+        process_types = (
+            self.client.get_commissioning_craft_process_types(
+                show_null_values=True
+            )
+        )
+
+        matches = [
+            process_type
+            for process_type in process_types
+            if str(process_type.code or "").strip().casefold()
+            == normalized_code.casefold()
+        ]
+
+        if not matches:
+            raise RuntimeError(
+                f"Die Vorgangsart {normalized_code} wurde in Wowiport nicht gefunden"
+            )
+
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Die Vorgangsart {normalized_code} ist in Wowiport nicht eindeutig"
+            )
+
+        return int(matches[0].id_)
+
+    def _resolve_craft_process_status_id(
+        self,
+        company_code_id: int,
+        process_status_code: str,
+    ) -> int:
+        normalized_code = process_status_code.strip()
+
+        rows = self._force_read_rows(
+            "CommissioningRead/CraftProcesses",
+            {
+                "companyCodeId": company_code_id,
+                "limit": 100,
+                "offset": 0,
+                "showNullValues": "true",
+            },
+        )
+
+        matching_ids = set()
+
+        for row in rows:
+            status = self._row_value(
+                row,
+                "CraftProcessStatus",
+            )
+
+            if not isinstance(status, dict):
+                continue
+
+            status_code = str(
+                self._row_value(status, "Code")
+                or ""
+            ).strip()
+
+            if status_code.casefold() != normalized_code.casefold():
+                continue
+
+            raw_id = self._row_value(
+                status,
+                "Id",
+            )
+
+            try:
+                matching_ids.add(int(raw_id))
+            except (TypeError, ValueError):
+                continue
+
+        if not matching_ids:
+            raise RuntimeError(
+                f"Der Vorgangsstatus {normalized_code} wurde für das Buchwerk nicht gefunden"
+            )
+
+        if len(matching_ids) > 1:
+            raise RuntimeError(
+                f"Der Vorgangsstatus {normalized_code} ist in Wowiport nicht eindeutig"
+            )
+
+        return matching_ids.pop()
+
+    def _commission_company_code_id(
+        self,
+        commission: Commission,
+    ) -> int:
+        raw_payload = commission.raw_payload or {}
+        company_code_code = str(
+            raw_payload.get("company_code_code")
+            or ""
+        ).strip()
+
+        if not company_code_code:
+            raise RuntimeError(
+                "Für den Auftrag wurde kein Buchwerk ausgewählt"
+            )
+
+        company_code_id = self._resolve_company_code_id(
+            company_code_code
+        )
+
+        if hasattr(commission, "company_code_erp_id"):
+            commission.company_code_erp_id = company_code_id
+
+        return company_code_id
+
+    def _find_crafts_process_by_idnum(
+        self,
+        id_num: str,
+    ) -> dict[str, Any] | None:
+        rows = self._force_read_rows(
+            "CommissioningRead/CraftProcesses",
+            {
+                "idNum": id_num,
+                "limit": 10,
+                "offset": 0,
+                "showNullValues": "true",
+            },
+        )
+
+        matches = [
+            row
+            for row in rows
+            if str(self._row_value(row, "IdNum") or "") == id_num
+        ]
+
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Mehrere Wowiport-Vorgänge mit IdNum {id_num} gefunden"
+            )
+
+        return self._identity_from_rows(matches)
+
+    def _find_crafts_process_by_id(
+        self,
+        erp_id: int,
+    ) -> dict[str, Any] | None:
+        rows = self._force_read_rows(
+            "CommissioningRead/CraftProcesses",
+            {
+                "id": erp_id,
+                "limit": 10,
+                "offset": 0,
+                "showNullValues": "true",
+            },
+        )
+
+        return self._identity_from_rows(rows)
+
+    def _ensure_crafts_process(
+            self,
+            commission: Commission,
+            resolved_company_code_id: int,
+            resolved_process_type_id: int,
+            resolved_process_status_id: int,
+    ) -> int:
+        if commission.crafts_process_erp_id:
+            existing = self._find_crafts_process_by_id(
+                commission.crafts_process_erp_id
+            )
+
+            if existing is not None:
+                return existing["id"]
+
+            commission.crafts_process_erp_id = None
+
+        public_id = str(commission.public_id)
+        normalized_public_id = "".join(
+            character
+            for character in public_id
+            if character.isalnum()
+        )
+        crafts_process_idnum = f"DL-{normalized_public_id}"
+
+        existing = self._find_crafts_process_by_idnum(
+            crafts_process_idnum
+        )
+
+        if existing is not None:
+            commission.crafts_process_erp_id = existing["id"]
+            return existing["id"]
+
+        resolved_reference_ids = self.resolve_commission_reference_ids(
+            commission
+        )
+
+        reference_ids = (
+            resolved_reference_ids.copy()
+            if isinstance(resolved_reference_ids, dict)
+            else {}
+        )
+
+        reference_ids.setdefault(
+            "company_code_id",
+            getattr(commission, "company_code_erp_id", None),
+        )
+        reference_ids.setdefault(
+            "economic_unit_id",
+            getattr(commission, "economic_unit_erp_id", None),
+        )
+        reference_ids.setdefault(
+            "building_id",
+            getattr(commission, "building_erp_id", None)
+            or getattr(commission, "building_id", None),
+        )
+        reference_ids.setdefault(
+            "use_unit_id",
+            getattr(commission, "use_unit_erp_id", None)
+            or getattr(commission, "use_unit_id", None),
+        )
+        reference_ids.setdefault(
+            "license_agreement_id",
+            getattr(commission, "license_agreement_erp_id", None)
+            or getattr(commission, "license_agreement_id", None),
+        )
+        short_description = (
+            commission.title
+            or commission.description
+            or "Auftrag aus DatLäuft"
+        )[:255]
+
+        process_from = (
+                commission.recording_date
+                or utc_now()
+        )
+
+        process_from_value = (
+            process_from.date()
+            if isinstance(process_from, datetime)
+            else process_from
+        )
+
+        result = self.client.create_commissioning_crafts_process(
+            short_description_crafts_process=short_description,
+            crafts_process_type_id=resolved_process_type_id,
+            company_code_id=resolved_company_code_id,
+            crafts_process_status_id=resolved_process_status_id,
+            economic_unit_id=reference_ids.get("economic_unit_id"),
+            building_id=reference_ids.get("building_id"),
+            use_unit_id=reference_ids.get("use_unit_id"),
+            license_agreement_id=reference_ids.get(
+                "license_agreement_id"
+            ),
+            crafts_process_from=process_from_value,
+            id_num=crafts_process_idnum,
+            description=commission.description,
+        )
+
+        identity = self._identity_from_rows(
+            self._result_rows(result)
+        )
+
+        if identity is None:
+            identity = self._find_crafts_process_by_idnum(
+                crafts_process_idnum
+            )
+
+        if identity is None:
+            raise RuntimeError(
+                "Wowiport hat den Vorgang angelegt, aber keine Vorgangs-ID zurückgegeben"
+            )
+
+        commission.crafts_process_erp_id = identity["id"]
+        return identity["id"]
+
+    def _find_existing_commission(
+        self,
+        crafts_process_id: int,
+        external_identification_number: str,
+    ) -> dict[str, Any] | None:
+        rows = self._force_read_rows(
+            "CommissioningRead/Commissions",
+            {
+                "craftsProcessId": crafts_process_id,
+                "limit": 100,
+                "offset": 0,
+                "showNullValues": "true",
+                "includeCommissionDetails": "true",
+            },
+        )
+
+        matches = [
+            row
+            for row in rows
+            if str(
+                self._row_value(
+                    row,
+                    "ExternalIdentificationNumber",
+                )
+                or ""
+            )
+            == external_identification_number
+        ]
+
+        if len(matches) > 1:
+            raise RuntimeError(
+                "Mehrere Wowiport-Aufträge mit derselben externen Kennung gefunden"
+            )
+
+        return self._identity_from_rows(matches)
+
+    def _commission_positions_payload(
+            self,
+            commission: Commission,
+            resolved_sales_tax_id: int,
+    ) -> list[dict[str, Any]]:
+        if not commission.positions:
+            raise RuntimeError(
+                "Der Auftrag enthält keine Auftragsposition"
+            )
+
+        position_payloads = []
+
+        for position_index, position in enumerate(
+            commission.positions,
+            start=1,
+        ):
+            payload = dict(
+                position.to_erp_payload()
+            )
+
+            commission_text = str(
+                payload.get("CommissionText")
+                or getattr(
+                    position,
+                    "commission_text",
+                    None,
+                )
+                or getattr(
+                    position,
+                    "description",
+                    None,
+                )
+                or ""
+            ).strip()
+
+            if not commission_text:
+                raise RuntimeError(
+                    f"Auftragsposition {position_index} enthält keinen Auftragstext"
+                )
+
+            raw_units = (
+                payload.get("Units")
+                if payload.get("Units") is not None
+                else getattr(position, "units", 1)
+            )
+
+            try:
+                units = float(raw_units)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"Auftragsposition {position_index} enthält keine gültige Menge"
+                ) from exc
+
+            if units <= 0:
+                raise RuntimeError(
+                    f"Auftragsposition {position_index} muss eine positive Menge besitzen"
+                )
+
+            raw_unit_price = payload.get(
+                "UnitPrice"
+            )
+            raw_net_amount = payload.get(
+                "NetAmount"
+            )
+            raw_gross_amount = payload.get(
+                "GrossAmount"
+            )
+
+            payload["GrossAmount"] = float(
+                raw_gross_amount
+                if raw_gross_amount is not None
+                else 0.0
+            )
+            payload["SalesTaxId"] = (
+                resolved_sales_tax_id
+            )
+            payload["TransferToCraftsmanPortalWithoutCosts"] = True
+
+
+            payload["CommissionText"] = commission_text
+            payload["Units"] = units
+            payload["PositionNumber"] = (
+                payload.get("PositionNumber")
+                or position_index
+            )
+            payload["UnitPrice"] = float(
+                raw_unit_price
+                if raw_unit_price is not None
+                else 0.0
+            )
+            payload["NetAmount"] = float(
+                raw_net_amount
+                if raw_net_amount is not None
+                else 0.0
+            )
+
+            service_catalogue_id = payload.get(
+                "ServiceCatalogueId"
+            )
+            craft_activity_id = payload.get(
+                "CraftActivityId"
+            )
+
+            if not service_catalogue_id:
+                raise RuntimeError(
+                    f"Auftragsposition {position_index} enthält keine Leistungskatalogposition"
+                )
+
+            if not craft_activity_id:
+                raise RuntimeError(
+                    f"Auftragsposition {position_index} enthält kein Gewerk"
+                )
+
+            position_payloads.append(payload)
+
+        return position_payloads
+
+    def create_commission_waiting_for_acceptance(
+            self,
+            commission: Commission,
+    ) -> Any:
+        raw_payload = commission.raw_payload or {}
+
+        process_type_code = str(
+            raw_payload.get("crafts_process_type_code")
+            or ""
+        ).strip()
+        process_status_code = str(
+            raw_payload.get("crafts_process_status_code")
+            or ""
+        ).strip()
+
+        sales_tax_code = str(
+            raw_payload.get("sales_tax_code")
+            or ""
+        ).strip()
+
+        if not sales_tax_code:
+            raise RuntimeError(
+                "Für den Auftrag wurde kein Umsatzsteuercode ausgewählt"
+            )
+
+        if not process_type_code:
+            raise RuntimeError(
+                "Für den Auftrag wurde keine Vorgangsart ausgewählt"
+            )
+
+        if not process_status_code:
+            raise RuntimeError(
+                "Für den Auftrag wurde kein Vorgangsstatus ausgewählt"
+            )
+
+        resolved_company_code_id = (
+            self._commission_company_code_id(
+                commission
+            )
+        )
+
+        resolved_sales_tax_id = (
+            self._resolve_sales_tax_id(
+                resolved_company_code_id,
+                sales_tax_code,
+            )
+        )
+        resolved_creditor_id = self._resolve_creditor_id(
+            commission,
+            resolved_company_code_id,
+        )
+        resolved_process_type_id = (
+            self._resolve_craft_process_type_id(
+                process_type_code
+            )
+        )
+        resolved_process_status_id = (
+            self._resolve_craft_process_status_id(
+                resolved_company_code_id,
+                process_status_code,
+            )
+        )
+
+        crafts_process_id = self._ensure_crafts_process(
+            commission,
+            resolved_company_code_id,
+            resolved_process_type_id,
+            resolved_process_status_id,
+        )
+
+        external_identification_number = str(
+            commission.erp_external_identification_number
+            or commission.public_id
+        )
+
+        commission.erp_external_identification_number = (
+            external_identification_number
+        )
+
+        existing_commission = self._find_existing_commission(
+            crafts_process_id,
+            external_identification_number,
+        )
+
+        if existing_commission is not None:
+            return Result(
+                200,
+                message="Auftrag bereits vorhanden",
+                data={
+                    "Id": existing_commission["id"],
+                    "IdNum": existing_commission["id_num"],
+                },
+            )
+
+        recording_date = (
+            commission.recording_date.date()
+            if commission.recording_date
+            else utc_now().date()
+        )
+        execution_from = (
+            commission.execution_from.date()
+            if commission.execution_from
+            else None
+        )
+        execution_to = (
+            commission.execution_to.date()
+            if commission.execution_to
+            else None
+        )
+
+        position_payloads = (
+            self._commission_positions_payload(
+                commission,
+                resolved_sales_tax_id,
+            )
+        )
+
+        result = self.client.create_commissioning_commission_wait_for_craftsman_feedback(
+            crafts_process_id=crafts_process_id,
+            external_identification_number=external_identification_number,
+            commission_type_id=commission.commission_type_erp_id,
+            creditor_id=resolved_creditor_id,
+            use_unit_id=commission.use_unit_id,
+            building_id=commission.building_erp_id,
+            license_agreement_id=commission.license_agreement_id,
+            responsible_official_repair_id=commission.responsible_official_repair_erp_id,
+            department_id=commission.department_erp_id,
+            recording_date=recording_date,
+            execution_from=execution_from,
+            execution_to=execution_to,
+            positions=position_payloads,
+            short_description_crafts_process=commission.title,
+        )
+
+        identity = self._identity_from_rows(
+            self._result_rows(result)
+        )
+
+        if identity is None:
+            identity = self._find_existing_commission(
+                crafts_process_id,
+                external_identification_number,
+            )
+
+        if identity is None:
+            raise RuntimeError(
+                "Wowiport hat den Auftrag angelegt, aber keine Auftrags-ID zurückgegeben"
+            )
+
+        return Result(
+            getattr(result, "status_code", 200),
+            message=getattr(
+                result,
+                "message",
+                "Auftrag angelegt",
+            ),
+            data={
+                "Id": identity["id"],
+                "IdNum": identity["id_num"],
+            },
+        )
+
+    def mark_commission_accepted(self, erp_id: int) -> None:
+        self.client.set_commissioning_commission_to_accepted(commission_id=erp_id)
+
+    def mark_commission_await_invoice(self, erp_id: int) -> None:
+        self.client.set_commissioning_commission_to_await_invoice(commission_id=erp_id)
+
     def get_use_unit(self, use_unit_id: int | None) -> UseUnit | None:
         if not use_unit_id:
             return None
@@ -256,6 +1158,131 @@ class WowiportService:
             return None
 
         return use_unit_list[0]
+
+    def resolve_commission_reference_ids(
+        self,
+        commission: Commission,
+    ) -> None:
+        license_agreement = None
+        use_unit = None
+        building = None
+
+        if commission.license_agreement_idnum:
+            license_agreements = (
+                self.client.get_license_agreements(
+                    license_agreement_idnum=(
+                        commission.license_agreement_idnum
+                    ),
+                    limit=2,
+                )
+            )
+            license_agreement = _single_idnum_match(
+                license_agreements,
+                commission.license_agreement_idnum,
+                "Mietvertrag",
+            )
+            license_agreement_id = _as_int(
+                _attr(license_agreement, "id_")
+            )
+            commission.license_agreement_id = (
+                _merge_reference_id(
+                    commission.license_agreement_id,
+                    license_agreement_id,
+                    "Mietvertrag",
+                )
+            )
+
+            agreement_use_unit = _attr(
+                license_agreement,
+                "use_unit",
+            )
+            agreement_use_unit_id = _as_int(
+                _attr(agreement_use_unit, "id_")
+            )
+            commission.use_unit_id = _merge_reference_id(
+                commission.use_unit_id,
+                agreement_use_unit_id,
+                "Nutzungseinheit des Mietvertrags",
+            )
+
+            if not commission.use_unit_idnum:
+                commission.use_unit_idnum = _clean_id_num(
+                    _attr(agreement_use_unit, "id_num")
+                )
+
+        if commission.use_unit_idnum:
+            use_units = self.client.get_use_units(
+                use_unit_idnum=commission.use_unit_idnum,
+                limit=2,
+            )
+            use_unit = _single_idnum_match(
+                use_units,
+                commission.use_unit_idnum,
+                "Nutzungseinheit",
+            )
+            use_unit_id = _as_int(
+                _attr(use_unit, "id_")
+            )
+            commission.use_unit_id = _merge_reference_id(
+                commission.use_unit_id,
+                use_unit_id,
+                "Nutzungseinheit",
+            )
+
+            use_unit_building = _attr(
+                use_unit,
+                "building_land",
+            )
+            use_unit_building_id = _as_int(
+                _attr(use_unit_building, "id_")
+            )
+            commission.building_erp_id = (
+                _merge_reference_id(
+                    commission.building_erp_id,
+                    use_unit_building_id,
+                    "Gebäude der Nutzungseinheit",
+                )
+            )
+
+            if not commission.building_idnum:
+                commission.building_idnum = _clean_id_num(
+                    _attr(use_unit_building, "id_num")
+                )
+
+        if commission.building_idnum:
+            buildings = self.client.get_building_lands(
+                building_land_idnum=(
+                    commission.building_idnum
+                ),
+                limit=2,
+            )
+            building = _single_idnum_match(
+                buildings,
+                commission.building_idnum,
+                "Gebäude",
+            )
+            building_id = _as_int(
+                _attr(building, "id_")
+            )
+            commission.building_erp_id = (
+                _merge_reference_id(
+                    commission.building_erp_id,
+                    building_id,
+                    "Gebäude",
+                )
+            )
+
+        if not any(
+            [
+                commission.use_unit_id,
+                commission.building_erp_id,
+                commission.license_agreement_id,
+            ]
+        ):
+            raise RuntimeError(
+                "Die Objektangabe konnte nicht in eine "
+                "OPENWOWI-ID aufgelöst werden."
+            )
 
     def get_commission_context(
             self,
@@ -430,42 +1457,159 @@ class WowiportService:
         )
 
 
-def sync_commission_from_erp(erp_id: int) -> Commission | None:
+def configured_commission_type_ids() -> set[int]:
+    return _integer_set(
+        settings.get(SettingKeys.WOWI_ALLOWED_COMMISSION_TYPE_IDS)
+    )
+
+
+def configured_commission_status_ids() -> set[int]:
+    return _integer_set(
+        settings.get(SettingKeys.WOWI_VISIBLE_COMMISSION_STATUS_IDS)
+    )
+
+
+def sync_commission_types_from_wowiport() -> dict[str, int]:
+    service = WowiportService()
+    payloads = service.client.get_commissioning_commission_types(
+        include_commission_control=True,
+        show_null_values=True,
+    ) or []
+
+    existing_items = {
+        item.erp_id: item
+        for item in WowiCommissionType.query.all()
+    }
+    seen_ids = set()
+    created = 0
+    updated = 0
+
+    for payload in payloads:
+        erp_id = int(_read_first(payload, "id_", "id", "Id"))
+        seen_ids.add(erp_id)
+
+        item = existing_items.get(erp_id)
+        if item is None:
+            item = WowiCommissionType(erp_id=erp_id)
+            db.session.add(item)
+            created += 1
+        else:
+            updated += 1
+
+        item.code = _first_text(
+            _read_first(payload, "code", "Code"),
+            _read_first(payload, "name", "Name"),
+            str(erp_id),
+        )
+        item.active = True
+        item.synced_at = utc_now()
+
+    for erp_id, item in existing_items.items():
+        if erp_id not in seen_ids:
+            item.active = False
+            item.synced_at = utc_now()
+
+    return {
+        "seen": len(seen_ids),
+        "created": created,
+        "updated": updated,
+    }
+
+
+def sync_commission_from_erp(
+    erp_id: int,
+) -> Commission | None:
     service = WowiportService()
     payload = service.get_commission(erp_id)
 
     if payload is None:
         return mark_commission_deleted(erp_id)
 
-    commission_status = _attr(payload, "commission_status")
-    status_id = _as_int(_attr(commission_status, "id_"))
-    approved_status_id = settings.get(SettingKeys.WOWI_APPROVED_STATUS_ID)
-    existing = db.session.query(Commission).filter_by(erp_id=erp_id).one_or_none()
+    existing = Commission.query.filter_by(
+        erp_id=erp_id
+    ).one_or_none()
+    allowed_type_ids = configured_commission_type_ids()
+    visible_status_ids = configured_commission_status_ids()
 
-    if status_id != approved_status_id and existing is None:
-        current_app.logger.info("commission_ignored erp_id=%s status_id=%s", erp_id, status_id)
-        return None
+    if not allowed_type_ids or not visible_status_ids:
+        current_app.logger.warning(
+            "commission_sync_configuration_missing erp_id=%s",
+            erp_id,
+        )
+        return existing
 
-    commission = upsert_commission(payload)
+    status_id = _commission_status_id(payload)
+    commission_type_id = _commission_type_id(payload)
+
+    if status_id not in visible_status_ids:
+        return (
+            mark_commission_deleted(erp_id)
+            if existing is not None
+            else None
+        )
+
+    if commission_type_id not in allowed_type_ids:
+        return (
+            mark_commission_deleted(erp_id)
+            if existing is not None
+            else None
+        )
+
+    sync_signature = _commission_sync_signature(
+        payload
+    )
+
+    if _commission_is_unchanged(
+        existing,
+        sync_signature,
+    ):
+        return existing
+
+    commission = upsert_commission(
+        payload,
+        sync_signature=sync_signature,
+    )
 
     try:
-        context = service.get_commission_context(erp_id=erp_id, commission_object=payload)
-        apply_commission_context(commission, context)
-    except Exception as ex:
-        current_app.logger.exception("commission_context_sync_failed erp_id=%s exc:%s", erp_id, str(ex))
+        context = service.get_commission_context(
+            erp_id=erp_id,
+            commission_object=payload,
+        )
+        apply_commission_context(
+            commission,
+            context,
+        )
+    except Exception as exc:
+        current_app.logger.exception(
+            "commission_context_sync_failed erp_id=%s exc=%s",
+            erp_id,
+            str(exc),
+        )
 
     return commission
 
 
-def sync_commissions_from_wowiport_regular() -> dict[str, int]:
+def sync_commissions_from_wowiport_regular(
+    full: bool = False,
+) -> dict[str, int]:
     service = WowiportService()
+    visible_status_ids = configured_commission_status_ids()
+    allowed_type_ids = configured_commission_type_ids()
+    date_field = settings.get(
+        SettingKeys.SYNC_COMMISSION_DATE_FIELD
+    )
 
-    status_id = settings.get(SettingKeys.WOWI_APPROVED_STATUS_ID)
-    date_from, date_to = current_business_year_range()
-    date_field = settings.get(SettingKeys.SYNC_COMMISSION_DATE_FIELD)
+    if full:
+        date_from, date_to = (
+            current_business_year_range()
+        )
+    else:
+        date_from, date_to = (
+            quick_reconciliation_range()
+        )
 
-    craftsman_erp_ids = [
-        row[0]
+    craftsman_erp_ids = {
+        int(row[0])
         for row in db.session.query(User.craftsman_erp_id)
         .filter(
             User.is_active_flag.is_(True),
@@ -473,110 +1617,140 @@ def sync_commissions_from_wowiport_regular() -> dict[str, int]:
         )
         .distinct()
         .all()
-    ]
+    }
 
     result = {
         "craftsmen": len(craftsman_erp_ids),
+        "statuses": len(visible_status_ids),
         "seen": 0,
         "synced": 0,
         "ignored_status": 0,
+        "ignored_type": 0,
         "ignored_business_year": 0,
         "ignored_unknown_craftsman": 0,
         "deleted_marked": 0,
         "errors": 0,
+        "configuration_missing": 0,
+        "reconciliation_skipped": 0,
+        "unchanged": 0,
     }
 
+    if not visible_status_ids or not allowed_type_ids:
+        result["configuration_missing"] = 1
+        current_app.logger.error(
+            "regular_commission_sync_configuration_missing "
+            "visible_status_ids=%s allowed_type_ids=%s",
+            sorted(visible_status_ids),
+            sorted(allowed_type_ids),
+        )
+        return result
+
     synced_erp_ids = set()
+    reconciliation_complete = True
     limit = 100
 
-    for craftsman_erp_id in craftsman_erp_ids:
-        offset = 0
+    for craftsman_erp_id in sorted(craftsman_erp_ids):
+        for status_id in sorted(visible_status_ids):
+            offset = 0
 
-        while True:
-            current_app.logger.info(
-                "regular_commission_sync_page craftsman_erp_id=%s offset=%s "
-                "limit=%s status_id=%s date_from=%s date_to=%s",
-                craftsman_erp_id,
-                offset,
-                limit,
-                status_id,
-                date_from.date(),
-                date_to.date(),
-            )
-
-            try:
-                payloads = service.get_commissions_for_regular_sync(
-                    status_id=status_id,
-                    craftsman_erp_id=craftsman_erp_id,
-                    date_from=date_from,
-                    date_to=date_to,
-                    limit=limit,
-                    offset=offset,
-                )
-            except Exception as exc:
-                current_app.logger.exception(
-                    "regular_commission_sync_page_failed craftsman_erp_id=%s offset=%s ex %s",
+            while True:
+                current_app.logger.info(
+                    "regular_commission_sync_page "
+                    "full=%s craftsman_erp_id=%s "
+                    "offset=%s limit=%s status_id=%s "
+                    "date_from=%s date_to=%s",
+                    full,
                     craftsman_erp_id,
                     offset,
-                    str(exc)
+                    limit,
+                    status_id,
+                    date_from.date(),
+                    date_to.date(),
                 )
-                result["errors"] += 1
-                break
-
-            if not payloads:
-                break
-
-            for payload in payloads:
-                result["seen"] += 1
 
                 try:
-                    sync_result = sync_commission_payload_from_erp(
-                        payload=payload,
-                        approved_status_id=status_id,
+                    payloads = service.get_commissions_for_regular_sync(
+                        status_id=status_id,
+                        craftsman_erp_id=craftsman_erp_id,
                         date_from=date_from,
                         date_to=date_to,
-                        date_field=date_field,
-                        allowed_craftsman_erp_ids=set(craftsman_erp_ids),
-                        service=service,
+                        limit=limit,
+                        offset=offset,
                     )
-
-                    erp_id = getattr(payload, "id_", None)
-                    if sync_result == "synced" and erp_id is not None:
-                        synced_erp_ids.add(int(erp_id))
-
-                    if sync_result == "synced":
-                        result["synced"] += 1
-                    elif sync_result == "ignored_status":
-                        result["ignored_status"] += 1
-                    elif sync_result == "ignored_business_year":
-                        result["ignored_business_year"] += 1
-                    elif sync_result == "ignored_unknown_craftsman":
-                        result["ignored_unknown_craftsman"] += 1
-                    elif sync_result == "deleted_marked":
-                        result["deleted_marked"] += 1
-
-                except Exception as ex:
+                except Exception as exc:
                     current_app.logger.exception(
-                        "regular_commission_sync_item_failed erp_id=%s ex %s",
-                        getattr(payload, "id_", None), str(ex)
+                        "regular_commission_sync_page_failed "
+                        "craftsman_erp_id=%s status_id=%s offset=%s exc=%s",
+                        craftsman_erp_id,
+                        status_id,
+                        offset,
+                        str(exc),
                     )
                     result["errors"] += 1
+                    reconciliation_complete = False
+                    break
 
-            db.session.commit()
+                if not payloads:
+                    break
 
-            if len(payloads) < limit:
-                break
+                for payload in payloads:
+                    result["seen"] += 1
 
-            offset += limit
+                    try:
+                        with db.session.begin_nested():
+                            sync_result = sync_commission_payload_from_erp(
+                                payload=payload,
+                                visible_status_ids=visible_status_ids,
+                                allowed_type_ids=allowed_type_ids,
+                                date_from=date_from,
+                                date_to=date_to,
+                                date_field=date_field,
+                                allowed_craftsman_erp_ids=craftsman_erp_ids,
+                                service=service,
+                            )
 
-    mark_missing_regular_sync_commissions_deleted(
-        date_from=date_from,
-        date_to=date_to,
-        date_field=date_field,
-        allowed_craftsman_erp_ids=set(craftsman_erp_ids),
-        synced_erp_ids=synced_erp_ids,
-        result=result,
-    )
+                        erp_id = _as_int(
+                            _read_first(payload, "id_", "id", "Id")
+                        )
+
+                        if (
+                                sync_result
+                                in {"synced", "unchanged"}
+                                and erp_id is not None
+                        ):
+                            synced_erp_ids.add(erp_id)
+
+                        if sync_result in result:
+                            result[sync_result] += 1
+                    except Exception as exc:
+                        current_app.logger.exception(
+                            "regular_commission_sync_item_failed "
+                            "erp_id=%s exc=%s",
+                            _read_first(payload, "id_", "id", "Id"),
+                            str(exc),
+                        )
+                        result["errors"] += 1
+                        reconciliation_complete = False
+
+                db.session.commit()
+
+                if len(payloads) < limit:
+                    break
+
+                offset += limit
+
+    if reconciliation_complete:
+        mark_missing_regular_sync_commissions_deleted(
+            date_from=date_from,
+            date_to=date_to,
+            date_field=date_field,
+            allowed_craftsman_erp_ids=craftsman_erp_ids,
+            visible_status_ids=visible_status_ids,
+            synced_erp_ids=synced_erp_ids,
+            result=result,
+        )
+    else:
+        result["reconciliation_skipped"] = 1
 
     db.session.commit()
     return result
@@ -584,51 +1758,123 @@ def sync_commissions_from_wowiport_regular() -> dict[str, int]:
 
 def sync_commission_payload_from_erp(
     payload: wowipy.CommissioningCommission,
-    approved_status_id: int,
+    visible_status_ids: set[int],
+    allowed_type_ids: set[int],
     date_from: datetime,
     date_to: datetime,
     date_field: str,
     allowed_craftsman_erp_ids: set[int],
     service: WowiportService,
 ) -> str:
-    erp_id = int(payload.id_)
+    erp_id = int(
+        _read_first(payload, "id_", "id", "Id")
+    )
+    existing = Commission.query.filter_by(
+        erp_id=erp_id
+    ).one_or_none()
+    status_id = _commission_status_id(payload)
+    commission_type_id = _commission_type_id(
+        payload
+    )
 
-    status_id = payload.commission_status.id_ if payload.commission_status else None
-    existing = db.session.query(Commission).filter_by(erp_id=erp_id).one_or_none()
-
-    craftsman_erp_id = None
-    if payload.craftsman is not None:
-        craftsman_erp_id = payload.craftsman.id_
+    craftsman = _read_first(
+        payload,
+        "craftsman",
+        "Craftsman",
+    )
+    craftsman_erp_id = _as_int(
+        _read_first(craftsman, "id_", "id", "Id")
+    )
 
     if craftsman_erp_id not in allowed_craftsman_erp_ids:
         if existing is not None:
             mark_commission_deleted(erp_id)
             return "deleted_marked"
+
         return "ignored_unknown_craftsman"
 
-    if status_id != approved_status_id:
+    if status_id not in visible_status_ids:
         if existing is not None:
             mark_commission_deleted(erp_id)
             return "deleted_marked"
+
         return "ignored_status"
 
-    commission_date = get_commission_business_year_date(payload, date_field)
-
-    if commission_date is None or not (date_from <= commission_date < date_to):
+    if commission_type_id not in allowed_type_ids:
         if existing is not None:
             mark_commission_deleted(erp_id)
             return "deleted_marked"
+
+        return "ignored_type"
+
+    commission_date = get_commission_business_year_date(
+        payload,
+        date_field,
+    )
+
+    if (
+        commission_date is None
+        or not date_from <= commission_date < date_to
+    ):
+        if existing is not None:
+            mark_commission_deleted(erp_id)
+            return "deleted_marked"
+
         return "ignored_business_year"
 
-    commission = upsert_commission(payload)
+    sync_signature = _commission_sync_signature(
+        payload
+    )
+
+    if _commission_is_unchanged(
+        existing,
+        sync_signature,
+    ):
+        return "unchanged"
+
+    commission = upsert_commission(
+        payload,
+        sync_signature=sync_signature,
+    )
 
     try:
-        context = service.get_commission_context(erp_id, payload)
-        apply_commission_context(commission, context)
-    except Exception as ex:
-        current_app.logger.exception("commission_context_sync_failed erp_id=%s ex %s", erp_id, ex)
+        context = service.get_commission_context(
+            erp_id=erp_id,
+            commission_object=payload,
+        )
+        apply_commission_context(
+            commission,
+            context,
+        )
+    except Exception as exc:
+        current_app.logger.exception(
+            "commission_context_sync_failed erp_id=%s exc=%s",
+            erp_id,
+            str(exc),
+        )
 
     return "synced"
+
+
+def quick_reconciliation_range() -> tuple[
+    datetime,
+    datetime,
+]:
+    lookback_days = max(
+        settings.get(
+            SettingKeys
+            .SYNC_QUICK_RECONCILIATION_LOOKBACK_DAYS
+        ),
+        1,
+    )
+    now = datetime.now()
+    start = now - timedelta(days=lookback_days)
+    end = now + timedelta(days=1)
+
+    return (
+        _as_naive_datetime(start),
+        _as_naive_datetime(end),
+    )
 
 
 def current_business_year_range() -> tuple[datetime, datetime]:
@@ -664,19 +1910,24 @@ def mark_missing_regular_sync_commissions_deleted(
     date_to: datetime,
     date_field: str,
     allowed_craftsman_erp_ids: set[int],
+    visible_status_ids: set[int],
     synced_erp_ids: set[int],
     result: dict[str, int],
 ) -> None:
-    if not allowed_craftsman_erp_ids:
+    if not allowed_craftsman_erp_ids or not visible_status_ids:
         return
 
-    query = db.session.query(Commission).filter(
+    query = Commission.query.filter(
+        Commission.erp_id.isnot(None),
         Commission.local_status != CommissionLocalStatus.DELETED.value,
         Commission.craftsman_erp_id.in_(allowed_craftsman_erp_ids),
+        Commission.status_id.in_(visible_status_ids),
     )
 
     if synced_erp_ids:
-        query = query.filter(Commission.erp_id.notin_(synced_erp_ids))
+        query = query.filter(
+            Commission.erp_id.notin_(synced_erp_ids)
+        )
 
     if date_field == "release_date":
         query = query.filter(
@@ -694,99 +1945,346 @@ def mark_missing_regular_sync_commissions_deleted(
             Commission.recording_date < date_to,
         )
 
-    approved_status_id = settings.get(SettingKeys.WOWI_APPROVED_STATUS_ID)
-
     for commission in query.all():
-        if commission.status_id == approved_status_id:
-            commission.local_status = CommissionLocalStatus.DELETED.value
-            commission.deleted_at = utc_now()
-            commission.synced_at = utc_now()
-            result["deleted_marked"] += 1
+        commission.local_status = CommissionLocalStatus.DELETED.value
+        commission.deleted_at = utc_now()
+        commission.synced_at = utc_now()
+        result["deleted_marked"] += 1
 
 
-def upsert_commission(payload: Any) -> Commission:
+def upsert_commission(
+    payload: Any,
+    sync_signature: str | None = None,
+) -> Commission:
     erp_id = int(_read_first(payload, "id_", "id", "Id"))
-    commission = db.session.query(Commission).filter_by(erp_id=erp_id).one_or_none()
+    commission = Commission.query.filter_by(erp_id=erp_id).one_or_none()
 
     if commission is None:
-        commission = Commission(erp_id=erp_id)
+        commission = Commission(
+            erp_id=erp_id,
+            source=CommissionSource.WOWIPORT.value,
+            erp_sync_state=CommissionSyncState.SYNCED.value,
+        )
         db.session.add(commission)
 
+    commission_status = _read_first(
+        payload,
+        "commission_status",
+        "CommissionStatus",
+    )
+    commission_type = _read_first(
+        payload,
+        "commission_type",
+        "CommissionType",
+    )
+    crafts_process = _read_first(
+        payload,
+        "crafts_process",
+        "CraftsProcess",
+    )
+    creditor = _read_first(payload, "creditor", "Creditor")
+    department = _read_first(payload, "department", "Department")
+    responsible_official = _read_first(
+        payload,
+        "responsible_official_repair",
+        "responsible_official",
+        "ResponsibleOfficialRepair",
+        "ResponsibleOfficial",
+    )
     craftsman = _read_first(payload, "craftsman", "Craftsman")
-    craftsman_erp_id = _read_first(craftsman, "id_", "id", "Id")
-
-    user = (
-        db.session.query(User)
-        .filter_by(craftsman_erp_id=craftsman_erp_id, is_active_flag=True)
-        .one_or_none()
-        if craftsman_erp_id is not None
-        else None
+    commission_items = (
+        _read_first(
+            payload,
+            "commission_items",
+            "CommissionItems",
+        )
+        or []
     )
 
-    commission_items = _read_first(payload, "commission_items", "CommissionItems") or []
-    first_item = commission_items[0] if commission_items else None
-    commission_status = _read_first(payload, "commission_status", "CommissionStatus")
+    craftsman_erp_id = _as_int(
+        _read_first(craftsman, "id_", "id", "Id")
+    )
 
-    item_internal_description = _read_first(
-        first_item,
-        "internal_description",
-        "InternalDescription",
+    user = None
+    if craftsman_erp_id is not None:
+        user = User.query.filter_by(
+            craftsman_erp_id=craftsman_erp_id,
+            is_active_flag=True,
+        ).one_or_none()
+
+    commission.erp_id = erp_id
+    commission.erp_idnum = _read_first(
+        payload,
+        "id_num",
+        "idNum",
+        "IdNum",
     )
-    item_commission_text = _read_first(
-        first_item,
-        "commission_text",
-        "CommissionText",
+    commission.code = _read_first(payload, "code", "Code")
+    commission.commission_type_erp_id = _as_int(
+        _read_first(commission_type, "id_", "id", "Id")
     )
-    item_code = _read_first(
-        first_item,
+    commission.crafts_process_erp_id = _as_int(
+        _read_first(crafts_process, "id_", "id", "Id")
+    )
+    commission.creditor_erp_id = _as_int(
+        _read_first(creditor, "id_", "id", "Id")
+    )
+    commission.department_erp_id = _as_int(
+        _read_first(department, "id_", "id", "Id")
+    )
+    commission.responsible_official_repair_erp_id = _as_int(
+        _read_first(
+            responsible_official,
+            "id_",
+            "id",
+            "Id",
+        )
+    )
+    commission.status_id = _as_int(
+        _read_first(commission_status, "id_", "id", "Id")
+    )
+    commission.status_code = _read_first(
+        commission_status,
         "code",
         "Code",
     )
-
-    commission.erp_idnum = _read_first(payload, "id_num", "idNum", "IdNum")
-    commission.code = _read_first(payload, "code", "Code")
-
-    commission.title = _first_text(
-        item_internal_description,
-        item_commission_text,
-        item_code,
-        _read_first(payload, "id_num", "idNum", "IdNum"),
-        f"Auftrag {erp_id}",
-    )
-
-    commission.description = _first_text(
-        item_commission_text,
-        item_internal_description,
-        _read_first(payload, "description", "Description"),
-    )
-
-    commission.damage_location = _read_first(payload, "damage_location", "DamageLocation")
-
-    commission.contact_person = _first_text(
-        _read_first(payload, "contact_person_on_site", "ContactPersonOnSite"),
-        _read_first(payload, "contact_person_engineering", "ContactPersonEngineering"),
-    )
-
-    commission.status_id = _read_first(commission_status, "id_", "id", "Id")
-    commission.status_code = _read_first(commission_status, "code", "Code")
     commission.craftsman_erp_id = craftsman_erp_id
     commission.user = user
-
-    commission.recording_date = parse_datetime(_read_first(payload, "recording_date", "RecordingDate"))
-    commission.release_date = parse_datetime(_read_first(payload, "release_date", "ReleaseDate"))
-    commission.execution_from = parse_datetime(_read_first(payload, "execution_from", "ExecutionFrom"))
-    commission.execution_to = parse_datetime(_read_first(payload, "execution_to", "ExecutionTo"))
-
+    commission.damage_location = _read_first(
+        payload,
+        "damage_location",
+        "DamageLocation",
+    )
+    commission.contact_person = _first_text(
+        _read_first(
+            payload,
+            "contact_person_on_site",
+            "ContactPersonOnSite",
+        ),
+        _read_first(
+            payload,
+            "contact_person_engineering",
+            "ContactPersonEngineering",
+        ),
+    )
+    commission.recording_date = parse_datetime(
+        _read_first(payload, "recording_date", "RecordingDate")
+    )
+    commission.release_date = parse_datetime(
+        _read_first(payload, "release_date", "ReleaseDate")
+    )
+    commission.execution_from = parse_datetime(
+        _read_first(payload, "execution_from", "ExecutionFrom")
+    )
+    commission.execution_to = parse_datetime(
+        _read_first(payload, "execution_to", "ExecutionTo")
+    )
     commission.deleted_at = None
     commission.synced_at = utc_now()
 
-    if not commission.local_status:
-        commission.local_status = CommissionLocalStatus.OPEN.value
+    if not commission.source:
+        commission.source = CommissionSource.WOWIPORT.value
 
-    if commission.local_status == CommissionLocalStatus.DELETED.value:
-        commission.local_status = CommissionLocalStatus.OPEN.value
+    if commission.erp_sync_state not in {
+        CommissionSyncState.PENDING.value,
+        CommissionSyncState.FAILED.value,
+    }:
+        commission.erp_sync_state = CommissionSyncState.SYNCED.value
+        commission.erp_sync_message = None
+        commission.local_status = ERP_LOCAL_STATUS.get(
+            commission.status_id,
+            CommissionLocalStatus.OPEN.value,
+        )
+
+    replace_commission_positions(
+        commission,
+        commission_items,
+    )
+
+    if len(commission.positions) > 1:
+        commission.title = "Mehrere Positionen"
+        commission.description = "Mehrere Positionen"
+    elif commission.positions:
+        first_position = commission.positions[0]
+        commission.title = _first_text(
+            first_position.internal_description,
+            first_position.commission_text,
+            first_position.code,
+            commission.erp_idnum,
+            f"Auftrag {erp_id}",
+        )
+        commission.description = _first_text(
+            first_position.commission_text,
+            first_position.internal_description,
+            first_position.description,
+        )
+    else:
+        commission.title = _first_text(
+            _read_first(payload, "description", "Description"),
+            commission.erp_idnum,
+            f"Auftrag {erp_id}",
+        )
+        commission.description = _read_first(
+            payload,
+            "description",
+            "Description",
+        )
+
+    if sync_signature:
+        raw_payload = (
+            dict(commission.raw_payload)
+            if isinstance(
+                commission.raw_payload,
+                dict,
+            )
+            else {}
+        )
+        raw_payload["sync_signature"] = (
+            sync_signature
+        )
+        commission.raw_payload = raw_payload
 
     return commission
+
+
+def replace_commission_positions(
+    commission: Commission,
+    payload_items: list[Any],
+) -> None:
+    commission.positions.clear()
+
+    if commission.id is not None:
+        db.session.flush()
+
+    for position_index, payload in enumerate(payload_items):
+        service_catalogue = _read_first(
+            payload,
+            "service_catalogue",
+            "service_catalog",
+            "ServiceCatalogue",
+            "ServiceCatalog",
+        )
+        craft_activity = _read_first(
+            payload,
+            "craft_activity",
+            "CraftActivity",
+        )
+        units = _as_float(
+            _read_first(payload, "units", "Units")
+        )
+
+        commission.positions.append(
+            CommissionPosition(
+                erp_id=_as_int(
+                    _read_first(payload, "id_", "id", "Id")
+                ),
+                position_index=position_index,
+                position_number=_as_float(
+                    _read_first(
+                        payload,
+                        "position_number",
+                        "PositionNumber",
+                    )
+                ),
+                code=_read_first(payload, "code", "Code"),
+                commission_text=_read_first(
+                    payload,
+                    "commission_text",
+                    "CommissionText",
+                ),
+                internal_description=_read_first(
+                    payload,
+                    "internal_description",
+                    "InternalDescription",
+                ),
+                description=_read_first(
+                    payload,
+                    "description",
+                    "Description",
+                ),
+                units=1.0 if units is None else units,
+                unit_price=_as_float(
+                    _read_first(
+                        payload,
+                        "unit_price",
+                        "UnitPrice",
+                    )
+                ),
+                net_amount=_as_float(
+                    _read_first(
+                        payload,
+                        "net_amount",
+                        "NetAmount",
+                    )
+                ),
+                material_costs=_as_float(
+                    _read_first(
+                        payload,
+                        "material_costs",
+                        "MaterialCosts",
+                    )
+                ),
+                labour_costs=_as_float(
+                    _read_first(
+                        payload,
+                        "labour_costs",
+                        "LabourCosts",
+                    )
+                ),
+                service_catalog_erp_id=_as_int(
+                    _read_first(
+                        service_catalogue,
+                        "id_",
+                        "id",
+                        "Id",
+                    )
+                ),
+                craft_activity_erp_id=_as_int(
+                    _read_first(
+                        craft_activity,
+                        "id_",
+                        "id",
+                        "Id",
+                    )
+                ),
+            )
+        )
+
+
+def _commission_status_id(payload: Any) -> int | None:
+    commission_status = _read_first(
+        payload,
+        "commission_status",
+        "CommissionStatus",
+    )
+    return _as_int(
+        _read_first(commission_status, "id_", "id", "Id")
+    )
+
+
+def _commission_type_id(payload: Any) -> int | None:
+    commission_type = _read_first(
+        payload,
+        "commission_type",
+        "CommissionType",
+    )
+    return _as_int(
+        _read_first(commission_type, "id_", "id", "Id")
+    )
+
+
+def _integer_set(value: Any) -> set[int]:
+    if not isinstance(value, (list, tuple, set)):
+        return set()
+
+    result = set()
+
+    for item in value:
+        parsed_item = _as_int(item)
+        if parsed_item is not None:
+            result.add(parsed_item)
+
+    return result
 
 
 def apply_commission_context(commission: Commission, context: dict[str, Any]) -> None:
@@ -848,6 +2346,16 @@ def _as_int(value: Any) -> int | None:
 
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 
@@ -930,3 +2438,348 @@ def _read_first(source: Any, *names: str) -> Any:
             return getattr(source, name)
 
     return None
+
+def _clean_id_num(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    normalized_value = str(value).strip()
+    return normalized_value or None
+
+
+def _single_idnum_match(
+    items: list[Any],
+    id_num: str,
+    label: str,
+) -> Any:
+    matches = [
+        item
+        for item in items
+        if _clean_id_num(
+            _attr(item, "id_num")
+        )
+        == id_num
+    ]
+
+    if not matches:
+        raise RuntimeError(
+            f"{label} mit der Nummer {id_num} "
+            "wurde in OPENWOWI nicht gefunden."
+        )
+
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"{label} mit der Nummer {id_num} "
+            "ist in OPENWOWI nicht eindeutig."
+        )
+
+    return matches[0]
+
+
+def _merge_reference_id(
+    current_id: int | None,
+    resolved_id: int | None,
+    label: str,
+) -> int | None:
+    if resolved_id is None:
+        raise RuntimeError(
+            f"Für {label} wurde keine interne "
+            "OPENWOWI-ID zurückgegeben."
+        )
+
+    if (
+        current_id is not None
+        and current_id != resolved_id
+    ):
+        raise RuntimeError(
+            f"Die angegebene {label}-Nummer passt "
+            "nicht zur bereits gespeicherten Zuordnung."
+        )
+
+    return resolved_id
+
+
+def _commission_is_unchanged(
+    commission: Commission | None,
+    sync_signature: str,
+) -> bool:
+    if commission is None:
+        return False
+
+    if (
+        commission.local_status
+        == CommissionLocalStatus.DELETED.value
+    ):
+        return False
+
+    if (
+        commission.erp_sync_state
+        != CommissionSyncState.SYNCED.value
+    ):
+        return False
+
+    if not isinstance(
+        commission.raw_payload,
+        dict,
+    ):
+        return False
+
+    return (
+        commission.raw_payload.get("sync_signature")
+        == sync_signature
+    )
+
+
+def _commission_sync_signature(
+    payload: Any,
+) -> str:
+    commission_status = _read_first(
+        payload,
+        "commission_status",
+        "CommissionStatus",
+    )
+    commission_type = _read_first(
+        payload,
+        "commission_type",
+        "CommissionType",
+    )
+    crafts_process = _read_first(
+        payload,
+        "crafts_process",
+        "CraftsProcess",
+    )
+    craftsman = _read_first(
+        payload,
+        "craftsman",
+        "Craftsman",
+    )
+    commission_items = (
+        _read_first(
+            payload,
+            "commission_items",
+            "CommissionItems",
+        )
+        or []
+    )
+
+    signature_data = {
+        "id_num": _read_first(
+            payload,
+            "id_num",
+            "idNum",
+            "IdNum",
+        ),
+        "code": _read_first(
+            payload,
+            "code",
+            "Code",
+        ),
+        "status_id": _as_int(
+            _read_first(
+                commission_status,
+                "id_",
+                "id",
+                "Id",
+            )
+        ),
+        "status_code": _read_first(
+            commission_status,
+            "code",
+            "Code",
+        ),
+        "commission_type_id": _as_int(
+            _read_first(
+                commission_type,
+                "id_",
+                "id",
+                "Id",
+            )
+        ),
+        "crafts_process_id": _as_int(
+            _read_first(
+                crafts_process,
+                "id_",
+                "id",
+                "Id",
+            )
+        ),
+        "craftsman_id": _as_int(
+            _read_first(
+                craftsman,
+                "id_",
+                "id",
+                "Id",
+            )
+        ),
+        "damage_location": _read_first(
+            payload,
+            "damage_location",
+            "DamageLocation",
+        ),
+        "contact_person_on_site": _read_first(
+            payload,
+            "contact_person_on_site",
+            "ContactPersonOnSite",
+        ),
+        "contact_person_engineering": _read_first(
+            payload,
+            "contact_person_engineering",
+            "ContactPersonEngineering",
+        ),
+        "recording_date": _signature_value(
+            _read_first(
+                payload,
+                "recording_date",
+                "RecordingDate",
+            )
+        ),
+        "release_date": _signature_value(
+            _read_first(
+                payload,
+                "release_date",
+                "ReleaseDate",
+            )
+        ),
+        "execution_from": _signature_value(
+            _read_first(
+                payload,
+                "execution_from",
+                "ExecutionFrom",
+            )
+        ),
+        "execution_to": _signature_value(
+            _read_first(
+                payload,
+                "execution_to",
+                "ExecutionTo",
+            )
+        ),
+        "positions": [
+            _position_signature(
+                item,
+                position_index,
+            )
+            for position_index, item
+            in enumerate(commission_items)
+        ],
+    }
+
+    serialized_data = json.dumps(
+        signature_data,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(
+        serialized_data.encode("utf-8")
+    ).hexdigest()
+
+
+def _position_signature(
+    payload: Any,
+    position_index: int,
+) -> dict[str, Any]:
+    service_catalogue = _read_first(
+        payload,
+        "service_catalogue",
+        "service_catalog",
+        "ServiceCatalogue",
+        "ServiceCatalog",
+    )
+    craft_activity = _read_first(
+        payload,
+        "craft_activity",
+        "CraftActivity",
+    )
+
+    return {
+        "position_index": position_index,
+        "erp_id": _as_int(
+            _read_first(payload, "id_", "id", "Id")
+        ),
+        "position_number": _as_float(
+            _read_first(
+                payload,
+                "position_number",
+                "PositionNumber",
+            )
+        ),
+        "code": _read_first(
+            payload,
+            "code",
+            "Code",
+        ),
+        "commission_text": _read_first(
+            payload,
+            "commission_text",
+            "CommissionText",
+        ),
+        "internal_description": _read_first(
+            payload,
+            "internal_description",
+            "InternalDescription",
+        ),
+        "description": _read_first(
+            payload,
+            "description",
+            "Description",
+        ),
+        "units": _as_float(
+            _read_first(payload, "units", "Units")
+        ),
+        "unit_price": _as_float(
+            _read_first(
+                payload,
+                "unit_price",
+                "UnitPrice",
+            )
+        ),
+        "net_amount": _as_float(
+            _read_first(
+                payload,
+                "net_amount",
+                "NetAmount",
+            )
+        ),
+        "material_costs": _as_float(
+            _read_first(
+                payload,
+                "material_costs",
+                "MaterialCosts",
+            )
+        ),
+        "labour_costs": _as_float(
+            _read_first(
+                payload,
+                "labour_costs",
+                "LabourCosts",
+            )
+        ),
+        "service_catalogue_id": _as_int(
+            _read_first(
+                service_catalogue,
+                "id_",
+                "id",
+                "Id",
+            )
+        ),
+        "craft_activity_id": _as_int(
+            _read_first(
+                craft_activity,
+                "id_",
+                "id",
+                "Id",
+            )
+        ),
+    }
+
+
+def _signature_value(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    return str(value)

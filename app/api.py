@@ -14,6 +14,9 @@ from .settings import SettingKeys, settings
 from .utils import iso_datetime
 from .wowiport import WowiportService
 from .catalog import get_user_visible_time_task, service_position_query_for_user
+from .erp_sync import enqueue_erp_operation
+from .models import CommissionSyncState, ErpOperationType
+
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 CANCELLATION_NOTE_PREFIX = "Storno zu Buchung #"
@@ -156,10 +159,32 @@ def commission_contacts(commission_id: int) -> Any:
 def start_commission(commission_id: int) -> Any:
     user = current_api_user()
     commission = editable_commission(commission_id, user)
+
+    if not commission.is_actionable:
+        return jsonify({
+            "message": "Der Auftrag wartet noch auf eine OPENWOWI-Auftragsnummer."
+        }), 409
+
+    if commission.local_status != CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value:
+        return jsonify({
+            "message": "Der Auftrag kann in diesem Status nicht gestartet werden."
+        }), 409
+
     commission.local_status = CommissionLocalStatus.IN_PROGRESS.value
+    commission.erp_sync_state = CommissionSyncState.PENDING.value
+
+    enqueue_erp_operation(
+        commission,
+        ErpOperationType.ACCEPT_COMMISSION,
+        f"commission:accepted:{commission.id}",
+    )
+
     audit("commission.start", "commission", commission.id)
     db.session.commit()
-    return jsonify({"item": serialize_commission(commission)})
+
+    return jsonify({
+        "item": serialize_commission(commission),
+    }), 202
 
 
 @api_bp.post("/commissions/<int:commission_id>/complete")
@@ -167,16 +192,66 @@ def start_commission(commission_id: int) -> Any:
 def complete_commission(commission_id: int) -> Any:
     user = current_api_user()
     commission = editable_commission(commission_id, user)
-    try:
-        WowiportService().mark_commission_done(commission.erp_id)
-    except Exception as exc:
-        current_app.logger.exception("commission_done_failed erp_id=%s", commission.erp_id)
-        return jsonify({"message": "ERP-Status konnte nicht gesetzt werden.", "detail": str(exc)}), 502
-    commission.local_status = CommissionLocalStatus.DONE.value
-    commission.completed_at = utc_now()
-    audit("commission.complete", "commission", commission.id, {"erp_id": commission.erp_id})
+    data = request.get_json(silent=True) or {}
+
+    if not commission.is_actionable:
+        return jsonify({
+            "message": "Der Auftrag wartet noch auf eine OPENWOWI-Auftragsnummer."
+        }), 409
+
+    completed = bool(data.get("completed", True))
+    tenant_charge = bool(data.get("tenant_charge", False))
+    reason = str(data.get("reason") or "").strip()
+
+    if not completed and not reason:
+        return jsonify({
+            "message": "Bitte einen Grund angeben, warum der Auftrag nicht abgeschlossen wurde."
+        }), 400
+
+    commission.completion_successful = completed
+    commission.tenant_charge_requested = tenant_charge
+    commission.completion_reason = reason or None
+    commission.completion_submitted_by = user
+    commission.completion_submitted_at = utc_now()
+
+    if not completed:
+        commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
+        commission.completed_at = None
+    elif tenant_charge:
+        commission.local_status = CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+        commission.completed_at = utc_now()
+
+        enqueue_erp_operation(
+            commission,
+            ErpOperationType.AWAIT_INVOICE,
+            f"commission:await-invoice:{commission.id}",
+        )
+    else:
+        commission.local_status = CommissionLocalStatus.DONE.value
+        commission.completed_at = utc_now()
+
+        enqueue_erp_operation(
+            commission,
+            ErpOperationType.COMPLETE_COMMISSION,
+            f"commission:done:{commission.id}",
+        )
+
+    audit(
+        "commission.complete",
+        "commission",
+        commission.id,
+        {
+            "completed": completed,
+            "tenant_charge": tenant_charge,
+            "reason": reason or None,
+        },
+    )
+
     db.session.commit()
-    return jsonify({"item": serialize_commission(commission)})
+
+    return jsonify({
+        "item": serialize_commission(commission),
+    }), 202
 
 
 @api_bp.get("/inventory/lookup")
@@ -866,6 +941,33 @@ def serialize_commission(commission: Commission, include_details: bool = False, 
         "latitude": commission.latitude,
         "longitude": commission.longitude,
         "has_coordinates": commission.latitude is not None and commission.longitude is not None,
+        "public_id": commission.public_id,
+        "source": commission.source,
+        "erp_sync_state": commission.erp_sync_state,
+        "erp_sync_message": commission.erp_sync_message,
+        "commission_type_id": commission.commission_type_erp_id,
+        "is_actionable": commission.is_actionable,
+        "display_title": commission.display_title,
+        "completion_successful": commission.completion_successful,
+        "tenant_charge_requested": commission.tenant_charge_requested,
+        "completion_reason": commission.completion_reason,
+        "positions": [
+            {
+                "id": position.id,
+                "erp_id": position.erp_id,
+                "position_index": position.position_index,
+                "position_number": position.position_number,
+                "code": position.code,
+                "commission_text": position.commission_text,
+                "internal_description": position.internal_description,
+                "description": position.description,
+                "display_text": position.display_text,
+                "units": position.units,
+                "service_catalog_id": position.service_catalog_erp_id,
+                "craft_activity_id": position.craft_activity_erp_id,
+            }
+            for position in commission.positions
+        ],
     }
 
     if viewer is not None:

@@ -12,11 +12,32 @@ from .auth import admin_required, foreman_required
 from .entra import import_entra_users
 from .extensions import db
 from .logging_service import configure_logging
-from .models import Commission, InventoryItem, InventoryMovement, InventoryMovementType, MaterialSource, MaterialUsageStatus, ReviewLevel, TimeEntry, TimeReviewStatus, TimeTaskExpectedMaterial, TimeTaskTemplate, User, utc_now, CraftActivity
 from .settings import all_definitions, grouped_definitions, settings
-from .wowiport import sync_commission_from_erp
 from .catalog import sync_catalogs_from_wowiport
 from sqlalchemy import or_
+from .commission_service import create_pending_commission
+from .models import (
+    Commission,
+    CommissionSource,
+    CraftActivity,
+    InventoryItem,
+    InventoryMovement,
+    InventoryMovementType,
+    MaterialSource,
+    MaterialUsageStatus,
+    ReviewLevel,
+    TimeEntry,
+    TimeReviewStatus,
+    TimeTaskExpectedMaterial,
+    TimeTaskTemplate,
+    User,
+    WowiCommissionType,
+    utc_now,
+)
+from .wowiport import (
+    configured_commission_type_ids,
+    sync_commission_from_erp,
+)
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -104,6 +125,119 @@ def user_edit(user_id: int) -> Any:
     return render_template("admin/user_form.html", item=item, craft_activities=craft_activities)
 
 
+@admin_bp.route(
+    "/admin/commissions/new",
+    methods=["GET", "POST"],
+)
+@foreman_required
+def commission_create() -> Any:
+    service_positions = TimeTaskTemplate.query.filter(
+        TimeTaskTemplate.active.is_(True),
+        TimeTaskTemplate.erp_service_catalogue_id.isnot(None),
+    ).order_by(
+        TimeTaskTemplate.title.asc()
+    ).all()
+
+    craft_activities = CraftActivity.query.filter(
+        CraftActivity.active.is_(True),
+        CraftActivity.erp_id.isnot(None),
+    ).order_by(
+        CraftActivity.name.asc()
+    ).all()
+
+    allowed_type_ids = configured_commission_type_ids()
+
+    if allowed_type_ids:
+        commission_types = WowiCommissionType.query.filter(
+            WowiCommissionType.active.is_(True),
+            WowiCommissionType.erp_id.in_(allowed_type_ids),
+        ).order_by(
+            WowiCommissionType.code.asc(),
+            WowiCommissionType.erp_id.asc(),
+        ).all()
+    else:
+        commission_types = []
+
+    users = User.query.filter(
+        User.is_active_flag.is_(True),
+        User.craftsman_erp_id.isnot(None),
+    ).order_by(
+        User.display_name.asc()
+    ).all()
+
+    position_rows = [{}]
+
+    if request.method == "POST":
+        form_data = read_commission_form()
+        position_rows = form_data["positions"] or [{}]
+
+        try:
+            assigned_user_id = required_form_int(
+                request.form.get("assigned_user_id"),
+                "Handwerker",
+            )
+
+            assigned_user = User.query.filter_by(
+                id=assigned_user_id,
+                is_active_flag=True,
+            ).one_or_none()
+
+            if (
+                assigned_user is None
+                or assigned_user.craftsman_erp_id is None
+            ):
+                raise ValueError(
+                    "Der ausgewählte Handwerker ist ungültig."
+                )
+
+            commission = create_pending_commission(
+                data=form_data,
+                assigned_user=assigned_user,
+                created_by_user=current_user,
+                source=CommissionSource.WEB,
+            )
+
+            db.session.flush()
+
+            audit(
+                "commission.create.web",
+                "commission",
+                commission.id,
+                {
+                    "public_id": commission.public_id,
+                    "assigned_user_id": assigned_user.id,
+                    "position_count": len(
+                        commission.positions
+                    ),
+                },
+            )
+
+            db.session.commit()
+
+            flash(
+                "Der Auftrag wurde erfasst und zur "
+                "Übertragung an Wowiport eingeplant.",
+                "success",
+            )
+
+            return redirect(
+                url_for("admin.commissions")
+            )
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+
+    return render_template(
+        "admin/commission_form.html",
+        service_positions=service_positions,
+        craft_activities=craft_activities,
+        commission_types=commission_types,
+        users=users,
+        position_rows=position_rows,
+        form_values=request.form,
+    )
+
+
 @admin_bp.get("/admin/commissions")
 @foreman_required
 def commissions() -> Any:
@@ -111,15 +245,39 @@ def commissions() -> Any:
     return render_template("admin/commissions.html", items=items)
 
 
-@admin_bp.post("/admin/commissions/<int:commission_id>/sync")
+@admin_bp.post(
+    "/admin/commissions/<int:commission_id>/sync"
+)
 @foreman_required
 def commission_sync(commission_id: int) -> Any:
     item = db.get_or_404(Commission, commission_id)
+
+    if item.erp_id is None:
+        flash(
+            "Der Auftrag besitzt noch keine Wowiport-ID. "
+            "Die Übertragung wird automatisch wiederholt.",
+            "warning",
+        )
+        return redirect(
+            url_for("admin.commissions")
+        )
+
     sync_commission_from_erp(item.erp_id)
-    audit("commission.sync", "commission", item.id)
+    audit(
+        "commission.sync",
+        "commission",
+        item.id,
+    )
     db.session.commit()
-    flash("Auftrag synchronisiert.", "success")
-    return redirect(url_for("admin.commissions"))
+
+    flash(
+        "Auftrag wurde synchronisiert.",
+        "success",
+    )
+
+    return redirect(
+        url_for("admin.commissions")
+    )
 
 
 @admin_bp.route("/admin/inventory", methods=["GET", "POST"])
@@ -439,3 +597,149 @@ def apply_inventory_movement(item: InventoryItem, movement: InventoryMovement) -
         item.stock_quantity += movement.quantity
     if movement.movement_type == InventoryMovementType.CORRECTION.value:
         item.stock_quantity += movement.quantity
+
+
+def read_commission_form() -> dict[str, Any]:
+    position_codes = request.form.getlist(
+        "position_code"
+    )
+    position_texts = request.form.getlist(
+        "position_text"
+    )
+    position_internal_descriptions = request.form.getlist(
+        "position_internal_description"
+    )
+    position_units = request.form.getlist(
+        "position_units"
+    )
+    service_catalog_ids = request.form.getlist(
+        "position_service_catalog_id"
+    )
+    craft_activity_ids = request.form.getlist(
+        "position_craft_activity_id"
+    )
+
+    position_count = max(
+        len(position_codes),
+        len(position_texts),
+        len(position_internal_descriptions),
+        len(position_units),
+        len(service_catalog_ids),
+        len(craft_activity_ids),
+        1,
+    )
+
+    positions = []
+
+    for position_index in range(position_count):
+        code = list_value(
+            position_codes,
+            position_index,
+        )
+        commission_text = list_value(
+            position_texts,
+            position_index,
+        )
+        internal_description = list_value(
+            position_internal_descriptions,
+            position_index,
+        )
+        units = list_value(
+            position_units,
+            position_index,
+        )
+        service_catalog_id = list_value(
+            service_catalog_ids,
+            position_index,
+        )
+        craft_activity_id = list_value(
+            craft_activity_ids,
+            position_index,
+        )
+
+        if not any(
+            [
+                code,
+                commission_text,
+                internal_description,
+                service_catalog_id,
+                craft_activity_id,
+            ]
+        ):
+            continue
+
+        positions.append(
+            {
+                "code": code,
+                "commission_text": commission_text,
+                "internal_description": internal_description,
+                "description": commission_text,
+                "units": units,
+                "service_catalog_id": service_catalog_id,
+                "craft_activity_id": craft_activity_id,
+            }
+        )
+
+    return {
+        "commission_type_id": request.form.get(
+            "commission_type_id"
+        ),
+        "crafts_process_id": request.form.get(
+            "crafts_process_id"
+        ),
+        "creditor_id": request.form.get("creditor_id"),
+        "department_id": request.form.get("department_id"),
+        "responsible_official_repair_id": request.form.get(
+            "responsible_official_repair_id"
+        ),
+        "use_unit_idnum": request.form.get(
+            "use_unit_idnum"
+        ),
+        "building_idnum": request.form.get(
+            "building_idnum"
+        ),
+        "license_agreement_idnum": request.form.get(
+            "license_agreement_idnum"
+        ),
+        "title": request.form.get("title"),
+        "damage_location": request.form.get(
+            "damage_location"
+        ),
+        "contact_person": request.form.get(
+            "contact_person"
+        ),
+        "execution_from": request.form.get(
+            "execution_from"
+        ),
+        "execution_to": request.form.get(
+            "execution_to"
+        ),
+        "positions": positions,
+    }
+
+
+def list_value(
+    values: list[str],
+    index: int,
+) -> str:
+    if index >= len(values):
+        return ""
+
+    return values[index].strip()
+
+
+def required_form_int(
+    value: str | None,
+    label: str,
+) -> int:
+    if value is None or not value.strip():
+        raise ValueError(
+            f"{label} muss angegeben werden."
+        )
+
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{label} ist ungültig."
+        ) from exc
