@@ -36,6 +36,14 @@ def sync_catalogs_from_wowiport() -> CatalogSyncResult:
     result.service_positions_updated = service_result.service_positions_updated
     result.service_positions_without_craft_activity = service_result.service_positions_without_craft_activity
 
+    result.service_positions_skipped_unassigned_craft_activity = (
+        service_result
+        .service_positions_skipped_unassigned_craft_activity
+    )
+    result.service_positions_deactivated = (
+        service_result.service_positions_deactivated
+    )
+
     return result
 
 
@@ -68,23 +76,12 @@ def sync_service_positions_from_wowiport(service: WowiportService | None = None)
     service = service or WowiportService()
     result = CatalogSyncResult()
 
-    assigned_craft_activity_ids = {
-        row[0]
-        for row in db.session.query(CraftActivity.id)
-        .join(CraftActivity.users)
-        .filter(CraftActivity.active.is_(True))
-        .distinct()
-        .all()
-    }
-
-    assigned_craft_activities_by_erp_id = {
+    craft_activities_by_erp_id = {
         item.erp_id: item
-        for item in CraftActivity.query
-        .filter(
+        for item in CraftActivity.query.filter(
+            CraftActivity.active.is_(True),
             CraftActivity.erp_id.isnot(None),
-            CraftActivity.id.in_(assigned_craft_activity_ids),
-        )
-        .all()
+        ).all()
     }
 
     existing_positions_by_erp_id = {
@@ -114,7 +111,9 @@ def sync_service_positions_from_wowiport(service: WowiportService | None = None)
             _deactivate_existing_position(existing_positions_by_erp_id.get(erp_id), result)
             continue
 
-        craft_activity = assigned_craft_activities_by_erp_id.get(craft_activity_erp_id)
+        craft_activity = craft_activities_by_erp_id.get(
+            craft_activity_erp_id
+        )
 
         if craft_activity is None:
             result.service_positions_skipped_unassigned_craft_activity += 1
@@ -158,9 +157,14 @@ def sync_service_positions_from_wowiport(service: WowiportService | None = None)
         synced_position_erp_ids.add(erp_id)
 
     for erp_id, service_position in existing_positions_by_erp_id.items():
-        if service_position.source == "wowiport" and erp_id not in synced_position_erp_ids:
-            if service_position.craft_activity_id not in assigned_craft_activity_ids:
-                _deactivate_existing_position(service_position, result)
+        if (
+                service_position.source == "wowiport"
+                and erp_id not in synced_position_erp_ids
+        ):
+            _deactivate_existing_position(
+                service_position,
+                result,
+            )
 
     return result
 

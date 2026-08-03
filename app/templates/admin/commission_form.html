@@ -216,7 +216,7 @@
               >
             </div>
 
-            <div class=col-md-10>
+            <div class="col-md-10">
               <label class="form-label">Leistungsposition</label>
               <select
                 class="form-select form-select-sm"
@@ -225,8 +225,13 @@
               >
                 <option value="">Bitte auswählen</option>
                 {% for service_position in service_positions %}
-                <option value="{{ service_position.erp_service_catalogue_id }}" {% if position.get('service_catalog_id')|int == service_position.erp_service_catalogue_id %}selected{% endif %}>
-                  {{ service_position.code }} · {{ service_position.title }}
+                <option
+                  value="{{ service_position.erp_service_catalogue_id }}"
+                  {% if position.get('service_catalog_id')|int == service_position.erp_service_catalogue_id %}selected{% endif %}
+                >
+                  {{ service_position.code }} ·
+                  {{ service_position.title }} ·
+                  Gewerk: {{ service_position.craft_activity.name }}
                 </option>
                 {% endfor %}
               </select>

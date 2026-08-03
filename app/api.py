@@ -9,13 +9,41 @@ from sqlalchemy import or_
 from .audit import audit
 from .auth import resolve_microsoft_user, validate_microsoft_id_token
 from .extensions import db
-from .models import Commission, CommissionLocalStatus, InventoryItem, InventoryMovement, InventoryMovementType, MaterialSource, MaterialUsageStatus, ReviewLevel, TimeEntry, TimeReviewStatus, TimeTaskExpectedMaterial, TimeTaskTemplate, User, utc_now, CraftActivity
+from .models import (
+    Commission,
+    CommissionLocalStatus,
+    InventoryItem,
+    InventoryMovement,
+    InventoryMovementType,
+    MaterialSource,
+    MaterialUsageStatus,
+    ReviewLevel,
+    TimeEntry,
+    TimeReviewStatus,
+    TimeTaskExpectedMaterial,
+    TimeTaskTemplate,
+    User,
+    utc_now,
+    CraftActivity,
+    CommissionSource,
+    WowiCommissionType,
+    WowiCompanyCode,
+)
 from .settings import SettingKeys, settings
 from .utils import iso_datetime
-from .wowiport import WowiportService
+from .wowiport import (
+    WowiportService,
+    configured_commission_type_ids,
+)
 from .catalog import get_user_visible_time_task, service_position_query_for_user
 from .erp_sync import enqueue_erp_operation
 from .models import CommissionSyncState, ErpOperationType
+
+from .commission_service import (
+    create_pending_commission,
+    normalize_public_id,
+    integer_set
+)
 
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -95,12 +123,25 @@ def commissions() -> Any:
         query = query.filter_by(user_id=int(user_id_filter))
 
     if status == "active":
-        query = query.filter(Commission.local_status.in_([
-            CommissionLocalStatus.OPEN.value,
-            CommissionLocalStatus.IN_PROGRESS.value,
-        ]))
-    elif status in {item.value for item in CommissionLocalStatus}:
-        query = query.filter_by(local_status=status)
+        query = query.filter(
+            Commission.local_status.in_(
+                [
+                    CommissionLocalStatus.RECORDED.value,
+                    CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
+                    CommissionLocalStatus.OPEN.value,
+                    CommissionLocalStatus.IN_PROGRESS.value,
+                    CommissionLocalStatus.COMPLETION_REVIEW.value,
+                    CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
+                ]
+            )
+        )
+    elif status in {
+        item.value
+        for item in CommissionLocalStatus
+    }:
+        query = query.filter_by(
+            local_status=status
+        )
 
     query = query.order_by(Commission.execution_from.asc().nulls_last(), Commission.id.asc())
     return jsonify({"items": [serialize_commission(item, viewer=user) for item in query.all()]})
@@ -129,6 +170,117 @@ def commission_users() -> Any:
         items.insert(0, user)
 
     return jsonify({"items": [serialize_user(item) for item in items]})
+
+
+@api_bp.get("/commissions/create-options")
+@jwt_required()
+def commission_create_options() -> Any:
+    user = current_api_user()
+
+    allowed_type_ids = integer_set(
+        settings.get(
+            SettingKeys.WOWI_ALLOWED_COMMISSION_TYPE_IDS
+        )
+    )
+
+    if allowed_type_ids:
+        commission_types = WowiCommissionType.query.filter(
+            WowiCommissionType.active.is_(True),
+            WowiCommissionType.erp_id.in_(
+                allowed_type_ids
+            ),
+        ).order_by(
+            WowiCommissionType.code.asc(),
+            WowiCommissionType.erp_id.asc(),
+        ).all()
+    else:
+        commission_types = []
+
+    company_codes = WowiCompanyCode.query.filter(
+        WowiCompanyCode.active.is_(True)
+    ).order_by(
+        WowiCompanyCode.code.asc()
+    ).all()
+
+    return jsonify(
+        {
+            "can_create": (
+                user.craftsman_erp_id is not None
+            ),
+            "company_codes": [
+                {
+                    "id": item.erp_id,
+                    "code": item.code,
+                    "name": item.name,
+                }
+                for item in company_codes
+            ],
+            "commission_types": [
+                {
+                    "id": item.erp_id,
+                    "code": item.code,
+                }
+                for item in commission_types
+            ],
+        }
+    )
+
+
+@api_bp.post("/commissions")
+@jwt_required()
+def create_commission() -> Any:
+    user = current_api_user()
+    data = request.get_json(silent=True) or {}
+
+    if not isinstance(data, dict):
+        return jsonify(
+            {
+                "message": "Die übermittelten Auftragsdaten sind ungültig."
+            }
+        ), 400
+
+    try:
+        commission = create_pending_commission(
+            data=data,
+            assigned_user=user,
+            created_by_user=user,
+            source=CommissionSource.IOS,
+        )
+
+        db.session.flush()
+
+        audit(
+            "commission.create.ios",
+            "commission",
+            commission.id,
+            {
+                "public_id": commission.public_id,
+                "assigned_user_id": user.id,
+                "position_count": len(
+                    commission.positions
+                ),
+            },
+        )
+
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+
+        return jsonify(
+            {
+                "message": str(exc)
+            }
+        ), 400
+
+    return jsonify(
+        {
+            "item": serialize_commission(
+                commission,
+                include_details=True,
+                viewer=user,
+            )
+        }
+    ), 202
 
 
 @api_bp.get("/commissions/<int:commission_id>")
@@ -1017,16 +1169,33 @@ def serialize_inventory_movement(
     }
 
 
-def serialize_time_task(item: TimeTaskTemplate | None, include_suggested: bool = True) -> dict[str, Any] | None:
+def serialize_time_task(
+    item: TimeTaskTemplate | None,
+    include_suggested: bool = True,
+) -> dict[str, Any] | None:
     if item is None:
         return None
+
     return {
         "id": item.id,
         "code": item.code,
         "title": item.title,
         "suggested_minutes": item.suggested_minutes,
-        "craft_activity": serialize_craft_activity(item.craft_activity) if item.craft_activity else None,
-        "expected_materials": [serialize_expected_material(material) for material in item.expected_materials],
+        "service_catalog_id": (
+            item.erp_service_catalogue_id
+        ),
+        "erp_idnum": item.erp_idnum,
+        "craft_activity": (
+            serialize_craft_activity(
+                item.craft_activity
+            )
+            if item.craft_activity
+            else None
+        ),
+        "expected_materials": [
+            serialize_expected_material(material)
+            for material in item.expected_materials
+        ],
     }
 
 

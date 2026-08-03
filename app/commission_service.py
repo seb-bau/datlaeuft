@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from .erp_sync import enqueue_erp_operation
 from .extensions import db
@@ -172,7 +172,9 @@ def create_pending_commission(
         "Umsatzsteuercode",
     )
 
-    public_id = str(uuid4())
+    public_id = normalize_public_id(
+        data.get("client_request_id")
+    )
 
     commission = Commission(
         company_code_erp_id=company_code.erp_id,
@@ -451,3 +453,15 @@ def required_setting_text(
         )
 
     return value
+
+
+def normalize_public_id(value: Any) -> str:
+    if value is None or not str(value).strip():
+        return str(uuid4())
+
+    try:
+        return str(UUID(str(value).strip()))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError(
+            "Die Client-Auftragskennung ist ungültig."
+        ) from exc
