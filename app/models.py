@@ -210,6 +210,38 @@ class Commission(db.Model):
     )
     commission_type_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
     crafts_process_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    company_code_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    company_code_code: Mapped[str | None] = mapped_column(
+        db.String(40),
+        index=True,
+    )
+    crafts_process_type_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    crafts_process_type_code: Mapped[str | None] = mapped_column(
+        db.String(120),
+        index=True,
+    )
+    crafts_process_status_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    crafts_process_status_code: Mapped[str | None] = mapped_column(
+        db.String(120),
+        index=True,
+    )
+    sales_tax_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    sales_tax_code: Mapped[str | None] = mapped_column(
+        db.String(40),
+        index=True,
+    )
     creditor_erp_id: Mapped[int | None] = mapped_column(db.Integer)
     department_erp_id: Mapped[int | None] = mapped_column(db.Integer)
     responsible_official_repair_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
@@ -374,6 +406,40 @@ class CommissionPosition(db.Model):
             "Description": self.description,
         }
         return {key: value for key, value in values.items() if value is not None}
+
+
+class WowiCompanyCode(db.Model):
+    __tablename__ = "wowi_company_code"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(
+        db.String(40),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default="1",
+        nullable=False,
+        index=True,
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
 
 
 class WowiCommissionType(db.Model):

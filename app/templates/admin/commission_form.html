@@ -23,7 +23,25 @@
 
   <div class="card-body">
     <div class="row g-3">
-      <div class="col-md-6">
+      <div class="col-md-4">
+  <label class="form-label">Buchwerk</label>
+  <select
+    class="form-select"
+    name="company_code_code"
+    required
+  >
+    <option value="">Bitte auswählen</option>
+    {% for item in company_codes %}
+    <option
+      value="{{ item.code }}"
+      {% if form_values.get('company_code_code') == item.code %}selected{% endif %}
+    >
+      {{ item.code }} · {{ item.name }}
+    </option>
+    {% endfor %}
+  </select>
+</div>
+      <div class="col-md-4">
         <label class="form-label">Auftragsart</label>
         <select class="form-select" name="commission_type_id" required>
           <option value="">Bitte auswählen</option>
@@ -35,7 +53,7 @@
         </select>
       </div>
 
-      <div class="col-md-6">
+      <div class="col-md-4">
         <label class="form-label">Handwerker</label>
         <select class="form-select" name="assigned_user_id" required>
           <option value="">Bitte auswählen</option>
@@ -198,31 +216,17 @@
               >
             </div>
 
-            <div class="col-md-5">
+            <div class=col-md-10>
               <label class="form-label">Leistungsposition</label>
               <select
                 class="form-select form-select-sm"
                 name="position_service_catalog_id"
+                required
               >
-                <option value="">Keine Zuordnung</option>
+                <option value="">Bitte auswählen</option>
                 {% for service_position in service_positions %}
                 <option value="{{ service_position.erp_service_catalogue_id }}" {% if position.get('service_catalog_id')|int == service_position.erp_service_catalogue_id %}selected{% endif %}>
                   {{ service_position.code }} · {{ service_position.title }}
-                </option>
-                {% endfor %}
-              </select>
-            </div>
-
-            <div class="col-md-5">
-              <label class="form-label">Gewerk</label>
-              <select
-                class="form-select form-select-sm"
-                name="position_craft_activity_id"
-              >
-                <option value="">Keine Zuordnung</option>
-                {% for activity in craft_activities %}
-                <option value="{{ activity.erp_id }}" {% if position.get('craft_activity_id')|int == activity.erp_id %}selected{% endif %}>
-                  {{ activity.name }}{% if activity.code %} · {{ activity.code }}{% endif %}
                 </option>
                 {% endfor %}
               </select>
@@ -250,7 +254,7 @@
     <button
       class="btn btn-primary"
       type="submit"
-      {% if not commission_types or not users %}disabled{% endif %}
+      {% if not company_codes or not commission_types or not users or not service_positions %}disabled{% endif %}
     >
       Auftrag erfassen
     </button>
@@ -297,31 +301,19 @@
         >
       </div>
 
-      <div class="col-md-5">
+      <div class="col-md-10">
         <label class="form-label">Leistungsposition</label>
         <select
           class="form-select form-select-sm"
           name="position_service_catalog_id"
+          required
         >
-          <option value="">Keine Zuordnung</option>
+          <option value="">Bitte auswählen</option>
           {% for service_position in service_positions %}
           <option value="{{ service_position.erp_service_catalogue_id }}">
-            {{ service_position.code }} · {{ service_position.title }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-
-      <div class="col-md-5">
-        <label class="form-label">Gewerk</label>
-        <select
-          class="form-select form-select-sm"
-          name="position_craft_activity_id"
-        >
-          <option value="">Keine Zuordnung</option>
-          {% for activity in craft_activities %}
-          <option value="{{ activity.erp_id }}">
-            {{ activity.name }}{% if activity.code %} · {{ activity.code }}{% endif %}
+            {{ service_position.code }} ·
+            {{ service_position.title }} ·
+            Gewerk: {{ service_position.craft_activity.name }}
           </option>
           {% endfor %}
         </select>

@@ -33,6 +33,7 @@ from .models import (
     User,
     WowiCommissionType,
     utc_now,
+    WowiCompanyCode,
 )
 from .wowiport import (
     configured_commission_type_ids,
@@ -131,18 +132,21 @@ def user_edit(user_id: int) -> Any:
 )
 @foreman_required
 def commission_create() -> Any:
-    service_positions = TimeTaskTemplate.query.filter(
+    service_positions = TimeTaskTemplate.query.join(
+        CraftActivity
+    ).filter(
         TimeTaskTemplate.active.is_(True),
         TimeTaskTemplate.erp_service_catalogue_id.isnot(None),
+        CraftActivity.active.is_(True),
+        CraftActivity.erp_id.isnot(None),
     ).order_by(
         TimeTaskTemplate.title.asc()
     ).all()
 
-    craft_activities = CraftActivity.query.filter(
-        CraftActivity.active.is_(True),
-        CraftActivity.erp_id.isnot(None),
+    company_codes = WowiCompanyCode.query.filter(
+        WowiCompanyCode.active.is_(True)
     ).order_by(
-        CraftActivity.name.asc()
+        WowiCompanyCode.code.asc()
     ).all()
 
     allowed_type_ids = configured_commission_type_ids()
@@ -230,7 +234,7 @@ def commission_create() -> Any:
     return render_template(
         "admin/commission_form.html",
         service_positions=service_positions,
-        craft_activities=craft_activities,
+        company_codes=company_codes,
         commission_types=commission_types,
         users=users,
         position_rows=position_rows,
@@ -615,9 +619,6 @@ def read_commission_form() -> dict[str, Any]:
     service_catalog_ids = request.form.getlist(
         "position_service_catalog_id"
     )
-    craft_activity_ids = request.form.getlist(
-        "position_craft_activity_id"
-    )
 
     position_count = max(
         len(position_codes),
@@ -625,7 +626,6 @@ def read_commission_form() -> dict[str, Any]:
         len(position_internal_descriptions),
         len(position_units),
         len(service_catalog_ids),
-        len(craft_activity_ids),
         1,
     )
 
@@ -652,10 +652,6 @@ def read_commission_form() -> dict[str, Any]:
             service_catalog_ids,
             position_index,
         )
-        craft_activity_id = list_value(
-            craft_activity_ids,
-            position_index,
-        )
 
         if not any(
             [
@@ -663,7 +659,6 @@ def read_commission_form() -> dict[str, Any]:
                 commission_text,
                 internal_description,
                 service_catalog_id,
-                craft_activity_id,
             ]
         ):
             continue
@@ -676,7 +671,6 @@ def read_commission_form() -> dict[str, Any]:
                 "description": commission_text,
                 "units": units,
                 "service_catalog_id": service_catalog_id,
-                "craft_activity_id": craft_activity_id,
             }
         )
 
@@ -715,6 +709,9 @@ def read_commission_form() -> dict[str, Any]:
             "execution_to"
         ),
         "positions": positions,
+        "company_code_code": request.form.get(
+            "company_code_code"
+        ),
     }
 
 

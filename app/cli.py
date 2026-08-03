@@ -16,17 +16,40 @@ from .models import (
     CommissionLocalStatus,
     User,
     WowiCommissionType,
-    utc_now
+    utc_now,
+    WowiCompanyCode,
 )
 from .settings import SettingKeys, settings
 from .wowiport import (
     sync_commission_from_erp,
     sync_commission_types_from_wowiport,
-    sync_commissions_from_wowiport_regular,
+    sync_commissions_from_wowiport_regular, sync_company_codes_from_wowiport,
 )
 
 
 def register_cli(app: Flask) -> None:
+    @app.cli.command("datlaeuft-sync-company-codes")
+    def sync_company_codes() -> None:
+        result = sync_company_codes_from_wowiport()
+        db.session.commit()
+
+        click.echo(
+            f"Gefunden={result['seen']} "
+            f"Neu={result['created']} "
+            f"Aktualisiert={result['updated']}"
+        )
+
+        for item in WowiCompanyCode.query.order_by(
+            WowiCompanyCode.code.asc()
+        ).all():
+            state = "aktiv" if item.active else "inaktiv"
+            click.echo(
+                f"{item.erp_id}\t"
+                f"{item.code}\t"
+                f"{item.name}\t"
+                f"{state}"
+            )
+
     @app.cli.command("datlaeuft-retry-erp-operation")
     @click.argument("operation_id", type=int)
     def retry_erp_operation(operation_id: int) -> None:

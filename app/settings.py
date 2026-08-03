@@ -39,6 +39,27 @@ class SettingKeys:
     WOWI_API_VERSION = SettingDefinition[str]("wowi.api_version", SettingValueType.STRING, "v1.2", "OPENWOWI Version", "Wowiport")
     WOWI_APPROVED_STATUS_ID = SettingDefinition[int]("wowi.approved_status_id", SettingValueType.INT, 6, "Status-ID Freigegeben", "Wowiport")
     WOWI_WEBHOOK_TOKEN = SettingDefinition[str]("wowi.webhook_bearer_token", SettingValueType.SECRET, "change-me", "Webhook Bearer Token", "Wowiport", True)
+    WOWI_DEFAULT_CRAFTS_PROCESS_TYPE_CODE = SettingDefinition[str](
+        "wowi.default_crafts_process_type_code",
+        SettingValueType.STRING,
+        "Instandhaltung",
+        "Standard-Vorgangsart",
+        "Wowiport",
+    )
+    WOWI_INITIAL_CRAFTS_PROCESS_STATUS_CODE = SettingDefinition[str](
+        "wowi.initial_crafts_process_status_code",
+        SettingValueType.STRING,
+        "Offen",
+        "Anfangsstatus des Vorgangs",
+        "Wowiport",
+    )
+    WOWI_INTERNAL_SALES_TAX_CODE = SettingDefinition[str](
+        "wowi.internal_sales_tax_code",
+        SettingValueType.STRING,
+        "V0",
+        "Umsatzsteuercode für interne Handwerker",
+        "Wowiport",
+    )
     WOWI_ALLOWED_COMMISSION_TYPE_IDS = SettingDefinition[list](
         "wowi.allowed_commission_type_ids",
         SettingValueType.JSON,

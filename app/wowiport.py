@@ -23,6 +23,7 @@ from .models import (
     User,
     WowiCommissionType,
     utc_now,
+    WowiCompanyCode,
 )
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
@@ -645,8 +646,10 @@ class WowiportService:
         commission: Commission,
     ) -> int:
         raw_payload = commission.raw_payload or {}
+
         company_code_code = str(
-            raw_payload.get("company_code_code")
+            commission.company_code_code
+            or raw_payload.get("company_code_code")
             or ""
         ).strip()
 
@@ -659,8 +662,8 @@ class WowiportService:
             company_code_code
         )
 
-        if hasattr(commission, "company_code_erp_id"):
-            commission.company_code_erp_id = company_code_id
+        commission.company_code_code = company_code_code
+        commission.company_code_erp_id = company_code_id
 
         return company_code_id
 
@@ -955,22 +958,62 @@ class WowiportService:
                 else 0.0
             )
 
-            service_catalogue_id = payload.get(
-                "ServiceCatalogueId"
+            service_catalogue_id = (
+                    payload.get("ServiceCatalogueId")
+                    or payload.get("ServiceCatalogId")
+                    or getattr(
+                position,
+                "service_catalog_erp_id",
+                None,
             )
-            craft_activity_id = payload.get(
-                "CraftActivityId"
+            )
+            craft_activity_id = (
+                    payload.get("CraftActivityId")
+                    or getattr(
+                position,
+                "craft_activity_erp_id",
+                None,
+            )
             )
 
-            if not service_catalogue_id:
+            try:
+                service_catalogue_id = int(
+                    service_catalogue_id
+                )
+            except (TypeError, ValueError) as exc:
                 raise RuntimeError(
                     f"Auftragsposition {position_index} enthält keine Leistungskatalogposition"
-                )
+                ) from exc
 
-            if not craft_activity_id:
+            try:
+                craft_activity_id = int(
+                    craft_activity_id
+                )
+            except (TypeError, ValueError) as exc:
                 raise RuntimeError(
                     f"Auftragsposition {position_index} enthält kein Gewerk"
+                ) from exc
+
+            if service_catalogue_id <= 0:
+                raise RuntimeError(
+                    f"Auftragsposition {position_index} enthält keine gültige Leistungskatalogposition"
                 )
+
+            if craft_activity_id <= 0:
+                raise RuntimeError(
+                    f"Auftragsposition {position_index} enthält kein gültiges Gewerk"
+                )
+
+            payload.pop(
+                "ServiceCatalogueId",
+                None,
+            )
+            payload["ServiceCatalogId"] = (
+                service_catalogue_id
+            )
+            payload["CraftActivityId"] = (
+                craft_activity_id
+            )
 
             position_payloads.append(payload)
 
@@ -983,16 +1026,29 @@ class WowiportService:
         raw_payload = commission.raw_payload or {}
 
         process_type_code = str(
-            raw_payload.get("crafts_process_type_code")
+            commission.crafts_process_type_code
+            or raw_payload.get("crafts_process_type_code")
+            or settings.get(
+                SettingKeys.WOWI_DEFAULT_CRAFTS_PROCESS_TYPE_CODE
+            )
             or ""
         ).strip()
+
         process_status_code = str(
-            raw_payload.get("crafts_process_status_code")
+            commission.crafts_process_status_code
+            or raw_payload.get("crafts_process_status_code")
+            or settings.get(
+                SettingKeys.WOWI_INITIAL_CRAFTS_PROCESS_STATUS_CODE
+            )
             or ""
         ).strip()
 
         sales_tax_code = str(
-            raw_payload.get("sales_tax_code")
+            commission.sales_tax_code
+            or raw_payload.get("sales_tax_code")
+            or settings.get(
+                SettingKeys.WOWI_INTERNAL_SALES_TAX_CODE
+            )
             or ""
         ).strip()
 
@@ -1059,6 +1115,19 @@ class WowiportService:
             crafts_process_id,
             external_identification_number,
         )
+        commission.sales_tax_code = sales_tax_code
+        commission.sales_tax_erp_id = resolved_sales_tax_id
+        commission.crafts_process_type_code = process_type_code
+        commission.crafts_process_type_erp_id = (
+            resolved_process_type_id
+        )
+        commission.crafts_process_status_code = (
+            process_status_code
+        )
+        commission.crafts_process_status_erp_id = (
+            resolved_process_status_id
+        )
+
 
         if existing_commission is not None:
             return Result(
@@ -1467,6 +1536,71 @@ def configured_commission_status_ids() -> set[int]:
     return _integer_set(
         settings.get(SettingKeys.WOWI_VISIBLE_COMMISSION_STATUS_IDS)
     )
+
+
+def sync_company_codes_from_wowiport() -> dict[str, int]:
+    service = WowiportService()
+
+    rows = service._force_read_rows(
+        "AccountancyMasterData/CompanyCodes",
+        {
+            "limit": 100,
+            "offset": 0,
+            "showNullValues": "true",
+        },
+    )
+
+    existing_items = {
+        item.erp_id: item
+        for item in WowiCompanyCode.query.all()
+    }
+
+    seen_ids = set()
+    created = 0
+    updated = 0
+
+    for row in rows:
+        erp_id = _as_int(
+            _read_first(row, "Id", "id", "id_")
+        )
+        code = _first_text(
+            _read_first(row, "Code", "code")
+        )
+
+        if erp_id is None or not code:
+            continue
+
+        name = _first_text(
+            _read_first(row, "Name", "name"),
+            _read_first(row, "Description", "description"),
+            code,
+        )
+
+        seen_ids.add(erp_id)
+        item = existing_items.get(erp_id)
+
+        if item is None:
+            item = WowiCompanyCode(erp_id=erp_id)
+            db.session.add(item)
+            created += 1
+        else:
+            updated += 1
+
+        item.code = code
+        item.name = name or code
+        item.active = True
+        item.synced_at = utc_now()
+
+    for erp_id, item in existing_items.items():
+        if erp_id not in seen_ids:
+            item.active = False
+            item.synced_at = utc_now()
+
+    return {
+        "seen": len(seen_ids),
+        "created": created,
+        "updated": updated,
+    }
 
 
 def sync_commission_types_from_wowiport() -> dict[str, int]:

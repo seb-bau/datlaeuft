@@ -16,6 +16,8 @@ from .models import (
     WowiBuilding,
     WowiUseUnit,
     utc_now,
+    TimeTaskTemplate,
+    WowiCompanyCode,
 )
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
@@ -137,9 +139,47 @@ def create_pending_commission(
             "Das Ausführungsende darf nicht vor dem Beginn liegen."
         )
 
+    company_code_code = clean_text(
+        data.get("company_code_code")
+    )
+
+    if not company_code_code:
+        raise ValueError(
+            "Das Buchwerk muss ausgewählt werden."
+        )
+
+    company_code = WowiCompanyCode.query.filter(
+        WowiCompanyCode.active.is_(True),
+        WowiCompanyCode.code == company_code_code,
+    ).one_or_none()
+
+    if company_code is None:
+        raise ValueError(
+            "Das ausgewählte Buchwerk ist nicht verfügbar. "
+            "Bitte die Wowiport-Buchwerke synchronisieren."
+        )
+
+    process_type_code = required_setting_text(
+        SettingKeys.WOWI_DEFAULT_CRAFTS_PROCESS_TYPE_CODE,
+        "Standard-Vorgangsart",
+    )
+    process_status_code = required_setting_text(
+        SettingKeys.WOWI_INITIAL_CRAFTS_PROCESS_STATUS_CODE,
+        "Anfangsstatus des Vorgangs",
+    )
+    sales_tax_code = required_setting_text(
+        SettingKeys.WOWI_INTERNAL_SALES_TAX_CODE,
+        "Umsatzsteuercode",
+    )
+
     public_id = str(uuid4())
 
     commission = Commission(
+        company_code_erp_id=company_code.erp_id,
+        company_code_code=company_code.code,
+        crafts_process_type_code=process_type_code,
+        crafts_process_status_code=process_status_code,
+        sales_tax_code=sales_tax_code,
         public_id=public_id,
         source=source.value,
         erp_sync_state=CommissionSyncState.PENDING.value,
@@ -217,10 +257,43 @@ def create_pending_commission(
                 "benötigt eine positive Menge."
             )
 
+        service_catalog_erp_id = required_int(
+            item,
+            "service_catalog_id",
+            f"Leistungsposition {position_index + 1}",
+        )
+
+        service_position = TimeTaskTemplate.query.filter(
+            TimeTaskTemplate.active.is_(True),
+            TimeTaskTemplate.erp_service_catalogue_id
+            == service_catalog_erp_id,
+        ).one_or_none()
+
+        if service_position is None:
+            raise ValueError(
+                f"Die Leistungsposition {position_index + 1} "
+                "ist nicht verfügbar."
+            )
+
+        craft_activity = service_position.craft_activity
+
+        if (
+            craft_activity is None
+            or not craft_activity.active
+            or craft_activity.erp_id is None
+        ):
+            raise ValueError(
+                f"Der Leistungsposition {position_index + 1} "
+                "ist kein gültiges Gewerk zugeordnet."
+            )
+
         commission.positions.append(
             CommissionPosition(
                 position_index=position_index,
-                code=clean_text(item.get("code")),
+                code=(
+                        clean_text(item.get("code"))
+                        or service_position.code
+                ),
                 commission_text=commission_text,
                 internal_description=clean_text(
                     item.get("internal_description")
@@ -229,13 +302,11 @@ def create_pending_commission(
                     item.get("description")
                 ),
                 units=units,
-                service_catalog_erp_id=optional_int(
-                    item.get("service_catalog_id"),
-                    "Leistungsposition",
+                service_catalog_erp_id=(
+                    service_position.erp_service_catalogue_id
                 ),
-                craft_activity_erp_id=optional_int(
-                    item.get("craft_activity_id"),
-                    "Gewerk",
+                craft_activity_erp_id=(
+                    craft_activity.erp_id
                 ),
             )
         )
@@ -366,3 +437,17 @@ def resolve_local_reference(
         )
 
     return matches[0] if matches else None
+
+
+def required_setting_text(
+    definition: Any,
+    label: str,
+) -> str:
+    value = clean_text(settings.get(definition))
+
+    if not value:
+        raise ValueError(
+            f"{label} ist nicht konfiguriert."
+        )
+
+    return value
