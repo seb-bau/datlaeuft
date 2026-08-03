@@ -48,6 +48,8 @@ class CommissionSyncState(str, Enum):
 class ErpOperationType(str, Enum):
     CREATE_COMMISSION = "create_commission"
     ACCEPT_COMMISSION = "accept_commission"
+    REFUSE_COMMISSION = "refuse_commission"
+    CANCEL_COMMISSION = "cancel_commission"
     COMPLETE_COMMISSION = "complete_commission"
     AWAIT_INVOICE = "await_invoice"
 

@@ -33,6 +33,7 @@ ERP_LOCAL_STATUS = {
     12: CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
     7: CommissionLocalStatus.IN_PROGRESS.value,
     9: CommissionLocalStatus.DONE.value,
+    10: CommissionLocalStatus.COMPLETION_REVIEW.value,
     11: CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
 }
 
@@ -264,6 +265,24 @@ class WowiportService:
 
     def mark_commission_done(self, erp_id: int) -> None:
         self.client.set_commissioning_commission_to_done(commission_id=erp_id)
+
+    def mark_commission_refused(
+        self,
+        erp_id: int,
+        reason: str,
+    ) -> None:
+        self.client.set_commissioning_commission_to_refused(
+            commission_id=erp_id,
+            reason_for_refusal=reason,
+        )
+
+    def mark_commission_canceled(
+        self,
+        erp_id: int,
+    ) -> None:
+        self.client.set_commissioning_commission_to_canceled(
+            commission_id=erp_id,
+        )
 
     @staticmethod
     def _row_value(row: dict[str, Any], *names: str) -> Any:

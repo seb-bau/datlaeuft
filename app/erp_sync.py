@@ -201,6 +201,31 @@ def execute_outbox_operation(
         commission.status_code = "Accepted"
         commission.local_status = CommissionLocalStatus.IN_PROGRESS.value
 
+    elif operation.operation_type in {
+        ErpOperationType.REFUSE_COMMISSION.value,
+        ErpOperationType.CANCEL_COMMISSION.value,
+    }:
+        require_erp_id(commission)
+
+        reason = str(
+            commission.completion_reason or ""
+        ).strip()
+
+        if not reason:
+            raise RuntimeError(
+                "Für den nicht abgeschlossenen Auftrag fehlt die Begründung."
+            )
+
+        service.mark_commission_canceled(
+            commission.erp_id
+        )
+
+        commission.status_id = 10
+        commission.status_code = "Canceled"
+        commission.local_status = (
+            CommissionLocalStatus.COMPLETION_REVIEW.value
+        )
+
     elif operation.operation_type == ErpOperationType.COMPLETE_COMMISSION.value:
         require_erp_id(commission)
         service.mark_commission_done(commission.erp_id)
@@ -277,10 +302,17 @@ def fail_outbox_operation(
         "commission",
         operation.commission_id,
         {
-            "operation_type": operation.operation_type,
+            "operation_type": (
+                operation.operation_type
+            ),
             "operation_id": operation.id,
-            "attempt_count": operation.attempt_count,
-            "next_attempt_seconds": delay_seconds,
+            "attempt_count": (
+                operation.attempt_count
+            ),
+            "next_attempt_seconds": (
+                delay_seconds
+            ),
+            "error": message,
         },
     )
 

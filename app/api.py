@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask import Blueprint, abort, current_app, jsonify, request
+from flask import Blueprint, abort, current_app, g, jsonify, request
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from sqlalchemy import or_
 
@@ -28,6 +28,7 @@ from .models import (
     CommissionSource,
     WowiCommissionType,
     WowiCompanyCode,
+    AuditLog
 )
 from .settings import SettingKeys, settings
 from .utils import iso_datetime
@@ -291,6 +292,33 @@ def commission_detail(commission_id: int) -> Any:
     return jsonify({"item": serialize_commission(commission, include_details=True, viewer=user)})
 
 
+@api_bp.get(
+    "/commissions/<int:commission_id>/history"
+)
+@jwt_required()
+def commission_history(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+
+    entries = commission_history_entries(
+        commission
+    )
+
+    return jsonify(
+        {
+            "items": [
+                serialize_history_entry(entry)
+                for entry in entries
+            ]
+        }
+    )
+
+
 @api_bp.get("/commissions/<int:commission_id>/contacts")
 @jwt_required()
 def commission_contacts(commission_id: int) -> Any:
@@ -341,36 +369,108 @@ def start_commission(commission_id: int) -> Any:
 
 @api_bp.post("/commissions/<int:commission_id>/complete")
 @jwt_required()
-def complete_commission(commission_id: int) -> Any:
+def complete_commission(
+    commission_id: int,
+) -> Any:
     user = current_api_user()
-    commission = editable_commission(commission_id, user)
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
     data = request.get_json(silent=True) or {}
 
     if not commission.is_actionable:
-        return jsonify({
-            "message": "Der Auftrag wartet noch auf eine OPENWOWI-Auftragsnummer."
-        }), 409
+        return jsonify(
+            {
+                "message": (
+                    "Der Auftrag wartet noch auf eine "
+                    "OPENWOWI-Auftragsnummer."
+                )
+            }
+        ), 409
 
-    completed = bool(data.get("completed", True))
-    tenant_charge = bool(data.get("tenant_charge", False))
-    reason = str(data.get("reason") or "").strip()
+    if (
+        commission.local_status
+        != CommissionLocalStatus.IN_PROGRESS.value
+    ):
+        return jsonify(
+            {
+                "message": (
+                    "Nur ein Auftrag in Bearbeitung "
+                    "kann abgeschlossen werden."
+                )
+            }
+        ), 409
 
-    if not completed and not reason:
-        return jsonify({
-            "message": "Bitte einen Grund angeben, warum der Auftrag nicht abgeschlossen wurde."
-        }), 400
+    if (
+        "completed" not in data
+        or not isinstance(
+            data.get("completed"),
+            bool,
+        )
+    ):
+        return jsonify(
+            {
+                "message": (
+                    "Bitte angeben, ob der Auftrag "
+                    "abgeschlossen werden konnte."
+                )
+            }
+        ), 400
 
-    commission.completion_successful = completed
-    commission.tenant_charge_requested = tenant_charge
-    commission.completion_reason = reason or None
-    commission.completion_submitted_by = user
-    commission.completion_submitted_at = utc_now()
+    completed = data["completed"]
+    tenant_charge = bool(
+        data.get("tenant_charge", False)
+    )
+    reason = str(
+        data.get("reason") or ""
+    ).strip()
 
     if not completed:
-        commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
+        tenant_charge = False
+
+        if not reason:
+            return jsonify(
+                {
+                    "message": (
+                        "Bitte einen Grund angeben, "
+                        "warum der Auftrag nicht "
+                        "abgeschlossen werden konnte."
+                    )
+                }
+            ), 400
+
+    commission.completion_successful = completed
+    commission.tenant_charge_requested = (
+        tenant_charge
+    )
+    commission.completion_reason = (
+        reason or None
+    )
+    commission.completion_submitted_by = user
+    commission.completion_submitted_at = (
+        utc_now()
+    )
+    commission.erp_sync_state = (
+        CommissionSyncState.PENDING.value
+    )
+    commission.erp_sync_message = None
+
+    if not completed:
+        commission.local_status = (
+            CommissionLocalStatus.COMPLETION_REVIEW.value
+        )
         commission.completed_at = None
+
+        enqueue_erp_operation(
+            commission,
+            ErpOperationType.CANCEL_COMMISSION,
+            f"commission:canceled:{commission.id}",
+        )
     elif tenant_charge:
-        commission.local_status = CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+        commission.local_status = (
+            CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+        )
         commission.completed_at = utc_now()
 
         enqueue_erp_operation(
@@ -379,7 +479,9 @@ def complete_commission(commission_id: int) -> Any:
             f"commission:await-invoice:{commission.id}",
         )
     else:
-        commission.local_status = CommissionLocalStatus.DONE.value
+        commission.local_status = (
+            CommissionLocalStatus.DONE.value
+        )
         commission.completed_at = utc_now()
 
         enqueue_erp_operation(
@@ -401,9 +503,14 @@ def complete_commission(commission_id: int) -> Any:
 
     db.session.commit()
 
-    return jsonify({
-        "item": serialize_commission(commission),
-    }), 202
+    return jsonify(
+        {
+            "item": serialize_commission(
+                commission,
+                viewer=user,
+            )
+        }
+    ), 202
 
 
 @api_bp.get("/inventory/lookup")
@@ -874,9 +981,21 @@ def mobile_microsoft_login_available() -> bool:
 
 def current_api_user() -> User:
     identity = get_jwt_identity()
-    user = db.session.get(User, int(identity)) if identity else None
+
+    user = (
+        db.session.get(
+            User,
+            int(identity),
+        )
+        if identity
+        else None
+    )
+
     if user is None or not user.is_active:
         abort(401)
+
+    g.api_user = user
+
     return user
 
 
@@ -1059,6 +1178,248 @@ def apply_material_review(movement: InventoryMovement) -> None:
     if movement.quantity > expected_quantity + 0.0001:
         movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
         movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
+
+
+def commission_history_entries(
+    commission: Commission,
+) -> list[AuditLog]:
+    entries_by_id: dict[int, AuditLog] = {}
+
+    direct_entries = AuditLog.query.filter_by(
+        entity_type="commission",
+        entity_id=str(commission.id),
+    ).all()
+
+    for entry in direct_entries:
+        entries_by_id[entry.id] = entry
+
+    related_actions = [
+        "inventory.withdrawal",
+        "inventory.cancel_withdrawal",
+        "time.update",
+        "time.delete",
+    ]
+
+    related_entries = AuditLog.query.filter(
+        AuditLog.action.in_(
+            related_actions
+        )
+    ).all()
+
+    for entry in related_entries:
+        metadata = entry.metadata_json or {}
+
+        try:
+            related_commission_id = int(
+                metadata.get(
+                    "commission_id",
+                    0,
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+
+        if related_commission_id == commission.id:
+            entries_by_id[entry.id] = entry
+
+    time_entry_ids = [
+        str(item.id)
+        for item in TimeEntry.query.filter_by(
+            commission_id=commission.id
+        ).all()
+    ]
+
+    if time_entry_ids:
+        time_entries = AuditLog.query.filter(
+            AuditLog.entity_type
+            == "time_entry",
+            AuditLog.entity_id.in_(
+                time_entry_ids
+            ),
+        ).all()
+
+        for entry in time_entries:
+            entries_by_id[entry.id] = entry
+
+    movement_ids = [
+        str(item.id)
+        for item in InventoryMovement.query.filter_by(
+            commission_id=commission.id
+        ).all()
+    ]
+
+    if movement_ids:
+        movement_entries = AuditLog.query.filter(
+            AuditLog.entity_type
+            == "inventory_movement",
+            AuditLog.entity_id.in_(
+                movement_ids
+            ),
+        ).all()
+
+        for entry in movement_entries:
+            entries_by_id[entry.id] = entry
+
+    return sorted(
+        entries_by_id.values(),
+        key=lambda item: (
+            item.created_at,
+            item.id,
+        ),
+        reverse=True,
+    )
+
+
+def serialize_history_entry(
+    entry: AuditLog,
+) -> dict[str, Any]:
+    return {
+        "id": entry.id,
+        "action": entry.action,
+        "title": history_title(entry),
+        "detail": history_detail(entry),
+        "actor": (
+            serialize_user(entry.actor)
+            if entry.actor
+            else None
+        ),
+        "actor_name": (
+            entry.actor.display_name
+            if entry.actor
+            else "System"
+        ),
+        "created_at": iso_datetime(
+            entry.created_at
+        ),
+    }
+
+
+def history_title(
+    entry: AuditLog,
+) -> str:
+    titles = {
+        "commission.create.web": "Auftrag im Web erfasst",
+        "commission.create.ios": "Auftrag in der App erfasst",
+        "commission.start": "Auftrag angenommen",
+        "commission.complete": "Auftragsabschluss übermittelt",
+        "inventory.withdrawal": "Material gebucht",
+        "inventory.cancel_withdrawal": "Materialbuchung storniert",
+        "time.create": "Zeit erfasst",
+        "time.update": "Zeiterfassung geändert",
+        "time.delete": "Zeiterfassung gelöscht",
+        "time.review": "Zeiterfassung geprüft",
+        "material.review": "Materialbuchung geprüft",
+        "erp.outbox.succeeded": "Mit Wowiport synchronisiert",
+        "erp.outbox.failed": "Wowiport-Synchronisierung fehlgeschlagen",
+        "webhook.wowiport": "Änderung aus Wowiport übernommen",
+    }
+
+    return titles.get(
+        entry.action,
+        entry.action,
+    )
+
+
+def history_detail(
+    entry: AuditLog,
+) -> str | None:
+    metadata = entry.metadata_json or {}
+    action = entry.action
+
+    if action == "commission.complete":
+        completed = bool(
+            metadata.get("completed")
+        )
+        tenant_charge = bool(
+            metadata.get("tenant_charge")
+        )
+        reason = str(
+            metadata.get("reason") or ""
+        ).strip()
+
+        if not completed:
+            return (
+                f"Nicht abgeschlossen: {reason}"
+                if reason
+                else "Nicht abgeschlossen"
+            )
+
+        if tenant_charge:
+            return (
+                "Abgeschlossen · "
+                "Mieterbelastung angefordert"
+            )
+
+        return "Erfolgreich abgeschlossen"
+
+    if action.startswith("inventory."):
+        quantity = metadata.get("quantity")
+
+        if quantity is not None:
+            return f"Menge: {quantity}"
+
+    if action.startswith("time."):
+        minutes = metadata.get("minutes")
+        decision = metadata.get("decision")
+
+        values = []
+
+        if minutes is not None:
+            values.append(
+                f"{minutes} Minuten"
+            )
+
+        if decision == "approve":
+            values.append("Freigegeben")
+        elif decision == "reject":
+            values.append("Abgelehnt")
+
+        return (
+            " · ".join(values)
+            if values
+            else None
+        )
+
+    if action.startswith("erp.outbox."):
+        operation_type = str(
+            metadata.get(
+                "operation_type",
+                "",
+            )
+        )
+        error = str(
+            metadata.get("error") or ""
+        ).strip()
+
+        operation_titles = {
+            "create_commission": "Auftrag erstellt",
+            "accept_commission": "Auftrag angenommen",
+            "refuse_commission": "Auftrag storniert",
+            "cancel_commission": "Auftrag storniert",
+            "complete_commission": "Auftrag abgeschlossen",
+            "await_invoice": "Warte auf Rechnung",
+        }
+
+        operation_title = operation_titles.get(
+            operation_type,
+            operation_type,
+        )
+
+        if error:
+            return (
+                f"{operation_title}: {error}"
+            )
+
+        return operation_title or None
+
+    if action == "webhook.wowiport":
+        webhook_action = str(
+            metadata.get("action") or ""
+        ).strip()
+
+        return webhook_action or None
+
+    return None
 
 
 def serialize_user(user: User) -> dict[str, Any]:
