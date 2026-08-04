@@ -4,7 +4,17 @@ from io import BytesIO
 from typing import Any
 
 import qrcode
-from flask import Blueprint, Response, current_app, flash, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user, login_required
 
 from .audit import audit
@@ -36,6 +46,7 @@ from .models import (
     WowiCompanyCode,
     InventoryLocation,
     InventoryLocationType,
+    InventoryItemBarcode,
 )
 from .inventory_service import (
     book_inventory_movement,
@@ -401,24 +412,325 @@ def inventory() -> Any:
     return render_template("admin/inventory.html", items=items)
 
 
-@admin_bp.route("/admin/inventory/<int:item_id>", methods=["GET", "POST"])
+@admin_bp.route(
+    "/admin/inventory/<int:item_id>",
+    methods=["GET", "POST"],
+)
 @foreman_required
-def inventory_item(item_id: int) -> Any:
-    item = db.get_or_404(InventoryItem, item_id)
+def inventory_item(
+    item_id: int,
+) -> Any:
+    item = db.get_or_404(
+        InventoryItem,
+        item_id,
+    )
+
     if request.method == "POST":
         if request.form.get("form_name") == "movement":
-            movement = InventoryMovement(item=item, user=current_user, movement_type=request.form.get("movement_type", InventoryMovementType.STORED.value), quantity=float(request.form.get("quantity", 0)), note=request.form.get("note"))
-            apply_inventory_movement(item, movement)
-            db.session.add(movement)
-            audit("inventory.movement", "inventory_item", item.id, {"movement_type": movement.movement_type, "quantity": movement.quantity})
+            movement = InventoryMovement(
+                item=item,
+                user=current_user,
+                movement_type=request.form.get(
+                    "movement_type",
+                    InventoryMovementType.STORED.value,
+                ),
+                quantity=float(
+                    request.form.get(
+                        "quantity",
+                        0,
+                    )
+                ),
+                note=request.form.get("note"),
+            )
+
+            apply_inventory_movement(
+                item,
+                movement,
+            )
+
+            audit(
+                "inventory.movement",
+                "inventory_item",
+                item.id,
+                {
+                    "movement_type": movement.movement_type,
+                    "quantity": movement.quantity,
+                },
+            )
+
         else:
             save_inventory_form(item)
-            audit("inventory.update", "inventory_item", item.id)
+
+            audit(
+                "inventory.update",
+                "inventory_item",
+                item.id,
+            )
+
         db.session.commit()
-        flash("Artikel gespeichert.", "success")
-        return redirect(url_for("admin.inventory_item", item_id=item.id))
-    movements = InventoryMovement.query.filter_by(item_id=item.id).order_by(InventoryMovement.occurred_at.desc()).all()
-    return render_template("admin/inventory_item.html", item=item, movements=movements, movement_types=InventoryMovementType)
+        flash(
+            "Artikel gespeichert.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin.inventory_item",
+                item_id=item.id,
+            )
+        )
+
+    movements = (
+        InventoryMovement.query
+        .filter_by(item_id=item.id)
+        .order_by(
+            InventoryMovement.occurred_at.desc()
+        )
+        .all()
+    )
+
+    barcodes = (
+        InventoryItemBarcode.query
+        .filter_by(item_id=item.id)
+        .order_by(
+            InventoryItemBarcode.active.desc(),
+            InventoryItemBarcode.kind.asc(),
+            InventoryItemBarcode.code.asc(),
+        )
+        .all()
+    )
+
+    barcode_kinds = [
+        ("ean", "EAN"),
+        ("qr", "QR-Code"),
+        ("other", "Sonstiger Code"),
+    ]
+
+    return render_template(
+        "admin/inventory_item.html",
+        item=item,
+        movements=movements,
+        movement_types=InventoryMovementType,
+        barcodes=barcodes,
+        barcode_kinds=barcode_kinds,
+    )
+
+
+@admin_bp.post(
+    "/admin/inventory/<int:item_id>/barcodes"
+)
+@foreman_required
+def inventory_barcode_create(
+    item_id: int,
+) -> Any:
+    item = db.get_or_404(
+        InventoryItem,
+        item_id,
+    )
+
+    code = request.form.get(
+        "code",
+        "",
+    ).strip()
+
+    kind = request.form.get(
+        "kind",
+        "ean",
+    ).strip()
+
+    description = (
+        request.form.get(
+            "description",
+            "",
+        ).strip()
+        or None
+    )
+
+    if not code:
+        flash(
+            "Der Code darf nicht leer sein.",
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.inventory_item",
+                item_id=item.id,
+            )
+        )
+
+    if kind not in {
+        "ean",
+        "qr",
+        "other",
+    }:
+        kind = "other"
+
+    if inventory_barcode_conflicts(
+        code,
+        item.id,
+    ):
+        flash(
+            "Dieser Code ist bereits einem Artikel zugeordnet.",
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.inventory_item",
+                item_id=item.id,
+            )
+        )
+
+    barcode = InventoryItemBarcode(
+        item=item,
+        code=code,
+        kind=kind,
+        description=description,
+        active=True,
+    )
+
+    db.session.add(barcode)
+    db.session.flush()
+
+    audit(
+        "inventory.barcode.create",
+        "inventory_item",
+        item.id,
+        {
+            "barcode_id": barcode.id,
+            "code": barcode.code,
+            "kind": barcode.kind,
+        },
+    )
+
+    db.session.commit()
+
+    flash(
+        "Code hinzugefügt.",
+        "success",
+    )
+
+    return redirect(
+        url_for(
+            "admin.inventory_item",
+            item_id=item.id,
+        )
+    )
+
+
+@admin_bp.post(
+    "/admin/inventory/<int:item_id>/barcodes/<int:barcode_id>"
+)
+@foreman_required
+def inventory_barcode_update(
+    item_id: int,
+    barcode_id: int,
+) -> Any:
+    item = db.get_or_404(
+        InventoryItem,
+        item_id,
+    )
+
+    barcode = (
+        InventoryItemBarcode.query
+        .filter_by(
+            id=barcode_id,
+            item_id=item.id,
+        )
+        .one_or_none()
+    )
+
+    if barcode is None:
+        abort(404)
+
+    code = request.form.get(
+        "code",
+        "",
+    ).strip()
+
+    kind = request.form.get(
+        "kind",
+        "ean",
+    ).strip()
+
+    description = (
+        request.form.get(
+            "description",
+            "",
+        ).strip()
+        or None
+    )
+
+    if not code:
+        flash(
+            "Der Code darf nicht leer sein.",
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.inventory_item",
+                item_id=item.id,
+            )
+        )
+
+    if kind not in {
+        "ean",
+        "qr",
+        "other",
+    }:
+        kind = "other"
+
+    if inventory_barcode_conflicts(
+        code,
+        item.id,
+        excluded_barcode_id=barcode.id,
+    ):
+        flash(
+            "Dieser Code ist bereits einem Artikel zugeordnet.",
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.inventory_item",
+                item_id=item.id,
+            )
+        )
+
+    barcode.code = code
+    barcode.kind = kind
+    barcode.description = description
+    barcode.active = (
+        "active" in request.form
+    )
+
+    audit(
+        "inventory.barcode.update",
+        "inventory_item",
+        item.id,
+        {
+            "barcode_id": barcode.id,
+            "code": barcode.code,
+            "kind": barcode.kind,
+            "active": barcode.active,
+        },
+    )
+
+    db.session.commit()
+
+    flash(
+        "Code aktualisiert.",
+        "success",
+    )
+
+    return redirect(
+        url_for(
+            "admin.inventory_item",
+            item_id=item.id,
+        )
+    )
 
 
 @admin_bp.get("/admin/inventory/<int:item_id>/qr.png")
@@ -737,6 +1049,43 @@ def save_inventory_location_form(
     item.location_type = location_type
     item.active = active
     item.is_default = requested_default
+
+
+def inventory_barcode_conflicts(
+    code: str,
+    item_id: int,
+    excluded_barcode_id: int | None = None,
+) -> bool:
+    barcode_query = (
+        InventoryItemBarcode.query
+        .filter(
+            InventoryItemBarcode.code == code
+        )
+    )
+
+    if excluded_barcode_id is not None:
+        barcode_query = barcode_query.filter(
+            InventoryItemBarcode.id
+            != excluded_barcode_id
+        )
+
+    if barcode_query.first() is not None:
+        return True
+
+    other_item = (
+        InventoryItem.query
+        .filter(
+            InventoryItem.id != item_id,
+            or_(
+                InventoryItem.item_number == code,
+                InventoryItem.ean == code,
+                InventoryItem.qr_code_payload == code,
+            ),
+        )
+        .first()
+    )
+
+    return other_item is not None
 
 
 def save_inventory_form(item: InventoryItem) -> None:

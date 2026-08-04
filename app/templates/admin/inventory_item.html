@@ -78,6 +78,170 @@
       </div>
     </div>
 
+    <div class="card shadow-sm mb-4">
+      <div class="card-header">
+        Zusätzliche scanbare Codes
+      </div>
+
+      <div class="card-body">
+        {% if not barcodes %}
+        <div class="text-muted mb-3">
+          Es sind noch keine zusätzlichen Codes vorhanden.
+        </div>
+        {% endif %}
+
+        {% for barcode in barcodes %}
+        <form
+          method="post"
+          action="{{ url_for(
+            'admin.inventory_barcode_update',
+            item_id=item.id,
+            barcode_id=barcode.id
+          ) }}"
+          class="row g-2 align-items-end border-bottom pb-3 mb-3"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <div class="col-lg-4">
+            <label class="form-label">
+              Code
+            </label>
+            <input
+              class="form-control form-control-sm"
+              name="code"
+              value="{{ barcode.code }}"
+              required
+            >
+          </div>
+
+          <div class="col-lg-2">
+            <label class="form-label">
+              Art
+            </label>
+            <select
+              class="form-select form-select-sm"
+              name="kind"
+            >
+              {% for kind_value, kind_label in barcode_kinds %}
+              <option
+                value="{{ kind_value }}"
+                {% if barcode.kind == kind_value %}selected{% endif %}
+              >
+                {{ kind_label }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-lg-3">
+            <label class="form-label">
+              Beschreibung
+            </label>
+            <input
+              class="form-control form-control-sm"
+              name="description"
+              value="{{ barcode.description or '' }}"
+              placeholder="z. B. Hersteller-EAN"
+            >
+          </div>
+
+          <div class="col-lg-1">
+            <div class="form-check mb-2">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                name="active"
+                id="barcodeActive{{ barcode.id }}"
+                {% if barcode.active %}checked{% endif %}
+              >
+              <label
+                class="form-check-label"
+                for="barcodeActive{{ barcode.id }}"
+              >
+                Aktiv
+              </label>
+            </div>
+          </div>
+
+          <div class="col-lg-2">
+            <button
+              class="btn btn-sm btn-outline-primary w-100"
+              type="submit"
+            >
+              Speichern
+            </button>
+          </div>
+        </form>
+        {% endfor %}
+
+        <form
+          method="post"
+          action="{{ url_for(
+            'admin.inventory_barcode_create',
+            item_id=item.id
+          ) }}"
+          class="row g-2 align-items-end"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <div class="col-lg-4">
+            <label class="form-label">
+              Neuer Code
+            </label>
+            <input
+              class="form-control form-control-sm"
+              name="code"
+              required
+            >
+          </div>
+
+          <div class="col-lg-2">
+            <label class="form-label">
+              Art
+            </label>
+            <select
+              class="form-select form-select-sm"
+              name="kind"
+            >
+              {% for kind_value, kind_label in barcode_kinds %}
+              <option value="{{ kind_value }}">
+                {{ kind_label }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-lg-4">
+            <label class="form-label">
+              Beschreibung
+            </label>
+            <input
+              class="form-control form-control-sm"
+              name="description"
+              placeholder="z. B. Modell oder Hersteller"
+            >
+          </div>
+
+          <div class="col-lg-2">
+            <button
+              class="btn btn-sm btn-primary w-100"
+              type="submit"
+            >
+              Hinzufügen
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div class="card shadow-sm">
       <div class="card-header">Logbuch</div>
       <div class="card-body">
