@@ -131,6 +131,56 @@ class SettingKeys:
     MOBILE_MICROSOFT_CLIENT_ID = SettingDefinition[str]("mobile.microsoft_client_id", SettingValueType.STRING, "", "Microsoft Client-ID der iOS-App", "Mobile App")
     MOBILE_MICROSOFT_REDIRECT_URI = SettingDefinition[str]("mobile.microsoft_redirect_uri", SettingValueType.STRING, "", "Microsoft Redirect-URI der iOS-App", "Mobile App")
     MOBILE_MICROSOFT_SCOPES = SettingDefinition[str]("mobile.microsoft_scopes", SettingValueType.STRING, "User.Read", "Microsoft Scopes der iOS-App", "Mobile App")
+    GENERIC_OIDC_ENABLED = SettingDefinition[bool](
+        "auth.generic_oidc_enabled",
+        SettingValueType.BOOL,
+        False,
+        "Generischen OIDC-Login erlauben",
+        "Anmeldung",
+    )
+    GENERIC_OIDC_PROVIDER_NAME = SettingDefinition[str](
+        "auth.generic_oidc_provider_name",
+        SettingValueType.STRING,
+        "Single Sign-on",
+        "Name des OIDC-Anbieters",
+        "Anmeldung",
+    )
+    GENERIC_OIDC_DISCOVERY_URL = SettingDefinition[str](
+        "auth.generic_oidc_discovery_url",
+        SettingValueType.STRING,
+        "",
+        "OIDC Discovery-URL",
+        "Anmeldung",
+    )
+    GENERIC_OIDC_CLIENT_ID = SettingDefinition[str](
+        "auth.generic_oidc_client_id",
+        SettingValueType.STRING,
+        "",
+        "OIDC Client-ID",
+        "Anmeldung",
+    )
+    GENERIC_OIDC_CLIENT_SECRET = SettingDefinition[str](
+        "auth.generic_oidc_client_secret",
+        SettingValueType.SECRET,
+        "",
+        "OIDC Client-Secret",
+        "Anmeldung",
+        True,
+    )
+    GENERIC_OIDC_SCOPES = SettingDefinition[str](
+        "auth.generic_oidc_scopes",
+        SettingValueType.STRING,
+        "openid profile email",
+        "OIDC Scopes",
+        "Anmeldung",
+    )
+    GENERIC_OIDC_AUTO_CREATE_USERS = SettingDefinition[bool](
+        "auth.generic_oidc_auto_create_users",
+        SettingValueType.BOOL,
+        False,
+        "OIDC-Benutzer automatisch anlegen",
+        "Anmeldung",
+    )
     SYNC_BUSINESS_YEAR_START_MONTH = SettingDefinition[int](
         "sync.business_year_start_month",
         SettingValueType.INT,

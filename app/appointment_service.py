@@ -430,3 +430,136 @@ def send_appointment_request_email(
     appointment_request.sent_at = (
         utc_now()
     )
+
+
+def send_appointment_response_email(
+    appointment_request: CommissionAppointmentRequest,
+    accepted_proposal: CommissionAppointmentProposal | None,
+) -> None:
+    commission = appointment_request.commission
+    assigned_user = commission.user
+
+    if assigned_user is None:
+        raise RuntimeError(
+            "Dem Auftrag ist kein Handwerker zugeordnet."
+        )
+
+    recipient_email = normalize_email_address(
+        assigned_user.email
+    )
+
+    smtp_host = settings.get(
+        SettingKeys.SMTP_HOST
+    ).strip()
+    smtp_port = settings.get(
+        SettingKeys.SMTP_PORT
+    )
+    smtp_sender = settings.get(
+        SettingKeys.SMTP_SENDER
+    ).strip()
+
+    if not smtp_host:
+        raise RuntimeError(
+            "Es ist kein SMTP-Server konfiguriert."
+        )
+
+    if not smtp_sender:
+        raise RuntimeError(
+            "Es ist keine SMTP-Absenderadresse konfiguriert."
+        )
+
+    order_number = (
+        commission.erp_idnum
+        or commission.code
+        or str(commission.id)
+    )
+
+    safe_order_number = (
+        str(order_number)
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
+
+    salutation = (
+        f"Guten Tag {assigned_user.display_name},"
+    )
+
+    if (
+        appointment_request.status
+        == AppointmentRequestStatus.ACCEPTED.value
+    ):
+        if accepted_proposal is None:
+            raise RuntimeError(
+                "Der bestätigte Terminvorschlag fehlt."
+            )
+
+        subject = (
+            f"Termin bestätigt – Auftrag "
+            f"{safe_order_number}"
+        )
+
+        response_text = (
+            "der Bewohner hat folgenden Termin bestätigt:\n\n"
+            f"{format_proposal(accepted_proposal)}"
+        )
+    elif (
+        appointment_request.status
+        == AppointmentRequestStatus.REJECTED.value
+    ):
+        subject = (
+            f"Terminvorschläge abgelehnt – Auftrag "
+            f"{safe_order_number}"
+        )
+
+        response_text = (
+            "der Bewohner hat alle Terminvorschläge abgelehnt."
+        )
+    else:
+        raise RuntimeError(
+            "Der Terminstatus kann nicht benachrichtigt werden."
+        )
+
+    detail_lines = [
+        salutation,
+        "",
+        response_text,
+        "",
+        f"Auftrag: {safe_order_number}",
+    ]
+
+    if commission.apartment_address:
+        detail_lines.append(
+            f"Adresse: {commission.apartment_address}"
+        )
+
+    if appointment_request.tenant_comment:
+        detail_lines.extend([
+            "",
+            "Kommentar des Bewohners:",
+            appointment_request.tenant_comment,
+        ])
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = smtp_sender
+    message["To"] = recipient_email
+    message.set_content(
+        "\n".join(detail_lines)
+    )
+
+    try:
+        with smtplib.SMTP(
+            smtp_host,
+            smtp_port,
+            timeout=20,
+        ) as smtp:
+            smtp.send_message(
+                message
+            )
+    except (
+        OSError,
+        smtplib.SMTPException,
+    ) as exc:
+        raise RuntimeError(
+            f"Die Benachrichtigung konnte nicht versendet werden: {exc}"
+        ) from exc

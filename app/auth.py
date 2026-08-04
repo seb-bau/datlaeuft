@@ -5,6 +5,8 @@ from typing import Any, Callable, TypeVar
 
 import jwt as pyjwt
 import msal
+from authlib.integrations.base_client.errors import OAuthError
+from authlib.integrations.flask_client import OAuth
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from jwt import PyJWKClient
@@ -66,7 +68,24 @@ def login() -> Any:
             db.session.commit()
             return redirect(request.args.get("next") or url_for("admin.dashboard"))
         flash("Anmeldung fehlgeschlagen.", "danger")
-    return render_template("auth/login.html", password_enabled=settings.get(SettingKeys.PASSWORD_LOGIN_ENABLED), microsoft_enabled=settings.get(SettingKeys.MICROSOFT_LOGIN_ENABLED))
+    return render_template(
+        "auth/login.html",
+        password_enabled=settings.get(
+            SettingKeys.PASSWORD_LOGIN_ENABLED
+        ),
+        microsoft_enabled=settings.get(
+            SettingKeys.MICROSOFT_LOGIN_ENABLED
+        ),
+        generic_oidc_enabled=settings.get(
+            SettingKeys.GENERIC_OIDC_ENABLED
+        ),
+        generic_oidc_provider_name=(
+                settings.get(
+                    SettingKeys.GENERIC_OIDC_PROVIDER_NAME
+                ).strip()
+                or "Single Sign-on"
+        ),
+    )
 
 
 @auth_bp.route("/logout")
@@ -105,6 +124,194 @@ def microsoft_callback() -> Any:
     audit("auth.microsoft_login", "user", user.id, {"oid": user.entra_oid})
     db.session.commit()
     return redirect(url_for("admin.dashboard"))
+
+
+@auth_bp.get("/auth/oidc")
+def generic_oidc_login() -> Any:
+    if not settings.get(
+        SettingKeys.GENERIC_OIDC_ENABLED
+    ):
+        abort(404)
+
+    next_url = request.args.get("next", "").strip()
+    session.pop("generic_oidc_next", None)
+
+    if (
+        next_url.startswith("/")
+        and not next_url.startswith("//")
+    ):
+        session["generic_oidc_next"] = next_url
+
+    try:
+        client = _build_generic_oidc_client()
+        redirect_uri = url_for(
+            "auth.generic_oidc_callback",
+            _external=True,
+        )
+        return client.authorize_redirect(redirect_uri)
+    except Exception:
+        current_app.logger.exception(
+            "generic_oidc_login_initialization_failed"
+        )
+        flash(
+            "Der Single-Sign-on-Anbieter konnte nicht aufgerufen werden.",
+            "danger",
+        )
+        return redirect(url_for("auth.login"))
+
+
+@auth_bp.get("/auth/oidc/callback")
+def generic_oidc_callback() -> Any:
+    if not settings.get(
+        SettingKeys.GENERIC_OIDC_ENABLED
+    ):
+        abort(404)
+
+    try:
+        client = _build_generic_oidc_client()
+        token = client.authorize_access_token()
+        claims = dict(token.get("userinfo") or {})
+
+        if not claims:
+            raise RuntimeError(
+                "Der OIDC-Anbieter hat keine Benutzerinformationen geliefert"
+            )
+    except OAuthError as exc:
+        current_app.logger.warning(
+            "generic_oidc_login_failed error=%s description=%s",
+            getattr(exc, "error", None),
+            getattr(exc, "description", None),
+        )
+        flash(
+            "Die Single-Sign-on-Anmeldung wurde abgebrochen oder ist fehlgeschlagen.",
+            "danger",
+        )
+        return redirect(url_for("auth.login"))
+    except Exception:
+        current_app.logger.exception(
+            "generic_oidc_login_failed"
+        )
+        flash(
+            "Die Single-Sign-on-Anmeldung ist fehlgeschlagen.",
+            "danger",
+        )
+        return redirect(url_for("auth.login"))
+
+    user = resolve_generic_oidc_user(
+        claims,
+        settings.get(
+            SettingKeys.GENERIC_OIDC_AUTO_CREATE_USERS
+        ),
+    )
+
+    if user is None:
+        flash(
+            "Der Single-Sign-on-Benutzer ist nicht freigeschaltet.",
+            "danger",
+        )
+        return redirect(url_for("auth.login"))
+
+    user.last_login_at = utc_now()
+    login_user(user)
+    audit(
+        "auth.generic_oidc_login",
+        "user",
+        user.id,
+        {
+            "issuer": claims.get("iss"),
+            "subject": claims.get("sub"),
+        },
+    )
+    db.session.commit()
+
+    next_url = session.pop("generic_oidc_next", None)
+
+    if (
+        not isinstance(next_url, str)
+        or not next_url.startswith("/")
+        or next_url.startswith("//")
+    ):
+        next_url = url_for("admin.dashboard")
+
+    return redirect(next_url)
+
+
+def _build_generic_oidc_client() -> Any:
+    discovery_url = settings.get(
+        SettingKeys.GENERIC_OIDC_DISCOVERY_URL
+    ).strip()
+    client_id = settings.get(
+        SettingKeys.GENERIC_OIDC_CLIENT_ID
+    ).strip()
+    client_secret = settings.get(
+        SettingKeys.GENERIC_OIDC_CLIENT_SECRET
+    ).strip()
+    scopes = settings.get(
+        SettingKeys.GENERIC_OIDC_SCOPES
+    ).strip()
+
+    if not discovery_url or not client_id or not client_secret:
+        raise RuntimeError(
+            "Die OIDC-Konfiguration ist unvollständig"
+        )
+
+    oauth = OAuth(current_app._get_current_object())
+    oauth.register(
+        name="generic_oidc",
+        client_id=client_id,
+        client_secret=client_secret,
+        server_metadata_url=discovery_url,
+        client_kwargs={
+            "scope": scopes or "openid profile email",
+        },
+    )
+
+    client = oauth.create_client("generic_oidc")
+
+    if client is None:
+        raise RuntimeError(
+            "Der OIDC-Client konnte nicht erstellt werden"
+        )
+
+    return client
+
+
+def resolve_generic_oidc_user(
+    claims: dict[str, Any],
+    create: bool,
+) -> User | None:
+    email = str(claims.get("email") or "").strip().lower()
+
+    if not email:
+        return None
+
+    if str(
+        claims.get("email_verified", "")
+    ).strip().lower() == "false":
+        return None
+
+    display_name = str(
+        claims.get("name")
+        or claims.get("preferred_username")
+        or email
+    ).strip()
+
+    user = User.query.filter_by(email=email).one_or_none()
+
+    if user is None and create:
+        user = User(
+            email=email,
+            display_name=display_name,
+            is_active_flag=True,
+        )
+        db.session.add(user)
+
+    if user is None or not user.is_active:
+        return None
+
+    user.email = email
+    user.display_name = display_name or user.display_name
+    return user
 
 
 def _build_msal_app() -> msal.ConfidentialClientApplication:

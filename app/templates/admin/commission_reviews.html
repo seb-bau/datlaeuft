@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Auftragsprüfung{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Auftragsprüfung</h1>
+    <div class="text-muted">
+      Nicht abgeschlossene Aufträge und angeforderte Mieterbelastungen
+    </div>
+  </div>
+
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.commissions') }}"
+  >
+    Alle Aufträge
+  </a>
+</div>
+
+<form method="get" class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-4">
+        <label class="form-label" for="status">
+          Prüfgrund
+        </label>
+        <select
+          class="form-select"
+          id="status"
+          name="status"
+        >
+          <option value="">Alle Prüfaufträge</option>
+
+          {% for value, label in status_labels.items() %}
+          <option
+            value="{{ value }}"
+            {% if selected_status == value %}selected{% endif %}
+          >
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-auto">
+        <button class="btn btn-primary" type="submit">
+          Filtern
+        </button>
+      </div>
+
+      <div class="col-md-auto">
+        <a
+          class="btn btn-outline-secondary"
+          href="{{ url_for('admin.commission_reviews') }}"
+        >
+          Zurücksetzen
+        </a>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm table-striped datatable align-middle">
+        <thead>
+          <tr>
+            <th>Prüfgrund</th>
+            <th>Auftragsnummer</th>
+            <th>Titel</th>
+            <th>Adresse</th>
+            <th>Mieter</th>
+            <th>Monteur</th>
+            <th>Erstellt von</th>
+            <th>Abschluss</th>
+            <th>Begründung</th>
+            <th>Gemeldet von</th>
+            <th>Gemeldet am</th>
+            <th>ERP-Synchronisierung</th>
+            <th>Aktion</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {% for item in items %}
+          <tr
+            class="{% if item.local_status == 'completion_review' %}table-danger{% elif item.local_status == 'tenant_charge_review' %}table-warning{% endif %}"
+          >
+            <td>
+              {% if item.local_status == "completion_review" %}
+              <span class="badge text-bg-danger">
+                Nicht abgeschlossen
+              </span>
+              {% elif item.local_status == "tenant_charge_review" %}
+              <span class="badge text-bg-warning">
+                Mieterbelastung
+              </span>
+              {% endif %}
+            </td>
+
+            <td>
+              <a href="{{ url_for('admin.commission_detail', commission_id=item.id) }}">
+                {{ item.erp_idnum or item.code or item.id }}
+              </a>
+            </td>
+
+            <td>{{ item.display_title }}</td>
+            <td>{{ item.apartment_address or "" }}</td>
+            <td>{{ item.tenant_name or "" }}</td>
+
+            <td>
+              {% if item.user %}
+              {{ item.user.display_name }}
+              {% elif item.craftsman_erp_id %}
+              ERP-ID {{ item.craftsman_erp_id }}
+              {% endif %}
+            </td>
+
+            <td>
+              {{ item.created_by.display_name if item.created_by else "Wowiport" }}
+            </td>
+
+            <td>
+              {% if item.completion_successful %}
+              Abgeschlossen
+              {% else %}
+              Nicht abgeschlossen
+              {% endif %}
+
+              {% if item.tenant_charge_requested %}
+              · Mieterbelastung
+              {% endif %}
+            </td>
+
+            <td>{{ item.completion_reason or "" }}</td>
+
+            <td>
+              {{ item.completion_submitted_by.display_name if item.completion_submitted_by else "" }}
+            </td>
+
+            <td
+              data-order="{{ item.completion_submitted_at.isoformat() if item.completion_submitted_at else '' }}"
+            >
+              {{ item.completion_submitted_at.strftime("%d.%m.%Y %H:%M") if item.completion_submitted_at else "" }}
+            </td>
+
+            <td>
+              {% if item.erp_sync_state == "failed" %}
+              <span class="badge text-bg-danger">
+                Fehlgeschlagen
+              </span>
+              <div class="small mt-1">
+                {{ item.erp_sync_message or "" }}
+              </div>
+              {% elif item.erp_sync_state == "pending" %}
+              <span class="badge text-bg-warning">
+                Ausstehend
+              </span>
+              {% else %}
+              <span class="badge text-bg-success">
+                Synchronisiert
+              </span>
+              {% endif %}
+            </td>
+
+            <td>
+              {% if item.erp_id %}
+              <form
+                method="post"
+                action="{{ url_for('admin.commission_sync', commission_id=item.id) }}"
+              >
+                <input
+                  type="hidden"
+                  name="csrf_token"
+                  value="{{ csrf_token() }}"
+                >
+                <input
+                  type="hidden"
+                  name="next"
+                  value="{{ request.full_path }}"
+                >
+
+                <button
+                  class="btn btn-sm btn-outline-secondary"
+                  type="submit"
+                >
+                  Synchronisieren
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

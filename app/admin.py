@@ -13,6 +13,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     url_for,
 )
 from flask_login import current_user, login_required
@@ -28,6 +29,7 @@ from sqlalchemy import or_
 from .commission_service import create_pending_commission
 from .models import (
     Commission,
+    CommissionLocalStatus,
     CommissionSource,
     CraftActivity,
     InventoryItem,
@@ -48,12 +50,16 @@ from .models import (
     InventoryLocationType,
     InventoryItemBarcode,
     AppointmentWindow,
+    AuditLog,
+    CommissionAppointmentRequest,
+    CommissionPhoto,
 )
 from .inventory_service import (
     book_inventory_movement,
     get_default_inventory_location,
     get_inventory_location,
 )
+from .photo_service import commission_photo_path
 from .wowiport import (
     configured_commission_type_ids,
     sync_commission_from_erp,
@@ -69,14 +75,75 @@ def root() -> Any:
     return redirect(url_for("admin.dashboard"))
 
 
+def commission_review_query():
+    query = Commission.query.filter(
+        Commission.deleted_at.is_(None),
+        Commission.local_status.in_([
+            CommissionLocalStatus.COMPLETION_REVIEW.value,
+            CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
+        ]),
+    )
+
+    if current_user.is_admin:
+        return query
+
+    if current_user.is_foreman:
+        return query.filter(
+            or_(
+                Commission.created_by_user_id
+                == current_user.id,
+                Commission.created_by_user_id.is_(None),
+            )
+        )
+
+    return query.filter(
+        Commission.id.is_(None)
+    )
+
+
 @admin_bp.get("/admin")
 @login_required
 def dashboard() -> Any:
-    open_count = Commission.query.filter(Commission.deleted_at.is_(None), Commission.local_status != "done").count()
-    review_count = TimeEntry.query.filter_by(review_status=TimeReviewStatus.NEEDS_REVIEW.value).count()
-    material_review_count = InventoryMovement.query.filter_by(review_status=TimeReviewStatus.NEEDS_REVIEW.value).count()
-    low_stock_count = InventoryItem.query.filter(InventoryItem.stock_quantity <= InventoryItem.reorder_level).count()
-    return render_template("admin/dashboard.html", open_count=open_count, review_count=review_count, material_review_count=material_review_count, low_stock_count=low_stock_count)
+    open_count = Commission.query.filter(
+        Commission.deleted_at.is_(None),
+        Commission.local_status
+        != CommissionLocalStatus.DONE.value,
+    ).count()
+
+    review_count = TimeEntry.query.filter_by(
+        review_status=TimeReviewStatus.NEEDS_REVIEW.value
+    ).count()
+
+    material_review_count = InventoryMovement.query.filter_by(
+        review_status=TimeReviewStatus.NEEDS_REVIEW.value
+    ).count()
+
+    low_stock_count = InventoryItem.query.filter(
+        InventoryItem.stock_quantity
+        <= InventoryItem.reorder_level
+    ).count()
+
+    commission_reviews = commission_review_query()
+
+    completion_review_count = commission_reviews.filter(
+        Commission.local_status
+        == CommissionLocalStatus.COMPLETION_REVIEW.value
+    ).count()
+
+    tenant_charge_review_count = commission_reviews.filter(
+        Commission.local_status
+        == CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+    ).count()
+
+    return render_template(
+        "admin/dashboard.html",
+        open_count=open_count,
+        review_count=review_count,
+        material_review_count=material_review_count,
+        low_stock_count=low_stock_count,
+        completion_review_count=completion_review_count,
+        tenant_charge_review_count=tenant_charge_review_count,
+    )
 
 
 @admin_bp.route("/admin/settings", methods=["GET", "POST"])
@@ -269,6 +336,232 @@ def commissions() -> Any:
     return render_template("admin/commissions.html", items=items)
 
 
+@admin_bp.get(
+    "/admin/commissions/<int:commission_id>"
+)
+@foreman_required
+def commission_detail(
+    commission_id: int,
+) -> Any:
+    item = db.get_or_404(
+        Commission,
+        commission_id,
+    )
+
+    photos = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.commission_id
+            == item.id,
+            CommissionPhoto.active.is_(True),
+            CommissionPhoto.deleted_at.is_(None),
+        )
+        .order_by(
+            CommissionPhoto.created_at.desc(),
+            CommissionPhoto.id.desc(),
+        )
+        .all()
+    )
+
+    appointment_requests = (
+        CommissionAppointmentRequest.query
+        .filter_by(
+            commission_id=item.id
+        )
+        .order_by(
+            CommissionAppointmentRequest.created_at.desc(),
+            CommissionAppointmentRequest.id.desc(),
+        )
+        .all()
+    )
+
+    history_entries = (
+        AuditLog.query
+        .filter_by(
+            entity_type="commission",
+            entity_id=str(item.id),
+        )
+        .order_by(
+            AuditLog.created_at.desc(),
+            AuditLog.id.desc(),
+        )
+        .limit(250)
+        .all()
+    )
+
+    local_status_labels = {
+        "recorded": "Erfasst",
+        "waiting_for_acceptance": "Warte auf Annahme",
+        "open": "Beauftragt",
+        "in_progress": "In Bearbeitung",
+        "completion_review": "Nicht abgeschlossen",
+        "tenant_charge_review": "Mieterbelastung",
+        "done": "Erledigt",
+        "deleted": "Gelöscht",
+    }
+
+    appointment_status_labels = {
+        "pending": "Rückmeldung ausstehend",
+        "accepted": "Angenommen",
+        "rejected": "Abgelehnt",
+        "superseded": "Nicht mehr aktuell",
+        "expired": "Abgelaufen",
+        "cancelled": "Termin aufgehoben",
+    }
+
+    history_titles = {
+        "commission.create.web": "Auftrag im Web erfasst",
+        "commission.create.ios": "Auftrag in der App erfasst",
+        "commission.start": "Auftrag angenommen",
+        "commission.complete": "Auftragsabschluss übermittelt",
+        "commission.sync": "Auftrag synchronisiert",
+        "appointment.sent": "Terminvorschläge gesendet",
+        "appointment.accepted": "Termin bestätigt",
+        "appointment.rejected": "Terminvorschläge abgelehnt",
+        "appointment.cancelled": "Bestätigten Termin aufgehoben",
+        "erp.outbox.succeeded": "Mit Wowiport synchronisiert",
+        "erp.outbox.failed": "Wowiport-Synchronisierung fehlgeschlagen",
+        "webhook.wowiport": "Änderung aus Wowiport übernommen",
+    }
+
+    return render_template(
+        "admin/commission_detail.html",
+        item=item,
+        photos=photos,
+        appointment_requests=appointment_requests,
+        history_entries=history_entries,
+        local_status_labels=local_status_labels,
+        appointment_status_labels=appointment_status_labels,
+        history_titles=history_titles,
+    )
+
+
+@admin_bp.get("/admin/commission-reviews")
+@foreman_required
+def commission_reviews() -> Any:
+    selected_status = request.args.get(
+        "status",
+        "",
+    ).strip()
+
+    status_labels = {
+        CommissionLocalStatus.COMPLETION_REVIEW.value:
+            "Nicht abgeschlossen",
+        CommissionLocalStatus.TENANT_CHARGE_REVIEW.value:
+            "Mieterbelastung",
+    }
+
+    query = commission_review_query()
+
+    if selected_status in status_labels:
+        query = query.filter(
+            Commission.local_status
+            == selected_status
+        )
+    else:
+        selected_status = ""
+
+    items = query.order_by(
+        Commission.completion_submitted_at.desc(),
+        Commission.id.desc(),
+    ).all()
+
+    return render_template(
+        "admin/commission_reviews.html",
+        items=items,
+        selected_status=selected_status,
+        status_labels=status_labels,
+    )
+
+
+def commission_photo_for_admin(
+    commission_id: int,
+    photo_id: int,
+) -> CommissionPhoto:
+    db.get_or_404(
+        Commission,
+        commission_id,
+    )
+
+    photo = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.id == photo_id,
+            CommissionPhoto.commission_id
+            == commission_id,
+            CommissionPhoto.active.is_(True),
+            CommissionPhoto.deleted_at.is_(None),
+        )
+        .one_or_none()
+    )
+
+    if photo is None:
+        abort(404)
+
+    return photo
+
+
+@admin_bp.get(
+    "/admin/commissions/<int:commission_id>/photos/"
+    "<int:photo_id>/thumbnail"
+)
+@foreman_required
+def commission_photo_thumbnail(
+    commission_id: int,
+    photo_id: int,
+) -> Any:
+    photo = commission_photo_for_admin(
+        commission_id,
+        photo_id,
+    )
+
+    path = commission_photo_path(
+        photo.thumbnail_storage_name
+    )
+
+    if not path.is_file():
+        abort(404)
+
+    return send_file(
+        path,
+        mimetype="image/jpeg",
+        as_attachment=False,
+        conditional=True,
+        max_age=3600,
+    )
+
+
+@admin_bp.get(
+    "/admin/commissions/<int:commission_id>/photos/"
+    "<int:photo_id>/content"
+)
+@foreman_required
+def commission_photo_content(
+    commission_id: int,
+    photo_id: int,
+) -> Any:
+    photo = commission_photo_for_admin(
+        commission_id,
+        photo_id,
+    )
+
+    path = commission_photo_path(
+        photo.storage_name
+    )
+
+    if not path.is_file():
+        abort(404)
+
+    return send_file(
+        path,
+        mimetype=photo.mime_type,
+        as_attachment=False,
+        download_name=photo.original_filename,
+        conditional=True,
+        max_age=3600,
+    )
+
+
 @admin_bp.post(
     "/admin/commissions/<int:commission_id>/sync"
 )
@@ -282,8 +575,14 @@ def commission_sync(commission_id: int) -> Any:
             "Die Übertragung wird automatisch wiederholt.",
             "warning",
         )
+        next_url = request.form.get(
+            "next",
+            "",
+        ).strip()
+
         return redirect(
-            url_for("admin.commissions")
+            next_url
+            or url_for("admin.commissions")
         )
 
     sync_commission_from_erp(item.erp_id)

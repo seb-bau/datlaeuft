@@ -27,7 +27,11 @@
         {% for item in items %}
         <tr>
           <td>{{ item.erp_id or "Ausstehend" }}</td>
-          <td>{{ item.erp_idnum or item.code or "Ausstehend" }}</td>
+          <td>
+  <a href="{{ url_for('admin.commission_detail', commission_id=item.id) }}">
+    {{ item.erp_idnum or item.code or "Ausstehend" }}
+  </a>
+</td>
           <td>{{ item.title or "" }}</td>
           <td>{{ item.apartment_address or "" }}</td>
           <td>{{ item.apartment_location or "" }}</td>

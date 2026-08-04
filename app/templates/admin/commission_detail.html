@@ -1,0 +1,433 @@
+{% extends "base.html" %}
+{% block title %}Auftrag {{ item.erp_idnum or item.code or item.id }}{% endblock %}
+{% block content %}
+<style>
+  .detail-table {
+    font-size: .82rem;
+  }
+
+  .commission-photo {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+  }
+
+  .history-metadata {
+    max-width: 520px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: .72rem;
+  }
+</style>
+
+<div class="d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h1 class="h3 mb-1">
+      {{ item.display_title }}
+    </h1>
+    <div class="text-muted">
+      Auftrag {{ item.erp_idnum or item.code or item.id }}
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    {% if item.erp_id %}
+    <form
+      method="post"
+      action="{{ url_for('admin.commission_sync', commission_id=item.id) }}"
+    >
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+      <input
+        type="hidden"
+        name="next"
+        value="{{ request.full_path }}"
+      >
+      <button
+        class="btn btn-outline-primary"
+        type="submit"
+      >
+        Synchronisieren
+      </button>
+    </form>
+    {% endif %}
+
+    <a
+      class="btn btn-outline-secondary"
+      href="{{ url_for('admin.commissions') }}"
+    >
+      Zurück
+    </a>
+  </div>
+</div>
+
+{% if item.local_status == "completion_review" %}
+<div class="alert alert-danger">
+  <strong>Auftrag nicht abgeschlossen.</strong>
+  {{ item.completion_reason or "Es wurde keine Begründung angegeben." }}
+</div>
+{% elif item.local_status == "tenant_charge_review" %}
+<div class="alert alert-warning">
+  <strong>Mieterbelastung angefordert.</strong>
+  Der Auftrag wartet in Wowiport auf die weitere Bearbeitung.
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="small text-muted">Lokaler Status</div>
+        <div class="fw-semibold">
+          {{ local_status_labels.get(item.local_status, item.local_status) }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="small text-muted">Wowiport-Status</div>
+        <div class="fw-semibold">
+          {{ item.status_code or item.status_id or "–" }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="small text-muted">ERP-Synchronisierung</div>
+        <div class="fw-semibold">
+          {% if item.erp_sync_state == "failed" %}
+          Fehlgeschlagen
+          {% elif item.erp_sync_state == "pending" %}
+          Ausstehend
+          {% else %}
+          Synchronisiert
+          {% endif %}
+        </div>
+        {% if item.erp_sync_message %}
+        <div class="small text-danger mt-1">
+          {{ item.erp_sync_message }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="small text-muted">Monteur</div>
+        <div class="fw-semibold">
+          {{ item.user.display_name if item.user else item.craftsman_erp_id or "–" }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    Auftragsdaten
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 detail-table">
+        <tbody>
+          <tr>
+            <th>ERP-ID</th>
+            <td>{{ item.erp_id or "Ausstehend" }}</td>
+            <th>Auftragsnummer</th>
+            <td>{{ item.erp_idnum or item.code or "Ausstehend" }}</td>
+          </tr>
+          <tr>
+            <th>Adresse</th>
+            <td>{{ item.apartment_address or "–" }}</td>
+            <th>Lage</th>
+            <td>{{ item.apartment_location or "–" }}</td>
+          </tr>
+          <tr>
+            <th>Mieter</th>
+            <td>{{ item.tenant_name or "–" }}</td>
+            <th>Ansprechpartner</th>
+            <td>{{ item.contact_person or "–" }}</td>
+          </tr>
+          <tr>
+            <th>Schadensort</th>
+            <td>{{ item.damage_location or "–" }}</td>
+            <th>Quelle</th>
+            <td>{{ item.source }}</td>
+          </tr>
+          <tr>
+            <th>Gebäudenummer</th>
+            <td>{{ item.building_idnum or "–" }}</td>
+            <th>Nutzungseinheit</th>
+            <td>{{ item.use_unit_idnum or "–" }}</td>
+          </tr>
+          <tr>
+            <th>Mietvertrag</th>
+            <td>{{ item.license_agreement_idnum or "–" }}</td>
+            <th>Erstellt von</th>
+            <td>{{ item.created_by.display_name if item.created_by else "Wowiport" }}</td>
+          </tr>
+          <tr>
+            <th>Ausführung von</th>
+            <td>
+              {{ item.execution_from.strftime("%d.%m.%Y %H:%M") if item.execution_from else "–" }}
+            </td>
+            <th>Ausführung bis</th>
+            <td>
+              {{ item.execution_to.strftime("%d.%m.%Y %H:%M") if item.execution_to else "–" }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    Auftragspositionen
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-striped mb-0 detail-table">
+        <thead>
+          <tr>
+            <th>Position</th>
+            <th>Code</th>
+            <th>Auftragstext</th>
+            <th>Interne Beschreibung</th>
+            <th>Menge</th>
+            <th>Leistungskatalog-ID</th>
+            <th>Gewerk-ID</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for position in item.positions %}
+          <tr>
+            <td>{{ position.position_number or position.position_index + 1 }}</td>
+            <td>{{ position.code or "" }}</td>
+            <td>{{ position.commission_text or position.description or "" }}</td>
+            <td>{{ position.internal_description or "" }}</td>
+            <td>{{ position.units }}</td>
+            <td>{{ position.service_catalog_erp_id or "" }}</td>
+            <td>{{ position.craft_activity_erp_id or "" }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7" class="text-muted">
+              Keine Auftragspositionen vorhanden.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if item.completion_submitted_at or item.completion_successful is not none %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    Auftragsabschluss
+  </div>
+  <div class="card-body">
+    <dl class="row mb-0 detail-table">
+      <dt class="col-md-3">Abgeschlossen</dt>
+      <dd class="col-md-9">
+        {{ "Ja" if item.completion_successful else "Nein" }}
+      </dd>
+
+      <dt class="col-md-3">Mieterbelastung</dt>
+      <dd class="col-md-9">
+        {{ "Ja" if item.tenant_charge_requested else "Nein" }}
+      </dd>
+
+      <dt class="col-md-3">Begründung</dt>
+      <dd class="col-md-9">
+        {{ item.completion_reason or "–" }}
+      </dd>
+
+      <dt class="col-md-3">Gemeldet von</dt>
+      <dd class="col-md-9">
+        {{ item.completion_submitted_by.display_name if item.completion_submitted_by else "–" }}
+      </dd>
+
+      <dt class="col-md-3">Gemeldet am</dt>
+      <dd class="col-md-9">
+        {{ item.completion_submitted_at.strftime("%d.%m.%Y %H:%M") if item.completion_submitted_at else "–" }}
+      </dd>
+    </dl>
+  </div>
+</div>
+{% endif %}
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    Terminvereinbarung
+  </div>
+  <div class="card-body">
+    {% if item.accepted_appointment_from %}
+    <div class="alert alert-success">
+      <strong>Bestätigter Termin:</strong>
+      {{ item.accepted_appointment_from.strftime("%d.%m.%Y %H:%M") }}
+      {% if item.accepted_appointment_to %}
+      bis {{ item.accepted_appointment_to.strftime("%H:%M") }} Uhr
+      {% endif %}
+
+      {% if item.accepted_appointment_comment %}
+      <div class="mt-2">
+        {{ item.accepted_appointment_comment }}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="table-responsive">
+      <table class="table table-sm table-striped datatable detail-table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Empfänger</th>
+            <th>Gesendet von</th>
+            <th>Gesendet am</th>
+            <th>Vorschläge</th>
+            <th>Mieterkommentar</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for appointment_request in appointment_requests %}
+          <tr>
+            <td>
+              {{ appointment_status_labels.get(appointment_request.status, appointment_request.status) }}
+            </td>
+            <td>
+              {{ appointment_request.recipient_name or "" }}
+              {% if appointment_request.recipient_name %}<br>{% endif %}
+              <span class="text-muted">
+                {{ appointment_request.recipient_email }}
+              </span>
+            </td>
+            <td>
+              {{ appointment_request.created_by.display_name if appointment_request.created_by else "System" }}
+            </td>
+            <td
+              data-order="{{ appointment_request.sent_at.isoformat() if appointment_request.sent_at else '' }}"
+            >
+              {{ appointment_request.sent_at.strftime("%d.%m.%Y %H:%M") if appointment_request.sent_at else "–" }}
+            </td>
+            <td>
+              <ul class="mb-0 ps-3">
+                {% for proposal in appointment_request.proposals %}
+                <li class="{% if proposal.accepted %}fw-bold text-success{% endif %}">
+                  {{ proposal.proposed_date.strftime("%d.%m.%Y") }},
+                  {{ proposal.start_time.strftime("%H:%M") }}–{{ proposal.end_time.strftime("%H:%M") }}
+                  Uhr
+                  {% if proposal.accepted %}· angenommen{% endif %}
+                </li>
+                {% endfor %}
+              </ul>
+            </td>
+            <td>{{ appointment_request.tenant_comment or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    Fotos
+  </div>
+  <div class="card-body">
+    {% if photos %}
+    <div class="row g-3">
+      {% for photo in photos %}
+      <div class="col-sm-6 col-md-4 col-xl-3">
+        <div class="card h-100">
+          <a
+            href="{{ url_for('admin.commission_photo_content', commission_id=item.id, photo_id=photo.id) }}"
+            target="_blank"
+          >
+            <img
+              class="card-img-top commission-photo"
+              src="{{ url_for('admin.commission_photo_thumbnail', commission_id=item.id, photo_id=photo.id) }}"
+              alt="{{ photo.caption or photo.original_filename }}"
+              loading="lazy"
+            >
+          </a>
+          <div class="card-body p-2">
+            <div class="small">
+              {{ photo.caption or photo.original_filename }}
+            </div>
+            <div class="text-muted small">
+              {{ photo.uploaded_by.display_name if photo.uploaded_by else photo.source }}
+              ·
+              {{ photo.created_at.strftime("%d.%m.%Y %H:%M") }}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-muted">
+      Keine Fotos vorhanden.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-semibold">
+    Verlauf
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-striped datatable mb-0 detail-table">
+        <thead>
+          <tr>
+            <th>Zeitpunkt</th>
+            <th>Aktion</th>
+            <th>Benutzer</th>
+            <th>Daten</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in history_entries %}
+          <tr>
+            <td data-order="{{ entry.created_at.isoformat() }}">
+              {{ entry.created_at.strftime("%d.%m.%Y %H:%M:%S") }}
+            </td>
+            <td>
+              {{ history_titles.get(entry.action, entry.action) }}
+            </td>
+            <td>
+              {{ entry.actor.display_name if entry.actor else "System" }}
+            </td>
+            <td>
+              {% if entry.metadata_json %}
+              <code class="history-metadata">
+                {{ entry.metadata_json | tojson }}
+              </code>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -3,6 +3,37 @@
 {% block content %}
 <h1 class="h3 mb-4">Dashboard</h1>
 <div class="row g-3">
+    <div class="col-md-4">
+    <a
+      class="card shadow-sm text-decoration-none text-body h-100"
+      href="{{ url_for('admin.commission_reviews', status='completion_review') }}"
+    >
+      <div class="card-body">
+        <div class="text-muted">
+          Nicht abgeschlossene Aufträge
+        </div>
+        <div class="display-6 text-danger">
+          {{ completion_review_count }}
+        </div>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-md-4">
+    <a
+      class="card shadow-sm text-decoration-none text-body h-100"
+      href="{{ url_for('admin.commission_reviews', status='tenant_charge_review') }}"
+    >
+      <div class="card-body">
+        <div class="text-muted">
+          Mieterbelastungen
+        </div>
+        <div class="display-6 text-warning">
+          {{ tenant_charge_review_count }}
+        </div>
+      </div>
+    </a>
+  </div>
   <div class="col-md-4">
     <div class="card shadow-sm">
       <div class="card-body">

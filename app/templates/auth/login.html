@@ -20,9 +20,26 @@
           <button class="btn btn-primary w-100" type="submit">Anmelden</button>
         </form>
         {% endif %}
-        {% if microsoft_enabled %}
+        {% if microsoft_enabled or generic_oidc_enabled %}
         <hr>
-        <a class="btn btn-outline-primary w-100" href="{{ url_for('auth.microsoft_login') }}">Mit Microsoft anmelden</a>
+        {% endif %}
+
+        {% if microsoft_enabled %}
+        <a
+          class="btn btn-outline-primary w-100"
+          href="{{ url_for('auth.microsoft_login') }}"
+        >
+          Mit Microsoft anmelden
+        </a>
+        {% endif %}
+
+        {% if generic_oidc_enabled %}
+        <a
+          class="btn btn-outline-secondary w-100 {% if microsoft_enabled %}mt-2{% endif %}"
+          href="{{ url_for('auth.generic_oidc_login') }}"
+        >
+          Mit {{ generic_oidc_provider_name }} anmelden
+        </a>
         {% endif %}
       </div>
     </div>

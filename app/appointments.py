@@ -7,12 +7,14 @@ from zoneinfo import ZoneInfo
 
 from flask import (
     Blueprint,
+    current_app,
     render_template,
     request,
 )
 
 from .appointment_service import (
     appointment_timezone,
+    send_appointment_response_email,
 )
 from .audit import audit
 from .extensions import db
@@ -51,6 +53,27 @@ def appointment_request_expired(
         )
 
     return expires_at < now
+
+
+def notify_assigned_user(
+    appointment_request: CommissionAppointmentRequest,
+    accepted_proposal: CommissionAppointmentProposal | None,
+) -> None:
+    try:
+        send_appointment_response_email(
+            appointment_request,
+            accepted_proposal,
+        )
+    except (
+        RuntimeError,
+        ValueError,
+    ):
+        current_app.logger.exception(
+            "appointment_response_notification_failed "
+            "appointment_request_id=%s commission_id=%s",
+            appointment_request.id,
+            appointment_request.commission_id,
+        )
 
 
 @appointments_bp.route(
@@ -267,6 +290,11 @@ def appointment_response(
 
         db.session.commit()
 
+        notify_assigned_user(
+            appointment_request,
+            proposal,
+        )
+
         return render_template(
             "appointments/result.html",
             state=AppointmentRequestStatus.ACCEPTED.value,
@@ -296,6 +324,11 @@ def appointment_response(
         )
 
         db.session.commit()
+
+        notify_assigned_user(
+            appointment_request,
+            None,
+        )
 
         return render_template(
             "appointments/result.html",
