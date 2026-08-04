@@ -51,6 +51,7 @@ from .models import (
 from .inventory_service import (
     book_inventory_movement,
     get_default_inventory_location,
+    get_inventory_location,
 )
 from .wowiport import (
     configured_commission_type_ids,
@@ -427,36 +428,64 @@ def inventory_item(
 
     if request.method == "POST":
         if request.form.get("form_name") == "movement":
-            movement = InventoryMovement(
-                item=item,
-                user=current_user,
-                movement_type=request.form.get(
-                    "movement_type",
-                    InventoryMovementType.STORED.value,
-                ),
-                quantity=float(
-                    request.form.get(
-                        "quantity",
-                        0,
+            try:
+                movement = InventoryMovement(
+                    item=item,
+                    user=current_user,
+                    movement_type=request.form.get(
+                        "movement_type",
+                        InventoryMovementType.STORED.value,
+                    ),
+                    quantity=float(
+                        request.form.get(
+                            "quantity",
+                            0,
+                        )
+                    ),
+                    note=(
+                            request.form.get(
+                                "note",
+                                "",
+                            ).strip()
+                            or None
+                    ),
+                )
+
+                apply_inventory_movement(
+                    item,
+                    movement,
+                )
+
+                audit(
+                    "inventory.movement",
+                    "inventory_item",
+                    item.id,
+                    {
+                        "movement_type": movement.movement_type,
+                        "quantity": movement.quantity,
+                        "source_location_id": (
+                            movement.source_location_id
+                        ),
+                        "target_location_id": (
+                            movement.target_location_id
+                        ),
+                    },
+                )
+
+            except (TypeError, ValueError) as exc:
+                db.session.rollback()
+
+                flash(
+                    str(exc),
+                    "danger",
+                )
+
+                return redirect(
+                    url_for(
+                        "admin.inventory_item",
+                        item_id=item.id,
                     )
-                ),
-                note=request.form.get("note"),
-            )
-
-            apply_inventory_movement(
-                item,
-                movement,
-            )
-
-            audit(
-                "inventory.movement",
-                "inventory_item",
-                item.id,
-                {
-                    "movement_type": movement.movement_type,
-                    "quantity": movement.quantity,
-                },
-            )
+                )
 
         else:
             save_inventory_form(item)
@@ -506,6 +535,43 @@ def inventory_item(
         ("other", "Sonstiger Code"),
     ]
 
+    locations = (
+        InventoryLocation.query
+        .filter(
+            InventoryLocation.active.is_(True)
+        )
+        .order_by(
+            InventoryLocation.is_default.desc(),
+            InventoryLocation.name.asc(),
+        )
+        .all()
+    )
+
+    stocks_by_location_id = {
+        stock.location_id: stock.quantity
+        for stock in item.stocks
+    }
+
+    location_stocks = [
+        {
+            "location": location,
+            "quantity": stocks_by_location_id.get(
+                location.id,
+                0,
+            ),
+        }
+        for location in locations
+    ]
+
+    movement_type_labels = {
+        InventoryMovementType.WITHDRAWAL.value: "Entnahme",
+        InventoryMovementType.STORED.value: "Eingelagert",
+        InventoryMovementType.ORDERED.value: "Bestellt",
+        InventoryMovementType.CORRECTION.value: "Korrektur",
+        InventoryMovementType.CANCELLATION.value: "Storno",
+        InventoryMovementType.TRANSFER.value: "Umbuchung",
+    }
+
     return render_template(
         "admin/inventory_item.html",
         item=item,
@@ -513,6 +579,9 @@ def inventory_item(
         movement_types=InventoryMovementType,
         barcodes=barcodes,
         barcode_kinds=barcode_kinds,
+        locations=locations,
+        location_stocks=location_stocks,
+        movement_type_labels=movement_type_labels,
     )
 
 
@@ -1136,17 +1205,79 @@ def save_expected_materials_form(item: TimeTaskTemplate) -> None:
         ))
 
 
+def inventory_location_from_form(
+    field_name: str,
+    label: str,
+) -> InventoryLocation:
+    raw_location_id = request.form.get(
+        field_name,
+        "",
+    ).strip()
+
+    if not raw_location_id:
+        raise ValueError(
+            f"{label} fehlt."
+        )
+
+    try:
+        location_id = int(raw_location_id)
+    except ValueError as exc:
+        raise ValueError(
+            f"{label} ist ungültig."
+        ) from exc
+
+    return get_inventory_location(
+        location_id
+    )
+
+
 def apply_inventory_movement(
     item: InventoryItem,
     movement: InventoryMovement,
 ) -> None:
-    if movement.movement_type == InventoryMovementType.WITHDRAWAL.value:
-        movement.source_location = (
-            get_default_inventory_location()
+    movement_type = movement.movement_type
+
+    allowed_types = {
+        InventoryMovementType.WITHDRAWAL.value,
+        InventoryMovementType.STORED.value,
+        InventoryMovementType.ORDERED.value,
+        InventoryMovementType.CORRECTION.value,
+        InventoryMovementType.TRANSFER.value,
+    }
+
+    if movement_type not in allowed_types:
+        raise ValueError(
+            "Die Buchungsart ist ungültig."
         )
+
+    if movement_type == InventoryMovementType.WITHDRAWAL.value:
+        movement.source_location = (
+            inventory_location_from_form(
+                "source_location_id",
+                "Der Quell-Lagerort",
+            )
+        )
+
+    elif movement_type == InventoryMovementType.TRANSFER.value:
+        movement.source_location = (
+            inventory_location_from_form(
+                "source_location_id",
+                "Der Quell-Lagerort",
+            )
+        )
+        movement.target_location = (
+            inventory_location_from_form(
+                "target_location_id",
+                "Der Ziel-Lagerort",
+            )
+        )
+
     else:
         movement.target_location = (
-            get_default_inventory_location()
+            inventory_location_from_form(
+                "target_location_id",
+                "Der Ziel-Lagerort",
+            )
         )
 
     book_inventory_movement(movement)
