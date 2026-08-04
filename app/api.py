@@ -10,11 +10,17 @@ from .audit import audit
 from .auth import resolve_microsoft_user, validate_microsoft_id_token
 from .extensions import db
 from .models import (
+    AuditLog,
     Commission,
     CommissionLocalStatus,
+    CommissionSource,
+    CraftActivity,
     InventoryItem,
+    InventoryItemBarcode,
+    InventoryLocation,
     InventoryMovement,
     InventoryMovementType,
+    InventoryStock,
     MaterialSource,
     MaterialUsageStatus,
     ReviewLevel,
@@ -23,12 +29,14 @@ from .models import (
     TimeTaskExpectedMaterial,
     TimeTaskTemplate,
     User,
-    utc_now,
-    CraftActivity,
-    CommissionSource,
     WowiCommissionType,
     WowiCompanyCode,
-    AuditLog
+    utc_now,
+)
+from .inventory_service import (
+    book_inventory_movement,
+    get_default_inventory_location,
+    get_inventory_location,
 )
 from .settings import SettingKeys, settings
 from .utils import iso_datetime
@@ -513,15 +521,43 @@ def complete_commission(
     ), 202
 
 
+@api_bp.get("/inventory/locations")
+@jwt_required()
+def inventory_locations() -> Any:
+    current_api_user()
+
+    locations = (
+        InventoryLocation.query
+        .filter(InventoryLocation.active.is_(True))
+        .order_by(
+            InventoryLocation.is_default.desc(),
+            InventoryLocation.name.asc(),
+        )
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_inventory_location(location)
+            for location in locations
+        ]
+    })
+
+
 @api_bp.get("/inventory/lookup")
 @jwt_required()
 def inventory_lookup() -> Any:
     current_api_user()
+
     code = request.args.get("code", "").strip()
     item = find_inventory_item(code)
+
     if item is None:
         abort(404)
-    return jsonify({"item": serialize_inventory_item(item)})
+
+    return jsonify({
+        "item": serialize_inventory_item(item)
+    })
 
 
 @api_bp.get("/inventory/search")
@@ -530,6 +566,7 @@ def inventory_search() -> Any:
     current_api_user()
 
     search_text = request.args.get("q", "").strip()
+
     if len(search_text) < 2:
         return jsonify({"items": []})
 
@@ -540,36 +577,242 @@ def inventory_search() -> Any:
 
     limit = min(max(limit, 1), 50)
 
-    query = InventoryItem.query.filter(InventoryItem.active.is_(True))
+    query = InventoryItem.query.filter(
+        InventoryItem.active.is_(True)
+    )
 
-    for term in [item.strip() for item in search_text.split() if item.strip()]:
+    for term in [
+        item.strip()
+        for item in search_text.split()
+        if item.strip()
+    ]:
         like_term = f"%{term}%"
-        query = query.filter(or_(
-            InventoryItem.name.ilike(like_term),
-            InventoryItem.item_number.ilike(like_term),
-            InventoryItem.ean.ilike(like_term),
-            InventoryItem.qr_code_payload.ilike(like_term),
-        ))
 
-    items = query.order_by(
-        InventoryItem.name.asc(),
-        InventoryItem.item_number.asc(),
-    ).limit(limit).all()
+        barcode_item_ids = (
+            db.session.query(
+                InventoryItemBarcode.item_id
+            )
+            .filter(
+                InventoryItemBarcode.active.is_(True),
+                InventoryItemBarcode.code.ilike(like_term),
+            )
+        )
 
-    return jsonify({"items": [serialize_inventory_item(item) for item in items]})
+        query = query.filter(
+            or_(
+                InventoryItem.name.ilike(like_term),
+                InventoryItem.item_number.ilike(like_term),
+                InventoryItem.ean.ilike(like_term),
+                InventoryItem.qr_code_payload.ilike(like_term),
+                InventoryItem.id.in_(barcode_item_ids),
+            )
+        )
+
+    items = (
+        query
+        .order_by(
+            InventoryItem.name.asc(),
+            InventoryItem.item_number.asc(),
+        )
+        .limit(limit)
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_inventory_item(item)
+            for item in items
+        ]
+    })
+
+
+@api_bp.get("/inventory/movements")
+@jwt_required()
+def inventory_movements() -> Any:
+    user = current_api_user()
+
+    movements = (
+        InventoryMovement.query
+        .filter(
+            InventoryMovement.user_id == user.id,
+            InventoryMovement.commission_id.is_(None),
+        )
+        .order_by(
+            InventoryMovement.occurred_at.desc()
+        )
+        .limit(query_limit())
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_inventory_movement(item)
+            for item in movements
+        ]
+    })
+
+
+@api_bp.post("/inventory/transfer")
+@jwt_required()
+def inventory_transfer() -> Any:
+    user = current_api_user()
+    data = request.get_json(silent=True) or {}
+
+    item = find_inventory_item(
+        str(data.get("code") or "").strip()
+    )
+
+    if item is None:
+        return jsonify({
+            "message": "Der Artikel wurde nicht gefunden."
+        }), 404
+
+    try:
+        quantity = float(data.get("quantity", 0))
+        source_location = get_inventory_location(
+            int(data.get("source_location_id"))
+        )
+        target_location = get_inventory_location(
+            int(data.get("target_location_id"))
+        )
+
+        movement = InventoryMovement(
+            item=item,
+            user=user,
+            movement_type=InventoryMovementType.TRANSFER.value,
+            quantity=quantity,
+            source=(
+                MaterialSource.VEHICLE.value
+                if source_location.location_type == "vehicle"
+                else MaterialSource.WAREHOUSE.value
+            ),
+            usage_status=(
+                MaterialUsageStatus.IN_VEHICLE.value
+                if target_location.location_type == "vehicle"
+                else MaterialUsageStatus.NOT_INSTALLED.value
+            ),
+            note=(
+                str(data.get("note") or "").strip()
+                or None
+            ),
+            source_location=source_location,
+            target_location=target_location,
+            review_status=TimeReviewStatus.OK.value,
+            review_level=ReviewLevel.GREEN.value,
+        )
+
+        book_inventory_movement(movement)
+
+    except (TypeError, ValueError) as exc:
+        db.session.rollback()
+        return jsonify({
+            "message": str(exc)
+        }), 400
+
+    audit(
+        "inventory.transfer",
+        "inventory_item",
+        item.id,
+        {
+            "quantity": quantity,
+            "source_location_id": source_location.id,
+            "target_location_id": target_location.id,
+        },
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "item": serialize_inventory_movement(movement),
+        "inventory_item": serialize_inventory_item(item),
+    }), 201
+
+
+@api_bp.post("/inventory/receipt")
+@jwt_required()
+def inventory_receipt() -> Any:
+    user = current_api_user()
+    data = request.get_json(silent=True) or {}
+
+    item = find_inventory_item(
+        str(data.get("code") or "").strip()
+    )
+
+    if item is None:
+        return jsonify({
+            "message": "Der Artikel wurde nicht gefunden."
+        }), 404
+
+    try:
+        quantity = float(data.get("quantity", 0))
+        target_location = get_inventory_location(
+            int(data.get("target_location_id"))
+        )
+
+        movement = InventoryMovement(
+            item=item,
+            user=user,
+            movement_type=InventoryMovementType.STORED.value,
+            quantity=quantity,
+            source=MaterialSource.DIRECT_PURCHASE.value,
+            usage_status=(
+                MaterialUsageStatus.IN_VEHICLE.value
+                if target_location.location_type == "vehicle"
+                else MaterialUsageStatus.NOT_INSTALLED.value
+            ),
+            note=(
+                str(data.get("note") or "").strip()
+                or None
+            ),
+            target_location=target_location,
+            review_status=TimeReviewStatus.OK.value,
+            review_level=ReviewLevel.GREEN.value,
+        )
+
+        book_inventory_movement(movement)
+
+    except (TypeError, ValueError) as exc:
+        db.session.rollback()
+        return jsonify({
+            "message": str(exc)
+        }), 400
+
+    audit(
+        "inventory.direct_purchase",
+        "inventory_item",
+        item.id,
+        {
+            "quantity": quantity,
+            "target_location_id": target_location.id,
+        },
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "item": serialize_inventory_movement(movement),
+        "inventory_item": serialize_inventory_item(item),
+    }), 201
 
 
 @api_bp.get("/commissions/<int:commission_id>/materials")
 @jwt_required()
 def commission_materials(commission_id: int) -> Any:
     user = current_api_user()
-    commission = viewable_commission(commission_id, user)
-    cancelled_ids = cancelled_inventory_movement_ids(commission.id)
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+    cancelled_ids = cancelled_inventory_movement_ids(
+        commission.id
+    )
 
     movements = (
         InventoryMovement.query
         .filter_by(commission_id=commission.id)
-        .order_by(InventoryMovement.occurred_at.desc())
+        .order_by(
+            InventoryMovement.occurred_at.desc()
+        )
         .all()
     )
 
@@ -578,7 +821,10 @@ def commission_materials(commission_id: int) -> Any:
             serialize_inventory_movement(
                 item,
                 cancelled_ids=cancelled_ids,
-                can_edit=can_edit_commission(commission, user),
+                can_edit=can_edit_commission(
+                    commission,
+                    user,
+                ),
             )
             for item in movements
         ]
@@ -587,30 +833,64 @@ def commission_materials(commission_id: int) -> Any:
 
 @api_bp.post("/commissions/<int:commission_id>/materials")
 @jwt_required()
-def add_commission_material(commission_id: int) -> Any:
+def add_commission_material(
+    commission_id: int,
+) -> Any:
     user = current_api_user()
-    commission = editable_commission(commission_id, user)
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
     data = request.get_json(silent=True) or {}
-    item = find_inventory_item(str(data.get("code", "")).strip())
+
+    item = find_inventory_item(
+        str(data.get("code", "")).strip()
+    )
+
     if item is None:
         abort(404)
+
     try:
         quantity = float(data.get("quantity", 1))
     except (TypeError, ValueError):
         abort(400)
+
     if quantity <= 0:
         abort(400)
+
     task = None
+
     if data.get("task_template_id"):
-        task = get_user_visible_time_task(user, int(data["task_template_id"]))
+        task = get_user_visible_time_task(
+            user,
+            int(data["task_template_id"]),
+        )
+
         if task is None:
             abort(403)
-    source = str(data.get("source") or MaterialSource.WAREHOUSE.value).strip()
-    if source not in {item.value for item in MaterialSource}:
+
+    source = str(
+        data.get("source")
+        or MaterialSource.WAREHOUSE.value
+    ).strip()
+
+    if source not in {
+        item.value
+        for item in MaterialSource
+    }:
         abort(400)
-    usage_status = str(data.get("usage_status") or MaterialUsageStatus.INSTALLED.value).strip()
-    if usage_status not in {item.value for item in MaterialUsageStatus}:
+
+    usage_status = str(
+        data.get("usage_status")
+        or MaterialUsageStatus.INSTALLED.value
+    ).strip()
+
+    if usage_status not in {
+        item.value
+        for item in MaterialUsageStatus
+    }:
         abort(400)
+
     movement = InventoryMovement(
         item=item,
         user=user,
@@ -623,27 +903,89 @@ def add_commission_material(commission_id: int) -> Any:
         usage_status=usage_status,
         deviation_reason=data.get("deviation_reason"),
     )
-    db.session.add(movement)
-    if source == MaterialSource.WAREHOUSE.value:
-        item.stock_quantity -= quantity
+
+    try:
+        if source == MaterialSource.WAREHOUSE.value:
+            movement.source_location = (
+                get_inventory_location(
+                    int(data["location_id"])
+                )
+                if data.get("location_id")
+                else get_default_inventory_location()
+            )
+            book_inventory_movement(movement)
+
+        elif source == MaterialSource.VEHICLE.value:
+            if not data.get("location_id"):
+                raise ValueError(
+                    "Bei der Quelle „Fahrzeug“ muss ein Fahrzeug-Lagerort ausgewählt werden."
+                )
+
+            movement.source_location = (
+                get_inventory_location(
+                    int(data["location_id"])
+                )
+            )
+            book_inventory_movement(movement)
+
+        else:
+            db.session.add(movement)
+
+    except (TypeError, ValueError) as exc:
+        db.session.rollback()
+
+        return jsonify({
+            "message": str(exc)
+        }), 400
+
     with db.session.no_autoflush:
         apply_material_review(movement)
-    audit("inventory.withdrawal", "inventory_item", item.id,
-          {"commission_id": commission.id, "quantity": quantity, "task_template_id": task.id if task else None,
-           "source": source})
+
+    audit(
+        "inventory.withdrawal",
+        "inventory_item",
+        item.id,
+        {
+            "commission_id": commission.id,
+            "quantity": quantity,
+            "task_template_id": (
+                task.id
+                if task
+                else None
+            ),
+            "source": source,
+            "source_location_id": (
+                movement.source_location_id
+            ),
+        },
+    )
+
     db.session.commit()
-    return jsonify({"item": serialize_inventory_movement(movement), "inventory_item": serialize_inventory_item(item)}), 201
+
+    return jsonify({
+        "item": serialize_inventory_movement(movement),
+        "inventory_item": serialize_inventory_item(item),
+    }), 201
 
 
 @api_bp.post("/commissions/<int:commission_id>/materials/<int:movement_id>/cancel")
 @jwt_required()
-def cancel_commission_material(commission_id: int, movement_id: int) -> Any:
+def cancel_commission_material(
+    commission_id: int,
+    movement_id: int,
+) -> Any:
     user = current_api_user()
-    commission = editable_commission(commission_id, user)
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
 
     movement = (
         InventoryMovement.query
-        .filter_by(id=movement_id, commission_id=commission.id)
+        .filter_by(
+            id=movement_id,
+            commission_id=commission.id,
+        )
         .one_or_none()
     )
 
@@ -651,19 +993,26 @@ def cancel_commission_material(commission_id: int, movement_id: int) -> Any:
         abort(404)
 
     if movement.movement_type != InventoryMovementType.WITHDRAWAL.value:
-        return jsonify({"message": "Nur Entnahmen können storniert werden."}), 400
+        return jsonify({
+            "message": "Nur Entnahmen können storniert werden."
+        }), 400
 
-    if movement.id in cancelled_inventory_movement_ids(commission.id):
-        return jsonify({"message": "Diese Materialbuchung wurde bereits storniert."}), 409
+    if movement.id in cancelled_inventory_movement_ids(
+        commission.id
+    ):
+        return jsonify({
+            "message": "Diese Materialbuchung wurde bereits storniert."
+        }), 409
 
     item = movement.item
-    if movement.source == MaterialSource.WAREHOUSE.value:
-        item.stock_quantity += movement.quantity
-
-    note_parts = [f"{CANCELLATION_NOTE_PREFIX}{movement.id}"]
+    note_parts = [
+        f"{CANCELLATION_NOTE_PREFIX}{movement.id}"
+    ]
 
     if movement.note:
-        note_parts.append(f"Originalnotiz: {movement.note}")
+        note_parts.append(
+            f"Originalnotiz: {movement.note}"
+        )
 
     cancellation = InventoryMovement(
         item=item,
@@ -679,7 +1028,25 @@ def cancel_commission_material(commission_id: int, movement_id: int) -> Any:
         review_level=ReviewLevel.GREEN.value,
     )
 
-    db.session.add(cancellation)
+    try:
+        if (
+            movement.source_location is not None
+            or movement.source == MaterialSource.WAREHOUSE.value
+        ):
+            cancellation.target_location = (
+                movement.source_location
+                or get_default_inventory_location()
+            )
+            book_inventory_movement(cancellation)
+        else:
+            db.session.add(cancellation)
+
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({
+            "message": str(exc)
+        }), 400
+
     audit(
         "inventory.cancel_withdrawal",
         "inventory_item",
@@ -688,21 +1055,29 @@ def cancel_commission_material(commission_id: int, movement_id: int) -> Any:
             "commission_id": commission.id,
             "movement_id": movement.id,
             "quantity": movement.quantity,
+            "target_location_id": (
+                cancellation.target_location_id
+            ),
         },
     )
+
     db.session.commit()
 
-    cancelled_ids = cancelled_inventory_movement_ids(commission.id)
+    cancelled_ids = cancelled_inventory_movement_ids(
+        commission.id
+    )
 
     return jsonify({
         "item": serialize_inventory_movement(
             cancellation,
             cancelled_ids=cancelled_ids,
-            can_edit=can_edit_commission(commission, user),
+            can_edit=can_edit_commission(
+                commission,
+                user,
+            ),
         ),
         "inventory_item": serialize_inventory_item(item),
     }), 201
-
 
 @api_bp.get("/time-tasks")
 @jwt_required()
@@ -1066,18 +1441,36 @@ def cancelled_inventory_movement_ids(commission_id: int) -> set[int]:
     return result
 
 
-def find_inventory_item(code: str) -> InventoryItem | None:
+def find_inventory_item(
+    code: str,
+) -> InventoryItem | None:
     if not code:
         return None
 
-    return db.session.query(InventoryItem).filter(
-        InventoryItem.active.is_(True),
-        or_(
-            InventoryItem.qr_code_payload == code,
-            InventoryItem.ean == code,
-            InventoryItem.item_number == code,
-        ),
-    ).one_or_none()
+    barcode = (
+        InventoryItemBarcode.query
+        .filter(
+            InventoryItemBarcode.code == code,
+            InventoryItemBarcode.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if barcode is not None and barcode.item.active:
+        return barcode.item
+
+    return (
+        InventoryItem.query
+        .filter(
+            InventoryItem.active.is_(True),
+            or_(
+                InventoryItem.qr_code_payload == code,
+                InventoryItem.ean == code,
+                InventoryItem.item_number == code,
+            ),
+        )
+        .one_or_none()
+    )
 
 
 def int_payload(data: dict[str, Any], key: str) -> int:
@@ -1493,8 +1886,68 @@ def serialize_commission(commission: Commission, include_details: bool = False, 
     return item
 
 
-def serialize_inventory_item(item: InventoryItem) -> dict[str, Any]:
-    return {"id": item.id, "item_number": item.item_number, "name": item.name, "unit": item.unit, "ean": item.ean, "qr_code_payload": item.qr_code_payload, "stock_quantity": item.stock_quantity, "reorder_level": item.reorder_level}
+def serialize_inventory_location(
+    item: InventoryLocation,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "code": item.code,
+        "name": item.name,
+        "location_type": item.location_type,
+        "is_default": item.is_default,
+    }
+
+
+def serialize_inventory_stock(
+    item: InventoryStock,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "quantity": item.quantity,
+        "location": serialize_inventory_location(
+            item.location
+        ),
+    }
+
+
+def serialize_inventory_item(
+    item: InventoryItem,
+) -> dict[str, Any]:
+    stocks = sorted(
+        [
+            stock
+            for stock in item.stocks
+            if stock.location.active
+        ],
+        key=lambda stock: (
+            not stock.location.is_default,
+            stock.location.name.lower(),
+        ),
+    )
+
+    barcodes = sorted(
+        [
+            barcode.code
+            for barcode in item.barcodes
+            if barcode.active
+        ]
+    )
+
+    return {
+        "id": item.id,
+        "item_number": item.item_number,
+        "name": item.name,
+        "unit": item.unit,
+        "ean": item.ean,
+        "qr_code_payload": item.qr_code_payload,
+        "stock_quantity": item.stock_quantity,
+        "reorder_level": item.reorder_level,
+        "barcodes": barcodes,
+        "stocks": [
+            serialize_inventory_stock(stock)
+            for stock in stocks
+        ],
+    }
 
 
 def serialize_inventory_movement(
@@ -1506,19 +1959,42 @@ def serialize_inventory_movement(
     is_cancelled = item.id in cancelled_ids
     can_cancel = (
         can_edit
-        and item.movement_type == InventoryMovementType.WITHDRAWAL.value
+        and item.movement_type
+        == InventoryMovementType.WITHDRAWAL.value
         and not is_cancelled
     )
 
     return {
         "id": item.id,
         "item": serialize_inventory_item(item.item),
-        "user": serialize_user(item.user) if item.user else None,
+        "user": (
+            serialize_user(item.user)
+            if item.user
+            else None
+        ),
         "commission_id": item.commission_id,
-        "task_template": serialize_time_task(item.task_template) if item.task_template else None,
+        "task_template": (
+            serialize_time_task(item.task_template)
+            if item.task_template
+            else None
+        ),
         "movement_type": item.movement_type,
         "quantity": item.quantity,
         "source": item.source,
+        "source_location": (
+            serialize_inventory_location(
+                item.source_location
+            )
+            if item.source_location
+            else None
+        ),
+        "target_location": (
+            serialize_inventory_location(
+                item.target_location
+            )
+            if item.target_location
+            else None
+        ),
         "usage_status": item.usage_status,
         "deviation_reason": item.deviation_reason,
         "note": item.note,

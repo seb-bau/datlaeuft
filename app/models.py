@@ -61,13 +61,29 @@ class ErpOutboxState(str, Enum):
     SUCCEEDED = "succeeded"
 
 
-
 class InventoryMovementType(str, Enum):
     WITHDRAWAL = "withdrawal"
     ORDERED = "ordered"
     STORED = "stored"
     CORRECTION = "correction"
     CANCELLATION = "cancellation"
+    TRANSFER = "transfer"
+
+
+class InventoryLocationType(str, Enum):
+    WAREHOUSE = "warehouse"
+    VEHICLE = "vehicle"
+    OTHER = "other"
+
+    @property
+    def label(self) -> str:
+        if self == InventoryLocationType.WAREHOUSE:
+            return "Lager"
+
+        if self == InventoryLocationType.VEHICLE:
+            return "Fahrzeug"
+
+        return "Sonstiger Lagerort"
 
 
 class TimeReviewStatus(str, Enum):
@@ -512,6 +528,156 @@ class ErpOutboxOperation(db.Model):
     commission: Mapped[Commission] = relationship(back_populates="erp_operations")
 
 
+class InventoryLocation(db.Model):
+    __tablename__ = "inventory_location"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    code: Mapped[str] = mapped_column(
+        db.String(80),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+        index=True,
+    )
+    location_type: Mapped[str] = mapped_column(
+        db.String(40),
+        default=InventoryLocationType.WAREHOUSE.value,
+        server_default=InventoryLocationType.WAREHOUSE.value,
+        nullable=False,
+        index=True,
+    )
+    is_default: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
+        index=True,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default="1",
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    stocks: Mapped[list["InventoryStock"]] = relationship(
+        back_populates="location",
+        cascade="all, delete-orphan",
+    )
+    outgoing_movements: Mapped[list["InventoryMovement"]] = relationship(
+        back_populates="source_location",
+        foreign_keys="InventoryMovement.source_location_id",
+    )
+    incoming_movements: Mapped[list["InventoryMovement"]] = relationship(
+        back_populates="target_location",
+        foreign_keys="InventoryMovement.target_location_id",
+    )
+
+    @property
+    def type_label(self) -> str:
+        try:
+            return InventoryLocationType(
+                self.location_type
+            ).label
+        except ValueError:
+            return self.location_type
+
+
+class InventoryStock(db.Model):
+    __tablename__ = "inventory_stock"
+    __table_args__ = (
+        UniqueConstraint(
+            "item_id",
+            "location_id",
+            name="uq_inventory_stock_item_location",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        db.ForeignKey("inventory_item.id"),
+        nullable=False,
+        index=True,
+    )
+    location_id: Mapped[int] = mapped_column(
+        db.ForeignKey("inventory_location.id"),
+        nullable=False,
+        index=True,
+    )
+    quantity: Mapped[float] = mapped_column(
+        db.Float,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+
+    item: Mapped[InventoryItem] = relationship(
+        back_populates="stocks"
+    )
+    location: Mapped[InventoryLocation] = relationship(
+        back_populates="stocks"
+    )
+
+
+class InventoryItemBarcode(db.Model):
+    __tablename__ = "inventory_item_barcode"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        db.ForeignKey("inventory_item.id"),
+        nullable=False,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(
+        db.String(160),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(
+        db.String(40),
+        default="ean",
+        server_default="ean",
+        nullable=False,
+        index=True,
+    )
+    description: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default="1",
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    item: Mapped[InventoryItem] = relationship(
+        back_populates="barcodes"
+    )
+
+
 class InventoryItem(db.Model):
     __tablename__ = "inventory_item"
 
@@ -527,6 +693,14 @@ class InventoryItem(db.Model):
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
 
     movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="item")
+    stocks: Mapped[list["InventoryStock"]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+    )
+    barcodes: Mapped[list["InventoryItemBarcode"]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+    )
     expected_task_materials: Mapped[list["TimeTaskExpectedMaterial"]] = relationship(back_populates="item")
 
     @property
@@ -545,6 +719,14 @@ class InventoryMovement(db.Model):
     user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
     commission_id: Mapped[int | None] = mapped_column(db.ForeignKey("commission.id"), index=True)
     task_template_id: Mapped[int | None] = mapped_column(db.ForeignKey("time_task_template.id"), index=True)
+    source_location_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("inventory_location.id"),
+        index=True,
+    )
+    target_location_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("inventory_location.id"),
+        index=True,
+    )
     movement_type: Mapped[str] = mapped_column(db.String(40), nullable=False, index=True)
     quantity: Mapped[float] = mapped_column(db.Float, nullable=False)
     note: Mapped[str | None] = mapped_column(db.Text)
@@ -561,6 +743,14 @@ class InventoryMovement(db.Model):
     user: Mapped[User | None] = relationship(back_populates="inventory_movements", foreign_keys=[user_id])
     commission: Mapped[Commission | None] = relationship(back_populates="inventory_movements")
     task_template: Mapped[TimeTaskTemplate | None] = relationship()
+    source_location: Mapped[InventoryLocation | None] = relationship(
+        back_populates="outgoing_movements",
+        foreign_keys=[source_location_id],
+    )
+    target_location: Mapped[InventoryLocation | None] = relationship(
+        back_populates="incoming_movements",
+        foreign_keys=[target_location_id],
+    )
     reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_user_id])
 
 

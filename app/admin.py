@@ -34,6 +34,12 @@ from .models import (
     WowiCommissionType,
     utc_now,
     WowiCompanyCode,
+    InventoryLocation,
+    InventoryLocationType,
+)
+from .inventory_service import (
+    book_inventory_movement,
+    get_default_inventory_location,
 )
 from .wowiport import (
     configured_commission_type_ids,
@@ -281,6 +287,101 @@ def commission_sync(commission_id: int) -> Any:
 
     return redirect(
         url_for("admin.commissions")
+    )
+
+
+@admin_bp.route(
+    "/admin/inventory-locations",
+    methods=["GET", "POST"],
+)
+@foreman_required
+def inventory_locations() -> Any:
+    if request.method == "POST":
+        item = InventoryLocation()
+
+        try:
+            save_inventory_location_form(
+                item
+            )
+            db.session.add(item)
+            db.session.flush()
+
+            audit(
+                "inventory.location.create",
+                "inventory_location",
+                item.id,
+            )
+
+            db.session.commit()
+            flash(
+                "Lagerort gespeichert.",
+                "success",
+            )
+        except ValueError as exc:
+            db.session.rollback()
+            flash(
+                str(exc),
+                "danger",
+            )
+
+        return redirect(
+            url_for(
+                "admin.inventory_locations"
+            )
+        )
+
+    items = InventoryLocation.query.order_by(
+        InventoryLocation.is_default.desc(),
+        InventoryLocation.active.desc(),
+        InventoryLocation.name.asc(),
+    ).all()
+
+    return render_template(
+        "admin/inventory_locations.html",
+        items=items,
+        location_types=InventoryLocationType,
+    )
+
+
+@admin_bp.post(
+    "/admin/inventory-locations/<int:item_id>"
+)
+@foreman_required
+def inventory_location_update(
+    item_id: int,
+) -> Any:
+    item = db.get_or_404(
+        InventoryLocation,
+        item_id,
+    )
+
+    try:
+        save_inventory_location_form(
+            item
+        )
+
+        audit(
+            "inventory.location.update",
+            "inventory_location",
+            item.id,
+        )
+
+        db.session.commit()
+        flash(
+            "Lagerort aktualisiert.",
+            "success",
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(
+            str(exc),
+            "danger",
+        )
+
+    return redirect(
+        url_for(
+            "admin.inventory_locations"
+        )
     )
 
 
@@ -546,6 +647,98 @@ def save_user_craft_activities(item: User) -> None:
     ).order_by(CraftActivity.name.asc()).all()
 
 
+def save_inventory_location_form(
+    item: InventoryLocation,
+) -> None:
+    code = request.form.get(
+        "code",
+        "",
+    ).strip().upper()
+    name = request.form.get(
+        "name",
+        "",
+    ).strip()
+    location_type = request.form.get(
+        "location_type",
+        InventoryLocationType.WAREHOUSE.value,
+    ).strip()
+    active = "active" in request.form
+    requested_default = (
+        "is_default" in request.form
+    )
+
+    if not code:
+        raise ValueError(
+            "Der Lagerort benötigt einen Code."
+        )
+
+    if not name:
+        raise ValueError(
+            "Der Lagerort benötigt einen Namen."
+        )
+
+    if location_type not in {
+        value.value
+        for value in InventoryLocationType
+    }:
+        raise ValueError(
+            "Die Lagerortart ist ungültig."
+        )
+
+    duplicate_query = InventoryLocation.query.filter(
+        InventoryLocation.code == code
+    )
+
+    if item.id is not None:
+        duplicate_query = duplicate_query.filter(
+            InventoryLocation.id != item.id
+        )
+
+    if duplicate_query.first() is not None:
+        raise ValueError(
+            "Dieser Lagerort-Code ist bereits vergeben."
+        )
+
+    current_default = (
+        item.is_default
+        if item.id is not None
+        else False
+    )
+    default_exists = InventoryLocation.query.filter(
+        InventoryLocation.is_default.is_(True),
+        InventoryLocation.id != item.id,
+    ).first() is not None
+
+    if not default_exists and item.id is None:
+        requested_default = True
+
+    if current_default and not requested_default:
+        raise ValueError(
+            "Bitte zuerst einen anderen Standard-Lagerort festlegen."
+        )
+
+    if requested_default and not active:
+        raise ValueError(
+            "Der Standard-Lagerort muss aktiv sein."
+        )
+
+    if requested_default:
+        InventoryLocation.query.filter(
+            InventoryLocation.id != item.id
+        ).update(
+            {
+                InventoryLocation.is_default: False
+            },
+            synchronize_session=False,
+        )
+
+    item.code = code
+    item.name = name
+    item.location_type = location_type
+    item.active = active
+    item.is_default = requested_default
+
+
 def save_inventory_form(item: InventoryItem) -> None:
     item.item_number = request.form.get("item_number", "").strip()
     item.name = request.form.get("name", "").strip()
@@ -594,13 +787,20 @@ def save_expected_materials_form(item: TimeTaskTemplate) -> None:
         ))
 
 
-def apply_inventory_movement(item: InventoryItem, movement: InventoryMovement) -> None:
+def apply_inventory_movement(
+    item: InventoryItem,
+    movement: InventoryMovement,
+) -> None:
     if movement.movement_type == InventoryMovementType.WITHDRAWAL.value:
-        item.stock_quantity -= movement.quantity
-    if movement.movement_type == InventoryMovementType.STORED.value:
-        item.stock_quantity += movement.quantity
-    if movement.movement_type == InventoryMovementType.CORRECTION.value:
-        item.stock_quantity += movement.quantity
+        movement.source_location = (
+            get_default_inventory_location()
+        )
+    else:
+        movement.target_location = (
+            get_default_inventory_location()
+        )
+
+    book_inventory_movement(movement)
 
 
 def read_commission_form() -> dict[str, Any]:

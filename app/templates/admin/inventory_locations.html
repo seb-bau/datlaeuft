@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Lagerorte{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Lagerorte</h1>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.inventory') }}">Zum Lager</a>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-4">
+    <form method="post" class="card shadow-sm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="card-header">Lagerort anlegen</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Code</label>
+          <input class="form-control" name="code" required>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Name</label>
+          <input class="form-control" name="name" required>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Art</label>
+          <select class="form-select" name="location_type">
+            {% for location_type in location_types %}
+            <option value="{{ location_type.value }}">{{ location_type.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" name="is_default">
+          <label class="form-check-label">Standard-Lagerort</label>
+        </div>
+
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="active" checked>
+          <label class="form-check-label">Aktiv</label>
+        </div>
+      </div>
+
+      <div class="card-footer text-end">
+        <button class="btn btn-primary" type="submit">Speichern</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-lg-8">
+    {% for item in items %}
+    <form id="location-{{ item.id }}" method="post" action="{{ url_for('admin.inventory_location_update', item_id=item.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    </form>
+    {% endfor %}
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <table class="table table-sm table-striped datatable align-middle small">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Name</th>
+              <th>Art</th>
+              <th>Standard</th>
+              <th>Aktiv</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+            <tr>
+              <td>
+                <input class="form-control form-control-sm" form="location-{{ item.id }}" name="code" value="{{ item.code }}" required>
+              </td>
+              <td>
+                <input class="form-control form-control-sm" form="location-{{ item.id }}" name="name" value="{{ item.name }}" required>
+              </td>
+              <td>
+                <select class="form-select form-select-sm" form="location-{{ item.id }}" name="location_type">
+                  {% for location_type in location_types %}
+                  <option value="{{ location_type.value }}" {% if item.location_type == location_type.value %}selected{% endif %}>
+                    {{ location_type.label }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td class="text-center">
+                <input class="form-check-input" form="location-{{ item.id }}" type="checkbox" name="is_default" {% if item.is_default %}checked{% endif %}>
+              </td>
+              <td class="text-center">
+                <input class="form-check-input" form="location-{{ item.id }}" type="checkbox" name="active" {% if item.active %}checked{% endif %}>
+              </td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-primary" form="location-{{ item.id }}" type="submit">Speichern</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
