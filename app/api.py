@@ -41,6 +41,13 @@ from .models import (
     WowiCompanyCode,
     utc_now,
     CommissionPhoto,
+    AppointmentRequestStatus,
+    AppointmentWindow,
+    CommissionAppointmentRequest,
+)
+from .appointment_service import (
+    create_appointment_request,
+    send_appointment_request_email,
 )
 from .photo_service import (
     commission_photo_path,
@@ -532,6 +539,149 @@ def complete_commission(
             )
         }
     ), 202
+
+
+@api_bp.get("/appointment-windows")
+@jwt_required()
+def appointment_windows() -> Any:
+    current_api_user()
+
+    items = (
+        AppointmentWindow.query
+        .filter(
+            AppointmentWindow.active.is_(True)
+        )
+        .order_by(
+            AppointmentWindow.sort_order.asc(),
+            AppointmentWindow.start_time.asc(),
+            AppointmentWindow.name.asc(),
+        )
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_appointment_window(item)
+            for item in items
+        ]
+    })
+
+
+@api_bp.get(
+    "/commissions/<int:commission_id>/appointments"
+)
+@jwt_required()
+def commission_appointments(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+
+    items = (
+        CommissionAppointmentRequest.query
+        .filter_by(
+            commission_id=commission.id
+        )
+        .order_by(
+            CommissionAppointmentRequest.created_at.desc()
+        )
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_appointment_request(item)
+            for item in items
+        ]
+    })
+
+
+@api_bp.post(
+    "/commissions/<int:commission_id>/appointments"
+)
+@jwt_required()
+def commission_appointment_create(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
+
+    if not commission.is_actionable:
+        return jsonify({
+            "message": (
+                "Terminvorschläge können erst nach "
+                "der Wowiport-Bestätigung versendet werden."
+            )
+        }), 409
+
+    payload = request.get_json(
+        silent=True
+    ) or {}
+
+    try:
+        appointment_request, public_token = (
+            create_appointment_request(
+                commission,
+                user,
+                payload,
+            )
+        )
+
+        db.session.add(
+            appointment_request
+        )
+        db.session.flush()
+
+        send_appointment_request_email(
+            appointment_request,
+            public_token,
+        )
+
+        audit(
+            "appointment.sent",
+            "commission",
+            commission.id,
+            {
+                "appointment_request_id": appointment_request.id,
+                "recipient_email": appointment_request.recipient_email,
+                "proposal_count": len(
+                    appointment_request.proposals
+                ),
+            },
+        )
+
+        db.session.commit()
+
+    except ValueError as exc:
+        db.session.rollback()
+
+        return jsonify({
+            "message": str(exc)
+        }), 400
+
+    except RuntimeError as exc:
+        db.session.rollback()
+
+        current_app.logger.exception(
+            "appointment_email_failed commission_id=%s",
+            commission.id,
+        )
+
+        return jsonify({
+            "message": str(exc)
+        }), 502
+
+    return jsonify({
+        "item": serialize_appointment_request(
+            appointment_request
+        )
+    }), 201
 
 
 @api_bp.get(
@@ -2230,6 +2380,15 @@ def serialize_commission(commission: Commission, include_details: bool = False, 
             }
             for position in commission.positions
         ],
+        "accepted_appointment_from": iso_datetime(
+            commission.accepted_appointment_from
+        ),
+        "accepted_appointment_to": iso_datetime(
+            commission.accepted_appointment_to
+        ),
+        "accepted_appointment_comment": (
+            commission.accepted_appointment_comment
+        ),
     }
 
     if viewer is not None:
@@ -2472,4 +2631,90 @@ def serialize_commission_photo(
             f"{photo.commission_id}/photos/"
             f"{photo.id}/thumbnail"
         ),
+    }
+
+
+def serialize_appointment_window(
+    item: AppointmentWindow,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "code": item.code,
+        "name": item.name,
+        "start_time": item.start_time.strftime(
+            "%H:%M"
+        ),
+        "end_time": item.end_time.strftime(
+            "%H:%M"
+        ),
+        "sort_order": item.sort_order,
+    }
+
+
+def serialize_appointment_proposal(
+    item,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "window_id": item.window_id,
+        "proposed_date": item.proposed_date.isoformat(),
+        "start_time": item.start_time.strftime(
+            "%H:%M"
+        ),
+        "end_time": item.end_time.strftime(
+            "%H:%M"
+        ),
+        "window_name": item.window_name,
+        "accepted": item.accepted,
+    }
+
+
+def serialize_appointment_request(
+    item: CommissionAppointmentRequest,
+) -> dict[str, Any]:
+    accepted_proposal = next(
+        (
+            proposal
+            for proposal in item.proposals
+            if proposal.accepted
+        ),
+        None,
+    )
+
+    return {
+        "id": item.id,
+        "commission_id": item.commission_id,
+        "recipient_name": item.recipient_name,
+        "recipient_email": item.recipient_email,
+        "message": item.message,
+        "status": item.status,
+        "tenant_comment": item.tenant_comment,
+        "sent_at": iso_datetime(
+            item.sent_at
+        ),
+        "responded_at": iso_datetime(
+            item.responded_at
+        ),
+        "expires_at": iso_datetime(
+            item.expires_at
+        ),
+        "created_at": iso_datetime(
+            item.created_at
+        ),
+        "created_by": (
+            serialize_user(item.created_by)
+            if item.created_by
+            else None
+        ),
+        "accepted_proposal_id": (
+            accepted_proposal.id
+            if accepted_proposal
+            else None
+        ),
+        "proposals": [
+            serialize_appointment_proposal(
+                proposal
+            )
+            for proposal in item.proposals
+        ],
     }

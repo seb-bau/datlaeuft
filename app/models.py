@@ -75,6 +75,7 @@ class AppointmentRequestStatus(str, Enum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
     SUPERSEDED = "superseded"
+    EXPIRED = "expired"
 
 
 class InventoryLocationType(str, Enum):

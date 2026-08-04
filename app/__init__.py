@@ -12,6 +12,7 @@ from .extensions import cors, csrf, db, jwt, login_manager, migrate
 from .logging_service import configure_logging
 from .settings import SettingKeys, settings
 from .webhooks import webhooks_bp
+from .appointments import appointments_bp
 
 
 def create_app() -> Flask:
@@ -47,6 +48,7 @@ def create_app() -> Flask:
     app.register_blueprint(admin_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(webhooks_bp)
+    app.register_blueprint(appointments_bp)
     csrf.exempt(api_bp)
     csrf.exempt(webhooks_bp)
     register_cli(app)
