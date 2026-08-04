@@ -24,6 +24,14 @@
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_entries') }}">Stundenzettel</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.material_movements') }}">Materialprüfung</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_templates') }}">Leistungspositionen</a></li>
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            href="{{ url_for('admin.appointment_windows') }}"
+          >
+            Terminzeitfenster
+          </a>
+        </li>
         {% if current_user.is_admin %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.users') }}">Benutzer</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.settings_page') }}">Einstellungen</a></li>

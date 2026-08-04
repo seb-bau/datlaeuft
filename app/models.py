@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
@@ -68,6 +68,13 @@ class InventoryMovementType(str, Enum):
     CORRECTION = "correction"
     CANCELLATION = "cancellation"
     TRANSFER = "transfer"
+
+
+class AppointmentRequestStatus(str, Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
 
 
 class InventoryLocationType(str, Enum):
@@ -325,6 +332,18 @@ class Commission(db.Model):
     latitude: Mapped[float | None] = mapped_column(db.Float)
     longitude: Mapped[float | None] = mapped_column(db.Float)
 
+    accepted_appointment_from: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    accepted_appointment_to: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    accepted_appointment_comment: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+
     user: Mapped[User | None] = relationship(
         back_populates="commissions",
         foreign_keys=[user_id],
@@ -344,6 +363,15 @@ class Commission(db.Model):
     )
     inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="commission")
     time_entries: Mapped[list["TimeEntry"]] = relationship(back_populates="commission")
+    photos: Mapped[list["CommissionPhoto"]] = relationship(
+        back_populates="commission",
+        cascade="all, delete-orphan",
+    )
+    appointment_requests: Mapped[list["CommissionAppointmentRequest"]] = relationship(
+        back_populates="commission",
+        cascade="all, delete-orphan",
+    )
+
 
     @property
     def is_actionable(self) -> bool:
@@ -424,6 +452,297 @@ class CommissionPosition(db.Model):
             "Description": self.description,
         }
         return {key: value for key, value in values.items() if value is not None}
+
+
+class CommissionPhoto(db.Model):
+    __tablename__ = "commission_photo"
+    __table_args__ = (
+        UniqueConstraint(
+            "commission_id",
+            "external_id",
+            name="uq_commission_photo_external_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    commission_id: Mapped[int] = mapped_column(
+        db.ForeignKey("commission.id"),
+        nullable=False,
+        index=True,
+    )
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(
+        db.String(40),
+        default="app",
+        server_default="app",
+        nullable=False,
+        index=True,
+    )
+    external_id: Mapped[str | None] = mapped_column(
+        db.String(160),
+        index=True,
+    )
+    original_filename: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+    )
+    storage_name: Mapped[str] = mapped_column(
+        db.String(500),
+        unique=True,
+        nullable=False,
+    )
+    thumbnail_storage_name: Mapped[str] = mapped_column(
+        db.String(500),
+        unique=True,
+        nullable=False,
+    )
+    mime_type: Mapped[str] = mapped_column(
+        db.String(100),
+        default="image/jpeg",
+        server_default="image/jpeg",
+        nullable=False,
+    )
+    size_bytes: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+    )
+    content_sha256: Mapped[str] = mapped_column(
+        db.String(64),
+        nullable=False,
+        index=True,
+    )
+    caption: Mapped[str | None] = mapped_column(
+        db.String(500)
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default="1",
+        nullable=False,
+        index=True,
+    )
+    external_updated_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    commission: Mapped[Commission] = relationship(
+        back_populates="photos"
+    )
+    uploaded_by: Mapped[User | None] = relationship(
+        foreign_keys=[uploaded_by_user_id]
+    )
+
+
+class AppointmentWindow(db.Model):
+    __tablename__ = "appointment_window"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    code: Mapped[str] = mapped_column(
+        db.String(80),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+        index=True,
+    )
+    start_time: Mapped[time] = mapped_column(
+        db.Time,
+        nullable=False,
+    )
+    end_time: Mapped[time] = mapped_column(
+        db.Time,
+        nullable=False,
+    )
+    sort_order: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default="1",
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+
+class CommissionAppointmentRequest(db.Model):
+    __tablename__ = "commission_appointment_request"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    commission_id: Mapped[int] = mapped_column(
+        db.ForeignKey("commission.id"),
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    recipient_name: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    recipient_email: Mapped[str] = mapped_column(
+        db.String(320),
+        nullable=False,
+        index=True,
+    )
+    message: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+    token_hash: Mapped[str] = mapped_column(
+        db.String(64),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        db.String(40),
+        default=AppointmentRequestStatus.PENDING.value,
+        server_default=AppointmentRequestStatus.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+    tenant_comment: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    commission: Mapped[Commission] = relationship(
+        back_populates="appointment_requests"
+    )
+    created_by: Mapped[User | None] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+    proposals: Mapped[list["CommissionAppointmentProposal"]] = relationship(
+        back_populates="appointment_request",
+        cascade="all, delete-orphan",
+        order_by="CommissionAppointmentProposal.proposed_date",
+    )
+
+
+class CommissionAppointmentProposal(db.Model):
+    __tablename__ = "commission_appointment_proposal"
+    __table_args__ = (
+        UniqueConstraint(
+            "appointment_request_id",
+            "proposed_date",
+            "start_time",
+            "end_time",
+            name="uq_appointment_proposal_time",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    appointment_request_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "commission_appointment_request.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    window_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("appointment_window.id"),
+        index=True,
+    )
+    proposed_date: Mapped[date] = mapped_column(
+        db.Date,
+        nullable=False,
+        index=True,
+    )
+    start_time: Mapped[time] = mapped_column(
+        db.Time,
+        nullable=False,
+    )
+    end_time: Mapped[time] = mapped_column(
+        db.Time,
+        nullable=False,
+    )
+    window_name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+    )
+    accepted: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    appointment_request: Mapped[CommissionAppointmentRequest] = relationship(
+        back_populates="proposals"
+    )
+    window: Mapped[AppointmentWindow | None] = relationship()
 
 
 class WowiCompanyCode(db.Model):

@@ -95,6 +95,29 @@ class SettingKeys:
         "Absenderadresse",
         "E-Mail",
     )
+    PUBLIC_BASE_URL = SettingDefinition[str](
+        "application.public_base_url",
+        SettingValueType.STRING,
+        "",
+        "Öffentliche Basis-URL",
+        "E-Mail",
+    )
+
+    APPOINTMENT_LINK_VALID_DAYS = SettingDefinition[int](
+        "appointments.link_valid_days",
+        SettingValueType.INT,
+        30,
+        "Gültigkeit von Terminlinks in Tagen",
+        "Terminvereinbarung",
+    )
+
+    APPOINTMENT_TIMEZONE = SettingDefinition[str](
+        "appointments.timezone",
+        SettingValueType.STRING,
+        "Europe/Berlin",
+        "Zeitzone",
+        "Terminvereinbarung",
+    )
     TIME_DEVIATION_PERCENT = SettingDefinition[float]("time.deviation_percent", SettingValueType.FLOAT, 20.0, "Abweichung in Prozent", "Zeiterfassung")
     TIME_DEVIATION_MINUTES = SettingDefinition[int]("time.deviation_minutes", SettingValueType.INT, 15, "Abweichung in Minuten", "Zeiterfassung")
     LOG_LEVEL = SettingDefinition[str]("logging.level", SettingValueType.STRING, "INFO", "Log-Level", "Logging")

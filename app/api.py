@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask import Blueprint, abort, current_app, g, jsonify, request
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    g,
+    jsonify,
+    request,
+    send_file,
+)
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from sqlalchemy import or_
 
@@ -32,6 +40,11 @@ from .models import (
     WowiCommissionType,
     WowiCompanyCode,
     utc_now,
+    CommissionPhoto,
+)
+from .photo_service import (
+    commission_photo_path,
+    store_commission_photo,
 )
 from .inventory_service import (
     book_inventory_movement,
@@ -519,6 +532,349 @@ def complete_commission(
             )
         }
     ), 202
+
+
+@api_bp.get(
+    "/commissions/<int:commission_id>/photos"
+)
+@jwt_required()
+def commission_photos(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+
+    photos = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.commission_id
+            == commission.id,
+            CommissionPhoto.active.is_(True),
+        )
+        .order_by(
+            CommissionPhoto.created_at.desc()
+        )
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_commission_photo(photo)
+            for photo in photos
+        ]
+    })
+
+
+@api_bp.post(
+    "/commissions/<int:commission_id>/photos"
+)
+@jwt_required()
+def commission_photo_upload(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
+
+    if not commission.is_actionable:
+        return jsonify({
+            "message": (
+                "Fotos können erst nach der "
+                "Wowiport-Bestätigung hochgeladen werden."
+            )
+        }), 409
+
+    upload = request.files.get("photo")
+
+    if upload is None:
+        return jsonify({
+            "message": "Es wurde kein Foto übermittelt."
+        }), 400
+
+    caption = (
+        request.form.get(
+            "caption",
+            "",
+        ).strip()
+        or None
+    )
+
+    if caption is not None:
+        caption = caption[:500]
+
+    try:
+        stored_photo = store_commission_photo(
+            commission,
+            upload,
+        )
+    except ValueError as exc:
+        return jsonify({
+            "message": str(exc)
+        }), 400
+
+    existing_photo = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.commission_id
+            == commission.id,
+            CommissionPhoto.content_sha256
+            == stored_photo.content_sha256,
+            CommissionPhoto.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if existing_photo is not None:
+        return jsonify({
+            "item": serialize_commission_photo(
+                existing_photo
+            ),
+            "duplicate": True,
+        }), 200
+
+    photo = CommissionPhoto(
+        commission=commission,
+        uploaded_by=user,
+        source="app",
+        original_filename=(
+            stored_photo.original_filename
+        ),
+        storage_name=(
+            stored_photo.storage_name
+        ),
+        thumbnail_storage_name=(
+            stored_photo.thumbnail_storage_name
+        ),
+        mime_type=stored_photo.mime_type,
+        size_bytes=stored_photo.size_bytes,
+        content_sha256=(
+            stored_photo.content_sha256
+        ),
+        caption=caption,
+        active=True,
+    )
+
+    db.session.add(photo)
+    db.session.flush()
+
+    audit(
+        "commission.photo.upload",
+        "commission",
+        commission.id,
+        {
+            "photo_id": photo.id,
+            "filename": photo.original_filename,
+            "caption": photo.caption,
+        },
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "item": serialize_commission_photo(photo),
+        "duplicate": False,
+    }), 201
+
+
+@api_bp.patch(
+    "/commissions/<int:commission_id>/photos/<int:photo_id>"
+)
+@jwt_required()
+def commission_photo_update(
+    commission_id: int,
+    photo_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
+
+    photo = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.id == photo_id,
+            CommissionPhoto.commission_id
+            == commission.id,
+            CommissionPhoto.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if photo is None:
+        abort(404)
+
+    data = request.get_json(
+        silent=True
+    ) or {}
+
+    caption = str(
+        data.get("caption") or ""
+    ).strip()
+
+    photo.caption = (
+        caption[:500]
+        if caption
+        else None
+    )
+
+    audit(
+        "commission.photo.update",
+        "commission",
+        commission.id,
+        {
+            "photo_id": photo.id,
+            "caption": photo.caption,
+        },
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "item": serialize_commission_photo(photo)
+    })
+
+
+@api_bp.delete(
+    "/commissions/<int:commission_id>/photos/<int:photo_id>"
+)
+@jwt_required()
+def commission_photo_delete(
+    commission_id: int,
+    photo_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
+
+    photo = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.id == photo_id,
+            CommissionPhoto.commission_id
+            == commission.id,
+            CommissionPhoto.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if photo is None:
+        abort(404)
+
+    photo.active = False
+    photo.deleted_at = utc_now()
+
+    audit(
+        "commission.photo.delete",
+        "commission",
+        commission.id,
+        {
+            "photo_id": photo.id,
+            "filename": photo.original_filename,
+        },
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Foto entfernt."
+    })
+
+
+@api_bp.get(
+    "/commissions/<int:commission_id>/photos/<int:photo_id>/content"
+)
+@jwt_required()
+def commission_photo_content(
+    commission_id: int,
+    photo_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+
+    photo = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.id == photo_id,
+            CommissionPhoto.commission_id
+            == commission.id,
+            CommissionPhoto.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if photo is None:
+        abort(404)
+
+    path = commission_photo_path(
+        photo.storage_name
+    )
+
+    if not path.is_file():
+        abort(404)
+
+    return send_file(
+        path,
+        mimetype=photo.mime_type,
+        as_attachment=False,
+        download_name=photo.original_filename,
+        conditional=True,
+        max_age=3600,
+    )
+
+
+@api_bp.get(
+    "/commissions/<int:commission_id>/photos/<int:photo_id>/thumbnail"
+)
+@jwt_required()
+def commission_photo_thumbnail(
+    commission_id: int,
+    photo_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+
+    photo = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.id == photo_id,
+            CommissionPhoto.commission_id
+            == commission.id,
+            CommissionPhoto.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if photo is None:
+        abort(404)
+
+    path = commission_photo_path(
+        photo.thumbnail_storage_name
+    )
+
+    if not path.is_file():
+        abort(404)
+
+    return send_file(
+        path,
+        mimetype="image/jpeg",
+        as_attachment=False,
+        conditional=True,
+        max_age=3600,
+    )
 
 
 @api_bp.get("/inventory/locations")
@@ -2080,4 +2436,40 @@ def serialize_time_entry(item: TimeEntry, viewer: User | None = None) -> dict[st
         "review_level": item.review_level,
         "created_at": iso_datetime(item.created_at),
         "can_edit": can_edit,
+    }
+
+
+def serialize_commission_photo(
+    photo: CommissionPhoto,
+) -> dict[str, Any]:
+    return {
+        "id": photo.id,
+        "commission_id": photo.commission_id,
+        "source": photo.source,
+        "external_id": photo.external_id,
+        "original_filename": photo.original_filename,
+        "mime_type": photo.mime_type,
+        "size_bytes": photo.size_bytes,
+        "caption": photo.caption,
+        "uploaded_by": (
+            serialize_user(photo.uploaded_by)
+            if photo.uploaded_by
+            else None
+        ),
+        "created_at": iso_datetime(
+            photo.created_at
+        ),
+        "updated_at": iso_datetime(
+            photo.updated_at
+        ),
+        "content_path": (
+            f"/api/commissions/"
+            f"{photo.commission_id}/photos/"
+            f"{photo.id}/content"
+        ),
+        "thumbnail_path": (
+            f"/api/commissions/"
+            f"{photo.commission_id}/photos/"
+            f"{photo.id}/thumbnail"
+        ),
     }

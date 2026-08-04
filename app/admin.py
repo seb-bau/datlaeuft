@@ -47,6 +47,7 @@ from .models import (
     InventoryLocation,
     InventoryLocationType,
     InventoryItemBarcode,
+    AppointmentWindow,
 )
 from .inventory_service import (
     book_inventory_movement,
@@ -57,6 +58,7 @@ from .wowiport import (
     configured_commission_type_ids,
     sync_commission_from_erp,
 )
+from datetime import time
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -1203,6 +1205,206 @@ def save_expected_materials_form(item: TimeTaskTemplate) -> None:
             required=f"expected_required_{index}" in request.form,
             note=(notes[index].strip() if index < len(notes) and notes[index].strip() else None),
         ))
+
+
+def save_appointment_window_form(
+    item: AppointmentWindow,
+) -> None:
+    code = (
+        request.form.get(
+            "code",
+            "",
+        )
+        .strip()
+        .upper()
+        .replace(" ", "-")
+    )
+
+    name = request.form.get(
+        "name",
+        "",
+    ).strip()
+
+    raw_start_time = request.form.get(
+        "start_time",
+        "",
+    ).strip()
+
+    raw_end_time = request.form.get(
+        "end_time",
+        "",
+    ).strip()
+
+    if not code:
+        raise ValueError(
+            "Der Code darf nicht leer sein."
+        )
+
+    if not name:
+        raise ValueError(
+            "Der Name darf nicht leer sein."
+        )
+
+    try:
+        start_time = time.fromisoformat(
+            raw_start_time
+        )
+        end_time = time.fromisoformat(
+            raw_end_time
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Die Uhrzeiten sind ungültig."
+        ) from exc
+
+    if start_time >= end_time:
+        raise ValueError(
+            "Die Endzeit muss nach der Startzeit liegen."
+        )
+
+    duplicate_query = (
+        AppointmentWindow.query
+        .filter(
+            AppointmentWindow.code == code
+        )
+    )
+
+    if item.id is not None:
+        duplicate_query = duplicate_query.filter(
+            AppointmentWindow.id != item.id
+        )
+
+    if duplicate_query.first() is not None:
+        raise ValueError(
+            "Dieser Code ist bereits vorhanden."
+        )
+
+    try:
+        sort_order = int(
+            request.form.get(
+                "sort_order",
+                0,
+            )
+            or 0
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Die Sortierung ist ungültig."
+        ) from exc
+
+    item.code = code
+    item.name = name
+    item.start_time = start_time
+    item.end_time = end_time
+    item.sort_order = sort_order
+    item.active = (
+        "active" in request.form
+    )
+
+
+@admin_bp.route(
+    "/admin/appointment-windows",
+    methods=["GET", "POST"],
+)
+@foreman_required
+def appointment_windows() -> Any:
+    if request.method == "POST":
+        item = AppointmentWindow()
+
+        try:
+            save_appointment_window_form(
+                item
+            )
+
+            db.session.add(item)
+            db.session.flush()
+
+            audit(
+                "appointment.window.create",
+                "appointment_window",
+                item.id,
+            )
+
+            db.session.commit()
+
+            flash(
+                "Zeitfenster gespeichert.",
+                "success",
+            )
+
+        except ValueError as exc:
+            db.session.rollback()
+
+            flash(
+                str(exc),
+                "danger",
+            )
+
+        return redirect(
+            url_for(
+                "admin.appointment_windows"
+            )
+        )
+
+    items = (
+        AppointmentWindow.query
+        .order_by(
+            AppointmentWindow.sort_order.asc(),
+            AppointmentWindow.start_time.asc(),
+            AppointmentWindow.name.asc(),
+        )
+        .all()
+    )
+
+    return render_template(
+        "admin/appointment_windows.html",
+        items=items,
+    )
+
+
+@admin_bp.post(
+    "/admin/appointment-windows/<int:item_id>"
+)
+@foreman_required
+def appointment_window_update(
+    item_id: int,
+) -> Any:
+    item = db.get_or_404(
+        AppointmentWindow,
+        item_id,
+    )
+
+    try:
+        save_appointment_window_form(
+            item
+        )
+
+        audit(
+            "appointment.window.update",
+            "appointment_window",
+            item.id,
+        )
+
+        db.session.commit()
+
+        flash(
+            "Zeitfenster aktualisiert.",
+            "success",
+        )
+
+    except ValueError as exc:
+        db.session.rollback()
+
+        flash(
+            str(exc),
+            "danger",
+        )
+
+    return redirect(
+        url_for(
+            "admin.appointment_windows"
+        )
+    )
 
 
 def inventory_location_from_form(
