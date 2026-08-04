@@ -113,6 +113,8 @@ def book_inventory_movement(
     elif quantity <= 0:
         raise ValueError("Die Buchungsmenge muss größer als 0 sein.")
 
+    db.session.add(movement)
+
     if movement_type == InventoryMovementType.WITHDRAWAL.value:
         location = (
             movement.source_location
@@ -198,7 +200,6 @@ def book_inventory_movement(
     else:
         raise ValueError("Die Buchungsart wird nicht unterstützt.")
 
-    db.session.add(movement)
     refresh_inventory_total(movement.item)
 
     return movement
