@@ -59,6 +59,13 @@
         <p>
           Diese Terminvorschläge wurden durch neuere Vorschläge ersetzt oder es wurde bereits ein Termin vereinbart.
         </p>
+        {% elif state == "cancelled" %}
+        <h1 class="h3">
+          Termin aufgehoben
+        </h1>
+        <p>
+          Der bereits bestätigte Termin wurde aufgehoben. Sie erhalten gegebenenfalls neue Terminvorschläge.
+        </p>
 
         {% else %}
         <h1 class="h3">

@@ -620,6 +620,14 @@ def commission_appointment_create(
             )
         }), 409
 
+    if commission.accepted_appointment_from is not None:
+        return jsonify({
+            "message": (
+                "Der Auftrag besitzt bereits einen "
+                "bestätigten Termin."
+            )
+        }), 409
+
     payload = request.get_json(
         silent=True
     ) or {}
@@ -682,6 +690,90 @@ def commission_appointment_create(
             appointment_request
         )
     }), 201
+
+
+@api_bp.delete(
+    "/commissions/<int:commission_id>/appointments/accepted"
+)
+@jwt_required()
+def commission_appointment_cancel(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
+
+    accepted_request = (
+        CommissionAppointmentRequest.query
+        .filter(
+            CommissionAppointmentRequest.commission_id
+            == commission.id,
+            CommissionAppointmentRequest.status
+            == AppointmentRequestStatus.ACCEPTED.value,
+        )
+        .order_by(
+            CommissionAppointmentRequest.responded_at.desc(),
+            CommissionAppointmentRequest.id.desc(),
+        )
+        .first()
+    )
+
+    appointment_from = (
+        commission.accepted_appointment_from
+    )
+    appointment_to = (
+        commission.accepted_appointment_to
+    )
+
+    if (
+        appointment_from is None
+        and accepted_request is None
+    ):
+        return jsonify({
+            "item": serialize_commission(
+                commission,
+                viewer=user,
+            )
+        })
+
+    if accepted_request is not None:
+        accepted_request.status = (
+            AppointmentRequestStatus.CANCELLED.value
+        )
+
+    commission.accepted_appointment_from = None
+    commission.accepted_appointment_to = None
+    commission.accepted_appointment_comment = None
+
+    audit(
+        "appointment.cancelled",
+        "commission",
+        commission.id,
+        {
+            "appointment_request_id": (
+                accepted_request.id
+                if accepted_request
+                else None
+            ),
+            "appointment_from": iso_datetime(
+                appointment_from
+            ),
+            "appointment_to": iso_datetime(
+                appointment_to
+            ),
+        },
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "item": serialize_commission(
+            commission,
+            viewer=user,
+        )
+    })
 
 
 @api_bp.get(
@@ -2211,6 +2303,10 @@ def history_title(
         "erp.outbox.succeeded": "Mit Wowiport synchronisiert",
         "erp.outbox.failed": "Wowiport-Synchronisierung fehlgeschlagen",
         "webhook.wowiport": "Änderung aus Wowiport übernommen",
+        "appointment.sent": "Terminvorschläge gesendet",
+        "appointment.accepted": "Termin bestätigt",
+        "appointment.rejected": "Terminvorschläge abgelehnt",
+        "appointment.cancelled": "Bestätigten Termin aufgehoben",
     }
 
     return titles.get(
