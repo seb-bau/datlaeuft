@@ -15,7 +15,7 @@ from .photo_service import (
     store_commission_photo_bytes,
 )
 from .settings import SettingKeys, settings
-from .utils import parse_datetime
+from .utils import ensure_utc, parse_datetime
 
 if TYPE_CHECKING:
     from .wowiport import WowiportService
@@ -95,9 +95,9 @@ def commission_media_sync_due(
     )
 
     return (
-        commission.media_synced_at
-        <= utc_now()
-        - timedelta(minutes=interval_minutes)
+            ensure_utc(commission.media_synced_at)
+            <= utc_now()
+            - timedelta(minutes=interval_minutes)
     )
 
 

@@ -1,9 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Aufträge{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex justify-content-between align-items-center gap-3 mb-4">
   <h1 class="h3 mb-0">Aufträge</h1>
-  <a class="btn btn-primary" href="{{ url_for('admin.commission_create') }}">Auftrag erfassen</a>
+
+  <div class="d-flex align-items-center gap-2">
+    <form method="get">
+      <select
+        class="form-select form-select-sm"
+        name="view"
+        onchange="this.form.submit()"
+        aria-label="Auftragsansicht"
+      >
+        <option value="active" {% if view_mode == "active" %}selected{% endif %}>
+          Aktive Aufträge
+        </option>
+        <option value="done" {% if view_mode == "done" %}selected{% endif %}>
+          Erledigte Aufträge
+        </option>
+        <option value="deleted" {% if view_mode == "deleted" %}selected{% endif %}>
+          Gelöschte Aufträge
+        </option>
+        <option value="all" {% if view_mode == "all" %}selected{% endif %}>
+          Alle Aufträge
+        </option>
+      </select>
+    </form>
+
+    <a
+      class="btn btn-primary"
+      href="{{ url_for('admin.commission_create') }}"
+    >
+      Auftrag erfassen
+    </a>
+  </div>
 </div>
 <div class="card shadow-sm">
   <div class="card-body">

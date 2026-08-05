@@ -24,7 +24,8 @@ def configure_logging(app: Flask) -> None:
     else:
         handler = _build_file_handler(formatter)
     root_logger.addHandler(handler)
-    app.logger.handlers = [handler]
+    app.logger.handlers.clear()
+    app.logger.propagate = True
 
 
 def _build_file_handler(formatter: logging.Formatter) -> logging.Handler:

@@ -581,8 +581,48 @@ def commission_create() -> Any:
 @admin_bp.get("/admin/commissions")
 @foreman_required
 def commissions() -> Any:
-    items = Commission.query.order_by(Commission.synced_at.desc()).all()
-    return render_template("admin/commissions.html", items=items)
+    view_mode = request.args.get(
+        "view",
+        "active",
+    ).strip()
+
+    query = Commission.query
+
+    if view_mode == "done":
+        query = query.filter(
+            Commission.deleted_at.is_(None),
+            Commission.local_status
+            == CommissionLocalStatus.DONE.value,
+        )
+    elif view_mode == "deleted":
+        query = query.filter(
+            or_(
+                Commission.deleted_at.is_not(None),
+                Commission.local_status
+                == CommissionLocalStatus.DELETED.value,
+            )
+        )
+    elif view_mode == "all":
+        pass
+    else:
+        view_mode = "active"
+        query = query.filter(
+            Commission.deleted_at.is_(None),
+            Commission.local_status.notin_([
+                CommissionLocalStatus.DONE.value,
+                CommissionLocalStatus.DELETED.value,
+            ]),
+        )
+
+    items = query.order_by(
+        Commission.synced_at.desc()
+    ).all()
+
+    return render_template(
+        "admin/commissions.html",
+        items=items,
+        view_mode=view_mode,
+    )
 
 
 @admin_bp.get(

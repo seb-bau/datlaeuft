@@ -17,7 +17,7 @@ from .models import (
     utc_now,
 )
 from .settings import SettingKeys, settings
-from .utils import parse_datetime
+from .utils import ensure_utc, parse_datetime
 
 if TYPE_CHECKING:
     from .wowiport import WowiportService
@@ -95,9 +95,9 @@ def commission_document_sync_due(
     )
 
     return (
-        commission.document_synced_at
-        <= utc_now()
-        - timedelta(minutes=interval_minutes)
+            ensure_utc(commission.document_synced_at)
+            <= utc_now()
+            - timedelta(minutes=interval_minutes)
     )
 
 

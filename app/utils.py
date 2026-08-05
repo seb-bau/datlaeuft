@@ -4,6 +4,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+def ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(timezone.utc)
+
+
 def nested_value(data: dict[str, Any] | None, *keys: str, default: Any = None) -> Any:
     current: Any = data
     for key in keys:
@@ -16,16 +23,18 @@ def nested_value(data: dict[str, Any] | None, *keys: str, default: Any = None) -
 def parse_datetime(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
+
     if isinstance(value, datetime):
-        return value
+        return ensure_utc(value)
+
     text = str(value).replace("Z", "+00:00")
+
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+
+    return ensure_utc(parsed)
 
 
 def iso_datetime(value: datetime | None) -> str | None:
