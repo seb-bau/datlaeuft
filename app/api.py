@@ -975,7 +975,16 @@ def commission_photos(
         CommissionPhoto.active.is_(True),
     )
 
-    if context_filter:
+    if context_filter == "object":
+        query = query.filter(
+            CommissionPhoto.context.in_(
+                (
+                    "building",
+                    "use_unit",
+                )
+            )
+        )
+    elif context_filter:
         query = query.filter(
             CommissionPhoto.context
             == context_filter
