@@ -19,9 +19,12 @@ from app.models import (
     ErpOutboxState,
     WebhookEvent,
     utc_now,
+    CommissionPhoto
 )
 from app.settings import SettingKeys, settings
 from .wowiport import WowiportService, mark_commission_deleted, sync_commission_from_erp, sync_commissions_from_wowiport_regular
+from .media_sync import sync_commission_object_photos
+from .document_sync import sync_commission_documents
 
 
 def enqueue_erp_operation(
@@ -51,11 +54,63 @@ def enqueue_erp_operation(
     return operation
 
 
+def enqueue_pending_commission_photo_uploads(
+    limit: int = 100,
+) -> int:
+    photos = (
+        CommissionPhoto.query
+        .join(
+            Commission,
+            Commission.id
+            == CommissionPhoto.commission_id,
+        )
+        .filter(
+            CommissionPhoto.source == "app",
+            CommissionPhoto.context == "order",
+            CommissionPhoto.active.is_(True),
+            CommissionPhoto.external_document_id.is_not(
+                None
+            ),
+            or_(
+                CommissionPhoto.erp_sync_state.is_(None),
+                CommissionPhoto.erp_sync_state
+                != CommissionSyncState.SYNCED.value,
+            ),
+            Commission.erp_id.is_not(None),
+        )
+        .order_by(
+            CommissionPhoto.created_at.asc(),
+            CommissionPhoto.id.asc(),
+        )
+        .limit(limit)
+        .all()
+    )
+
+    for photo in photos:
+        enqueue_erp_operation(
+            photo.commission,
+            ErpOperationType.UPLOAD_COMMISSION_PHOTO,
+            (
+                "commission-photo:"
+                f"{photo.external_document_id}"
+            ),
+            {
+                "photo_id": photo.id,
+            },
+        )
+
+    if photos:
+        db.session.commit()
+
+    return len(photos)
+
+
 def process_due_work(
     outbox_limit: int = 20,
     webhook_limit: int = 50,
 ) -> dict[str, int]:
     requeue_stale_work()
+    enqueue_pending_commission_photo_uploads()
     webhook_count = process_webhook_batch(webhook_limit)
     outbox_count = process_outbox_batch(outbox_limit)
     return {
@@ -193,6 +248,61 @@ def execute_outbox_operation(
         commission.status_id = 12
         commission.status_code = "WaitForCraftsmanFeedback"
         commission.local_status = CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value
+        try:
+            media_result = (
+                sync_commission_object_photos(
+                    commission=commission,
+                    service=service,
+                    force=True,
+                )
+            )
+
+            current_app.logger.info(
+                "commission_media_sync_completed "
+                "commission_id=%s erp_id=%s result=%s",
+                commission.id,
+                commission.erp_id,
+                media_result,
+            )
+        except Exception as exc:
+            commission.media_sync_error = (
+                str(exc)[:4000]
+            )
+
+            current_app.logger.exception(
+                "commission_media_sync_failed "
+                "commission_id=%s erp_id=%s",
+                commission.id,
+                commission.erp_id,
+            )
+
+        try:
+            document_result = (
+                sync_commission_documents(
+                    commission=commission,
+                    service=service,
+                    force=True,
+                )
+            )
+
+            current_app.logger.info(
+                "commission_document_sync_completed "
+                "commission_id=%s erp_id=%s result=%s",
+                commission.id,
+                commission.erp_id,
+                document_result,
+            )
+        except Exception as exc:
+            commission.document_sync_error = (
+                str(exc)[:4000]
+            )
+
+            current_app.logger.exception(
+                "commission_document_sync_failed "
+                "commission_id=%s erp_id=%s",
+                commission.id,
+                commission.erp_id,
+            )
 
     elif operation.operation_type == ErpOperationType.ACCEPT_COMMISSION.value:
         require_erp_id(commission)
@@ -239,7 +349,81 @@ def execute_outbox_operation(
         commission.status_id = 11
         commission.status_code = "AwaitInvoice"
         commission.local_status = CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+    elif (
+        operation.operation_type
+        == ErpOperationType.UPLOAD_COMMISSION_PHOTO.value
+    ):
+        require_erp_id(commission)
 
+        try:
+            photo_id = int(
+                (operation.payload or {}).get(
+                    "photo_id"
+                )
+                or 0
+            )
+        except (TypeError, ValueError):
+            photo_id = 0
+
+        photo = db.session.get(
+            CommissionPhoto,
+            photo_id,
+        )
+
+        if (
+            photo is None
+            or photo.commission_id
+            != commission.id
+        ):
+            raise RuntimeError(
+                "Das zu übertragende Foto wurde nicht gefunden."
+            )
+
+        if photo.active:
+            uploaded_row = (
+                service.upload_commission_photo(
+                    commission,
+                    photo,
+                )
+            )
+
+            file_guid = (
+                uploaded_row.get("FileGuid")
+                or uploaded_row.get("fileGuid")
+                or uploaded_row.get("file_guid")
+            )
+            file_id = (
+                uploaded_row.get("Id")
+                or uploaded_row.get("id")
+            )
+
+            external_file_identity = (
+                file_guid
+                or file_id
+            )
+
+            if external_file_identity is None:
+                raise RuntimeError(
+                    "OPENWOWI hat keine Dokument-ID zurückgegeben."
+                )
+
+            photo.external_id = (
+                "Commission:"
+                f"{external_file_identity}"
+            )
+            photo.external_entity_name = (
+                "Commission"
+            )
+            photo.external_entity_id = (
+                commission.erp_id
+            )
+            photo.external_updated_at = utc_now()
+
+        photo.erp_sync_state = (
+            CommissionSyncState.SYNCED.value
+        )
+        photo.erp_sync_message = None
+        photo.erp_synced_at = utc_now()
     else:
         raise RuntimeError(
             f"Unbekannte ERP-Operation: {operation.operation_type}"
@@ -289,6 +473,35 @@ def fail_outbox_operation(
         3600,
     )
     message = str(error)[:4000]
+    if (
+        operation.operation_type
+        == ErpOperationType.UPLOAD_COMMISSION_PHOTO.value
+    ):
+        try:
+            photo_id = int(
+                (operation.payload or {}).get(
+                    "photo_id"
+                )
+                or 0
+            )
+        except (TypeError, ValueError):
+            photo_id = 0
+
+        photo = db.session.get(
+            CommissionPhoto,
+            photo_id,
+        )
+
+        if (
+            photo is not None
+            and photo.commission_id
+            == operation.commission_id
+        ):
+            photo.erp_sync_state = (
+                CommissionSyncState.FAILED.value
+            )
+            photo.erp_sync_message = message
+
 
     operation.state = ErpOutboxState.FAILED.value
     operation.available_at = utc_now() + timedelta(seconds=delay_seconds)

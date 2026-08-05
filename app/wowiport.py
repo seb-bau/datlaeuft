@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+import base64
 
 from datetime import datetime
 from typing import Any
@@ -24,9 +25,13 @@ from .models import (
     WowiCommissionType,
     utc_now,
     WowiCompanyCode,
+    CommissionPhoto,
 )
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
+from .media_sync import sync_commission_object_photos
+from .document_sync import sync_commission_documents
+from .photo_service import commission_photo_path
 
 
 ERP_LOCAL_STATUS = {
@@ -262,6 +267,330 @@ class WowiportService:
             return None
 
         return commission_list[0]
+
+    def get_media_rows(
+        self,
+        entity_name: str,
+        entity_id: int,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        limit = 100
+
+        while True:
+            result = self.client._rest_adapter.get(
+                endpoint=(
+                    f"MediaRead/{entity_name}/MediaData"
+                ),
+                ep_params={
+                    "entityId": entity_id,
+                    "showNullValues": "true",
+                    "limit": limit,
+                    "offset": offset,
+                },
+                force_refresh=True,
+            )
+
+            page_rows = self._result_rows(
+                result
+            )
+            rows.extend(page_rows)
+
+            if len(page_rows) < limit:
+                break
+
+            offset += limit
+
+        return rows
+
+    def download_media_content(
+        self,
+        entity_name: str,
+        file_guid: str,
+    ) -> bytes:
+        result = self.client._rest_adapter.get(
+            endpoint=(
+                f"MediaRead/{entity_name}/"
+                f"MediaContent/{file_guid}"
+            ),
+            force_refresh=True,
+        )
+
+        encoded_data = getattr(
+            result,
+            "data",
+            None,
+        )
+
+        if not isinstance(encoded_data, str):
+            raise RuntimeError(
+                "OPENWOWI hat keinen gültigen Bildinhalt geliefert."
+            )
+
+        try:
+            return base64.b64decode(
+                encoded_data
+            )
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(
+                "Der OPENWOWI-Bildinhalt ist ungültig."
+            ) from exc
+
+    def get_document_rows(
+        self,
+        entity_name: str,
+        entity_id: int,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        limit = 100
+
+        while True:
+            result = self.client._rest_adapter.get(
+                endpoint=(
+                    f"DocumentRead/{entity_name}/"
+                    f"FileData"
+                ),
+                ep_params={
+                    "entityId": entity_id,
+                    "includeRevision": "false",
+                    "showNullValues": "true",
+                    "limit": limit,
+                    "offset": offset,
+                },
+                force_refresh=True,
+            )
+
+            page_rows = self._result_rows(
+                result
+            )
+            rows.extend(page_rows)
+
+            if len(page_rows) < limit:
+                break
+
+            offset += limit
+
+        return rows
+
+    def upload_commission_photo(
+        self,
+        commission: Commission,
+        photo: CommissionPhoto,
+    ) -> dict[str, Any]:
+        if commission.erp_id is None:
+            raise RuntimeError(
+                "Der Auftrag besitzt noch keine OPENWOWI-ID."
+            )
+
+        external_document_id = str(
+            photo.external_document_id or ""
+        ).strip()
+
+        if not external_document_id:
+            raise RuntimeError(
+                "Das Foto besitzt keine externe Dokument-ID."
+            )
+
+        def row_value(
+            row: dict[str, Any],
+            *keys: str,
+        ) -> Any:
+            for key in keys:
+                if key in row:
+                    return row[key]
+
+            return None
+
+        def find_existing() -> dict[str, Any] | None:
+            rows = self.get_document_rows(
+                "Commission",
+                commission.erp_id,
+            )
+
+            for row in rows:
+                row_external_id = row_value(
+                    row,
+                    "ExternalDocumentId",
+                    "externalDocumentId",
+                    "external_document_id",
+                )
+
+                if (
+                    str(row_external_id or "").strip()
+                    == external_document_id
+                ):
+                    return row
+
+            return None
+
+        existing_row = find_existing()
+
+        if existing_row is not None:
+            return existing_row
+
+        path = commission_photo_path(
+            photo.storage_name
+        )
+
+        if not path.is_file():
+            raise RuntimeError(
+                "Die lokale Fotodatei wurde nicht gefunden."
+            )
+
+        content = path.read_bytes()
+
+        if not content:
+            raise RuntimeError(
+                "Die lokale Fotodatei ist leer."
+            )
+
+        file_type_id = settings.get(
+            SettingKeys.WOWI_DOCUMENT_FILE_TYPE_ID
+        )
+        privacy_category_id = settings.get(
+            SettingKeys.WOWI_DOCUMENT_PRIVACY_CATEGORY_ID
+        )
+
+        if file_type_id <= 0:
+            raise RuntimeError(
+                "Es ist keine gültige Wowiport-Dateiart konfiguriert."
+            )
+
+        if privacy_category_id <= 0:
+            raise RuntimeError(
+                "Es ist keine gültige Datenschutzkategorie konfiguriert."
+            )
+
+        creation_date = photo.created_at or utc_now()
+
+        if creation_date.tzinfo is None:
+            creation_date = creation_date.replace(
+                tzinfo=timezone.utc
+            )
+        else:
+            creation_date = creation_date.astimezone(
+                timezone.utc
+            )
+
+        payload = {
+            "Filename": photo.original_filename,
+            "CreationDate": creation_date.strftime(
+                "%Y-%m-%dT%H:%M:%S"
+            ),
+            "ExternalDocumentId": external_document_id,
+            "FileTypeId": file_type_id,
+            "DataPrivacyCategoryId": privacy_category_id,
+            "EntityId": commission.erp_id,
+            "Contents": base64.b64encode(
+                content
+            ).decode("ascii"),
+            "Sha1Hash": hashlib.sha1(
+                content
+            ).hexdigest(),
+        }
+
+        result = self.client._rest_adapter.post(
+            endpoint="DocumentEdit/Commission/File",
+            data=payload,
+        )
+
+        result_data = getattr(
+            result,
+            "data",
+            None,
+        )
+
+        if (
+            isinstance(result_data, list)
+            and result_data
+            and isinstance(result_data[0], dict)
+        ):
+            return result_data[0]
+
+        if isinstance(result_data, dict):
+            return result_data
+
+        existing_row = find_existing()
+
+        if existing_row is not None:
+            return existing_row
+
+        raise RuntimeError(
+            "OPENWOWI hat das Foto nicht mit Dokumentdaten bestätigt."
+        )
+
+    def download_document_content(
+        self,
+        entity_name: str,
+        file_guid: str,
+    ) -> bytes:
+        result = self.client._rest_adapter.get(
+            endpoint=(
+                f"DocumentRead/{entity_name}/"
+                f"FileContent/{file_guid}"
+            ),
+            force_refresh=True,
+        )
+
+        encoded_data = getattr(
+            result,
+            "data",
+            None,
+        )
+
+        if not isinstance(encoded_data, str):
+            raise RuntimeError(
+                "OPENWOWI hat keinen gültigen Dateiinhalt geliefert."
+            )
+
+        try:
+            return base64.b64decode(
+                encoded_data
+            )
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(
+                "Der OPENWOWI-Dateiinhalt ist ungültig."
+            ) from exc
+
+    def get_commission_ticket_rows(
+        self,
+        commission_erp_id: int,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        limit = 100
+
+        while True:
+            result = self.client._rest_adapter.get(
+                endpoint=(
+                    "CommunicationRead/Ticket"
+                ),
+                ep_params={
+                    "ticketAssignmentEntityId": 7,
+                    "ticketAssignmentEntityValueEntityId": (
+                        commission_erp_id
+                    ),
+                    "includeAssignmentEntity": "true",
+                    "includeComments": "false",
+                    "showNullValues": "true",
+                    "limit": limit,
+                    "offset": offset,
+                },
+                force_refresh=True,
+            )
+
+            page_rows = self._result_rows(
+                result
+            )
+            rows.extend(page_rows)
+
+            if len(page_rows) < limit:
+                break
+
+            offset += limit
+
+        return rows
 
     def mark_commission_done(self, erp_id: int) -> None:
         self.client.set_commissioning_commission_to_done(commission_id=erp_id)
@@ -1669,6 +1998,68 @@ def sync_commission_types_from_wowiport() -> dict[str, int]:
     }
 
 
+def sync_commission_media_safely(
+    commission: Commission,
+    service: WowiportService,
+    force: bool = False,
+) -> None:
+    try:
+        result = sync_commission_object_photos(
+            commission=commission,
+            service=service,
+            force=force,
+        )
+
+        current_app.logger.info(
+            "commission_media_sync_completed "
+            "commission_id=%s erp_id=%s result=%s",
+            commission.id,
+            commission.erp_id,
+            result,
+        )
+    except Exception as exc:
+        commission.media_sync_error = str(exc)[:4000]
+
+        current_app.logger.exception(
+            "commission_media_sync_failed "
+            "commission_id=%s erp_id=%s",
+            commission.id,
+            commission.erp_id,
+        )
+
+
+def sync_commission_documents_safely(
+    commission: Commission,
+    service: WowiportService,
+    force: bool = False,
+) -> None:
+    try:
+        result = sync_commission_documents(
+            commission=commission,
+            service=service,
+            force=force,
+        )
+
+        current_app.logger.info(
+            "commission_document_sync_completed "
+            "commission_id=%s erp_id=%s result=%s",
+            commission.id,
+            commission.erp_id,
+            result,
+        )
+    except Exception as exc:
+        commission.document_sync_error = (
+            str(exc)[:4000]
+        )
+
+        current_app.logger.exception(
+            "commission_document_sync_failed "
+            "commission_id=%s erp_id=%s",
+            commission.id,
+            commission.erp_id,
+        )
+
+
 def sync_commission_from_erp(
     erp_id: int,
 ) -> Commission | None:
@@ -1713,9 +2104,19 @@ def sync_commission_from_erp(
     )
 
     if _commission_is_unchanged(
-        existing,
-        sync_signature,
+            existing,
+            sync_signature,
     ):
+        if existing is not None:
+            sync_commission_media_safely(
+                commission=existing,
+                service=service,
+            )
+            sync_commission_documents_safely(
+                commission=existing,
+                service=service,
+            )
+
         return existing
 
     commission = upsert_commission(
@@ -1738,6 +2139,17 @@ def sync_commission_from_erp(
             erp_id,
             str(exc),
         )
+
+    sync_commission_media_safely(
+        commission=commission,
+        service=service,
+        force=True,
+    )
+    sync_commission_documents_safely(
+        commission=commission,
+        service=service,
+        force=True,
+    )
 
     return commission
 
@@ -1980,9 +2392,19 @@ def sync_commission_payload_from_erp(
     )
 
     if _commission_is_unchanged(
-        existing,
-        sync_signature,
+            existing,
+            sync_signature,
     ):
+        if existing is not None:
+            sync_commission_media_safely(
+                commission=existing,
+                service=service,
+            )
+            sync_commission_documents_safely(
+                commission=existing,
+                service=service,
+            )
+
         return "unchanged"
 
     commission = upsert_commission(
@@ -2005,6 +2427,17 @@ def sync_commission_payload_from_erp(
             erp_id,
             str(exc),
         )
+
+    sync_commission_media_safely(
+        commission=commission,
+        service=service,
+        force=True,
+    )
+    sync_commission_documents_safely(
+        commission=commission,
+        service=service,
+        force=True,
+    )
 
     return "synced"
 

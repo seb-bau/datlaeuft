@@ -37,6 +37,37 @@ class SettingKeys:
     WOWI_PASSWORD = SettingDefinition[str]("wowi.password", SettingValueType.SECRET, "", "Wowiport Kennwort", "Wowiport", True)
     WOWI_API_KEY = SettingDefinition[str]("wowi.api_key", SettingValueType.SECRET, "", "OPENWOWI API-Key", "Wowiport", True)
     WOWI_API_VERSION = SettingDefinition[str]("wowi.api_version", SettingValueType.STRING, "v1.2", "OPENWOWI Version", "Wowiport")
+    WOWI_DOCUMENT_FILE_TYPE_ID = SettingDefinition[int](
+        "wowi.document_file_type_id",
+        SettingValueType.INT,
+        62,
+        "Dateiart für hochgeladene Auftragsdateien",
+        "Wowiport",
+    )
+
+    WOWI_DOCUMENT_PRIVACY_CATEGORY_ID = SettingDefinition[int](
+        "wowi.document_privacy_category_id",
+        SettingValueType.INT,
+        3,
+        "Datenschutzkategorie für Auftragsdateien",
+        "Wowiport",
+    )
+
+    WOWI_DOCUMENT_SYNC_INTERVAL_MINUTES = SettingDefinition[int](
+        "wowi.document_sync_interval_minutes",
+        SettingValueType.INT,
+        60,
+        "Abgleichintervall für Auftragsdateien in Minuten",
+        "Synchronisierung",
+    )
+
+    WOWI_MEDIA_SYNC_INTERVAL_MINUTES = SettingDefinition[int](
+        "wowi.media_sync_interval_minutes",
+        SettingValueType.INT,
+        60,
+        "Abgleichintervall für Gebäude- und Wohnungsfotos in Minuten",
+        "Synchronisierung",
+    )
     WOWI_APPROVED_STATUS_ID = SettingDefinition[int]("wowi.approved_status_id", SettingValueType.INT, 6, "Status-ID Freigegeben", "Wowiport")
     WOWI_WEBHOOK_TOKEN = SettingDefinition[str]("wowi.webhook_bearer_token", SettingValueType.SECRET, "change-me", "Webhook Bearer Token", "Wowiport", True)
     WOWI_DEFAULT_CRAFTS_PROCESS_TYPE_CODE = SettingDefinition[str](

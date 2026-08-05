@@ -83,6 +83,18 @@ def store_commission_photo(
         MAX_PHOTO_BYTES + 1
     )
 
+    return store_commission_photo_bytes(
+        commission=commission,
+        raw_data=raw_data,
+        original_filename=upload.filename,
+    )
+
+
+def store_commission_photo_bytes(
+    commission: Commission,
+    raw_data: bytes,
+    original_filename: str,
+) -> StoredCommissionPhoto:
     if not raw_data:
         raise ValueError(
             "Das Foto ist leer."
@@ -151,7 +163,7 @@ def store_commission_photo(
         Image.DecompressionBombError,
     ) as exc:
         raise ValueError(
-            "Die hochgeladene Datei ist kein gültiges Bild."
+            "Die übertragene Datei ist kein gültiges Bild."
         ) from exc
 
     original_data = original_buffer.getvalue()
@@ -208,13 +220,13 @@ def store_commission_photo(
         thumbnail_path
     )
 
-    original_filename = (
-        secure_filename(upload.filename)
+    safe_filename = (
+        secure_filename(original_filename)
         or "foto.jpg"
     )
 
     return StoredCommissionPhoto(
-        original_filename=original_filename,
+        original_filename=safe_filename,
         storage_name=storage_name,
         thumbnail_storage_name=(
             thumbnail_storage_name

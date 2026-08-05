@@ -52,6 +52,7 @@ class ErpOperationType(str, Enum):
     CANCEL_COMMISSION = "cancel_commission"
     COMPLETE_COMMISSION = "complete_commission"
     AWAIT_INVOICE = "await_invoice"
+    UPLOAD_COMMISSION_PHOTO = "upload_commission_photo"
 
 
 class ErpOutboxState(str, Enum):
@@ -330,6 +331,20 @@ class Commission(db.Model):
         default=utc_now,
         nullable=False,
     )
+    document_synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    document_sync_error: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+    media_synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    media_sync_error: Mapped[str | None] = mapped_column(
+        db.Text
+    )
     building_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
     latitude: Mapped[float | None] = mapped_column(db.Float)
     longitude: Mapped[float | None] = mapped_column(db.Float)
@@ -366,6 +381,10 @@ class Commission(db.Model):
     inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="commission")
     time_entries: Mapped[list["TimeEntry"]] = relationship(back_populates="commission")
     photos: Mapped[list["CommissionPhoto"]] = relationship(
+        back_populates="commission",
+        cascade="all, delete-orphan",
+    )
+    attachments: Mapped[list["CommissionAttachment"]] = relationship(
         back_populates="commission",
         cascade="all, delete-orphan",
     )
@@ -478,6 +497,13 @@ class CommissionPhoto(db.Model):
         db.ForeignKey("user_account.id"),
         index=True,
     )
+    context: Mapped[str] = mapped_column(
+        db.String(40),
+        default="order",
+        server_default="order",
+        nullable=False,
+        index=True,
+    )
     source: Mapped[str] = mapped_column(
         db.String(40),
         default="app",
@@ -488,6 +514,28 @@ class CommissionPhoto(db.Model):
     external_id: Mapped[str | None] = mapped_column(
         db.String(160),
         index=True,
+    )
+    external_document_id: Mapped[str] = mapped_column(
+        db.String(80),
+        default=lambda: str(uuid4()),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    external_entity_name: Mapped[str | None] = mapped_column(
+        db.String(80),
+        index=True,
+    )
+    external_entity_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    picture_type_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    picture_type_name: Mapped[str | None] = mapped_column(
+        db.String(160)
     )
     original_filename: Mapped[str] = mapped_column(
         db.String(255),
@@ -528,6 +576,19 @@ class CommissionPhoto(db.Model):
         nullable=False,
         index=True,
     )
+    erp_sync_state: Mapped[str] = mapped_column(
+        db.String(30),
+        default=CommissionSyncState.PENDING.value,
+        server_default=CommissionSyncState.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+    erp_sync_message: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+    erp_synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
     external_updated_at: Mapped[datetime | None] = mapped_column(
         db.DateTime(timezone=True)
     )
@@ -549,6 +610,153 @@ class CommissionPhoto(db.Model):
 
     commission: Mapped[Commission] = relationship(
         back_populates="photos"
+    )
+    uploaded_by: Mapped[User | None] = relationship(
+        foreign_keys=[uploaded_by_user_id]
+    )
+
+
+class CommissionAttachment(db.Model):
+    __tablename__ = "commission_attachment"
+    __table_args__ = (
+        UniqueConstraint(
+            "commission_id",
+            "external_file_guid",
+            name="uq_commission_attachment_external_file",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    commission_id: Mapped[int] = mapped_column(
+        db.ForeignKey("commission.id"),
+        nullable=False,
+        index=True,
+    )
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(
+        db.String(40),
+        default="app",
+        server_default="app",
+        nullable=False,
+        index=True,
+    )
+    source_entity_name: Mapped[str | None] = mapped_column(
+        db.String(80),
+        index=True,
+    )
+    source_entity_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    external_id: Mapped[str | None] = mapped_column(
+        db.String(160),
+        index=True,
+    )
+    external_file_guid: Mapped[str | None] = mapped_column(
+        db.String(160),
+        index=True,
+    )
+    external_document_id: Mapped[str] = mapped_column(
+        db.String(80),
+        default=lambda: str(uuid4()),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    original_filename: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+    )
+    storage_name: Mapped[str] = mapped_column(
+        db.String(500),
+        nullable=False,
+        unique=True,
+    )
+    thumbnail_storage_name: Mapped[str | None] = mapped_column(
+        db.String(500),
+        unique=True,
+    )
+    mime_type: Mapped[str] = mapped_column(
+        db.String(160),
+        default="application/octet-stream",
+        server_default="application/octet-stream",
+        nullable=False,
+    )
+    size_bytes: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+    )
+    content_sha256: Mapped[str] = mapped_column(
+        db.String(64),
+        nullable=False,
+        index=True,
+    )
+    file_type_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    file_type_name: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    privacy_category_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    privacy_category_name: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    caption: Mapped[str | None] = mapped_column(
+        db.String(500)
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default="1",
+        nullable=False,
+        index=True,
+    )
+    erp_sync_state: Mapped[str] = mapped_column(
+        db.String(30),
+        default=CommissionSyncState.PENDING.value,
+        server_default=CommissionSyncState.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+    erp_sync_message: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+    erp_synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    external_created_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    external_updated_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    commission: Mapped[Commission] = relationship(
+        back_populates="attachments"
     )
     uploaded_by: Mapped[User | None] = relationship(
         foreign_keys=[uploaded_by_user_id]

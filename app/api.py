@@ -13,6 +13,8 @@ from flask import (
 )
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from sqlalchemy import or_
+from uuid import uuid4
+
 
 from .audit import audit
 from .auth import resolve_microsoft_user, validate_microsoft_id_token
@@ -44,6 +46,7 @@ from .models import (
     AppointmentRequestStatus,
     AppointmentWindow,
     CommissionAppointmentRequest,
+    CommissionAttachment,
 )
 from .appointment_service import (
     create_appointment_request,
@@ -72,6 +75,9 @@ from .commission_service import (
     create_pending_commission,
     normalize_public_id,
     integer_set
+)
+from .attachment_service import (
+    commission_attachment_path,
 )
 
 
@@ -777,6 +783,161 @@ def commission_appointment_cancel(
 
 
 @api_bp.get(
+    "/commissions/<int:commission_id>/attachments"
+)
+@jwt_required()
+def commission_attachments(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+
+    attachments = (
+        CommissionAttachment.query
+        .filter(
+            CommissionAttachment.commission_id
+            == commission.id,
+            CommissionAttachment.active.is_(True),
+        )
+        .order_by(
+            CommissionAttachment.created_at.desc(),
+            CommissionAttachment.id.desc(),
+        )
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_commission_attachment(
+                attachment
+            )
+            for attachment in attachments
+        ]
+    })
+
+
+@api_bp.get(
+    "/commissions/<int:commission_id>/attachments/"
+    "<int:attachment_id>/content"
+)
+@jwt_required()
+def commission_attachment_content(
+    commission_id: int,
+    attachment_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+
+    attachment = (
+        CommissionAttachment.query
+        .filter(
+            CommissionAttachment.id
+            == attachment_id,
+            CommissionAttachment.commission_id
+            == commission.id,
+            CommissionAttachment.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if attachment is None:
+        abort(404)
+
+    path = commission_attachment_path(
+        attachment.storage_name
+    )
+
+    if not path.is_file():
+        abort(404)
+
+    display_inline = (
+        attachment.mime_type.startswith("image/")
+        or attachment.mime_type
+        == "application/pdf"
+    )
+
+    response = send_file(
+        path,
+        mimetype=attachment.mime_type,
+        as_attachment=not display_inline,
+        download_name=attachment.original_filename,
+        conditional=True,
+        max_age=3600,
+    )
+    response.headers[
+        "X-Content-Type-Options"
+    ] = "nosniff"
+
+    return response
+
+
+@api_bp.get(
+    "/commissions/<int:commission_id>/attachments/"
+    "<int:attachment_id>/thumbnail"
+)
+@jwt_required()
+def commission_attachment_thumbnail(
+    commission_id: int,
+    attachment_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = viewable_commission(
+        commission_id,
+        user,
+    )
+
+    attachment = (
+        CommissionAttachment.query
+        .filter(
+            CommissionAttachment.id
+            == attachment_id,
+            CommissionAttachment.commission_id
+            == commission.id,
+            CommissionAttachment.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if attachment is None:
+        abort(404)
+
+    thumbnail_storage_name = getattr(
+        attachment,
+        "thumbnail_storage_name",
+        None,
+    )
+
+    if not thumbnail_storage_name:
+        abort(404)
+
+    path = commission_attachment_path(
+        thumbnail_storage_name
+    )
+
+    if not path.is_file():
+        abort(404)
+
+    response = send_file(
+        path,
+        mimetype="image/jpeg",
+        as_attachment=False,
+        conditional=True,
+        max_age=3600,
+    )
+    response.headers[
+        "X-Content-Type-Options"
+    ] = "nosniff"
+
+    return response
+
+
+@api_bp.get(
     "/commissions/<int:commission_id>/photos"
 )
 @jwt_required()
@@ -789,15 +950,57 @@ def commission_photos(
         user,
     )
 
-    photos = (
-        CommissionPhoto.query
-        .filter(
-            CommissionPhoto.commission_id
-            == commission.id,
-            CommissionPhoto.active.is_(True),
+    context_filter = request.args.get(
+        "context",
+        "",
+    ).strip().lower()
+
+    entity_filter = request.args.get(
+        "entity",
+        "",
+    ).strip().lower()
+
+    if context_filter not in {
+        "",
+        "order",
+        "object",
+    }:
+        return jsonify({
+            "message": "Ungültiger Fotokontext."
+        }), 400
+
+    query = CommissionPhoto.query.filter(
+        CommissionPhoto.commission_id
+        == commission.id,
+        CommissionPhoto.active.is_(True),
+    )
+
+    if context_filter:
+        query = query.filter(
+            CommissionPhoto.context
+            == context_filter
         )
+
+    if entity_filter == "building":
+        query = query.filter(
+            CommissionPhoto.external_entity_name
+            == "Building"
+        )
+    elif entity_filter == "use_unit":
+        query = query.filter(
+            CommissionPhoto.external_entity_name
+            == "UseUnit"
+        )
+    elif entity_filter:
+        return jsonify({
+            "message": "Ungültiger Bestandsobjektfilter."
+        }), 400
+
+    photos = (
+        query
         .order_by(
-            CommissionPhoto.created_at.desc()
+            CommissionPhoto.created_at.desc(),
+            CommissionPhoto.id.desc(),
         )
         .all()
     )
@@ -822,14 +1025,6 @@ def commission_photo_upload(
         commission_id,
         user,
     )
-
-    if not commission.is_actionable:
-        return jsonify({
-            "message": (
-                "Fotos können erst nach der "
-                "Wowiport-Bestätigung hochgeladen werden."
-            )
-        }), 409
 
     upload = request.files.get("photo")
 
@@ -879,10 +1074,21 @@ def commission_photo_upload(
             "duplicate": True,
         }), 200
 
+    external_document_id = (
+        "datlaeuft-photo-"
+        f"{uuid4().hex}"
+    )
+
     photo = CommissionPhoto(
         commission=commission,
         uploaded_by=user,
         source="app",
+        context="order",
+        external_document_id=(
+            external_document_id
+        ),
+        external_entity_name="Commission",
+        external_entity_id=commission.erp_id,
         original_filename=(
             stored_photo.original_filename
         ),
@@ -899,10 +1105,26 @@ def commission_photo_upload(
         ),
         caption=caption,
         active=True,
+        erp_sync_state=(
+            CommissionSyncState.PENDING.value
+        ),
     )
 
     db.session.add(photo)
     db.session.flush()
+
+    if commission.erp_id is not None:
+        enqueue_erp_operation(
+            commission,
+            ErpOperationType.UPLOAD_COMMISSION_PHOTO,
+            (
+                "commission-photo:"
+                f"{photo.external_document_id}"
+            ),
+            {
+                "photo_id": photo.id,
+            },
+        )
 
     audit(
         "commission.photo.upload",
@@ -2701,7 +2923,51 @@ def serialize_commission_photo(
         "id": photo.id,
         "commission_id": photo.commission_id,
         "source": photo.source,
+        "context": photo.context,
+        "external_entity_name": (
+            photo.external_entity_name
+        ),
+        "external_entity_id": (
+            photo.external_entity_id
+        ),
+        "picture_type_id": (
+            photo.picture_type_erp_id
+        ),
+        "picture_type_name": (
+            photo.picture_type_name
+        ),
+        "erp_sync_state": (
+            photo.erp_sync_state
+        ),
+        "erp_sync_message": (
+            photo.erp_sync_message
+        ),
         "external_id": photo.external_id,
+        "context": photo.context,
+        "external_document_id": (
+            photo.external_document_id
+        ),
+        "external_entity_name": (
+            photo.external_entity_name
+        ),
+        "external_entity_id": (
+            photo.external_entity_id
+        ),
+        "picture_type_id": (
+            photo.picture_type_erp_id
+        ),
+        "picture_type_name": (
+            photo.picture_type_name
+        ),
+        "erp_sync_state": (
+            photo.erp_sync_state
+        ),
+        "erp_sync_message": (
+            photo.erp_sync_message
+        ),
+        "erp_synced_at": iso_datetime(
+            photo.erp_synced_at
+        ),
         "original_filename": photo.original_filename,
         "mime_type": photo.mime_type,
         "size_bytes": photo.size_bytes,
@@ -2726,6 +2992,57 @@ def serialize_commission_photo(
             f"/api/commissions/"
             f"{photo.commission_id}/photos/"
             f"{photo.id}/thumbnail"
+        ),
+    }
+
+
+def serialize_commission_attachment(
+    attachment: CommissionAttachment,
+) -> dict[str, Any]:
+    thumbnail_storage_name = getattr(
+        attachment,
+        "thumbnail_storage_name",
+        None,
+    )
+
+    return {
+        "id": attachment.id,
+        "commission_id": attachment.commission_id,
+        "source_entity_name": (
+            attachment.source_entity_name
+        ),
+        "source_entity_id": (
+            attachment.source_entity_id
+        ),
+        "external_document_id": (
+            attachment.external_document_id
+        ),
+        "original_filename": (
+            attachment.original_filename
+        ),
+        "mime_type": attachment.mime_type,
+        "size_bytes": attachment.size_bytes,
+        "is_image": (
+            attachment.mime_type.startswith(
+                "image/"
+            )
+        ),
+        "created_at": iso_datetime(
+            attachment.created_at
+        ),
+        "content_path": (
+            f"/api/commissions/"
+            f"{attachment.commission_id}/"
+            f"attachments/{attachment.id}/content"
+        ),
+        "thumbnail_path": (
+            (
+                f"/api/commissions/"
+                f"{attachment.commission_id}/"
+                f"attachments/{attachment.id}/thumbnail"
+            )
+            if thumbnail_storage_name
+            else None
         ),
     }
 
