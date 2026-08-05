@@ -29,7 +29,10 @@ from .models import (
 )
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
-from .media_sync import sync_commission_object_photos
+from .media_sync import (
+    commission_media_sync_due,
+    sync_commission_object_photos,
+)
 from .document_sync import sync_commission_documents
 from .photo_service import commission_photo_path
 
@@ -1998,6 +2001,48 @@ def sync_commission_types_from_wowiport() -> dict[str, int]:
     }
 
 
+def refresh_commission_context_safely(
+    commission: Commission,
+    service: WowiportService,
+    erp_id: int,
+    payload: Any,
+) -> bool:
+    previous_object_ids = (
+        commission.building_erp_id,
+        commission.use_unit_id,
+    )
+
+    try:
+        context = service.get_commission_context(
+            erp_id=erp_id,
+            commission_object=payload,
+        )
+
+        apply_commission_context(
+            commission,
+            context,
+        )
+    except Exception as exc:
+        current_app.logger.exception(
+            "commission_context_sync_failed "
+            "erp_id=%s exc=%s",
+            erp_id,
+            str(exc),
+        )
+
+        return False
+
+    current_object_ids = (
+        commission.building_erp_id,
+        commission.use_unit_id,
+    )
+
+    return (
+        current_object_ids
+        != previous_object_ids
+    )
+
+
 def sync_commission_media_safely(
     commission: Commission,
     service: WowiportService,
@@ -2108,9 +2153,24 @@ def sync_commission_from_erp(
             sync_signature,
     ):
         if existing is not None:
+            context_changed = False
+
+            if commission_media_sync_due(
+                    existing
+            ):
+                context_changed = (
+                    refresh_commission_context_safely(
+                        commission=existing,
+                        service=service,
+                        erp_id=erp_id,
+                        payload=payload,
+                    )
+                )
+
             sync_commission_media_safely(
                 commission=existing,
                 service=service,
+                force=context_changed,
             )
             sync_commission_documents_safely(
                 commission=existing,
@@ -2124,21 +2184,12 @@ def sync_commission_from_erp(
         sync_signature=sync_signature,
     )
 
-    try:
-        context = service.get_commission_context(
-            erp_id=erp_id,
-            commission_object=payload,
-        )
-        apply_commission_context(
-            commission,
-            context,
-        )
-    except Exception as exc:
-        current_app.logger.exception(
-            "commission_context_sync_failed erp_id=%s exc=%s",
-            erp_id,
-            str(exc),
-        )
+    refresh_commission_context_safely(
+        commission=commission,
+        service=service,
+        erp_id=erp_id,
+        payload=payload,
+    )
 
     sync_commission_media_safely(
         commission=commission,
@@ -2396,9 +2447,24 @@ def sync_commission_payload_from_erp(
             sync_signature,
     ):
         if existing is not None:
+            context_changed = False
+
+            if commission_media_sync_due(
+                    existing
+            ):
+                context_changed = (
+                    refresh_commission_context_safely(
+                        commission=existing,
+                        service=service,
+                        erp_id=erp_id,
+                        payload=payload,
+                    )
+                )
+
             sync_commission_media_safely(
                 commission=existing,
                 service=service,
+                force=context_changed,
             )
             sync_commission_documents_safely(
                 commission=existing,
@@ -2412,21 +2478,12 @@ def sync_commission_payload_from_erp(
         sync_signature=sync_signature,
     )
 
-    try:
-        context = service.get_commission_context(
-            erp_id=erp_id,
-            commission_object=payload,
-        )
-        apply_commission_context(
-            commission,
-            context,
-        )
-    except Exception as exc:
-        current_app.logger.exception(
-            "commission_context_sync_failed erp_id=%s exc=%s",
-            erp_id,
-            str(exc),
-        )
+    refresh_commission_context_safely(
+        commission=commission,
+        service=service,
+        erp_id=erp_id,
+        payload=payload,
+    )
 
     sync_commission_media_safely(
         commission=commission,

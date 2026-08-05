@@ -1071,6 +1071,7 @@ def commission_photo_upload(
             CommissionPhoto.content_sha256
             == stored_photo.content_sha256,
             CommissionPhoto.active.is_(True),
+            CommissionPhoto.context == "order",
         )
         .one_or_none()
     )
@@ -1240,6 +1241,18 @@ def commission_photo_delete(
 
     if photo is None:
         abort(404)
+
+    if (
+            photo.erp_sync_state
+            == CommissionSyncState.SYNCED.value
+            and photo.external_id
+    ):
+        return jsonify({
+            "message": (
+                "Das Foto wurde bereits an Wowiport "
+                "übertragen und kann nur dort entfernt werden."
+            )
+        }), 409
 
     photo.active = False
     photo.deleted_at = utc_now()

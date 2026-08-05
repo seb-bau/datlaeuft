@@ -53,18 +53,28 @@ from .models import (
     AuditLog,
     CommissionAppointmentRequest,
     CommissionPhoto,
+    CommissionSyncState,
+    ErpOperationType,
+    ErpOutboxOperation,
+    ErpOutboxState,
+    WebhookEvent,
 )
 from .inventory_service import (
     book_inventory_movement,
     get_default_inventory_location,
     get_inventory_location,
 )
-from .photo_service import commission_photo_path
+from .photo_service import (
+    commission_photo_path,
+    store_commission_photo,
+)
+from .erp_sync import enqueue_erp_operation
 from .wowiport import (
     configured_commission_type_ids,
     sync_commission_from_erp,
 )
 from datetime import time
+from uuid import uuid4
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -101,6 +111,23 @@ def commission_review_query():
     )
 
 
+def safe_next_url(
+    default_endpoint: str,
+) -> str:
+    next_url = request.form.get(
+        "next",
+        "",
+    ).strip()
+
+    if (
+        next_url.startswith("/")
+        and not next_url.startswith("//")
+    ):
+        return next_url
+
+    return url_for(default_endpoint)
+
+
 @admin_bp.get("/admin")
 @login_required
 def dashboard() -> Any:
@@ -135,6 +162,46 @@ def dashboard() -> Any:
         == CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
     ).count()
 
+    sync_problem_count = 0
+
+    if current_user.is_admin:
+        failed_outbox_count = (
+            ErpOutboxOperation.query
+            .filter(
+                ErpOutboxOperation.state
+                == ErpOutboxState.FAILED.value
+            )
+            .count()
+        )
+
+        failed_webhook_count = (
+            WebhookEvent.query
+            .filter(
+                WebhookEvent.processed.is_(False),
+                WebhookEvent.attempt_count > 0,
+            )
+            .count()
+        )
+
+        commission_sync_error_count = (
+            Commission.query
+            .filter(
+                or_(
+                    Commission.erp_sync_state
+                    == CommissionSyncState.FAILED.value,
+                    Commission.media_sync_error.isnot(None),
+                    Commission.document_sync_error.isnot(None),
+                )
+            )
+            .count()
+        )
+
+        sync_problem_count = (
+                failed_outbox_count
+                + failed_webhook_count
+                + commission_sync_error_count
+        )
+
     return render_template(
         "admin/dashboard.html",
         open_count=open_count,
@@ -143,6 +210,75 @@ def dashboard() -> Any:
         low_stock_count=low_stock_count,
         completion_review_count=completion_review_count,
         tenant_charge_review_count=tenant_charge_review_count,
+        sync_problem_count=sync_problem_count,
+    )
+
+
+@admin_bp.get("/admin/sync-health")
+@admin_required
+def sync_health() -> Any:
+    outbox_items = (
+        ErpOutboxOperation.query
+        .filter(
+            ErpOutboxOperation.state.in_(
+                (
+                    ErpOutboxState.PENDING.value,
+                    ErpOutboxState.PROCESSING.value,
+                    ErpOutboxState.FAILED.value,
+                )
+            )
+        )
+        .order_by(
+            ErpOutboxOperation.available_at.asc(),
+            ErpOutboxOperation.id.asc(),
+        )
+        .all()
+    )
+
+    webhook_items = (
+        WebhookEvent.query
+        .filter(
+            WebhookEvent.processed.is_(False)
+        )
+        .order_by(
+            WebhookEvent.received_at.asc(),
+            WebhookEvent.id.asc(),
+        )
+        .all()
+    )
+
+    commission_items = (
+        Commission.query
+        .filter(
+            or_(
+                Commission.erp_sync_state
+                == CommissionSyncState.FAILED.value,
+                Commission.media_sync_error.isnot(None),
+                Commission.document_sync_error.isnot(None),
+            )
+        )
+        .order_by(
+            Commission.synced_at.asc(),
+            Commission.id.asc(),
+        )
+        .all()
+    )
+
+    outbox_status_labels = {
+        ErpOutboxState.PENDING.value:
+            "Ausstehend",
+        ErpOutboxState.PROCESSING.value:
+            "In Bearbeitung",
+        ErpOutboxState.FAILED.value:
+            "Fehlgeschlagen",
+    }
+
+    return render_template(
+        "admin/sync_health.html",
+        outbox_items=outbox_items,
+        webhook_items=webhook_items,
+        commission_items=commission_items,
+        outbox_status_labels=outbox_status_labels,
     )
 
 
@@ -211,6 +347,106 @@ def user_edit(user_id: int) -> Any:
         return redirect(url_for("admin.users"))
 
     return render_template("admin/user_form.html", item=item, craft_activities=craft_activities)
+
+
+def save_web_commission_photo(
+    commission: Commission,
+    upload: Any,
+    caption: str | None,
+) -> tuple[CommissionPhoto, bool]:
+    stored_photo = store_commission_photo(
+        commission,
+        upload,
+    )
+
+    existing_photo = (
+        CommissionPhoto.query
+        .filter(
+            CommissionPhoto.commission_id
+            == commission.id,
+            CommissionPhoto.context == "order",
+            CommissionPhoto.content_sha256
+            == stored_photo.content_sha256,
+            CommissionPhoto.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    if existing_photo is not None:
+        commission_photo_path(
+            stored_photo.storage_name
+        ).unlink(missing_ok=True)
+
+        commission_photo_path(
+            stored_photo.thumbnail_storage_name
+        ).unlink(missing_ok=True)
+
+        return existing_photo, True
+
+    normalized_caption = (
+        str(caption or "").strip()[:500]
+        or None
+    )
+
+    photo = CommissionPhoto(
+        commission=commission,
+        uploaded_by_user_id=current_user.id,
+        source="web",
+        context="order",
+        external_document_id=(
+            "datlaeuft-photo-"
+            f"{uuid4().hex}"
+        ),
+        external_entity_name="Commission",
+        external_entity_id=commission.erp_id,
+        original_filename=(
+            stored_photo.original_filename
+        ),
+        storage_name=stored_photo.storage_name,
+        thumbnail_storage_name=(
+            stored_photo.thumbnail_storage_name
+        ),
+        mime_type=stored_photo.mime_type,
+        size_bytes=stored_photo.size_bytes,
+        content_sha256=(
+            stored_photo.content_sha256
+        ),
+        caption=normalized_caption,
+        active=True,
+        erp_sync_state=(
+            CommissionSyncState.PENDING.value
+        ),
+    )
+
+    db.session.add(photo)
+    db.session.flush()
+
+    if commission.erp_id is not None:
+        enqueue_erp_operation(
+            commission,
+            ErpOperationType.UPLOAD_COMMISSION_PHOTO,
+            (
+                "commission-photo:"
+                f"{photo.external_document_id}"
+            ),
+            {
+                "photo_id": photo.id,
+            },
+        )
+
+    audit(
+        "commission.photo.upload",
+        "commission",
+        commission.id,
+        {
+            "photo_id": photo.id,
+            "filename": photo.original_filename,
+            "caption": photo.caption,
+            "source": "web",
+        },
+    )
+
+    return photo, False
 
 
 @admin_bp.route(
@@ -289,6 +525,19 @@ def commission_create() -> Any:
             )
 
             db.session.flush()
+            photo_upload = request.files.get("photo")
+
+            if (
+                    photo_upload is not None
+                    and photo_upload.filename
+            ):
+                save_web_commission_photo(
+                    commission=commission,
+                    upload=photo_upload,
+                    caption=request.form.get(
+                        "photo_caption"
+                    ),
+                )
 
             audit(
                 "commission.create.web",
@@ -422,6 +671,7 @@ def commission_detail(
         "erp.outbox.succeeded": "Mit Wowiport synchronisiert",
         "erp.outbox.failed": "Wowiport-Synchronisierung fehlgeschlagen",
         "webhook.wowiport": "Änderung aus Wowiport übernommen",
+        "commission.photo.upload": "Foto hinzugefügt",
     }
 
     return render_template(
@@ -501,6 +751,72 @@ def commission_photo_for_admin(
     return photo
 
 
+@admin_bp.post(
+    "/admin/commissions/<int:commission_id>/photos"
+)
+@foreman_required
+def commission_photo_upload(
+    commission_id: int,
+) -> Any:
+    commission = db.get_or_404(
+        Commission,
+        commission_id,
+    )
+
+    upload = request.files.get("photo")
+
+    if upload is None or not upload.filename:
+        flash(
+            "Bitte ein Foto auswählen.",
+            "danger",
+        )
+        return redirect(
+            url_for(
+                "admin.commission_detail",
+                commission_id=commission.id,
+            )
+        )
+
+    try:
+        photo, duplicate = save_web_commission_photo(
+            commission=commission,
+            upload=upload,
+            caption=request.form.get(
+                "photo_caption"
+            ),
+        )
+
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    else:
+        if duplicate:
+            flash(
+                "Dieses Foto ist bereits vorhanden.",
+                "warning",
+            )
+        elif commission.erp_id is None:
+            flash(
+                "Das Foto wurde gespeichert und wird nach "
+                "der Wowiport-Bestätigung übertragen.",
+                "success",
+            )
+        else:
+            flash(
+                "Das Foto wurde gespeichert und zur "
+                "Übertragung an Wowiport eingeplant.",
+                "success",
+            )
+
+    return redirect(
+        url_for(
+            "admin.commission_detail",
+            commission_id=commission.id,
+        )
+    )
+
+
 @admin_bp.get(
     "/admin/commissions/<int:commission_id>/photos/"
     "<int:photo_id>/thumbnail"
@@ -568,6 +884,9 @@ def commission_photo_content(
 @foreman_required
 def commission_sync(commission_id: int) -> Any:
     item = db.get_or_404(Commission, commission_id)
+    next_url = safe_next_url(
+        "admin.commissions"
+    )
 
     if item.erp_id is None:
         flash(
@@ -575,15 +894,8 @@ def commission_sync(commission_id: int) -> Any:
             "Die Übertragung wird automatisch wiederholt.",
             "warning",
         )
-        next_url = request.form.get(
-            "next",
-            "",
-        ).strip()
 
-        return redirect(
-            next_url
-            or url_for("admin.commissions")
-        )
+        return redirect(next_url)
 
     sync_commission_from_erp(item.erp_id)
     audit(
@@ -598,9 +910,7 @@ def commission_sync(commission_id: int) -> Any:
         "success",
     )
 
-    return redirect(
-        url_for("admin.commissions")
-    )
+    return redirect(next_url)
 
 
 @admin_bp.route(
@@ -1921,3 +2231,123 @@ def required_form_int(
         raise ValueError(
             f"{label} ist ungültig."
         ) from exc
+
+
+@admin_bp.post(
+    "/admin/sync-health/outbox/<int:operation_id>/retry"
+)
+@admin_required
+def sync_health_retry_outbox(
+    operation_id: int,
+) -> Any:
+    operation = db.get_or_404(
+        ErpOutboxOperation,
+        operation_id,
+    )
+
+    if (
+        operation.state
+        != ErpOutboxState.FAILED.value
+    ):
+        flash(
+            "Die ERP-Operation ist nicht fehlgeschlagen.",
+            "warning",
+        )
+        return redirect(
+            url_for("admin.sync_health")
+        )
+
+    operation.state = (
+        ErpOutboxState.PENDING.value
+    )
+    operation.available_at = utc_now()
+    operation.locked_at = None
+    operation.last_error = None
+
+    operation.commission.erp_sync_state = (
+        CommissionSyncState.PENDING.value
+    )
+    operation.commission.erp_sync_message = None
+
+    audit(
+        "erp.outbox.retry",
+        "commission",
+        operation.commission_id,
+        {
+            "operation_id": operation.id,
+            "operation_type": (
+                operation.operation_type
+            ),
+            "attempt_count": (
+                operation.attempt_count
+            ),
+        },
+    )
+
+    db.session.commit()
+
+    flash(
+        "Die ERP-Operation wurde erneut eingeplant.",
+        "success",
+    )
+
+    return redirect(
+        url_for("admin.sync_health")
+    )
+
+
+@admin_bp.post(
+    "/admin/sync-health/webhooks/<int:event_id>/retry"
+)
+@admin_required
+def sync_health_retry_webhook(
+    event_id: int,
+) -> Any:
+    event = db.get_or_404(
+        WebhookEvent,
+        event_id,
+    )
+
+    if event.processed:
+        flash(
+            "Der Webhook wurde bereits verarbeitet.",
+            "warning",
+        )
+        return redirect(
+            url_for("admin.sync_health")
+        )
+
+    if event.processing_at is not None:
+        flash(
+            "Der Webhook wird momentan verarbeitet.",
+            "warning",
+        )
+        return redirect(
+            url_for("admin.sync_health")
+        )
+
+    event.next_attempt_at = utc_now()
+    event.processing_at = None
+    event.message = None
+
+    audit(
+        "webhook.retry",
+        "webhook_event",
+        event.id,
+        {
+            "entity_type": event.entity_type,
+            "entity_id": event.entity_id,
+            "attempt_count": event.attempt_count,
+        },
+    )
+
+    db.session.commit()
+
+    flash(
+        "Der Webhook wurde erneut eingeplant.",
+        "success",
+    )
+
+    return redirect(
+        url_for("admin.sync_health")
+    )

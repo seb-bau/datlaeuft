@@ -19,6 +19,26 @@
     </a>
   </div>
 
+  {% if current_user.is_admin %}
+  <div class="col-md-4">
+    <a
+      class="card shadow-sm text-decoration-none text-body h-100"
+      href="{{ url_for('admin.sync_health') }}"
+    >
+      <div class="card-body">
+        <div class="text-muted">
+          Synchronisierungsprobleme
+        </div>
+        <div
+          class="display-6 {% if sync_problem_count %}text-danger{% else %}text-success{% endif %}"
+        >
+          {{ sync_problem_count }}
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+
   <div class="col-md-4">
     <a
       class="card shadow-sm text-decoration-none text-body h-100"

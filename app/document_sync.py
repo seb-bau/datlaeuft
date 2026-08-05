@@ -12,6 +12,7 @@ from .extensions import db
 from .models import (
     Commission,
     CommissionAttachment,
+    CommissionPhoto,
     CommissionSyncState,
     utc_now,
 )
@@ -192,6 +193,7 @@ def sync_commission_documents(
         "created": 0,
         "updated": 0,
         "deactivated": 0,
+        "linked_photos": 0,
         "errors": 0,
         "skipped": 0,
     }
@@ -315,6 +317,46 @@ def sync_commission_documents(
 
                 continue
 
+            external_document_id = (
+                    _text(
+                        _value(
+                            row,
+                            "ExternalDocumentId",
+                            "external_document_id",
+                        )
+                    )
+                    or str(uuid4())
+            )[:80]
+
+            local_photo = None
+
+            if entity_name == "Commission":
+                local_photo = (
+                    CommissionPhoto.query
+                    .filter(
+                        CommissionPhoto.commission_id
+                        == commission.id,
+                        CommissionPhoto.context == "order",
+                        CommissionPhoto.external_document_id
+                        == external_document_id,
+                        CommissionPhoto.active.is_(True),
+                    )
+                    .one_or_none()
+                )
+
+            if local_photo is not None:
+                result["linked_photos"] += 1
+
+                if (
+                        attachment is not None
+                        and attachment.active
+                ):
+                    attachment.active = False
+                    attachment.deleted_at = now
+                    result["deactivated"] += 1
+
+                continue
+
             file_name = (
                 _text(
                     _value(
@@ -370,17 +412,6 @@ def sync_commission_documents(
                     continue
             else:
                 stored_attachment = None
-
-            external_document_id = (
-                _text(
-                    _value(
-                        row,
-                        "ExternalDocumentId",
-                        "external_document_id",
-                    )
-                )
-                or str(uuid4())
-            )[:80]
 
             external_created_at = (
                 _external_datetime(

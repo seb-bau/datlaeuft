@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Synchronisierung{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Synchronisierung</h1>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    ERP-Aufträge
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-striped datatable mb-0">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Auftrag</th>
+            <th>Operation</th>
+            <th>Versuche</th>
+            <th>Nächster Versuch</th>
+            <th>Fehler</th>
+            <th data-filter="false">Aktion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for operation in outbox_items %}
+          <tr>
+            <td>
+              {{ outbox_status_labels.get(operation.state, operation.state) }}
+            </td>
+            <td>
+              <a
+                href="{{ url_for('admin.commission_detail', commission_id=operation.commission_id) }}"
+              >
+                {{ operation.commission.erp_idnum or operation.commission.code or operation.commission.id }}
+              </a>
+            </td>
+            <td>{{ operation.operation_type }}</td>
+            <td>{{ operation.attempt_count }}</td>
+            <td
+              data-order="{{ operation.available_at.isoformat() }}"
+            >
+              {{ operation.available_at.strftime("%d.%m.%Y %H:%M:%S") }}
+            </td>
+            <td class="text-danger">
+              {{ operation.last_error or "" }}
+            </td>
+              <td>
+              {% if operation.state == "failed" %}
+              <form
+                method="post"
+                action="{{ url_for('admin.sync_health_retry_outbox', operation_id=operation.id) }}"
+              >
+                <input
+                  type="hidden"
+                  name="csrf_token"
+                  value="{{ csrf_token() }}"
+                >
+                <button
+                  class="btn btn-sm btn-outline-primary"
+                  type="submit"
+                >
+                  Erneut versuchen
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    Nicht verarbeitete Webhooks
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-striped datatable mb-0">
+        <thead>
+          <tr>
+            <th>Empfangen</th>
+            <th>Entität</th>
+            <th>Wowiport-ID</th>
+            <th>Aktion</th>
+            <th>Versuche</th>
+            <th>Nächster Versuch</th>
+            <th>Meldung</th>
+            <th data-filter="false">Aktion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for event in webhook_items %}
+          <tr>
+            <td data-order="{{ event.received_at.isoformat() }}">
+              {{ event.received_at.strftime("%d.%m.%Y %H:%M:%S") }}
+            </td>
+            <td>{{ event.entity_type or event.entity_name or "" }}</td>
+            <td>{{ event.entity_id or "" }}</td>
+            <td>{{ event.action or "" }}</td>
+            <td>{{ event.attempt_count }}</td>
+            <td
+              data-order="{{ event.next_attempt_at.isoformat() if event.next_attempt_at else '' }}"
+            >
+              {{ event.next_attempt_at.strftime("%d.%m.%Y %H:%M:%S") if event.next_attempt_at else "Sofort" }}
+            </td>
+            <td class="text-danger">
+              {{ event.message or "" }}
+            </td>
+              <td>
+              {% if event.attempt_count > 0 and event.processing_at is none %}
+              <form
+                method="post"
+                action="{{ url_for('admin.sync_health_retry_webhook', event_id=event.id) }}"
+              >
+                <input
+                  type="hidden"
+                  name="csrf_token"
+                  value="{{ csrf_token() }}"
+                >
+                <button
+                  class="btn btn-sm btn-outline-primary"
+                  type="submit"
+                >
+                  Erneut versuchen
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header fw-semibold">
+    Auftragsbezogene Fehler
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-striped datatable mb-0">
+        <thead>
+          <tr>
+            <th>Auftrag</th>
+            <th>ERP-Fehler</th>
+            <th>Medienfehler</th>
+            <th>Dokumentenfehler</th>
+            <th>Letzter Abgleich</th>
+            <th data-filter="false">Aktion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for commission in commission_items %}
+          <tr>
+            <td>
+              <a
+                href="{{ url_for('admin.commission_detail', commission_id=commission.id) }}"
+              >
+                {{ commission.erp_idnum or commission.code or commission.id }}
+              </a>
+            </td>
+            <td class="text-danger">
+              {{ commission.erp_sync_message or "" }}
+            </td>
+            <td class="text-danger">
+              {{ commission.media_sync_error or "" }}
+            </td>
+            <td class="text-danger">
+              {{ commission.document_sync_error or "" }}
+            </td>
+            <td
+              data-order="{{ commission.synced_at.isoformat() if commission.synced_at else '' }}"
+            >
+              {{ commission.synced_at.strftime("%d.%m.%Y %H:%M:%S") if commission.synced_at else "–" }}
+            </td>
+              <td>
+              {% if commission.erp_id %}
+              <form
+                method="post"
+                action="{{ url_for('admin.commission_sync', commission_id=commission.id) }}"
+              >
+                <input
+                  type="hidden"
+                  name="csrf_token"
+                  value="{{ csrf_token() }}"
+                >
+                <input
+                  type="hidden"
+                  name="next"
+                  value="{{ request.full_path }}"
+                >
+                <button
+                  class="btn btn-sm btn-outline-primary"
+                  type="submit"
+                >
+                  Jetzt abgleichen
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -24,23 +24,23 @@
   <div class="card-body">
     <div class="row g-3">
       <div class="col-md-4">
-  <label class="form-label">Buchwerk</label>
-  <select
-    class="form-select"
-    name="company_code_code"
-    required
-  >
-    <option value="">Bitte auswählen</option>
-    {% for item in company_codes %}
-    <option
-      value="{{ item.code }}"
-      {% if form_values.get('company_code_code') == item.code %}selected{% endif %}
-    >
-      {{ item.code }} · {{ item.name }}
-    </option>
-    {% endfor %}
-  </select>
-</div>
+        <label class="form-label">Buchwerk</label>
+        <select
+          class="form-select"
+          name="company_code_code"
+          required
+        >
+          <option value="">Bitte auswählen</option>
+          {% for item in company_codes %}
+          <option
+            value="{{ item.code }}"
+            {% if form_values.get('company_code_code') == item.code %}selected{% endif %}
+          >
+            {{ item.code }} · {{ item.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
       <div class="col-md-4">
         <label class="form-label">Auftragsart</label>
         <select class="form-select" name="commission_type_id" required>
@@ -248,6 +248,33 @@
           </div>
         </div>
         {% endfor %}
+      </div>
+      <div class="col-12">
+        <hr>
+        <h2 class="h5">Auftragsfoto</h2>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Foto</label>
+        <input
+          class="form-control"
+          type="file"
+          name="photo"
+          accept="image/*"
+        >
+        <div class="form-text">
+          Das Foto kann auch nachträglich ergänzt werden.
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Bildbeschreibung</label>
+        <input
+          class="form-control"
+          name="photo_caption"
+          maxlength="500"
+          value="{{ form_values.get('photo_caption', '') }}"
+        >
       </div>
     </div>
   </div>

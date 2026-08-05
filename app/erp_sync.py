@@ -65,7 +65,12 @@ def enqueue_pending_commission_photo_uploads(
             == CommissionPhoto.commission_id,
         )
         .filter(
-            CommissionPhoto.source == "app",
+            CommissionPhoto.source.in_(
+                (
+                    "app",
+                    "web",
+                )
+            ),
             CommissionPhoto.context == "order",
             CommissionPhoto.active.is_(True),
             CommissionPhoto.external_document_id.is_not(

@@ -351,6 +351,47 @@
     Fotos
   </div>
   <div class="card-body">
+    <form
+      method="post"
+      enctype="multipart/form-data"
+      action="{{ url_for('admin.commission_photo_upload', commission_id=item.id) }}"
+      class="row g-2 align-items-end mb-4"
+    >
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+
+      <div class="col-md-5">
+        <label class="form-label">Foto hinzufügen</label>
+        <input
+          class="form-control"
+          type="file"
+          name="photo"
+          accept="image/*"
+          required
+        >
+      </div>
+
+      <div class="col-md-5">
+        <label class="form-label">Bildbeschreibung</label>
+        <input
+          class="form-control"
+          name="photo_caption"
+          maxlength="500"
+        >
+      </div>
+
+      <div class="col-md-2">
+        <button
+          class="btn btn-primary w-100"
+          type="submit"
+        >
+          Hochladen
+        </button>
+      </div>
+    </form>
     {% if photos %}
     <div class="row g-3">
       {% for photo in photos %}
