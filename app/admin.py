@@ -58,6 +58,7 @@ from .models import (
     ErpOutboxOperation,
     ErpOutboxState,
     WebhookEvent,
+    PushEventType,
 )
 from .inventory_service import (
     book_inventory_movement,
@@ -69,6 +70,7 @@ from .photo_service import (
     store_commission_photo,
 )
 from .erp_sync import enqueue_erp_operation
+from .push_service import enqueue_commission_push
 from .wowiport import (
     configured_commission_type_ids,
     sync_commission_from_erp,
@@ -550,6 +552,12 @@ def commission_create() -> Any:
                         commission.positions
                     ),
                 },
+            )
+
+            enqueue_commission_push(
+                commission=commission,
+                event_type=PushEventType.NEW_COMMISSION,
+                user=assigned_user,
             )
 
             db.session.commit()

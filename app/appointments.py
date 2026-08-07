@@ -22,9 +22,11 @@ from .models import (
     AppointmentRequestStatus,
     CommissionAppointmentProposal,
     CommissionAppointmentRequest,
+    PushEventType,
     utc_now,
 )
 
+from .push_service import enqueue_commission_push
 
 appointments_bp = Blueprint(
     "appointments",
@@ -288,6 +290,11 @@ def appointment_response(
             },
         )
 
+        enqueue_commission_push(
+            commission=commission,
+            event_type=PushEventType.CHANGED_COMMISSION,
+        )
+
         db.session.commit()
 
         notify_assigned_user(
@@ -321,6 +328,11 @@ def appointment_response(
                 "appointment_request_id": appointment_request.id,
                 "tenant_comment": tenant_comment,
             },
+        )
+
+        enqueue_commission_push(
+            commission=appointment_request.commission,
+            event_type=PushEventType.CHANGED_COMMISSION,
         )
 
         db.session.commit()

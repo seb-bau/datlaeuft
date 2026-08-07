@@ -25,6 +25,10 @@ from app.settings import SettingKeys, settings
 from .wowiport import WowiportService, mark_commission_deleted, sync_commission_from_erp, sync_commissions_from_wowiport_regular
 from .media_sync import sync_commission_object_photos
 from .document_sync import sync_commission_documents
+from .push_service import (
+    process_push_batch,
+    requeue_stale_push_deliveries,
+)
 
 
 def enqueue_erp_operation(
@@ -113,14 +117,17 @@ def enqueue_pending_commission_photo_uploads(
 def process_due_work(
     outbox_limit: int = 20,
     webhook_limit: int = 50,
+    push_limit: int = 50,
 ) -> dict[str, int]:
     requeue_stale_work()
     enqueue_pending_commission_photo_uploads()
     webhook_count = process_webhook_batch(webhook_limit)
     outbox_count = process_outbox_batch(outbox_limit)
+    push_count = process_push_batch(push_limit)
     return {
         "webhooks": webhook_count,
         "outbox": outbox_count,
+        "push": push_count,
     }
 
 
@@ -149,6 +156,8 @@ def requeue_stale_work() -> None:
         },
         synchronize_session=False,
     )
+
+    requeue_stale_push_deliveries()
 
     db.session.commit()
 
@@ -825,8 +834,9 @@ def run_worker(
             )
 
         if (
-            result["webhooks"] == 0
-            and result["outbox"] == 0
-            and not reconciliation_ran
+                result["webhooks"] == 0
+                and result["outbox"] == 0
+                and result["push"] == 0
+                and not reconciliation_ran
         ):
             sleep(poll_seconds)

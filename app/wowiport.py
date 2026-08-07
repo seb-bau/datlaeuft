@@ -26,6 +26,7 @@ from .models import (
     utc_now,
     WowiCompanyCode,
     CommissionPhoto,
+    PushEventType,
 )
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
@@ -34,6 +35,7 @@ from .media_sync import (
     sync_commission_object_photos,
 )
 from .document_sync import sync_commission_documents
+from .push_service import enqueue_commission_push
 from .photo_service import commission_photo_path
 
 
@@ -2007,9 +2009,13 @@ def refresh_commission_context_safely(
     erp_id: int,
     payload: Any,
 ) -> bool:
-    previous_object_ids = (
+    previous_context = (
         commission.building_erp_id,
         commission.use_unit_id,
+        commission.license_agreement_id,
+        commission.apartment_address,
+        commission.apartment_location,
+        commission.tenant_name,
     )
 
     try:
@@ -2032,15 +2038,16 @@ def refresh_commission_context_safely(
 
         return False
 
-    current_object_ids = (
+    current_context = (
         commission.building_erp_id,
         commission.use_unit_id,
+        commission.license_agreement_id,
+        commission.apartment_address,
+        commission.apartment_location,
+        commission.tenant_name,
     )
 
-    return (
-        current_object_ids
-        != previous_object_ids
-    )
+    return current_context != previous_context
 
 
 def sync_commission_media_safely(
@@ -2105,6 +2112,36 @@ def sync_commission_documents_safely(
         )
 
 
+def enqueue_synced_commission_push(
+    commission: Commission,
+    existed_before_sync: bool,
+    previous_user_id: int | None,
+    was_deleted_before_sync: bool,
+    had_sync_signature_before_sync: bool,
+) -> None:
+    if commission.user is None:
+        return
+
+    current_user_id = commission.user.id
+
+    if (
+        not existed_before_sync
+        or was_deleted_before_sync
+        or previous_user_id != current_user_id
+    ):
+        event_type = PushEventType.NEW_COMMISSION
+    elif not had_sync_signature_before_sync:
+        return
+    else:
+        event_type = PushEventType.CHANGED_COMMISSION
+
+    enqueue_commission_push(
+        commission=commission,
+        event_type=event_type,
+        user=commission.user,
+    )
+
+
 def sync_commission_from_erp(
     erp_id: int,
 ) -> Commission | None:
@@ -2117,6 +2154,20 @@ def sync_commission_from_erp(
     existing = Commission.query.filter_by(
         erp_id=erp_id
     ).one_or_none()
+    existed_before_sync = existing is not None
+    previous_user_id = existing.user_id if existing is not None else None
+    was_deleted_before_sync = bool(
+        existing is not None
+        and (
+            existing.local_status == CommissionLocalStatus.DELETED.value
+            or existing.deleted_at is not None
+        )
+    )
+    had_sync_signature_before_sync = bool(
+        existing is not None
+        and isinstance(existing.raw_payload, dict)
+        and existing.raw_payload.get("sync_signature")
+    )
     allowed_type_ids = configured_commission_type_ids()
     visible_status_ids = configured_commission_status_ids()
 
@@ -2177,6 +2228,12 @@ def sync_commission_from_erp(
                 service=service,
             )
 
+            if context_changed:
+                enqueue_commission_push(
+                    commission=existing,
+                    event_type=PushEventType.CHANGED_COMMISSION,
+                )
+
         return existing
 
     commission = upsert_commission(
@@ -2200,6 +2257,13 @@ def sync_commission_from_erp(
         commission=commission,
         service=service,
         force=True,
+    )
+    enqueue_synced_commission_push(
+        commission=commission,
+        existed_before_sync=existed_before_sync,
+        previous_user_id=previous_user_id,
+        was_deleted_before_sync=was_deleted_before_sync,
+        had_sync_signature_before_sync=had_sync_signature_before_sync,
     )
 
     return commission
@@ -2388,6 +2452,20 @@ def sync_commission_payload_from_erp(
     existing = Commission.query.filter_by(
         erp_id=erp_id
     ).one_or_none()
+    existed_before_sync = existing is not None
+    previous_user_id = existing.user_id if existing is not None else None
+    was_deleted_before_sync = bool(
+        existing is not None
+        and (
+            existing.local_status == CommissionLocalStatus.DELETED.value
+            or existing.deleted_at is not None
+        )
+    )
+    had_sync_signature_before_sync = bool(
+        existing is not None
+        and isinstance(existing.raw_payload, dict)
+        and existing.raw_payload.get("sync_signature")
+    )
     status_id = _commission_status_id(payload)
     commission_type_id = _commission_type_id(
         payload
@@ -2471,6 +2549,12 @@ def sync_commission_payload_from_erp(
                 service=service,
             )
 
+            if context_changed:
+                enqueue_commission_push(
+                    commission=existing,
+                    event_type=PushEventType.CHANGED_COMMISSION,
+                )
+
         return "unchanged"
 
     commission = upsert_commission(
@@ -2494,6 +2578,13 @@ def sync_commission_payload_from_erp(
         commission=commission,
         service=service,
         force=True,
+    )
+    enqueue_synced_commission_push(
+        commission=commission,
+        existed_before_sync=existed_before_sync,
+        previous_user_id=previous_user_id,
+        was_deleted_before_sync=was_deleted_before_sync,
+        had_sync_signature_before_sync=had_sync_signature_before_sync,
     )
 
     return "synced"

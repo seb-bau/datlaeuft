@@ -79,6 +79,10 @@ from .commission_service import (
 from .attachment_service import (
     commission_attachment_path,
 )
+from .push_service import (
+    register_push_device,
+    unregister_push_device,
+)
 
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -139,6 +143,137 @@ def api_microsoft_login() -> Any:
 def me() -> Any:
     user = current_api_user()
     return jsonify({"user": serialize_user(user)})
+
+
+@api_bp.get("/push/preferences")
+@jwt_required()
+def push_preferences() -> Any:
+    user = current_api_user()
+    return jsonify(
+        {
+            "preferences": {
+                "new_commission_enabled": bool(
+                    user.push_new_commission_enabled
+                ),
+                "changed_commission_enabled": bool(
+                    user.push_changed_commission_enabled
+                ),
+            }
+        }
+    )
+
+
+@api_bp.patch("/push/preferences")
+@jwt_required()
+def update_push_preferences() -> Any:
+    user = current_api_user()
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "Ungültiger JSON-Body."}), 400
+
+    changed = False
+
+    if "new_commission_enabled" in data:
+        value = data["new_commission_enabled"]
+        if type(value) is not bool:
+            return jsonify(
+                {
+                    "message": (
+                        "new_commission_enabled muss ein Wahrheitswert sein."
+                    )
+                }
+            ), 400
+        user.push_new_commission_enabled = value
+        changed = True
+
+    if "changed_commission_enabled" in data:
+        value = data["changed_commission_enabled"]
+        if type(value) is not bool:
+            return jsonify(
+                {
+                    "message": (
+                        "changed_commission_enabled muss ein Wahrheitswert sein."
+                    )
+                }
+            ), 400
+        user.push_changed_commission_enabled = value
+        changed = True
+
+    if not changed:
+        return jsonify(
+            {"message": "Es wurde keine Mitteilungseinstellung übergeben."}
+        ), 400
+
+    db.session.commit()
+    return jsonify(
+        {
+            "preferences": {
+                "new_commission_enabled": bool(
+                    user.push_new_commission_enabled
+                ),
+                "changed_commission_enabled": bool(
+                    user.push_changed_commission_enabled
+                ),
+            }
+        }
+    )
+
+
+@api_bp.put("/push/device")
+@jwt_required()
+def register_device_for_push() -> Any:
+    user = current_api_user()
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "Ungültiger JSON-Body."}), 400
+
+    try:
+        device = register_push_device(
+            user=user,
+            installation_id=str(data.get("installation_id", "")),
+            device_token=str(data.get("device_token", "")),
+            platform=str(data.get("platform", "ios")),
+            app_version=data.get("app_version"),
+            device_name=data.get("device_name"),
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"message": str(exc)}), 400
+
+    db.session.commit()
+    return jsonify(
+        {
+            "device": {
+                "id": device.id,
+                "installation_id": device.installation_id,
+                "active": device.active,
+            }
+        }
+    )
+
+
+@api_bp.delete("/push/device")
+@jwt_required()
+def unregister_device_for_push() -> Any:
+    user = current_api_user()
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "Ungültiger JSON-Body."}), 400
+
+    try:
+        device = unregister_push_device(
+            user=user,
+            installation_id=str(data.get("installation_id", "")),
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"message": str(exc)}), 400
+
+    db.session.commit()
+    return jsonify({"unregistered": device is not None})
 
 
 @api_bp.get("/commissions")

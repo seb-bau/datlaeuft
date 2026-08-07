@@ -162,6 +162,35 @@ class SettingKeys:
     MOBILE_MICROSOFT_CLIENT_ID = SettingDefinition[str]("mobile.microsoft_client_id", SettingValueType.STRING, "", "Microsoft Client-ID der iOS-App", "Mobile App")
     MOBILE_MICROSOFT_REDIRECT_URI = SettingDefinition[str]("mobile.microsoft_redirect_uri", SettingValueType.STRING, "", "Microsoft Redirect-URI der iOS-App", "Mobile App")
     MOBILE_MICROSOFT_SCOPES = SettingDefinition[str]("mobile.microsoft_scopes", SettingValueType.STRING, "User.Read", "Microsoft Scopes der iOS-App", "Mobile App")
+    PUSH_RELAY_URL = SettingDefinition[str](
+        "push.relay_url",
+        SettingValueType.STRING,
+        "",
+        "Basis-URL des Push-Providers",
+        "Push-Mitteilungen",
+    )
+    PUSH_RELAY_API_KEY = SettingDefinition[str](
+        "push.relay_api_key",
+        SettingValueType.SECRET,
+        "",
+        "API-Key des Push-Providers",
+        "Push-Mitteilungen",
+        True,
+    )
+    PUSH_RELAY_TIMEOUT_SECONDS = SettingDefinition[float](
+        "push.relay_timeout_seconds",
+        SettingValueType.FLOAT,
+        10.0,
+        "Timeout des Push-Providers in Sekunden",
+        "Push-Mitteilungen",
+    )
+    PUSH_MAX_ATTEMPTS = SettingDefinition[int](
+        "push.max_attempts",
+        SettingValueType.INT,
+        8,
+        "Maximale Zustellversuche je Gerät",
+        "Push-Mitteilungen",
+    )
     GENERIC_OIDC_ENABLED = SettingDefinition[bool](
         "auth.generic_oidc_enabled",
         SettingValueType.BOOL,

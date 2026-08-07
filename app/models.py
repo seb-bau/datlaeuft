@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from flask_login import UserMixin
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -60,6 +60,20 @@ class ErpOutboxState(str, Enum):
     PROCESSING = "processing"
     FAILED = "failed"
     SUCCEEDED = "succeeded"
+
+
+class PushEventType(str, Enum):
+    NEW_COMMISSION = "new_commission"
+    CHANGED_COMMISSION = "changed_commission"
+    PING = "ping"
+
+
+class PushDeliveryState(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    FAILED = "failed"
+    SUCCEEDED = "succeeded"
+    DISCARDED = "discarded"
 
 
 class InventoryMovementType(str, Enum):
@@ -179,6 +193,18 @@ class User(UserMixin, db.Model):
     is_admin: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
     is_foreman: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
     is_active_flag: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
+    push_new_commission_enabled: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    push_changed_commission_enabled: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
@@ -192,6 +218,14 @@ class User(UserMixin, db.Model):
         "CraftActivity",
         secondary=user_craft_activity,
         back_populates="users",
+    )
+    push_devices: Mapped[list["PushDevice"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    push_deliveries: Mapped[list["PushDelivery"]] = relationship(
+        back_populates="user",
+        foreign_keys="PushDelivery.user_id",
     )
 
     @property
@@ -392,6 +426,9 @@ class Commission(db.Model):
         back_populates="commission",
         cascade="all, delete-orphan",
     )
+    push_deliveries: Mapped[list["PushDelivery"]] = relationship(
+        back_populates="commission",
+    )
 
 
     @property
@@ -414,6 +451,157 @@ class Commission(db.Model):
         if self.positions:
             return self.positions[0].display_text
         return "Ausstehender Auftrag"
+
+
+class PushDevice(db.Model):
+    __tablename__ = "push_device"
+    __table_args__ = (
+        UniqueConstraint(
+            "installation_id",
+            name="uq_push_device_installation_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    installation_id: Mapped[str] = mapped_column(
+        db.String(36),
+        nullable=False,
+        index=True,
+    )
+    device_token: Mapped[str] = mapped_column(
+        db.String(512),
+        nullable=False,
+        index=True,
+    )
+    platform: Mapped[str] = mapped_column(
+        db.String(30),
+        default="ios",
+        server_default="ios",
+        nullable=False,
+    )
+    app_version: Mapped[str | None] = mapped_column(db.String(80))
+    device_name: Mapped[str | None] = mapped_column(db.String(255))
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+    last_registered_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship(back_populates="push_devices")
+    deliveries: Mapped[list["PushDelivery"]] = relationship(
+        back_populates="device",
+    )
+
+
+class PushDelivery(db.Model):
+    __tablename__ = "push_delivery"
+    __table_args__ = (
+        UniqueConstraint(
+            "batch_id",
+            "device_id",
+            name="uq_push_delivery_batch_device",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[str] = mapped_column(
+        db.String(36),
+        nullable=False,
+        index=True,
+    )
+    device_id: Mapped[int] = mapped_column(
+        db.ForeignKey("push_device.id"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    commission_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("commission.id"),
+        index=True,
+    )
+    device_token: Mapped[str] = mapped_column(
+        db.String(512),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(
+        db.String(40),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(db.String(180), nullable=False)
+    body: Mapped[str] = mapped_column(db.String(500), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(db.JSON, nullable=False)
+    collapse_id: Mapped[str | None] = mapped_column(db.String(64))
+    state: Mapped[str] = mapped_column(
+        db.String(30),
+        default=PushDeliveryState.PENDING.value,
+        server_default=PushDeliveryState.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    available_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+        index=True,
+    )
+    locked_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    last_error: Mapped[str | None] = mapped_column(db.Text)
+    provider_status: Mapped[int | None] = mapped_column(db.Integer)
+    provider_reason: Mapped[str | None] = mapped_column(db.String(120))
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    device: Mapped[PushDevice] = relationship(back_populates="deliveries")
+    user: Mapped[User] = relationship(
+        back_populates="push_deliveries",
+        foreign_keys=[user_id],
+    )
+    commission: Mapped[Commission | None] = relationship(
+        back_populates="push_deliveries",
+    )
 
 
 class CommissionPosition(db.Model):

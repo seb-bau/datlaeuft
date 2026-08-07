@@ -20,6 +20,11 @@ from .models import (
     WowiCompanyCode,
 )
 from .settings import SettingKeys, settings
+from .push_service import (
+    enqueue_push_ping,
+    process_push_batch,
+    push_batch_state_counts,
+)
 from .wowiport import (
     sync_commission_from_erp,
     sync_commission_types_from_wowiport,
@@ -299,21 +304,72 @@ def register_cli(app: Flask) -> None:
             f"Übersprungen={result['skipped']}"
         )
 
+    @app.cli.command("datlaeuft-push-ping")
+    @click.option("--email", required=True)
+    @click.option(
+        "--message",
+        default="Push-Verbindung erfolgreich getestet.",
+        show_default=True,
+    )
+    def push_ping(
+        email: str,
+        message: str,
+    ) -> None:
+        user = User.query.filter_by(
+            email=email.strip().lower(),
+            is_active_flag=True,
+        ).one_or_none()
+
+        if user is None:
+            raise click.ClickException(
+                "Der aktive Benutzer wurde nicht gefunden."
+            )
+
+        batch = enqueue_push_ping(
+            user=user,
+            message=message,
+        )
+        db.session.commit()
+
+        if batch.queued_count == 0:
+            click.echo(
+                "Für den Benutzer ist kein aktives iOS-Gerät registriert."
+            )
+            return
+
+        processed_count = process_push_batch(
+            limit=batch.queued_count,
+            batch_id=batch.batch_id,
+        )
+        state_counts = push_batch_state_counts(batch.batch_id)
+
+        click.echo(
+            f"Eingeplant={batch.queued_count} "
+            f"Verarbeitet={processed_count} "
+            f"Zugestellt={state_counts.get('succeeded', 0)} "
+            f"Fehlgeschlagen={state_counts.get('failed', 0)} "
+            f"Verworfen={state_counts.get('discarded', 0)}"
+        )
+
     @app.cli.command("datlaeuft-process-erp-work")
     @click.option("--outbox-limit", type=int, default=20)
     @click.option("--webhook-limit", type=int, default=50)
+    @click.option("--push-limit", type=int, default=50)
     def process_erp_work(
         outbox_limit: int,
         webhook_limit: int,
+        push_limit: int,
     ) -> None:
         result = process_due_work(
             outbox_limit=outbox_limit,
             webhook_limit=webhook_limit,
+            push_limit=push_limit,
         )
 
         click.echo(
             f"Webhooks={result['webhooks']} "
-            f"ERP-Aufgaben={result['outbox']}"
+            f"ERP-Aufgaben={result['outbox']} "
+            f"Push-Zustellungen={result['push']}"
         )
 
     @app.cli.command("datlaeuft-worker")
