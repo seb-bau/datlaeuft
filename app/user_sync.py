@@ -447,50 +447,51 @@ def _extract_display_name(
         "legal_person",
     )
 
+    natural_parts = [
+        _text_or_none(
+            _value(
+                natural_person,
+                "FirstName",
+                "first_name",
+            )
+        ),
+        _text_or_none(
+            _value(
+                natural_person,
+                "LastName",
+                "last_name",
+            )
+        ),
+    ]
     natural_name = " ".join(
-        value
-        for value in [
-            _text_or_none(
-                _value(
-                    natural_person,
-                    "FirstName",
-                    "first_name",
-                )
-            ),
-            _text_or_none(
-(
-                _value(
-                    natural_person,
-                    "LastName",
-                    "last_name",
-                )
-            ),
-        ]
-        if value
+        part
+        for part in natural_parts
+        if part
     )
 
+    legal_parts = [
+        _text_or_none(
+            _value(
+                legal_person,
+                "LongName1",
+                "long_name1",
+            )
+        ),
+        _text_or_none(
+            _value(
+                legal_person,
+                "LongName2",
+                "long_name2",
+            )
+        ),
+    ]
     legal_name = " ".join(
-        value
-        for value in [
-            _text_or_none(
-                _value(
-                    legal_person,
-                    "LongName1",
-                    "long_name1",
-                )
-            ),
-            _text_or_none(
-                _value(
-                    legal_person,
-                    "LongName2",
-                    "long_name2",
-                )
-            ),
-        ]
-        if value
+        part
+        for part in legal_parts
+        if part
     )
 
-    for value in [
+    candidates = [
         _value(
             person,
             "Name",
@@ -504,8 +505,10 @@ def _extract_display_name(
             "shortname",
         ),
         fallback,
-    ]:
-        text = _text_or_none(value)
+    ]
+
+    for candidate in candidates:
+        text = _text_or_none(candidate)
 
         if text:
             return text
