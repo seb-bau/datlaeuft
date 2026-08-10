@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from flask_login import UserMixin
-from sqlalchemy import UniqueConstraint, true
+from sqlalchemy import UniqueConstraint, false, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -190,6 +190,22 @@ class User(UserMixin, db.Model):
     password_hash: Mapped[str | None] = mapped_column(db.String(255))
     entra_oid: Mapped[str | None] = mapped_column(db.String(80), unique=True)
     craftsman_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    person_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    creditor_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    creditor_number: Mapped[str | None] = mapped_column(db.String(120))
+    craftsman_portal_id: Mapped[str | None] = mapped_column(db.String(120))
+    wowiport_managed: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    exclude_from_wowiport_sync: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
     is_admin: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
     is_foreman: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
     is_active_flag: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)

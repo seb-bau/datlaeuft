@@ -22,6 +22,26 @@
       <input class="form-control" type="number" name="craftsman_erp_id" value="{{ item.craftsman_erp_id or '' }}">
     </div>
 
+        <div class="col-md-6">
+      <label class="form-label">ERP-Personen-ID</label>
+      <input class="form-control" value="{{ item.person_erp_id or '' }}" readonly>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">ERP-Kreditoren-ID</label>
+      <input class="form-control" value="{{ item.creditor_erp_id or '' }}" readonly>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">Kreditorennummer</label>
+      <input class="form-control" value="{{ item.creditor_number or '' }}" readonly>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">Handwerkerportal-ID</label>
+      <input class="form-control" value="{{ item.craftsman_portal_id or '' }}" readonly>
+    </div>
+
     <div class="col-md-6">
       <label class="form-label">Kennwort</label>
       <input class="form-control" type="password" name="password" autocomplete="new-password">
@@ -46,6 +66,34 @@
       <div class="form-check mt-4">
         <input class="form-check-input" type="checkbox" name="is_active_flag" {% if item.is_active_flag %}checked{% endif %}>
         <label class="form-check-label">Aktiv</label>
+      </div>
+    </div>
+
+        <div class="col-md-4">
+      <div class="form-check mt-4">
+        <input
+          class="form-check-input"
+          type="checkbox"
+          name="exclude_from_wowiport_sync"
+          {% if item.exclude_from_wowiport_sync %}checked{% endif %}
+        >
+        <label class="form-check-label">
+          Von Wowiport-Synchronisierung ausschließen
+        </label>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="mt-4">
+        {% if item.wowiport_managed %}
+        <span class="badge text-bg-primary">
+          Automatisch aus Wowiport
+        </span>
+        {% else %}
+        <span class="badge text-bg-secondary">
+          Manuell angelegt
+        </span>
+        {% endif %}
       </div>
     </div>
 

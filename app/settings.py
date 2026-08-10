@@ -105,6 +105,13 @@ class SettingKeys:
         "Zu synchronisierende Auftragsstatus",
         "Wowiport",
     )
+    WOWI_USER_EMAIL_DOMAIN_WHITELIST = SettingDefinition[str](
+        "wowi.user_email_domain_whitelist",
+        SettingValueType.STRING,
+        "",
+        "Erlaubte E-Mail-Domains für Handwerker (kommagetrennt)",
+        "Wowiport",
+    )
     SMTP_HOST = SettingDefinition[str](
         "smtp.host",
         SettingValueType.STRING,

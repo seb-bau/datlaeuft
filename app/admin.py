@@ -1663,6 +1663,10 @@ def save_user_form(item: User) -> None:
     item.is_admin = "is_admin" in request.form
     item.is_foreman = "is_foreman" in request.form
     item.is_active_flag = "is_active_flag" in request.form
+    item.exclude_from_wowiport_sync = (
+        "exclude_from_wowiport_sync"
+        in request.form
+    )
     password = request.form.get("password", "")
     if password:
         item.set_password(password)

@@ -78,10 +78,18 @@ def sync_service_positions_from_wowiport(service: WowiportService | None = None)
 
     craft_activities_by_erp_id = {
         item.erp_id: item
-        for item in CraftActivity.query.filter(
-            CraftActivity.active.is_(True),
-            CraftActivity.erp_id.isnot(None),
-        ).all()
+        for item in (
+            CraftActivity.query
+            .join(CraftActivity.users)
+            .filter(
+                CraftActivity.active.is_(True),
+                CraftActivity.erp_id.isnot(None),
+                User.is_active_flag.is_(True),
+                User.craftsman_erp_id.isnot(None),
+            )
+            .distinct()
+            .all()
+        )
     }
 
     existing_positions_by_erp_id = {

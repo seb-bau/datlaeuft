@@ -296,12 +296,15 @@ def commissions() -> Any:
         query = query.filter(
             Commission.local_status.in_(
                 [
-                    CommissionLocalStatus.RECORDED.value,
-                    CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
-                    CommissionLocalStatus.OPEN.value,
-                    CommissionLocalStatus.IN_PROGRESS.value,
-                    CommissionLocalStatus.COMPLETION_REVIEW.value,
-                    CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
+                    CommissionLocalStatus
+                    .WAITING_FOR_ACCEPTANCE
+                    .value,
+                    CommissionLocalStatus
+                    .OPEN
+                    .value,
+                    CommissionLocalStatus
+                    .IN_PROGRESS
+                    .value,
                 ]
             )
         )

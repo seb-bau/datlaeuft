@@ -1080,22 +1080,6 @@ class WowiportService:
 
             commission.crafts_process_erp_id = None
 
-        public_id = str(commission.public_id)
-        normalized_public_id = "".join(
-            character
-            for character in public_id
-            if character.isalnum()
-        )
-        crafts_process_idnum = f"DL-{normalized_public_id}"
-
-        existing = self._find_crafts_process_by_idnum(
-            crafts_process_idnum
-        )
-
-        if existing is not None:
-            commission.crafts_process_erp_id = existing["id"]
-            return existing["id"]
-
         resolved_reference_ids = self.resolve_commission_reference_ids(
             commission
         )
@@ -1158,7 +1142,6 @@ class WowiportService:
                 "license_agreement_id"
             ),
             crafts_process_from=process_from_value,
-            id_num=crafts_process_idnum,
             description=commission.description,
         )
 
@@ -1167,16 +1150,15 @@ class WowiportService:
         )
 
         if identity is None:
-            identity = self._find_crafts_process_by_idnum(
-                crafts_process_idnum
-            )
-
-        if identity is None:
             raise RuntimeError(
                 "Wowiport hat den Vorgang angelegt, aber keine Vorgangs-ID zurückgegeben"
             )
 
-        commission.crafts_process_erp_id = identity["id"]
+        commission.crafts_process_erp_id = (
+            identity["id"]
+        )
+        db.session.commit()
+
         return identity["id"]
 
     def _find_existing_commission(
@@ -1844,6 +1826,38 @@ class WowiportService:
     def get_craft_activities(self) -> list[Any]:
         return self.client.get_commissioning_craft_activities(show_null_values=True)
 
+    def get_craftsmen_for_user_sync(
+        self,
+    ) -> list[dict[str, Any]]:
+        rows = []
+        limit = 100
+        offset = 0
+
+        while True:
+            page = self._force_read_rows(
+                "CommissioningRead/Craftsman",
+                {
+                    "limit": limit,
+                    "offset": offset,
+                    "includeMainCommunication": "true",
+                    "includePersonCommunications": "true",
+                    "includeCraftsmanAccessibility": "true",
+                    "showNullValues": "true",
+                },
+            )
+
+            if not page:
+                break
+
+            rows.extend(page)
+
+            if len(page) < limit:
+                break
+
+            offset += limit
+
+        return rows
+
     def get_service_catalogues(self) -> list[Any]:
         return self.client.get_commissioning_service_catalogues(
             include_invalid=False,
@@ -2179,6 +2193,18 @@ def sync_commission_from_erp(
         return existing
 
     status_id = _commission_status_id(payload)
+
+    if (
+        existing is None
+        and status_id == 11
+    ):
+        current_app.logger.info(
+            "commission_sync_await_invoice_not_local "
+            "erp_id=%s",
+            erp_id,
+        )
+        return None
+
     commission_type_id = _commission_type_id(payload)
 
     if status_id not in visible_status_ids:
@@ -2273,6 +2299,34 @@ def sync_commissions_from_wowiport_regular(
     full: bool = False,
 ) -> dict[str, int]:
     service = WowiportService()
+    from .catalog import (
+        sync_craft_activities_from_wowiport,
+        sync_service_positions_from_wowiport,
+    )
+    from .user_sync import (
+        sync_users_from_wowiport,
+    )
+
+    craft_result = (
+        sync_craft_activities_from_wowiport(
+            service
+        )
+    )
+    db.session.flush()
+
+    user_result = (
+        sync_users_from_wowiport(
+            service
+        )
+    )
+    db.session.flush()
+
+    service_position_result = (
+        sync_service_positions_from_wowiport(
+            service
+        )
+    )
+    db.session.commit()
     visible_status_ids = configured_commission_status_ids()
     allowed_type_ids = configured_commission_type_ids()
     date_field = settings.get(
@@ -2313,6 +2367,48 @@ def sync_commissions_from_wowiport_regular(
         "configuration_missing": 0,
         "reconciliation_skipped": 0,
         "unchanged": 0,
+        "ignored_await_invoice_not_local": 0,
+        "user_sync_seen": user_result.seen,
+        "users_created": user_result.created,
+        "users_updated": user_result.updated,
+        "users_unchanged": user_result.unchanged,
+        "users_skipped_domain": user_result.skipped_domain,
+        "users_skipped_without_craft_activity": (
+            user_result
+            .skipped_without_craft_activity
+        ),
+        "users_skipped_protected": (
+            user_result.skipped_protected
+        ),
+        "users_skipped_excluded": (
+            user_result.skipped_excluded
+        ),
+        "users_skipped_conflict": (
+            user_result.skipped_conflict
+        ),
+        "user_sync_configuration_missing": (
+            user_result.configuration_missing
+        ),
+        "craft_activities_created": (
+            craft_result
+            .craft_activities_created
+        ),
+        "craft_activities_updated": (
+            craft_result
+            .craft_activities_updated
+        ),
+        "service_positions_created": (
+            service_position_result
+            .service_positions_created
+        ),
+        "service_positions_updated": (
+            service_position_result
+            .service_positions_updated
+        ),
+        "service_positions_deactivated": (
+            service_position_result
+            .service_positions_deactivated
+        ),
     }
 
     if not visible_status_ids or not allowed_type_ids:
@@ -2470,6 +2566,14 @@ def sync_commission_payload_from_erp(
     commission_type_id = _commission_type_id(
         payload
     )
+
+    if (
+        existing is None
+        and status_id == 11
+    ):
+        return (
+            "ignored_await_invoice_not_local"
+        )
 
     craftsman = _read_first(
         payload,

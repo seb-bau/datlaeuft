@@ -1,0 +1,580 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from .extensions import db
+from .models import CraftActivity, User
+from .settings import SettingKeys, settings
+from .wowiport import WowiportService
+
+
+EMAIL_PATTERN = re.compile(
+    r"^[^@\s]+@[^@\s]+$"
+)
+DOMAIN_SEPARATOR_PATTERN = re.compile(
+    r"[,;\s]+"
+)
+
+
+@dataclass
+class UserSyncResult:
+    seen: int = 0
+    created: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    skipped_domain: int = 0
+    skipped_without_craft_activity: int = 0
+    skipped_protected: int = 0
+    skipped_excluded: int = 0
+    skipped_conflict: int = 0
+    configuration_missing: int = 0
+
+
+def sync_users_from_wowiport(
+    service: WowiportService | None = None,
+) -> UserSyncResult:
+    service = service or WowiportService()
+    result = UserSyncResult()
+    allowed_domains = (
+        _configured_email_domains()
+    )
+
+    if not allowed_domains:
+        result.configuration_missing = 1
+        return result
+
+    craft_activities_by_erp_id = {
+        item.erp_id: item
+        for item in CraftActivity.query.filter(
+            CraftActivity.active.is_(True),
+            CraftActivity.erp_id.isnot(None),
+        ).all()
+    }
+
+    for row in (
+        service.get_craftsmen_for_user_sync()
+    ):
+        result.seen += 1
+
+        craftsman_erp_id = _as_int(
+            _value(
+                row,
+                "Id",
+                "id",
+                "id_",
+            )
+        )
+
+        if craftsman_erp_id is None:
+            result.skipped_conflict += 1
+            continue
+
+        email = _extract_allowed_email(
+            row,
+            allowed_domains,
+        )
+
+        if email is None:
+            result.skipped_domain += 1
+            continue
+
+        craft_activity_ids = (
+            _extract_craft_activity_ids(row)
+        )
+        craft_activities = [
+            craft_activities_by_erp_id[erp_id]
+            for erp_id in sorted(
+                craft_activity_ids
+            )
+            if erp_id
+            in craft_activities_by_erp_id
+        ]
+
+        if not craft_activities:
+            result.skipped_without_craft_activity += 1
+            continue
+
+        craftsman_matches = (
+            User.query
+            .filter_by(
+                craftsman_erp_id=(
+                    craftsman_erp_id
+                )
+            )
+            .order_by(User.id.asc())
+            .all()
+        )
+
+        if len(craftsman_matches) > 1:
+            result.skipped_conflict += 1
+            continue
+
+        user = (
+            craftsman_matches[0]
+            if craftsman_matches
+            else None
+        )
+        email_match = (
+            User.query
+            .filter_by(email=email)
+            .one_or_none()
+        )
+
+        if user is None:
+            user = email_match
+        elif (
+            email_match is not None
+            and email_match.id != user.id
+        ):
+            result.skipped_conflict += 1
+            continue
+
+        if (
+            user is not None
+            and not user.wowiport_managed
+        ):
+            result.skipped_protected += 1
+            continue
+
+        if (
+            user is not None
+            and user.exclude_from_wowiport_sync
+        ):
+            result.skipped_excluded += 1
+            continue
+
+        created = user is None
+
+        if created:
+            user = User(
+                email=email,
+                display_name=email,
+                wowiport_managed=True,
+                exclude_from_wowiport_sync=False,
+                is_active_flag=True,
+            )
+            db.session.add(user)
+
+        previous_values = (
+            user.email,
+            user.display_name,
+            user.craftsman_erp_id,
+            user.person_erp_id,
+            user.creditor_erp_id,
+            user.creditor_number,
+            user.craftsman_portal_id,
+            user.is_active_flag,
+            frozenset(
+                item.id
+                for item
+                in user.craft_activities
+            ),
+        )
+
+        person = _value(
+            row,
+            "Person",
+            "person",
+        )
+
+        user.email = email
+        user.display_name = (
+            _extract_display_name(
+                row,
+                email,
+            )
+        )
+        user.craftsman_erp_id = (
+            craftsman_erp_id
+        )
+        user.person_erp_id = _as_int(
+            _value(
+                row,
+                "PersonId",
+                "person_id",
+            )
+            or _value(
+                person,
+                "Id",
+                "id",
+                "id_",
+            )
+        )
+        user.creditor_erp_id = _as_int(
+            _value(
+                row,
+                "CreditorId",
+                "creditor_id",
+            )
+        )
+        user.creditor_number = (
+            _text_or_none(
+                _value(
+                    row,
+                    "CreditorNumber",
+                    "creditor_number",
+                )
+            )
+        )
+        user.craftsman_portal_id = (
+            _text_or_none(
+                _value(
+                    row,
+                    "CraftsmanPortalId",
+                    "craftsman_portal_id",
+                )
+            )
+        )
+        user.wowiport_managed = True
+        user.is_active_flag = True
+        user.craft_activities = (
+            craft_activities
+        )
+
+        current_values = (
+            user.email,
+            user.display_name,
+            user.craftsman_erp_id,
+            user.person_erp_id,
+            user.creditor_erp_id,
+            user.creditor_number,
+            user.craftsman_portal_id,
+            user.is_active_flag,
+            frozenset(
+                item.id
+                for item
+                in user.craft_activities
+            ),
+        )
+
+        if created:
+            result.created += 1
+        elif (
+            previous_values
+            != current_values
+        ):
+            result.updated += 1
+        else:
+            result.unchanged += 1
+
+    return result
+
+
+def _configured_email_domains() -> set[str]:
+    raw_value = settings.get(
+        SettingKeys
+        .WOWI_USER_EMAIL_DOMAIN_WHITELIST
+    )
+    values = (
+        DOMAIN_SEPARATOR_PATTERN
+        .split(str(raw_value or ""))
+    )
+
+    return {
+        value
+        .strip()
+        .lower()
+        .lstrip("@")
+        .rstrip(".")
+        for value in values
+        if value
+        .strip()
+        .lstrip("@")
+        .rstrip(".")
+    }
+
+
+def _extract_allowed_email(
+    row: Any,
+    allowed_domains: set[str],
+) -> str | None:
+    person = _value(
+        row,
+        "Person",
+        "person",
+    )
+    communications = []
+
+    first_email = _value(
+        person,
+        "FirstEmailCommunication",
+        "first_email_communication",
+    )
+
+    if first_email is not None:
+        communications.append(first_email)
+
+    communications.extend(
+        _as_list(
+            _value(
+                person,
+                "Communications",
+                "communications",
+            )
+        )
+    )
+
+    main_communication = _value(
+        row,
+        "MainCommunication",
+        "main_communication",
+    )
+
+    if main_communication is not None:
+        communications.append(
+            main_communication
+        )
+
+    for accessibility in (
+        _craftsman_accessibilities(row)
+    ):
+        communication = _value(
+            accessibility,
+            "Communication",
+            "communication",
+        )
+
+        if communication is not None:
+            communications.append(
+                communication
+            )
+
+    for communication in communications:
+        email = _text_or_none(
+            _value(
+                communication,
+                "Content",
+                "content",
+                "Value",
+                "value",
+            )
+        )
+
+        if email is None:
+            continue
+
+        normalized_email = (
+            email.strip().lower()
+        )
+
+        if (
+            EMAIL_PATTERN.fullmatch(
+                normalized_email
+            )
+            is None
+        ):
+            continue
+
+        domain = (
+            normalized_email
+            .rsplit("@", 1)[1]
+            .rstrip(".")
+        )
+
+        if domain in allowed_domains:
+            return normalized_email
+
+    return None
+
+
+def _extract_craft_activity_ids(
+    row: Any,
+) -> set[int]:
+    result = set()
+
+    for accessibility in (
+        _craftsman_accessibilities(row)
+    ):
+        craft_activity = _value(
+            accessibility,
+            "CraftActivity",
+            "craft_activity",
+        )
+
+        erp_id = _as_int(
+            _value(
+                craft_activity,
+                "Id",
+                "id",
+                "id_",
+            )
+            or _value(
+                accessibility,
+                "CraftActivityId",
+                "craft_activity_id",
+            )
+        )
+
+        if erp_id is not None:
+            result.add(erp_id)
+
+    return result
+
+
+def _craftsman_accessibilities(
+    row: Any,
+) -> list[Any]:
+    return _as_list(
+        _value(
+            row,
+            "CraftsmanAccessibilityList",
+            "craftsman_accessibility_list",
+            "CraftsmanAccessibility",
+            "craftsman_accessibility",
+        )
+    )
+
+
+def _extract_display_name(
+    row: Any,
+    fallback: str,
+) -> str:
+    person = _value(
+        row,
+        "Person",
+        "person",
+    )
+    natural_person = _value(
+        person,
+        "NaturalPerson",
+        "natural_person",
+    )
+    legal_person = _value(
+        person,
+        "LegalPerson",
+        "legal_person",
+    )
+
+    natural_name = " ".join(
+        value
+        for value in [
+            _text_or_none(
+                _value(
+                    natural_person,
+                    "FirstName",
+                    "first_name",
+                )
+            ),
+            _text_or_none(
+(
+                _value(
+                    natural_person,
+                    "LastName",
+                    "last_name",
+                )
+            ),
+        ]
+        if value
+    )
+
+    legal_name = " ".join(
+        value
+        for value in [
+            _text_or_none(
+                _value(
+                    legal_person,
+                    "LongName1",
+                    "long_name1",
+                )
+            ),
+            _text_or_none(
+                _value(
+                    legal_person,
+                    "LongName2",
+                    "long_name2",
+                )
+            ),
+        ]
+        if value
+    )
+
+    for value in [
+        _value(
+            person,
+            "Name",
+            "name",
+        ),
+        natural_name,
+        legal_name,
+        _value(
+            person,
+            "Shortname",
+            "shortname",
+        ),
+        fallback,
+    ]:
+        text = _text_or_none(value)
+
+        if text:
+            return text
+
+    return fallback
+
+
+def _value(
+    source: Any,
+    *names: str,
+) -> Any:
+    if source is None:
+        return None
+
+    if isinstance(source, dict):
+        normalized = {
+            str(key)
+            .replace("_", "")
+            .lower(): value
+            for key, value
+            in source.items()
+        }
+
+        for name in names:
+            key = (
+                name
+                .replace("_", "")
+                .lower()
+            )
+
+            if key in normalized:
+                return normalized[key]
+
+        return None
+
+    for name in names:
+        if hasattr(source, name):
+            return getattr(source, name)
+
+    return None
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return value
+
+    if isinstance(value, tuple):
+        return list(value)
+
+    return [value]
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    return parsed if parsed > 0 else None
+
+
+def _text_or_none(
+    value: Any,
+) -> str | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    return text or None
