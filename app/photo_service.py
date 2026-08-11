@@ -91,9 +91,10 @@ def store_commission_photo(
 
 
 def store_commission_photo_bytes(
-    commission: Commission,
+    commission: Commission | None,
     raw_data: bytes,
     original_filename: str,
+    storage_directory: Path | None = None,
 ) -> StoredCommissionPhoto:
     if not raw_data:
         raise ValueError(
@@ -172,9 +173,17 @@ def store_commission_photo_bytes(
         original_data
     ).hexdigest()
 
-    commission_directory = (
-        Path(str(commission.public_id))
-    )
+    if storage_directory is None:
+        if commission is None:
+            raise ValueError(
+                "Für das Foto fehlt das Speicherverzeichnis."
+            )
+
+        storage_directory = Path(
+            str(commission.public_id)
+        )
+
+    commission_directory = storage_directory
     file_token = uuid4().hex
 
     storage_name = str(

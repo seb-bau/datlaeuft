@@ -23,7 +23,6 @@ from app.models import (
 )
 from app.settings import SettingKeys, settings
 from .wowiport import WowiportService, mark_commission_deleted, sync_commission_from_erp, sync_commissions_from_wowiport_regular
-from .media_sync import sync_commission_object_photos
 from .document_sync import sync_commission_documents
 from .push_service import (
     process_push_batch,
@@ -263,14 +262,6 @@ def execute_outbox_operation(
         commission.status_code = "WaitForCraftsmanFeedback"
         commission.local_status = CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value
         try:
-            media_result = (
-                sync_commission_object_photos(
-                    commission=commission,
-                    service=service,
-                    force=True,
-                )
-            )
-
             current_app.logger.info(
                 "commission_media_sync_completed "
                 "commission_id=%s erp_id=%s result=%s",

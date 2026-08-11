@@ -692,9 +692,9 @@ class CommissionPhoto(db.Model):
     id: Mapped[int] = mapped_column(
         primary_key=True
     )
-    commission_id: Mapped[int] = mapped_column(
+    commission_id: Mapped[int | None] = mapped_column(
         db.ForeignKey("commission.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     uploaded_by_user_id: Mapped[int | None] = mapped_column(
@@ -724,6 +724,10 @@ class CommissionPhoto(db.Model):
         default=lambda: str(uuid4()),
         nullable=False,
         unique=True,
+        index=True,
+    )
+    external_file_guid: Mapped[str | None] = mapped_column(
+        db.String(64),
         index=True,
     )
     external_entity_name: Mapped[str | None] = mapped_column(
@@ -770,6 +774,10 @@ class CommissionPhoto(db.Model):
         nullable=False,
         index=True,
     )
+    metadata_signature: Mapped[str | None] = mapped_column(
+        db.String(64),
+        index=True,
+    )
     caption: Mapped[str | None] = mapped_column(
         db.String(500)
     )
@@ -812,7 +820,7 @@ class CommissionPhoto(db.Model):
         db.DateTime(timezone=True)
     )
 
-    commission: Mapped[Commission] = relationship(
+    commission: Mapped[Commission | None] = relationship(
         back_populates="photos"
     )
     uploaded_by: Mapped[User | None] = relationship(

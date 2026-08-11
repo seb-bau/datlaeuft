@@ -12,7 +12,8 @@ from flask import (
     send_file,
 )
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
+from .media_sync import MEDIA_SOURCE
 from uuid import uuid4
 
 
@@ -1107,57 +1108,147 @@ def commission_photos(
             "message": "Ungültiger Fotokontext."
         }), 400
 
-    query = CommissionPhoto.query.filter(
-        CommissionPhoto.commission_id
-        == commission.id,
-        CommissionPhoto.active.is_(True),
-    )
-
-    if context_filter == "object":
-        query = query.filter(
-            CommissionPhoto.context.in_(
-                (
-                    "building",
-                    "use_unit",
-                )
-            )
-        )
-    elif context_filter:
-        query = query.filter(
-            CommissionPhoto.context
-            == context_filter
-        )
-
-    if entity_filter == "building":
-        query = query.filter(
-            CommissionPhoto.external_entity_name
-            == "Building"
-        )
-    elif entity_filter == "use_unit":
-        query = query.filter(
-            CommissionPhoto.external_entity_name
-            == "UseUnit"
-        )
-    elif entity_filter:
+    if entity_filter not in {
+        "",
+        "building",
+        "use_unit",
+    }:
         return jsonify({
-            "message": "Ungültiger Bestandsobjektfilter."
+            "message": (
+                "Ungültiger "
+                "Bestandsobjektfilter."
+            )
         }), 400
 
-    photos = (
-        query
-        .order_by(
-            CommissionPhoto.created_at.desc(),
-            CommissionPhoto.id.desc(),
+    photos: list[CommissionPhoto] = []
+
+    if (
+        context_filter in {"", "order"}
+        and not entity_filter
+    ):
+        photos.extend(
+            CommissionPhoto.query
+            .filter(
+                CommissionPhoto.commission_id
+                == commission.id,
+                CommissionPhoto.context
+                == "order",
+                CommissionPhoto.active.is_(
+                    True
+                ),
+            )
+            .all()
         )
-        .all()
+
+    if context_filter in {"", "object"}:
+        entity_conditions = []
+
+        if (
+            entity_filter
+            in {"", "building"}
+            and commission.building_erp_id
+            is not None
+        ):
+            entity_conditions.append(
+                and_(
+                    CommissionPhoto
+                    .external_entity_name
+                    == "Building",
+                    CommissionPhoto
+                    .external_entity_id
+                    == commission
+                    .building_erp_id,
+                )
+            )
+
+        if (
+            entity_filter
+            in {"", "use_unit"}
+            and commission.use_unit_id
+            is not None
+        ):
+            entity_conditions.append(
+                and_(
+                    CommissionPhoto
+                    .external_entity_name
+                    == "UseUnit",
+                    CommissionPhoto
+                    .external_entity_id
+                    == commission.use_unit_id,
+                )
+            )
+
+        if entity_conditions:
+            photos.extend(
+                CommissionPhoto.query
+                .filter(
+                    CommissionPhoto
+                    .commission_id
+                    .is_(None),
+                    CommissionPhoto.source
+                    == MEDIA_SOURCE,
+                    CommissionPhoto.active.is_(
+                        True
+                    ),
+                    or_(
+                        *entity_conditions
+                    ),
+                )
+                .all()
+            )
+
+    photos.sort(
+        key=lambda photo: photo.id,
+        reverse=True,
     )
 
     return jsonify({
         "items": [
-            serialize_commission_photo(photo)
+            serialize_commission_photo(
+                photo,
+                commission_id=commission.id,
+            )
             for photo in photos
         ]
     })
+
+
+def viewable_commission_photo(
+    commission: Commission,
+    photo_id: int,
+) -> CommissionPhoto:
+    photo = CommissionPhoto.query.filter(
+        CommissionPhoto.id == photo_id,
+        CommissionPhoto.active.is_(True),
+    ).one_or_none()
+
+    if photo is None:
+        abort(404)
+
+    if photo.commission_id == commission.id:
+        return photo
+
+    if (
+        photo.commission_id is None
+        and photo.source == MEDIA_SOURCE
+        and (
+            (
+                photo.external_entity_name
+                == "Building"
+                and photo.external_entity_id
+                == commission.building_erp_id
+            )
+            or (
+                photo.external_entity_name
+                == "UseUnit"
+                and photo.external_entity_id
+                == commission.use_unit_id
+            )
+        )
+    ):
+        return photo
+
+    abort(404)
 
 
 @api_bp.post(
@@ -1426,15 +1517,9 @@ def commission_photo_content(
         user,
     )
 
-    photo = (
-        CommissionPhoto.query
-        .filter(
-            CommissionPhoto.id == photo_id,
-            CommissionPhoto.commission_id
-            == commission.id,
-            CommissionPhoto.active.is_(True),
-        )
-        .one_or_none()
+    photo = viewable_commission_photo(
+        commission=commission,
+        photo_id=photo_id,
     )
 
     if photo is None:
@@ -1471,15 +1556,9 @@ def commission_photo_thumbnail(
         user,
     )
 
-    photo = (
-        CommissionPhoto.query
-        .filter(
-            CommissionPhoto.id == photo_id,
-            CommissionPhoto.commission_id
-            == commission.id,
-            CommissionPhoto.active.is_(True),
-        )
-        .one_or_none()
+    photo = viewable_commission_photo(
+        commission=commission,
+        photo_id=photo_id,
     )
 
     if photo is None:
@@ -3078,10 +3157,21 @@ def serialize_time_entry(item: TimeEntry, viewer: User | None = None) -> dict[st
 
 def serialize_commission_photo(
     photo: CommissionPhoto,
+    commission_id: int | None = None,
 ) -> dict[str, Any]:
+    effective_commission_id = (
+        photo.commission_id
+        if photo.commission_id is not None
+        else commission_id
+    )
+
+    if effective_commission_id is None:
+        raise ValueError(
+            "Für das Foto fehlt der Auftrag."
+        )
     return {
         "id": photo.id,
-        "commission_id": photo.commission_id,
+        "commission_id": effective_commission_id,
         "source": photo.source,
         "context": photo.context,
         "external_entity_name": (
@@ -3145,12 +3235,12 @@ def serialize_commission_photo(
         ),
         "content_path": (
             f"/api/commissions/"
-            f"{photo.commission_id}/photos/"
+            f"{effective_commission_id}/photos/"
             f"{photo.id}/content"
         ),
         "thumbnail_path": (
             f"/api/commissions/"
-            f"{photo.commission_id}/photos/"
+            f"{effective_commission_id}/photos/"
             f"{photo.id}/thumbnail"
         ),
     }

@@ -30,10 +30,6 @@ from .models import (
 )
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
-from .media_sync import (
-    commission_media_sync_due,
-    sync_commission_object_photos,
-)
 from .document_sync import sync_commission_documents
 from .push_service import enqueue_commission_push
 from .photo_service import commission_photo_path
@@ -274,26 +270,38 @@ class WowiportService:
         return commission_list[0]
 
     def get_media_rows(
-        self,
-        entity_name: str,
-        entity_id: int,
+            self,
+            entity_name: str,
+            entity_id: int | None = None,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         offset = 0
         limit = 100
 
         while True:
-            result = self.client._rest_adapter.get(
-                endpoint=(
-                    f"MediaRead/{entity_name}/MediaData"
-                ),
-                ep_params={
-                    "entityId": entity_id,
-                    "showNullValues": "true",
-                    "limit": limit,
-                    "offset": offset,
-                },
-                force_refresh=True,
+            parameters = {
+                "showNullValues": "true",
+                "limit": limit,
+                "offset": offset,
+            }
+
+            if entity_id is not None:
+                parameters["entityId"] = (
+                    entity_id
+                )
+
+            result = (
+                self.client
+                ._rest_adapter
+                .get(
+                    endpoint=(
+                        f"MediaRead/"
+                        f"{entity_name}/"
+                        f"MediaData"
+                    ),
+                    ep_params=parameters,
+                    force_refresh=True,
+                )
             )
 
             page_rows = self._result_rows(
@@ -2064,36 +2072,6 @@ def refresh_commission_context_safely(
     return current_context != previous_context
 
 
-def sync_commission_media_safely(
-    commission: Commission,
-    service: WowiportService,
-    force: bool = False,
-) -> None:
-    try:
-        result = sync_commission_object_photos(
-            commission=commission,
-            service=service,
-            force=force,
-        )
-
-        current_app.logger.info(
-            "commission_media_sync_completed "
-            "commission_id=%s erp_id=%s result=%s",
-            commission.id,
-            commission.erp_id,
-            result,
-        )
-    except Exception as exc:
-        commission.media_sync_error = str(exc)[:4000]
-
-        current_app.logger.exception(
-            "commission_media_sync_failed "
-            "commission_id=%s erp_id=%s",
-            commission.id,
-            commission.erp_id,
-        )
-
-
 def sync_commission_documents_safely(
     commission: Commission,
     service: WowiportService,
@@ -2230,35 +2208,10 @@ def sync_commission_from_erp(
             sync_signature,
     ):
         if existing is not None:
-            context_changed = False
-
-            if commission_media_sync_due(
-                    existing
-            ):
-                context_changed = (
-                    refresh_commission_context_safely(
-                        commission=existing,
-                        service=service,
-                        erp_id=erp_id,
-                        payload=payload,
-                    )
-                )
-
-            sync_commission_media_safely(
-                commission=existing,
-                service=service,
-                force=context_changed,
-            )
             sync_commission_documents_safely(
                 commission=existing,
                 service=service,
             )
-
-            if context_changed:
-                enqueue_commission_push(
-                    commission=existing,
-                    event_type=PushEventType.CHANGED_COMMISSION,
-                )
 
         return existing
 
@@ -2274,11 +2227,6 @@ def sync_commission_from_erp(
         payload=payload,
     )
 
-    sync_commission_media_safely(
-        commission=commission,
-        service=service,
-        force=True,
-    )
     sync_commission_documents_safely(
         commission=commission,
         service=service,
@@ -2628,37 +2576,6 @@ def sync_commission_payload_from_erp(
             existing,
             sync_signature,
     ):
-        if existing is not None:
-            context_changed = False
-
-            if commission_media_sync_due(
-                    existing
-            ):
-                context_changed = (
-                    refresh_commission_context_safely(
-                        commission=existing,
-                        service=service,
-                        erp_id=erp_id,
-                        payload=payload,
-                    )
-                )
-
-            sync_commission_media_safely(
-                commission=existing,
-                service=service,
-                force=context_changed,
-            )
-            sync_commission_documents_safely(
-                commission=existing,
-                service=service,
-            )
-
-            if context_changed:
-                enqueue_commission_push(
-                    commission=existing,
-                    event_type=PushEventType.CHANGED_COMMISSION,
-                )
-
         return "unchanged"
 
     commission = upsert_commission(
@@ -2673,11 +2590,6 @@ def sync_commission_payload_from_erp(
         payload=payload,
     )
 
-    sync_commission_media_safely(
-        commission=commission,
-        service=service,
-        force=True,
-    )
     sync_commission_documents_safely(
         commission=commission,
         service=service,

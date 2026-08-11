@@ -30,6 +30,9 @@ from .wowiport import (
     sync_commission_types_from_wowiport,
     sync_commissions_from_wowiport_regular, sync_company_codes_from_wowiport,
 )
+from .media_sync import (
+    sync_object_photos_from_wowiport,
+)
 
 
 def register_cli(app: Flask) -> None:
@@ -287,6 +290,29 @@ def register_cli(app: Flask) -> None:
             f"{result['configuration_missing']} "
             f"Abgleich_übersprungen="
             f"{result['reconciliation_skipped']}"
+        )
+
+    @app.cli.command(
+        "datlaeuft-sync-object-photos"
+    )
+    def sync_object_photos() -> None:
+        result = (
+            sync_object_photos_from_wowiport()
+        )
+
+        click.echo(
+            f"Gefunden={result['seen']} "
+            f"Neu={result['created']} "
+            f"Aktualisiert={result['updated']} "
+            f"Unverändert={result['unchanged']} "
+            f"Heruntergeladen="
+            f"{result['downloaded']} "
+            f"Gelöscht={result['deleted']} "
+            f"Altbestand_gelöscht="
+            f"{result['legacy_deleted']} "
+            f"Dateien_gelöscht="
+            f"{result['deleted_files']} "
+            f"Fehler={result['errors']}"
         )
 
     @app.cli.command("datlaeuft-sync-buildings")
