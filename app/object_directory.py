@@ -69,13 +69,6 @@ def sync_object_directory() -> dict[str, int]:
         "Wirtschaftseinheiten",
     )
 
-    seen_department_ids = set()
-    seen_jurisdiction_ids = set()
-
-    for economic_unit in WowiEconomicUnit.query.filter_by(
-        active=True
-    ).all():
-
     seen_economic_ids = set()
 
     for row in economic_rows:
@@ -621,7 +614,7 @@ def sync_object_directory() -> dict[str, int]:
         },
     )
 
-    seen_contractor_ids = set()
+    seen_contractor_keys = set()
 
     for row in contractor_rows:
         erp_id = _as_int(
@@ -646,15 +639,17 @@ def sync_object_directory() -> dict[str, int]:
         )
 
         if (
-            erp_id is None
-            or agreement_erp_id is None
+                erp_id is None
+                or agreement_erp_id is None
         ):
             continue
 
         agreement = (
-            WowiLicenseAgreement.query.filter_by(
+            WowiLicenseAgreement.query
+            .filter_by(
                 erp_id=agreement_erp_id
-            ).one_or_none()
+            )
+            .one_or_none()
         )
         person = _object(
             row,
@@ -662,18 +657,25 @@ def sync_object_directory() -> dict[str, int]:
             "person",
         )
         name = (
-            _person_name(person)
-            or _text(
-                _value(row, "Name", "name")
-            )
+                _person_name(person)
+                or _text(
+            _value(row, "Name", "name")
+        )
         )
 
         if name is None:
             continue
 
-        item = WowiContractor.query.filter_by(
-            erp_id=erp_id
-        ).one_or_none()
+        item = (
+            WowiContractor.query
+            .filter_by(
+                erp_id=erp_id,
+                license_agreement_erp_id=(
+                    agreement_erp_id
+                ),
+            )
+            .one_or_none()
+        )
 
         if item is None:
             item = WowiContractor(
@@ -719,15 +721,27 @@ def sync_object_directory() -> dict[str, int]:
         item.active = agreement is not None
         item.synced_at = synced_at
 
-        seen_contractor_ids.add(erp_id)
+        seen_contractor_keys.add(
+            (
+                erp_id,
+                agreement_erp_id,
+            )
+        )
         result["contractors"] += 1
 
-    _deactivate_missing(
-        WowiContractor,
-        seen_contractor_ids,
-        synced_at,
-    )
+    for item in WowiContractor.query.filter(
+            WowiContractor.active.is_(True)
+    ).all():
+        key = (
+            item.erp_id,
+            item.license_agreement_erp_id,
+        )
 
+        if key not in seen_contractor_keys:
+            item.active = False
+            item.synced_at = synced_at
+
+    seen_department_ids = set()
     seen_jurisdiction_ids = set()
 
     for economic_unit in (
@@ -986,6 +1000,11 @@ def sync_object_directory() -> dict[str, int]:
             seen_jurisdiction_ids.add(erp_id)
             result["jurisdictions"] += 1
 
+    _deactivate_missing(
+        WowiEconomicUnitJurisdiction,
+        seen_jurisdiction_ids,
+        synced_at,
+    )
     _deactivate_missing(
         WowiDepartment,
         seen_department_ids,

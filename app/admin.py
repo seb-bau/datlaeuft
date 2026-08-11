@@ -66,8 +66,8 @@ from .models import (
     ErpOutboxState,
     WebhookEvent,
     PushEventType,
-    CraftActivityDepartmentTypeMapping,
-    WowiDepartmentType,
+    CraftActivityDepartmentMapping,
+    WowiDepartment,
 )
 from .inventory_service import (
     book_inventory_movement,
@@ -323,36 +323,36 @@ def craft_department_mappings() -> Any:
         )
         .all()
     )
-    department_types = (
-        WowiDepartmentType.query
+    departments = (
+        WowiDepartment.query
         .filter_by(
             active=True
         )
         .order_by(
-            WowiDepartmentType.name.asc()
+            WowiDepartment.name.asc()
         )
         .all()
     )
     mappings = {
         item.craft_activity_id: item
         for item in (
-            CraftActivityDepartmentTypeMapping
+            CraftActivityDepartmentMapping
             .query
             .all()
         )
     }
 
     if request.method == "POST":
-        department_types_by_id = {
+        departments_by_id = {
             item.id: item
-            for item in department_types
+            for item in departments
         }
-        selected_department_types = {}
+        selected_departments = {}
 
         for craft_activity in craft_activities:
             raw_value = request.form.get(
                 (
-                    "department_type_"
+                    "department_"
                     f"{craft_activity.id}"
                 ),
                 "",
@@ -362,13 +362,13 @@ def craft_department_mappings() -> Any:
                 continue
 
             try:
-                department_type_id = int(
+                department_id = int(
                     raw_value
                 )
             except ValueError:
                 flash(
-                    "Die ausgewählte "
-                    "Zuständigkeitsart ist ungültig.",
+                    "Die ausgewählte Abteilung "
+                    "ist ungültig.",
                     "danger",
                 )
                 return redirect(
@@ -378,17 +378,14 @@ def craft_department_mappings() -> Any:
                     )
                 )
 
-            department_type = (
-                department_types_by_id.get(
-                    department_type_id
-                )
+            department = departments_by_id.get(
+                department_id
             )
 
-            if department_type is None:
+            if department is None:
                 flash(
-                    "Die ausgewählte "
-                    "Zuständigkeitsart ist "
-                    "nicht verfügbar.",
+                    "Die ausgewählte Abteilung "
+                    "ist nicht verfügbar.",
                     "danger",
                 )
                 return redirect(
@@ -398,21 +395,19 @@ def craft_department_mappings() -> Any:
                     )
                 )
 
-            selected_department_types[
+            selected_departments[
                 craft_activity.id
-            ] = department_type
+            ] = department
 
         for craft_activity in craft_activities:
             mapping = mappings.get(
                 craft_activity.id
             )
-            department_type = (
-                selected_department_types.get(
-                    craft_activity.id
-                )
+            department = selected_departments.get(
+                craft_activity.id
             )
 
-            if department_type is None:
+            if department is None:
                 if mapping is not None:
                     db.session.delete(mapping)
 
@@ -420,7 +415,7 @@ def craft_department_mappings() -> Any:
 
             if mapping is None:
                 mapping = (
-                    CraftActivityDepartmentTypeMapping(
+                    CraftActivityDepartmentMapping(
                         craft_activity=(
                             craft_activity
                         ),
@@ -428,9 +423,7 @@ def craft_department_mappings() -> Any:
                 )
                 db.session.add(mapping)
 
-            mapping.department_type = (
-                department_type
-            )
+            mapping.department = department
             mapping.updated_by = current_user
             mapping.updated_at = utc_now()
 
@@ -459,7 +452,7 @@ def craft_department_mappings() -> Any:
     return render_template(
         "admin/craft_department_mappings.html",
         craft_activities=craft_activities,
-        department_types=department_types,
+        departments=departments,
         mappings=mappings,
     )
 

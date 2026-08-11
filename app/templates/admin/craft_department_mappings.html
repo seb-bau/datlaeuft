@@ -3,11 +3,14 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
-    <h1 class="h3 mb-1">Gewerk-Zuständigkeiten</h1>
+    <h1 class="h3 mb-1">
+      Gewerk-Zuständigkeiten
+    </h1>
     <p class="text-muted mb-0">
-      Jedem Gewerk wird die passende Wowiport-Zuständigkeitsart zugeordnet.
+      Jedem Gewerk wird die zuständige Wowiport-Abteilung zugeordnet.
     </p>
   </div>
+
   <form
     method="post"
     action="{{ url_for('admin.object_directory_sync') }}"
@@ -26,9 +29,9 @@
   </form>
 </div>
 
-{% if not department_types %}
+{% if not departments %}
 <div class="alert alert-warning">
-  Es sind noch keine Wowiport-Zuständigkeitsarten synchronisiert.
+  Es sind noch keine Wowiport-Abteilungen synchronisiert.
 </div>
 {% endif %}
 
@@ -45,7 +48,7 @@
         <tr>
           <th>Gewerk</th>
           <th>Wowiport-ID</th>
-          <th>Zuständigkeitsart</th>
+          <th>Abteilung</th>
         </tr>
       </thead>
       <tbody>
@@ -71,20 +74,20 @@
           <td>
             <select
               class="form-select"
-              name="department_type_{{ craft_activity.id }}"
+              name="department_{{ craft_activity.id }}"
             >
               <option value="">
                 Nicht zugeordnet
               </option>
 
-              {% for department_type in department_types %}
+              {% for department in departments %}
               <option
-                value="{{ department_type.id }}"
-                {% if mapping and mapping.department_type_id == department_type.id %}selected{% endif %}
+                value="{{ department.id }}"
+                {% if mapping and mapping.department_id == department.id %}selected{% endif %}
               >
-                {{ department_type.name }}
+                {{ department.name }}
                 ·
-                {{ department_type.erp_id }}
+                {{ department.erp_id }}
               </option>
               {% endfor %}
             </select>
@@ -99,7 +102,7 @@
     <button
       class="btn btn-primary"
       type="submit"
-      {% if not department_types %}disabled{% endif %}
+      {% if not departments %}disabled{% endif %}
     >
       Zuordnungen speichern
     </button>

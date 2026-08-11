@@ -339,8 +339,8 @@ def register_cli(app: Flask) -> None:
         db.session.commit()
 
         click.echo(
-            f"Abteilungsarten="
-            f"{result['department_types']} "
+            f"Abteilungen="
+            f"{result['departments']} "
             f"Wirtschaftseinheiten="
             f"{result['economic_units']} "
             f"Zuständigkeiten="

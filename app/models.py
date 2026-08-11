@@ -1898,45 +1898,71 @@ class WowiLicenseAgreement(db.Model):
 
 class WowiContractor(db.Model):
     __tablename__ = "wowi_contractor"
+    __table_args__ = (
+        db.Index(
+            (
+                "ux_wowi_contractor_"
+                "erp_license_agreement"
+            ),
+            "erp_id",
+            "license_agreement_erp_id",
+            unique=True,
+        ),
+    )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
     erp_id: Mapped[int] = mapped_column(
         db.Integer,
-        unique=True,
         nullable=False,
         index=True,
     )
-    license_agreement_erp_id: Mapped[int] = mapped_column(
-        db.Integer,
-        nullable=False,
-        index=True,
+    license_agreement_erp_id: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+            index=True,
+        )
     )
-    license_agreement_id: Mapped[int | None] = mapped_column(
-        db.ForeignKey("wowi_license_agreement.id"),
-        index=True,
+    license_agreement_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey(
+                "wowi_license_agreement.id"
+            ),
+            index=True,
+        )
     )
-    person_erp_id: Mapped[int | None] = mapped_column(
-        db.Integer,
-        index=True,
+    person_erp_id: Mapped[int | None] = (
+        mapped_column(
+            db.Integer,
+            index=True,
+        )
     )
     display_name: Mapped[str] = mapped_column(
         db.String(255),
         nullable=False,
         index=True,
     )
-    contractual_use_from: Mapped[date | None] = mapped_column(
-        db.Date
+    contractual_use_from: Mapped[date | None] = (
+        mapped_column(
+            db.Date
+        )
     )
-    contractual_use_to: Mapped[date | None] = mapped_column(
-        db.Date
+    contractual_use_to: Mapped[date | None] = (
+        mapped_column(
+            db.Date
+        )
     )
     active: Mapped[bool] = mapped_column(
         db.Boolean,
         default=True,
         nullable=False,
     )
-    synced_at: Mapped[datetime | None] = mapped_column(
-        db.DateTime(timezone=True)
+    synced_at: Mapped[datetime | None] = (
+        mapped_column(
+            db.DateTime(timezone=True)
+        )
     )
 
     license_agreement: Mapped[
