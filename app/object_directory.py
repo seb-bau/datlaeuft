@@ -9,13 +9,13 @@ from sqlalchemy import or_
 from .extensions import db
 from .models import (
     CraftActivity,
-    CraftActivityDepartmentTypeMapping,
+    CraftActivityDepartmentMapping,
     TimeTaskTemplate,
     User,
     WowiBuilding,
     WowiCompanyCode,
     WowiContractor,
-    WowiDepartmentType,
+    WowiDepartment,
     WowiEconomicUnit,
     WowiEconomicUnitJurisdiction,
     WowiLicenseAgreement,
@@ -38,7 +38,7 @@ class CommissionObjectContext:
 class CommissionAssignment:
     user: User
     craft_activity: CraftActivity
-    department_type: WowiDepartmentType
+    department: WowiDepartment
     jurisdiction: WowiEconomicUnitJurisdiction
     responsible_official_erp_id: int
 
@@ -48,7 +48,7 @@ def sync_object_directory() -> dict[str, int]:
     synced_at = utc_now()
     active_on = date.today().isoformat()
     result = {
-        "department_types": 0,
+        "departments": 0,
         "economic_units": 0,
         "jurisdictions": 0,
         "buildings": 0,
@@ -56,53 +56,6 @@ def sync_object_directory() -> dict[str, int]:
         "license_agreements": 0,
         "contractors": 0,
     }
-
-    department_rows = service.read_all_rows(
-        "CommercialInventoryCatalog/DepartmentType",
-        {},
-        paginate=False,
-    )
-    _require_rows(
-        department_rows,
-        "Zuständigkeitsarten",
-    )
-
-    seen_department_ids = set()
-
-    for row in department_rows:
-        erp_id = _as_int(
-            _value(row, "Id", "id")
-        )
-        name = _text(
-            _value(row, "Name", "name")
-        )
-
-        if erp_id is None or name is None:
-            continue
-
-        item = WowiDepartmentType.query.filter_by(
-            erp_id=erp_id
-        ).one_or_none()
-
-        if item is None:
-            item = WowiDepartmentType(
-                erp_id=erp_id,
-                name=name,
-            )
-            db.session.add(item)
-
-        item.name = name
-        item.active = True
-        item.synced_at = synced_at
-
-        seen_department_ids.add(erp_id)
-        result["department_types"] += 1
-
-    _deactivate_missing(
-        WowiDepartmentType,
-        seen_department_ids,
-        synced_at,
-    )
 
     economic_rows = service.read_all_rows(
         "CommercialInventory/EconomicUnits",
@@ -115,6 +68,13 @@ def sync_object_directory() -> dict[str, int]:
         economic_rows,
         "Wirtschaftseinheiten",
     )
+
+    seen_department_ids = set()
+    seen_jurisdiction_ids = set()
+
+    for economic_unit in WowiEconomicUnit.query.filter_by(
+        active=True
+    ).all():
 
     seen_economic_ids = set()
 
@@ -873,6 +833,19 @@ def sync_object_directory() -> dict[str, int]:
                 "Person",
                 "person",
             )
+
+            department_erp_id = _as_int(
+                _value(
+                    department,
+                    "Id",
+                    "id",
+                )
+                or _value(
+                    row,
+                    "DepartmentId",
+                    "departmentId",
+                )
+            )
             department_type_erp_id = _as_int(
                 _value(
                     department_type,
@@ -887,10 +860,52 @@ def sync_object_directory() -> dict[str, int]:
             )
 
             if (
-                erp_id is None
-                or department_type_erp_id is None
+                    erp_id is None
+                    or department_erp_id is None
+                    or department_type_erp_id is None
             ):
                 continue
+
+            department_name = _text(
+                _value(
+                    department,
+                    "Name",
+                    "name",
+                )
+            )
+
+            cached_department = (
+                WowiDepartment.query.filter_by(
+                    erp_id=department_erp_id
+                ).one_or_none()
+            )
+
+            if cached_department is None:
+                cached_department = WowiDepartment(
+                    erp_id=department_erp_id,
+                    name=(
+                            department_name
+                            or str(department_erp_id)
+                    ),
+                )
+                db.session.add(cached_department)
+
+            cached_department.name = (
+                    department_name
+                    or cached_department.name
+            )
+            cached_department.active = True
+            cached_department.synced_at = synced_at
+
+            if (
+                    department_erp_id
+                    not in seen_department_ids
+            ):
+                result["departments"] += 1
+
+            seen_department_ids.add(
+                department_erp_id
+            )
 
             item = (
                 WowiEconomicUnitJurisdiction.query
@@ -911,20 +926,8 @@ def sync_object_directory() -> dict[str, int]:
                 db.session.add(item)
 
             item.economic_unit = economic_unit
-            item.department_erp_id = _as_int(
-                _value(
-                    department,
-                    "Id",
-                    "id",
-                )
-            )
-            item.department_name = _text(
-                _value(
-                    department,
-                    "Name",
-                    "name",
-                )
-            )
+            item.department_erp_id = department_erp_id
+            item.department_name = department_name
             item.department_type_erp_id = (
                 department_type_erp_id
             )
@@ -959,16 +962,16 @@ def sync_object_directory() -> dict[str, int]:
                 )
             )
             item.responsible_name = (
-                _person_name(person)
-                or _text(
-                    _value(
-                        official,
-                        "PersonName",
-                        "personName",
-                        "Name",
-                        "name",
-                    )
+                    _person_name(person)
+                    or _text(
+                _value(
+                    official,
+                    "PersonName",
+                    "personName",
+                    "Name",
+                    "name",
                 )
+            )
             )
             item.main_jurisdiction = _as_bool(
                 _value(
@@ -984,8 +987,8 @@ def sync_object_directory() -> dict[str, int]:
             result["jurisdictions"] += 1
 
     _deactivate_missing(
-        WowiEconomicUnitJurisdiction,
-        seen_jurisdiction_ids,
+        WowiDepartment,
+        seen_department_ids,
         synced_at,
     )
 
@@ -1224,7 +1227,7 @@ def resolve_commission_assignment(
         iter(craft_activity_ids)
     )
     mapping = (
-        CraftActivityDepartmentTypeMapping.query
+        CraftActivityDepartmentMapping.query
         .filter_by(
             craft_activity_id=craft_activity_id
         )
@@ -1232,8 +1235,8 @@ def resolve_commission_assignment(
     )
 
     if (
-        mapping is None
-        or not mapping.department_type.active
+            mapping is None
+            or not mapping.department.active
     ):
         craft_activity = db.session.get(
             CraftActivity,
@@ -1241,13 +1244,13 @@ def resolve_commission_assignment(
         )
         craft_name = (
             craft_activity.name
-            if craft_activity
+            if craft_activity is not None
             else str(craft_activity_id)
         )
+
         raise ValueError(
-            f"Für das Gewerk „{craft_name}“ ist "
-            "keine aktive Zuständigkeitsart "
-            "hinterlegt."
+            f"Für das Gewerk „{craft_name}“ "
+            "ist keine aktive Abteilung hinterlegt."
         )
 
     jurisdictions = (
@@ -1256,21 +1259,22 @@ def resolve_commission_assignment(
             economic_unit_id=(
                 object_context.economic_unit.id
             ),
-            department_type_erp_id=(
-                mapping.department_type.erp_id
+            department_erp_id=(
+                mapping.department.erp_id
             ),
             active=True,
         )
         .all()
     )
+
     main_jurisdictions = [
         jurisdiction
         for jurisdiction in jurisdictions
         if jurisdiction.main_jurisdiction
     ]
     candidates = (
-        main_jurisdictions
-        or jurisdictions
+            main_jurisdictions
+            or jurisdictions
     )
 
     if len(candidates) != 1:
@@ -1333,7 +1337,7 @@ def resolve_commission_assignment(
     return CommissionAssignment(
         user=users[0],
         craft_activity=mapping.craft_activity,
-        department_type=mapping.department_type,
+        department=mapping.department,
         jurisdiction=jurisdiction,
         responsible_official_erp_id=(
             responsible_official_erp_id
@@ -1345,27 +1349,33 @@ def commission_creation_tasks():
     return (
         TimeTaskTemplate.query
         .join(
-            CraftActivityDepartmentTypeMapping,
-            CraftActivityDepartmentTypeMapping
-            .craft_activity_id
-            == TimeTaskTemplate.craft_activity_id,
+            CraftActivityDepartmentMapping,
+            (
+                CraftActivityDepartmentMapping
+                .craft_activity_id
+                == TimeTaskTemplate.craft_activity_id
+            ),
         )
         .join(
-            WowiDepartmentType,
-            WowiDepartmentType.id
-            == CraftActivityDepartmentTypeMapping
-            .department_type_id,
+            WowiDepartment,
+            (
+                WowiDepartment.id
+                == CraftActivityDepartmentMapping
+                .department_id
+            ),
         )
         .filter(
             TimeTaskTemplate.active.is_(True),
-            TimeTaskTemplate
-            .erp_service_catalogue_id
-            .isnot(None),
+            (
+                TimeTaskTemplate
+                .erp_service_catalogue_id
+                .isnot(None)
+            ),
             TimeTaskTemplate.craft_activity.has(
                 CraftActivity.active.is_(True)
                 & CraftActivity.erp_id.isnot(None)
             ),
-            WowiDepartmentType.active.is_(True),
+            WowiDepartment.active.is_(True),
         )
     )
 

@@ -333,23 +333,12 @@ def create_pending_commission(
         service_positions,
         object_context,
     )
-
-    if (
-        assignment.jurisdiction
-        .department_erp_id is None
-    ):
-        raise ValueError(
-            "In der Zuständigkeit fehlt "
-            "die ausführende Abteilung."
-        )
-
     commission.user = assignment.user
     commission.craftsman_erp_id = (
         assignment.user.craftsman_erp_id
     )
     commission.department_erp_id = (
-        assignment.jurisdiction
-        .department_erp_id
+        assignment.department.erp_id
     )
     commission.responsible_official_repair_erp_id = (
         assignment.responsible_official_erp_id

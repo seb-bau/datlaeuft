@@ -180,7 +180,9 @@ class CraftActivity(db.Model):
     )
 
     service_positions: Mapped[list["TimeTaskTemplate"]] = relationship(back_populates="craft_activity")
-    department_type_mapping: Mapped["CraftActivityDepartmentTypeMapping | None"] = relationship(
+    department_mapping: Mapped[
+        "CraftActivityDepartmentMapping | None"
+    ] = relationship(
         back_populates="craft_activity",
         cascade="all, delete-orphan",
         uselist=False,
@@ -1641,10 +1643,12 @@ class ApiTokenBlocklist(db.Model):
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
 
 
-class WowiDepartmentType(db.Model):
-    __tablename__ = "wowi_department_type"
+class WowiDepartment(db.Model):
+    __tablename__ = "wowi_department"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
     erp_id: Mapped[int] = mapped_column(
         db.Integer,
         unique=True,
@@ -1666,30 +1670,34 @@ class WowiDepartmentType(db.Model):
     )
 
     craft_activity_mappings: Mapped[
-        list["CraftActivityDepartmentTypeMapping"]
+        list["CraftActivityDepartmentMapping"]
     ] = relationship(
-        back_populates="department_type",
+        back_populates="department",
     )
 
 
-class CraftActivityDepartmentTypeMapping(db.Model):
-    __tablename__ = "craft_activity_department_type_mapping"
+class CraftActivityDepartmentMapping(db.Model):
+    __tablename__ = "craft_activity_department_mapping"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
     craft_activity_id: Mapped[int] = mapped_column(
         db.ForeignKey("craft_activity.id"),
         unique=True,
         nullable=False,
         index=True,
     )
-    department_type_id: Mapped[int] = mapped_column(
-        db.ForeignKey("wowi_department_type.id"),
+    department_id: Mapped[int] = mapped_column(
+        db.ForeignKey("wowi_department.id"),
         nullable=False,
         index=True,
     )
-    updated_by_user_id: Mapped[int | None] = mapped_column(
-        db.ForeignKey("user_account.id"),
-        index=True,
+    updated_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+            index=True,
+        )
     )
     updated_at: Mapped[datetime] = mapped_column(
         db.DateTime(timezone=True),
@@ -1699,9 +1707,9 @@ class CraftActivityDepartmentTypeMapping(db.Model):
     )
 
     craft_activity: Mapped[CraftActivity] = relationship(
-        back_populates="department_type_mapping"
+        back_populates="department_mapping"
     )
-    department_type: Mapped[WowiDepartmentType] = relationship(
+    department: Mapped[WowiDepartment] = relationship(
         back_populates="craft_activity_mappings"
     )
     updated_by: Mapped[User | None] = relationship()
