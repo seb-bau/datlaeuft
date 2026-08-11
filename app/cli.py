@@ -10,6 +10,7 @@ from .entra import import_entra_users
 from .erp_sync import process_due_work, run_worker
 from .extensions import db
 from .location_sync import sync_wowi_buildings
+from .object_directory import sync_object_directory
 from .models import (
     ErpOutboxOperation,
     Commission,
@@ -328,6 +329,30 @@ def register_cli(app: Flask) -> None:
             f"Geokodiert={result['geocoded']} "
             f"Ohne_Koordinaten={result['without_coordinates']} "
             f"Übersprungen={result['skipped']}"
+        )
+
+    @app.cli.command(
+        "datlaeuft-sync-object-directory"
+    )
+    def sync_commission_object_directory() -> None:
+        result = sync_object_directory()
+        db.session.commit()
+
+        click.echo(
+            f"Abteilungsarten="
+            f"{result['department_types']} "
+            f"Wirtschaftseinheiten="
+            f"{result['economic_units']} "
+            f"Zuständigkeiten="
+            f"{result['jurisdictions']} "
+            f"Gebäude="
+            f"{result['buildings']} "
+            f"Nutzungseinheiten="
+            f"{result['use_units']} "
+            f"Mietverträge="
+            f"{result['license_agreements']} "
+            f"Vertragspartner="
+            f"{result['contractors']}"
         )
 
     @app.cli.command("datlaeuft-push-ping")

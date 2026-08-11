@@ -12,12 +12,13 @@ from .models import (
     CommissionSource,
     CommissionSyncState,
     ErpOperationType,
-    User,
-    WowiBuilding,
-    WowiUseUnit,
-    utc_now,
     TimeTaskTemplate,
-    WowiCompanyCode,
+    User,
+    utc_now,
+)
+from .object_directory import (
+    resolve_commission_assignment,
+    resolve_commission_object,
 )
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
@@ -25,16 +26,9 @@ from .utils import parse_datetime
 
 def create_pending_commission(
     data: dict[str, Any],
-    assigned_user: User,
     created_by_user: User,
     source: CommissionSource,
 ) -> Commission:
-    if assigned_user.craftsman_erp_id is None:
-        raise ValueError(
-            "Dem ausgewählten Handwerker fehlt "
-            "die Wowiport-Zuordnung."
-        )
-
     commission_type_id = required_int(
         data,
         "commission_type_id",
@@ -51,76 +45,18 @@ def create_pending_commission(
             "Diese Auftragsart ist nicht freigegeben."
         )
 
-    use_unit_idnum = clean_id_num(
-        data.get("use_unit_idnum")
+    object_context = resolve_commission_object(
+        data
     )
-    building_idnum = clean_id_num(
-        data.get("building_idnum")
-    )
-    license_agreement_idnum = clean_id_num(
-        data.get("license_agreement_idnum")
-    )
-
-    if not any(
-        [
-            use_unit_idnum,
-            building_idnum,
-            license_agreement_idnum,
-        ]
-    ):
-        raise ValueError(
-            "Nutzungseinheit, Gebäude oder Mietvertrag "
-            "muss angegeben werden."
-        )
-
-    use_unit = resolve_local_reference(
-        WowiUseUnit,
-        use_unit_idnum,
-        "Nutzungseinheit",
-    )
-    building = resolve_local_reference(
-        WowiBuilding,
-        building_idnum,
-        "Gebäude",
-    )
-
-    use_unit_erp_id = (
-        use_unit.erp_id
-        if use_unit is not None
-        else None
-    )
-    building_erp_id = (
-        building.erp_id
-        if building is not None
-        else None
-    )
-
-    if use_unit is not None:
-        if (
-            building_erp_id is not None
-            and use_unit.building_erp_id is not None
-            and building_erp_id
-            != use_unit.building_erp_id
-        ):
-            raise ValueError(
-                "Die Nutzungseinheit gehört nicht "
-                "zum angegebenen Gebäude."
-            )
-
-        if building_erp_id is None:
-            building_erp_id = use_unit.building_erp_id
-
-        if (
-            not building_idnum
-            and use_unit.building is not None
-        ):
-            building_idnum = use_unit.building.id_num
-
     position_data = data.get("positions")
 
-    if not isinstance(position_data, list) or not position_data:
+    if (
+        not isinstance(position_data, list)
+        or not position_data
+    ):
         raise ValueError(
-            "Mindestens eine Auftragsposition ist erforderlich."
+            "Mindestens eine Auftragsposition "
+            "ist erforderlich."
         )
 
     execution_from = parse_datetime(
@@ -136,27 +72,8 @@ def create_pending_commission(
         and execution_from > execution_to
     ):
         raise ValueError(
-            "Das Ausführungsende darf nicht vor dem Beginn liegen."
-        )
-
-    company_code_code = clean_text(
-        data.get("company_code_code")
-    )
-
-    if not company_code_code:
-        raise ValueError(
-            "Das Buchwerk muss ausgewählt werden."
-        )
-
-    company_code = WowiCompanyCode.query.filter(
-        WowiCompanyCode.active.is_(True),
-        WowiCompanyCode.code == company_code_code,
-    ).one_or_none()
-
-    if company_code is None:
-        raise ValueError(
-            "Das ausgewählte Buchwerk ist nicht verfügbar. "
-            "Bitte die Wowiport-Buchwerke synchronisieren."
+            "Das Ausführungsende darf nicht "
+            "vor dem Beginn liegen."
         )
 
     process_type_code = required_setting_text(
@@ -175,19 +92,64 @@ def create_pending_commission(
     public_id = normalize_public_id(
         data.get("client_request_id")
     )
+    use_unit = object_context.use_unit
+    building = object_context.building
+    agreement = (
+        object_context.license_agreement
+    )
+    apartment_location = None
+
+    if use_unit is not None:
+        location_items = [
+            use_unit.floor_name,
+            use_unit.position_name,
+            use_unit.description_of_position,
+        ]
+        apartment_location = (
+            " · ".join(
+                item
+                for item in location_items
+                if item
+            )
+            or None
+        )
 
     commission = Commission(
-        company_code_erp_id=company_code.erp_id,
-        company_code_code=company_code.code,
-        crafts_process_type_code=process_type_code,
-        crafts_process_status_code=process_status_code,
+        company_code_erp_id=(
+            object_context.economic_unit
+            .company_code_erp_id
+        ),
+        company_code_code=(
+            object_context.economic_unit
+            .company_code_code
+        ),
+        economic_unit_erp_id=(
+            object_context.economic_unit.erp_id
+        ),
+        economic_unit_idnum=(
+            object_context.economic_unit.id_num
+        ),
+        crafts_process_type_code=(
+            process_type_code
+        ),
+        crafts_process_status_code=(
+            process_status_code
+        ),
         sales_tax_code=sales_tax_code,
         public_id=public_id,
         source=source.value,
-        erp_sync_state=CommissionSyncState.PENDING.value,
-        local_status=CommissionLocalStatus.RECORDED.value,
-        erp_external_identification_number=public_id,
-        commission_type_erp_id=commission_type_id,
+        erp_sync_state=(
+            CommissionSyncState.PENDING.value
+        ),
+        local_status=(
+            CommissionLocalStatus.RECORDED.value
+        ),
+        erp_external_identification_number=(
+            public_id
+        ),
+        commission_type_erp_id=(
+            commission_type_id
+        ),
         crafts_process_erp_id=optional_int(
             data.get("crafts_process_id"),
             "Vorgang",
@@ -196,24 +158,53 @@ def create_pending_commission(
             data.get("creditor_id"),
             "Kreditor",
         ),
-        department_erp_id=optional_int(
-            data.get("department_id"),
-            "Abteilung",
+        use_unit_id=(
+            use_unit.erp_id
+            if use_unit
+            else None
         ),
-        responsible_official_repair_erp_id=optional_int(
-            data.get("responsible_official_repair_id"),
-            "Sachbearbeiter",
+        use_unit_idnum=(
+            use_unit.id_num
+            if use_unit
+            else None
         ),
-        use_unit_id=use_unit_erp_id,
-        use_unit_idnum=use_unit_idnum,
-        building_erp_id=building_erp_id,
-        building_idnum=building_idnum,
-        license_agreement_id=None,
-        license_agreement_idnum=license_agreement_idnum,
-        user=assigned_user,
-        craftsman_erp_id=assigned_user.craftsman_erp_id,
+        building_erp_id=(
+            building.erp_id
+            if building
+            else None
+        ),
+        building_idnum=(
+            building.id_num
+            if building
+            else None
+        ),
+        license_agreement_id=(
+            agreement.erp_id
+            if agreement
+            else None
+        ),
+        license_agreement_idnum=(
+            agreement.id_num
+            if agreement
+            else None
+        ),
+        apartment_address=(
+            use_unit.address
+            if use_unit is not None
+            else (
+                building.address
+                if building is not None
+                else None
+            )
+        ),
+        apartment_location=apartment_location,
+        tenant_name=object_context.tenant_name,
+        user=None,
+        craftsman_erp_id=None,
         created_by=created_by_user,
-        title=clean_text(data.get("title")),
+        title=clean_text(
+            data.get("title")
+        ),
         damage_location=clean_text(
             data.get("damage_location")
         ),
@@ -228,7 +219,11 @@ def create_pending_commission(
 
     db.session.add(commission)
 
-    for position_index, item in enumerate(position_data):
+    service_positions = []
+
+    for position_index, item in enumerate(
+        position_data
+    ):
         if not isinstance(item, dict):
             raise ValueError(
                 "Eine Auftragsposition ist ungültig."
@@ -262,22 +257,33 @@ def create_pending_commission(
         service_catalog_erp_id = required_int(
             item,
             "service_catalog_id",
-            f"Leistungsposition {position_index + 1}",
+            (
+                "Leistungsposition "
+                f"{position_index + 1}"
+            ),
         )
 
-        service_position = TimeTaskTemplate.query.filter(
-            TimeTaskTemplate.active.is_(True),
-            TimeTaskTemplate.erp_service_catalogue_id
-            == service_catalog_erp_id,
-        ).one_or_none()
+        service_position = (
+            TimeTaskTemplate.query.filter(
+                TimeTaskTemplate.active.is_(
+                    True
+                ),
+                TimeTaskTemplate
+                .erp_service_catalogue_id
+                == service_catalog_erp_id,
+            ).one_or_none()
+        )
 
         if service_position is None:
             raise ValueError(
-                f"Die Leistungsposition {position_index + 1} "
+                "Die Leistungsposition "
+                f"{position_index + 1} "
                 "ist nicht verfügbar."
             )
 
-        craft_activity = service_position.craft_activity
+        craft_activity = (
+            service_position.craft_activity
+        )
 
         if (
             craft_activity is None
@@ -285,27 +291,37 @@ def create_pending_commission(
             or craft_activity.erp_id is None
         ):
             raise ValueError(
-                f"Der Leistungsposition {position_index + 1} "
-                "ist kein gültiges Gewerk zugeordnet."
+                "Der Leistungsposition "
+                f"{position_index + 1} "
+                "ist kein gültiges Gewerk "
+                "zugeordnet."
             )
 
+        service_positions.append(
+            service_position
+        )
         commission.positions.append(
             CommissionPosition(
                 position_index=position_index,
                 code=(
-                        clean_text(item.get("code"))
-                        or service_position.code
+                    clean_text(item.get("code"))
+                    or service_position.code
                 ),
-                commission_text=commission_text,
+                commission_text=(
+                    commission_text
+                ),
                 internal_description=clean_text(
-                    item.get("internal_description")
+                    item.get(
+                        "internal_description"
+                    )
                 ),
                 description=clean_text(
                     item.get("description")
                 ),
                 units=units,
                 service_catalog_erp_id=(
-                    service_position.erp_service_catalogue_id
+                    service_position
+                    .erp_service_catalogue_id
                 ),
                 craft_activity_erp_id=(
                     craft_activity.erp_id
@@ -313,11 +329,41 @@ def create_pending_commission(
             )
         )
 
+    assignment = resolve_commission_assignment(
+        service_positions,
+        object_context,
+    )
+
+    if (
+        assignment.jurisdiction
+        .department_erp_id is None
+    ):
+        raise ValueError(
+            "In der Zuständigkeit fehlt "
+            "die ausführende Abteilung."
+        )
+
+    commission.user = assignment.user
+    commission.craftsman_erp_id = (
+        assignment.user.craftsman_erp_id
+    )
+    commission.department_erp_id = (
+        assignment.jurisdiction
+        .department_erp_id
+    )
+    commission.responsible_official_repair_erp_id = (
+        assignment.responsible_official_erp_id
+    )
+
     if len(commission.positions) > 1:
         commission.title = "Mehrere Positionen"
-        commission.description = "Mehrere Positionen"
+        commission.description = (
+            "Mehrere Positionen"
+        )
     else:
-        first_position = commission.positions[0]
+        first_position = (
+            commission.positions[0]
+        )
         position_text = (
             first_position.internal_description
             or first_position.commission_text
@@ -333,9 +379,12 @@ def create_pending_commission(
 
     enqueue_erp_operation(
         commission=commission,
-        operation_type=ErpOperationType.CREATE_COMMISSION,
+        operation_type=(
+            ErpOperationType.CREATE_COMMISSION
+        ),
         idempotency_key=(
-            f"commission:create:{commission.public_id}"
+            f"commission:create:"
+            f"{commission.public_id}"
         ),
     )
 

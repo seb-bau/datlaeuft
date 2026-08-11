@@ -3,7 +3,12 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h1 class="h3 mb-0">Auftrag erfassen</h1>
-  <a class="btn btn-outline-secondary" href="{{ url_for('admin.commissions') }}">Zurück</a>
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.commissions') }}"
+  >
+    Zurück
+  </a>
 </div>
 
 {% if not commission_types %}
@@ -12,57 +17,60 @@
 </div>
 {% endif %}
 
-{% if not users %}
-<div class="alert alert-warning">
-  Es sind keine aktiven Handwerker mit Wowiport-Zuordnung vorhanden.
-</div>
-{% endif %}
-
-<form method="post" class="card shadow-sm">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<form
+  method="post"
+  enctype="multipart/form-data"
+  class="card shadow-sm"
+>
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+  <input
+    id="objectType"
+    type="hidden"
+    name="object_type"
+    value="{{ selected_object.get('object_type', '') if selected_object else '' }}"
+  >
+  <input
+    id="objectId"
+    type="hidden"
+    name="object_id"
+    value="{{ selected_object.get('object_id', '') if selected_object else '' }}"
+  >
 
   <div class="card-body">
     <div class="row g-3">
       <div class="col-md-4">
-        <label class="form-label">Buchwerk</label>
+        <label class="form-label">
+          Auftragsart
+        </label>
         <select
           class="form-select"
-          name="company_code_code"
+          name="commission_type_id"
           required
         >
-          <option value="">Bitte auswählen</option>
-          {% for item in company_codes %}
-          <option
-            value="{{ item.code }}"
-            {% if form_values.get('company_code_code') == item.code %}selected{% endif %}
-          >
-            {{ item.code }} · {{ item.name }}
+          <option value="">
+            Bitte auswählen
           </option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-4">
-        <label class="form-label">Auftragsart</label>
-        <select class="form-select" name="commission_type_id" required>
-          <option value="">Bitte auswählen</option>
+
           {% for item in commission_types %}
-          <option value="{{ item.erp_id }}" {% if form_values.get('commission_type_id')|int == item.erp_id %}selected{% endif %}>
+          <option
+            value="{{ item.erp_id }}"
+            {% if form_values.get('commission_type_id')|int == item.erp_id %}selected{% endif %}
+          >
             {{ item.code or "Unbenannte Auftragsart" }}
           </option>
           {% endfor %}
         </select>
       </div>
 
-      <div class="col-md-4">
-        <label class="form-label">Handwerker</label>
-        <select class="form-select" name="assigned_user_id" required>
-          <option value="">Bitte auswählen</option>
-          {% for user in users %}
-          <option value="{{ user.id }}" {% if form_values.get('assigned_user_id')|int == user.id %}selected{% endif %}>
-            {{ user.display_name }}
-          </option>
-          {% endfor %}
-        </select>
+      <div class="col-md-8 d-flex align-items-end">
+        <div class="alert alert-info mb-0 w-100 py-2">
+          Handwerker und Buchwerk werden aus Objekt,
+          Gewerk und Wowiport-Zuständigkeit ermittelt.
+        </div>
       </div>
 
       <div class="col-12">
@@ -70,39 +78,50 @@
         <h2 class="h5">Objektbezug</h2>
       </div>
 
-      <div class="col-md-4">
-        <label class="form-label">Nutzungseinheitsnummer</label>
-        <input
-          class="form-control"
-          type="text"
-          name="use_unit_idnum"
-          value="{{ form_values.get('use_unit_idnum', '') }}"
-          placeholder="IdNum der Nutzungseinheit"
+      <div class="col-lg-7">
+        <label
+          class="form-label"
+          for="objectSearch"
         >
-      </div>
+          Mieter, Vertrag, Nutzungseinheit oder Adresse
+        </label>
 
-      <div class="col-md-4">
-        <label class="form-label">Gebäudenummer</label>
-        <input
-          class="form-control"
-          type="text"
-          name="building_idnum"
-          value="{{ form_values.get('building_idnum', '') }}"
-          placeholder="IdNum des Gebäudes"
-        >
-      </div>
+        <div class="input-group">
+          <input
+            id="objectSearch"
+            class="form-control"
+            type="search"
+            autocomplete="off"
+            placeholder="Mindestens zwei Zeichen eingeben"
+          >
+          <button
+            id="searchObject"
+            class="btn btn-outline-primary"
+            type="button"
+          >
+            Suchen
+          </button>
+        </div>
 
-      <div class="col-md-4">
-        <label class="form-label">Mietvertragsnummer</label>
-        <input
-          class="form-control"
-          type="text"
-          name="license_agreement_idnum"
-          value="{{ form_values.get('license_agreement_idnum', '') }}"
-          placeholder="IdNum des Mietvertrags"
-        >
         <div class="form-text">
-          Mindestens eine der drei fachlichen Nummern ist erforderlich.
+          Für Keller, Treppenhaus oder Außenanlage
+          kann direkt ein Gebäude gewählt werden.
+        </div>
+
+        <div
+          id="objectResults"
+          class="list-group mt-2"
+        ></div>
+      </div>
+
+      <div class="col-lg-5">
+        <div
+          id="objectSummary"
+          class="border rounded p-3 h-100"
+        >
+          <div class="text-muted">
+            Noch kein Objekt ausgewählt.
+          </div>
         </div>
       </div>
 
@@ -112,7 +131,9 @@
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">Kurztitel</label>
+        <label class="form-label">
+          Kurztitel
+        </label>
         <input
           class="form-control"
           name="title"
@@ -121,7 +142,9 @@
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">Schadensort</label>
+        <label class="form-label">
+          Schadensort
+        </label>
         <input
           class="form-control"
           name="damage_location"
@@ -130,7 +153,9 @@
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">Ansprechpartner vor Ort</label>
+        <label class="form-label">
+          Ansprechpartner vor Ort
+        </label>
         <input
           class="form-control"
           name="contact_person"
@@ -139,7 +164,9 @@
       </div>
 
       <div class="col-md-3">
-        <label class="form-label">Ausführung von</label>
+        <label class="form-label">
+          Ausführung von
+        </label>
         <input
           class="form-control"
           type="datetime-local"
@@ -149,7 +176,9 @@
       </div>
 
       <div class="col-md-3">
-        <label class="form-label">Ausführung bis</label>
+        <label class="form-label">
+          Ausführung bis
+        </label>
         <input
           class="form-control"
           type="datetime-local"
@@ -161,7 +190,9 @@
       <div class="col-12">
         <hr>
         <div class="d-flex justify-content-between align-items-center">
-          <h2 class="h5 mb-0">Auftragspositionen</h2>
+          <h2 class="h5 mb-0">
+            Auftragspositionen
+          </h2>
           <button
             id="addPosition"
             class="btn btn-sm btn-outline-primary"
@@ -177,7 +208,9 @@
         <div class="position-row border rounded p-3 mb-3">
           <div class="row g-3">
             <div class="col-md-2">
-              <label class="form-label">Positionscode</label>
+              <label class="form-label">
+                Positionscode
+              </label>
               <input
                 class="form-control form-control-sm"
                 name="position_code"
@@ -186,7 +219,9 @@
             </div>
 
             <div class="col-md-5">
-              <label class="form-label">Auftragstext</label>
+              <label class="form-label">
+                Auftragstext
+              </label>
               <input
                 class="form-control form-control-sm"
                 name="position_text"
@@ -196,7 +231,9 @@
             </div>
 
             <div class="col-md-3">
-              <label class="form-label">Interne Beschreibung</label>
+              <label class="form-label">
+                Interne Beschreibung
+              </label>
               <input
                 class="form-control form-control-sm"
                 name="position_internal_description"
@@ -205,7 +242,9 @@
             </div>
 
             <div class="col-md-2">
-              <label class="form-label">Menge</label>
+              <label class="form-label">
+                Menge
+              </label>
               <input
                 class="form-control form-control-sm"
                 type="number"
@@ -217,21 +256,30 @@
             </div>
 
             <div class="col-md-10">
-              <label class="form-label">Leistungsposition</label>
+              <label class="form-label">
+                Leistungsposition
+              </label>
               <select
                 class="form-select form-select-sm"
                 name="position_service_catalog_id"
                 required
               >
-                <option value="">Bitte auswählen</option>
+                <option value="">
+                  Bitte auswählen
+                </option>
+
                 {% for service_position in service_positions %}
                 <option
                   value="{{ service_position.erp_service_catalogue_id }}"
+                  data-craft-id="{{ service_position.craft_activity_id }}"
                   {% if position.get('service_catalog_id')|int == service_position.erp_service_catalogue_id %}selected{% endif %}
                 >
-                  {{ service_position.code }} ·
-                  {{ service_position.title }} ·
-                  Gewerk: {{ service_position.craft_activity.name }}
+                  {{ service_position.code }}
+                  ·
+                  {{ service_position.title }}
+                  ·
+                  Gewerk:
+                  {{ service_position.craft_activity.name }}
                 </option>
                 {% endfor %}
               </select>
@@ -249,13 +297,16 @@
         </div>
         {% endfor %}
       </div>
+
       <div class="col-12">
         <hr>
         <h2 class="h5">Auftragsfoto</h2>
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">Foto</label>
+        <label class="form-label">
+          Foto
+        </label>
         <input
           class="form-control"
           type="file"
@@ -268,7 +319,9 @@
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">Bildbeschreibung</label>
+        <label class="form-label">
+          Bildbeschreibung
+        </label>
         <input
           class="form-control"
           name="photo_caption"
@@ -281,12 +334,14 @@
 
   <div class="card-footer d-flex justify-content-between align-items-center">
     <span class="text-muted">
-      Der Auftrag bleibt bis zur Wowiport-Bestätigung auf „Erfasst“.
+      Der Auftrag bleibt bis zur Wowiport-Bestätigung
+      auf „Erfasst“.
     </span>
     <button
       class="btn btn-primary"
+      id="submitCommission"
       type="submit"
-      {% if not company_codes or not commission_types or not users or not service_positions %}disabled{% endif %}
+      {% if not commission_types or not service_positions %}disabled{% endif %}
     >
       Auftrag erfassen
     </button>
@@ -297,7 +352,9 @@
   <div class="position-row border rounded p-3 mb-3">
     <div class="row g-3">
       <div class="col-md-2">
-        <label class="form-label">Positionscode</label>
+        <label class="form-label">
+          Positionscode
+        </label>
         <input
           class="form-control form-control-sm"
           name="position_code"
@@ -305,7 +362,9 @@
       </div>
 
       <div class="col-md-5">
-        <label class="form-label">Auftragstext</label>
+        <label class="form-label">
+          Auftragstext
+        </label>
         <input
           class="form-control form-control-sm"
           name="position_text"
@@ -314,7 +373,9 @@
       </div>
 
       <div class="col-md-3">
-        <label class="form-label">Interne Beschreibung</label>
+        <label class="form-label">
+          Interne Beschreibung
+        </label>
         <input
           class="form-control form-control-sm"
           name="position_internal_description"
@@ -322,7 +383,9 @@
       </div>
 
       <div class="col-md-2">
-        <label class="form-label">Menge</label>
+        <label class="form-label">
+          Menge
+        </label>
         <input
           class="form-control form-control-sm"
           type="number"
@@ -334,18 +397,29 @@
       </div>
 
       <div class="col-md-10">
-        <label class="form-label">Leistungsposition</label>
+        <label class="form-label">
+          Leistungsposition
+        </label>
         <select
           class="form-select form-select-sm"
           name="position_service_catalog_id"
           required
         >
-          <option value="">Bitte auswählen</option>
+          <option value="">
+            Bitte auswählen
+          </option>
+
           {% for service_position in service_positions %}
-          <option value="{{ service_position.erp_service_catalogue_id }}">
-            {{ service_position.code }} ·
-            {{ service_position.title }} ·
-            Gewerk: {{ service_position.craft_activity.name }}
+          <option
+            value="{{ service_position.erp_service_catalogue_id }}"
+            data-craft-id="{{ service_position.craft_activity_id }}"
+          >
+            {{ service_position.code }}
+            ·
+            {{ service_position.title }}
+            ·
+            Gewerk:
+            {{ service_position.craft_activity.name }}
           </option>
           {% endfor %}
         </select>
@@ -362,43 +436,408 @@
     </div>
   </div>
 </template>
-
 <script>
   const positions = document.getElementById("positions");
-  const positionTemplate = document.getElementById("positionTemplate");
-  const addPosition = document.getElementById("addPosition");
+  const positionTemplate = document.getElementById(
+    "positionTemplate"
+  );
+  const addPosition = document.getElementById(
+    "addPosition"
+  );
+  const objectSearch = document.getElementById(
+    "objectSearch"
+  );
+  const searchObject = document.getElementById(
+    "searchObject"
+  );
+  const objectResults = document.getElementById(
+    "objectResults"
+  );
+  const objectSummary = document.getElementById(
+    "objectSummary"
+  );
+  const objectType = document.getElementById(
+    "objectType"
+  );
+  const objectId = document.getElementById(
+    "objectId"
+  );
+  const submitCommission = document.getElementById(
+    "submitCommission"
+  );
+  const canCreate = {{ 'true' if commission_types and service_positions else 'false' }};
+  const initialObject = {{ (selected_object or none)|tojson }};
+
+  function objectText(item) {
+    const values = [
+      item.tenant_name,
+      item.is_vacancy
+        ? "Leerstand"
+        : null,
+      item.license_agreement?.id_num
+        ? `Vertrag ${item.license_agreement.id_num}`
+        : null,
+      item.use_unit?.id_num
+        ? `Nutzungseinheit ${item.use_unit.id_num}`
+        : null,
+      item.building?.address,
+      item.building?.id_num
+        ? `Gebäude ${item.building.id_num}`
+        : null,
+    ];
+
+    return values
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  function detailRow(label, value) {
+    if (!value) {
+      return null;
+    }
+
+    const row = document.createElement(
+      "div"
+    );
+    row.className = "mb-2";
+
+    const title = document.createElement(
+      "div"
+    );
+    title.className = "small text-muted";
+    title.textContent = label;
+
+    const content = document.createElement(
+      "div"
+    );
+    content.textContent = value;
+
+    row.append(
+      title,
+      content
+    );
+
+    return row;
+  }
+
+  function selectObject(item) {
+    objectType.value = item.object_type;
+    objectId.value = item.object_id;
+    objectSummary.replaceChildren();
+
+    const heading = document.createElement(
+      "div"
+    );
+    heading.className = "fw-semibold mb-2";
+    heading.textContent = item.label;
+    objectSummary.appendChild(heading);
+
+    const rows = [
+      detailRow(
+        "Mieter",
+        item.tenant_name
+          || (
+            item.is_vacancy
+              ? "Leerstand"
+              : null
+          )
+      ),
+      detailRow(
+        "Buchwerk",
+        item.company_code?.code
+      ),
+      detailRow(
+        "Wirtschaftseinheit",
+        [
+          item.economic_unit?.id_num,
+          item.economic_unit?.name,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      ),
+      detailRow(
+        "Gebäude",
+        [
+          item.building?.id_num,
+          item.building?.address,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      ),
+      detailRow(
+        "Nutzungseinheit",
+        [
+          item.use_unit?.id_num,
+          item.use_unit?.floor,
+          item.use_unit?.position,
+          item.use_unit?.description,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      ),
+      detailRow(
+        "Mietvertrag",
+        item.license_agreement?.id_num
+      ),
+    ];
+
+    rows
+      .filter(Boolean)
+      .forEach((row) => {
+        objectSummary.appendChild(row);
+      });
+
+    const contactPerson = document.querySelector(
+      '[name="contact_person"]'
+    );
+
+    if (
+      item.tenant_name
+      && !contactPerson.value
+    ) {
+      contactPerson.value = item.tenant_name;
+    }
+
+    objectResults.replaceChildren();
+    submitCommission.disabled = (
+      !canCreate
+      || !objectId.value
+    );
+  }
+
+  async function loadObjects() {
+    const query = objectSearch.value.trim();
+
+    objectResults.replaceChildren();
+
+    if (query.length < 2) {
+      const message = document.createElement(
+        "div"
+      );
+      message.className = "text-danger mt-2";
+      message.textContent = (
+        "Bitte mindestens zwei Zeichen eingeben."
+      );
+      objectResults.appendChild(message);
+      return;
+    }
+
+    searchObject.disabled = true;
+
+    try {
+      const searchUrl = (
+        "{{ url_for('admin.commission_object_search') }}"
+        + `?q=${encodeURIComponent(query)}`
+      );
+      const response = await fetch(searchUrl);
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          payload.message
+          || "Die Suche ist fehlgeschlagen."
+        );
+      }
+
+      if (!payload.items.length) {
+        const message = document.createElement(
+          "div"
+        );
+        message.className = "text-muted mt-2";
+        message.textContent = (
+          "Keine passenden Objekte gefunden."
+        );
+        objectResults.appendChild(message);
+        return;
+      }
+
+      payload.items.forEach((item) => {
+        const button = document.createElement(
+          "button"
+        );
+        button.type = "button";
+        button.className = (
+          "list-group-item "
+          + "list-group-item-action"
+        );
+
+        const title = document.createElement(
+          "div"
+        );
+        title.className = "fw-semibold";
+        title.textContent = item.label;
+
+        const details = document.createElement(
+          "div"
+        );
+        details.className = "small text-muted";
+        details.textContent = objectText(item);
+
+        button.append(
+          title,
+          details
+        );
+        button.addEventListener(
+          "click",
+          () => selectObject(item)
+        );
+        objectResults.appendChild(button);
+      });
+
+    } catch (error) {
+      const message = document.createElement(
+        "div"
+      );
+      message.className = "text-danger mt-2";
+      message.textContent = error.message;
+      objectResults.appendChild(message);
+
+    } finally {
+      searchObject.disabled = false;
+    }
+  }
+
+  function updateCraftOptions(
+    preferredSelect = null
+  ) {
+    const selects = Array.from(
+      positions.querySelectorAll(
+        '[name="position_service_catalog_id"]'
+      )
+    );
+    const preferredOption = (
+      preferredSelect?.selectedOptions[0]
+    );
+    const selectedCraftId = (
+      preferredOption?.dataset.craftId
+      || selects
+        .map(
+          (select) => (
+            select.selectedOptions[0]
+              ?.dataset
+              .craftId
+          )
+        )
+        .find(Boolean)
+      || null
+    );
+
+    selects.forEach((select) => {
+      Array.from(
+        select.options
+      ).forEach((option) => {
+        option.disabled = Boolean(
+          selectedCraftId
+          && option.value
+          && option.dataset.craftId
+            !== selectedCraftId
+        );
+      });
+
+      if (
+        select.value
+        && select.selectedOptions[0]
+          ?.dataset
+          .craftId
+          !== selectedCraftId
+      ) {
+        select.value = "";
+      }
+    });
+  }
 
   function updateRemoveButtons() {
-    const rows = positions.querySelectorAll(".position-row");
+    const rows = positions.querySelectorAll(
+      ".position-row"
+    );
 
     rows.forEach((row) => {
-      const button = row.querySelector(".remove-position");
+      const button = row.querySelector(
+        ".remove-position"
+      );
       button.disabled = rows.length === 1;
     });
   }
 
   function bindRemoveButton(button) {
-    button.addEventListener("click", () => {
-      button.closest(".position-row").remove();
-      updateRemoveButtons();
-    });
+    button.addEventListener(
+      "click",
+      () => {
+        button
+          .closest(".position-row")
+          .remove();
+
+        updateRemoveButtons();
+        updateCraftOptions();
+      }
+    );
   }
 
-  addPosition.addEventListener("click", () => {
-    const fragment = positionTemplate.content.cloneNode(true);
-    const button = fragment.querySelector(".remove-position");
+  addPosition.addEventListener(
+    "click",
+    () => {
+      const fragment = (
+        positionTemplate.content
+        .cloneNode(true)
+      );
+      const button = fragment.querySelector(
+        ".remove-position"
+      );
 
-    bindRemoveButton(button);
-    positions.appendChild(fragment);
-    updateRemoveButtons();
-  });
+      bindRemoveButton(button);
+      positions.appendChild(fragment);
+      updateRemoveButtons();
+      updateCraftOptions();
+    }
+  );
 
   positions
-    .querySelectorAll(".remove-position")
+    .querySelectorAll(
+      ".remove-position"
+    )
     .forEach((button) => {
       bindRemoveButton(button);
     });
 
+  positions.addEventListener(
+    "change",
+    (event) => {
+      if (
+        event.target.name
+        === "position_service_catalog_id"
+      ) {
+        updateCraftOptions(
+          event.target
+        );
+      }
+    }
+  );
+
+  searchObject.addEventListener(
+    "click",
+    loadObjects
+  );
+
+  objectSearch.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        loadObjects();
+      }
+    }
+  );
+
   updateRemoveButtons();
+  updateCraftOptions();
+
+  submitCommission.disabled = (
+    !canCreate
+    || !objectId.value
+  );
+
+  if (initialObject) {
+    selectObject(initialObject);
+  }
 </script>
 {% endblock %}

@@ -10,6 +10,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -25,6 +26,12 @@ from .extensions import db
 from .logging_service import configure_logging
 from .settings import all_definitions, grouped_definitions, settings
 from .catalog import sync_catalogs_from_wowiport
+from .object_directory import (
+    commission_creation_tasks,
+    get_commission_object_choice,
+    search_commission_objects,
+    sync_object_directory,
+)
 from sqlalchemy import or_
 from .commission_service import create_pending_commission
 from .models import (
@@ -59,6 +66,8 @@ from .models import (
     ErpOutboxState,
     WebhookEvent,
     PushEventType,
+    CraftActivityDepartmentTypeMapping,
+    WowiDepartmentType,
 )
 from .inventory_service import (
     book_inventory_movement,
@@ -298,6 +307,212 @@ def settings_page() -> Any:
     return render_template("admin/settings.html", groups=grouped_definitions(), settings=settings)
 
 
+@admin_bp.route(
+    "/admin/craft-department-mappings",
+    methods=["GET", "POST"],
+)
+@admin_required
+def craft_department_mappings() -> Any:
+    craft_activities = (
+        CraftActivity.query
+        .filter_by(
+            active=True
+        )
+        .order_by(
+            CraftActivity.name.asc()
+        )
+        .all()
+    )
+    department_types = (
+        WowiDepartmentType.query
+        .filter_by(
+            active=True
+        )
+        .order_by(
+            WowiDepartmentType.name.asc()
+        )
+        .all()
+    )
+    mappings = {
+        item.craft_activity_id: item
+        for item in (
+            CraftActivityDepartmentTypeMapping
+            .query
+            .all()
+        )
+    }
+
+    if request.method == "POST":
+        department_types_by_id = {
+            item.id: item
+            for item in department_types
+        }
+        selected_department_types = {}
+
+        for craft_activity in craft_activities:
+            raw_value = request.form.get(
+                (
+                    "department_type_"
+                    f"{craft_activity.id}"
+                ),
+                "",
+            ).strip()
+
+            if not raw_value:
+                continue
+
+            try:
+                department_type_id = int(
+                    raw_value
+                )
+            except ValueError:
+                flash(
+                    "Die ausgewählte "
+                    "Zuständigkeitsart ist ungültig.",
+                    "danger",
+                )
+                return redirect(
+                    url_for(
+                        "admin."
+                        "craft_department_mappings"
+                    )
+                )
+
+            department_type = (
+                department_types_by_id.get(
+                    department_type_id
+                )
+            )
+
+            if department_type is None:
+                flash(
+                    "Die ausgewählte "
+                    "Zuständigkeitsart ist "
+                    "nicht verfügbar.",
+                    "danger",
+                )
+                return redirect(
+                    url_for(
+                        "admin."
+                        "craft_department_mappings"
+                    )
+                )
+
+            selected_department_types[
+                craft_activity.id
+            ] = department_type
+
+        for craft_activity in craft_activities:
+            mapping = mappings.get(
+                craft_activity.id
+            )
+            department_type = (
+                selected_department_types.get(
+                    craft_activity.id
+                )
+            )
+
+            if department_type is None:
+                if mapping is not None:
+                    db.session.delete(mapping)
+
+                continue
+
+            if mapping is None:
+                mapping = (
+                    CraftActivityDepartmentTypeMapping(
+                        craft_activity=(
+                            craft_activity
+                        ),
+                    )
+                )
+                db.session.add(mapping)
+
+            mapping.department_type = (
+                department_type
+            )
+            mapping.updated_by = current_user
+            mapping.updated_at = utc_now()
+
+        audit(
+            "craft_department_mappings.update",
+            metadata={
+                "craft_activity_count": len(
+                    craft_activities
+                ),
+            },
+        )
+        db.session.commit()
+
+        flash(
+            "Gewerk-Zuordnungen gespeichert.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin."
+                "craft_department_mappings"
+            )
+        )
+
+    return render_template(
+        "admin/craft_department_mappings.html",
+        craft_activities=craft_activities,
+        department_types=department_types,
+        mappings=mappings,
+    )
+
+
+@admin_bp.post(
+    "/admin/object-directory/sync"
+)
+@admin_required
+def object_directory_sync() -> Any:
+    try:
+        result = sync_object_directory()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "object_directory_sync_failed"
+        )
+        flash(
+            "Die Wowiport-Objektdaten "
+            "konnten nicht synchronisiert werden.",
+            "danger",
+        )
+        return redirect(
+            url_for(
+                "admin."
+                "craft_department_mappings"
+            )
+        )
+
+    audit(
+        "object_directory.sync",
+        metadata=result,
+    )
+    db.session.commit()
+
+    flash(
+        "Objektdaten synchronisiert: "
+        f"{result['economic_units']} "
+        "Wirtschaftseinheiten, "
+        f"{result['jurisdictions']} "
+        "Zuständigkeiten, "
+        f"{result['buildings']} Gebäude, "
+        f"{result['use_units']} "
+        "Nutzungseinheiten.",
+        "success",
+    )
+
+    return redirect(
+        url_for(
+            "admin.craft_department_mappings"
+        )
+    )
+
+
 @admin_bp.get("/admin/users")
 @admin_required
 def users() -> Any:
@@ -457,81 +672,101 @@ def save_web_commission_photo(
 )
 @foreman_required
 def commission_create() -> Any:
-    service_positions = TimeTaskTemplate.query.join(
-        CraftActivity
-    ).filter(
-        TimeTaskTemplate.active.is_(True),
-        TimeTaskTemplate.erp_service_catalogue_id.isnot(None),
-        CraftActivity.active.is_(True),
-        CraftActivity.erp_id.isnot(None),
-    ).order_by(
-        TimeTaskTemplate.title.asc()
-    ).all()
+    service_positions = (
+        commission_creation_tasks()
+        .join(
+            CraftActivity,
+            TimeTaskTemplate.craft_activity_id
+            == CraftActivity.id,
+        )
+        .filter(
+            TimeTaskTemplate
+            .erp_service_catalogue_id
+            .isnot(None),
+            CraftActivity.active.is_(True),
+            CraftActivity.erp_id.isnot(None),
+        )
+        .order_by(
+            TimeTaskTemplate.title.asc()
+        )
+        .all()
+    )
 
-    company_codes = WowiCompanyCode.query.filter(
-        WowiCompanyCode.active.is_(True)
-    ).order_by(
-        WowiCompanyCode.code.asc()
-    ).all()
-
-    allowed_type_ids = configured_commission_type_ids()
+    allowed_type_ids = (
+        configured_commission_type_ids()
+    )
 
     if allowed_type_ids:
-        commission_types = WowiCommissionType.query.filter(
-            WowiCommissionType.active.is_(True),
-            WowiCommissionType.erp_id.in_(allowed_type_ids),
-        ).order_by(
-            WowiCommissionType.code.asc(),
-            WowiCommissionType.erp_id.asc(),
-        ).all()
+        commission_types = (
+            WowiCommissionType.query
+            .filter(
+                WowiCommissionType.active.is_(
+                    True
+                ),
+                WowiCommissionType.erp_id.in_(
+                    allowed_type_ids
+                ),
+            )
+            .order_by(
+                WowiCommissionType.code.asc(),
+                WowiCommissionType.erp_id.asc(),
+            )
+            .all()
+        )
     else:
         commission_types = []
 
-    users = User.query.filter(
-        User.is_active_flag.is_(True),
-        User.craftsman_erp_id.isnot(None),
-    ).order_by(
-        User.display_name.asc()
-    ).all()
-
     position_rows = [{}]
+    selected_object = None
 
     if request.method == "POST":
         form_data = read_commission_form()
-        position_rows = form_data["positions"] or [{}]
+        position_rows = (
+            form_data["positions"]
+            or [{}]
+        )
 
         try:
-            assigned_user_id = required_form_int(
-                request.form.get("assigned_user_id"),
-                "Handwerker",
+            object_id = int(
+                form_data.get("object_id")
+                or ""
             )
-
-            assigned_user = User.query.filter_by(
-                id=assigned_user_id,
-                is_active_flag=True,
-            ).one_or_none()
-
-            if (
-                assigned_user is None
-                or assigned_user.craftsman_erp_id is None
-            ):
-                raise ValueError(
-                    "Der ausgewählte Handwerker ist ungültig."
+            selected_object = (
+                get_commission_object_choice(
+                    str(
+                        form_data.get(
+                            "object_type"
+                        )
+                        or ""
+                    ),
+                    object_id,
                 )
+            )
+        except (
+            TypeError,
+            ValueError,
+            AttributeError,
+        ):
+            selected_object = None
 
-            commission = create_pending_commission(
-                data=form_data,
-                assigned_user=assigned_user,
-                created_by_user=current_user,
-                source=CommissionSource.WEB,
+        try:
+            commission = (
+                create_pending_commission(
+                    data=form_data,
+                    created_by_user=current_user,
+                    source=CommissionSource.WEB,
+                )
             )
 
             db.session.flush()
-            photo_upload = request.files.get("photo")
+
+            photo_upload = request.files.get(
+                "photo"
+            )
 
             if (
-                    photo_upload is not None
-                    and photo_upload.filename
+                photo_upload is not None
+                and photo_upload.filename
             ):
                 save_web_commission_photo(
                     commission=commission,
@@ -546,8 +781,12 @@ def commission_create() -> Any:
                 "commission",
                 commission.id,
                 {
-                    "public_id": commission.public_id,
-                    "assigned_user_id": assigned_user.id,
+                    "public_id": (
+                        commission.public_id
+                    ),
+                    "assigned_user_id": (
+                        commission.user_id
+                    ),
                     "position_count": len(
                         commission.positions
                     ),
@@ -556,33 +795,61 @@ def commission_create() -> Any:
 
             enqueue_commission_push(
                 commission=commission,
-                event_type=PushEventType.NEW_COMMISSION,
-                user=assigned_user,
+                event_type=(
+                    PushEventType.NEW_COMMISSION
+                ),
+                user=commission.user,
             )
 
             db.session.commit()
 
             flash(
-                "Der Auftrag wurde erfasst und zur "
-                "Übertragung an Wowiport eingeplant.",
+                "Der Auftrag wurde erfasst und "
+                "zur Übertragung an Wowiport "
+                "eingeplant.",
                 "success",
             )
 
             return redirect(
                 url_for("admin.commissions")
             )
+
         except ValueError as exc:
             db.session.rollback()
-            flash(str(exc), "danger")
+            flash(
+                str(exc),
+                "danger",
+            )
 
     return render_template(
         "admin/commission_form.html",
         service_positions=service_positions,
-        company_codes=company_codes,
         commission_types=commission_types,
-        users=users,
         position_rows=position_rows,
         form_values=request.form,
+        selected_object=selected_object,
+    )
+
+
+@admin_bp.get(
+    "/admin/commission-objects/search"
+)
+@foreman_required
+def commission_object_search() -> Any:
+    search_text = request.args.get(
+        "q",
+        "",
+    ).strip()
+
+    items = search_commission_objects(
+        search_text,
+        limit=30,
+    )
+
+    return jsonify(
+        {
+            "items": items,
+        }
     )
 
 
@@ -2218,6 +2485,12 @@ def read_commission_form() -> dict[str, Any]:
         )
 
     return {
+        "object_type": request.form.get(
+            "object_type"
+        ),
+        "object_id": request.form.get(
+            "object_id"
+        ),
         "commission_type_id": request.form.get(
             "commission_type_id"
         ),

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Gewerk-Zuständigkeiten{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Gewerk-Zuständigkeiten</h1>
+    <p class="text-muted mb-0">
+      Jedem Gewerk wird die passende Wowiport-Zuständigkeitsart zugeordnet.
+    </p>
+  </div>
+  <form
+    method="post"
+    action="{{ url_for('admin.object_directory_sync') }}"
+  >
+    <input
+      type="hidden"
+      name="csrf_token"
+      value="{{ csrf_token() }}"
+    >
+    <button
+      class="btn btn-outline-primary"
+      type="submit"
+    >
+      Objektdaten jetzt synchronisieren
+    </button>
+  </form>
+</div>
+
+{% if not department_types %}
+<div class="alert alert-warning">
+  Es sind noch keine Wowiport-Zuständigkeitsarten synchronisiert.
+</div>
+{% endif %}
+
+<form method="post" class="card shadow-sm">
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+
+  <div class="table-responsive">
+    <table class="table table-striped align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Gewerk</th>
+          <th>Wowiport-ID</th>
+          <th>Zuständigkeitsart</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for craft_activity in craft_activities %}
+        {% set mapping = mappings.get(craft_activity.id) %}
+        <tr>
+          <td>
+            <strong>
+              {{ craft_activity.name }}
+            </strong>
+
+            {% if craft_activity.code %}
+            <div class="small text-muted">
+              {{ craft_activity.code }}
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            {{ craft_activity.erp_id or "–" }}
+          </td>
+
+          <td>
+            <select
+              class="form-select"
+              name="department_type_{{ craft_activity.id }}"
+            >
+              <option value="">
+                Nicht zugeordnet
+              </option>
+
+              {% for department_type in department_types %}
+              <option
+                value="{{ department_type.id }}"
+                {% if mapping and mapping.department_type_id == department_type.id %}selected{% endif %}
+              >
+                {{ department_type.name }}
+                ·
+                {{ department_type.erp_id }}
+              </option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card-footer d-flex justify-content-end">
+    <button
+      class="btn btn-primary"
+      type="submit"
+      {% if not department_types %}disabled{% endif %}
+    >
+      Zuordnungen speichern
+    </button>
+  </div>
+</form>
+{% endblock %}

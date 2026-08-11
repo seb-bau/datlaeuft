@@ -159,7 +159,8 @@ class AppSetting(db.Model):
     label: Mapped[str] = mapped_column(db.String(200), nullable=False)
     group: Mapped[str] = mapped_column(db.String(80), nullable=False, index=True)
     is_secret: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now,
+                                                 nullable=False)
 
 
 class CraftActivity(db.Model):
@@ -179,6 +180,11 @@ class CraftActivity(db.Model):
     )
 
     service_positions: Mapped[list["TimeTaskTemplate"]] = relationship(back_populates="craft_activity")
+    department_type_mapping: Mapped["CraftActivityDepartmentTypeMapping | None"] = relationship(
+        back_populates="craft_activity",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class User(UserMixin, db.Model):
@@ -228,7 +234,8 @@ class User(UserMixin, db.Model):
         back_populates="user",
         foreign_keys="Commission.user_id",
     )
-    inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="user", foreign_keys="InventoryMovement.user_id")
+    inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="user",
+                                                                          foreign_keys="InventoryMovement.user_id")
     time_entries: Mapped[list["TimeEntry"]] = relationship(back_populates="user", foreign_keys="TimeEntry.user_id")
     craft_activities: Mapped[list["CraftActivity"]] = relationship(
         "CraftActivity",
@@ -295,6 +302,14 @@ class Commission(db.Model):
     company_code_code: Mapped[str | None] = mapped_column(
         db.String(40),
         index=True,
+    )
+    economic_unit_erp_id: Mapped[int | None] = mapped_column(
+            db.Integer,
+            index = True,
+    )
+    economic_unit_idnum: Mapped[str | None] = mapped_column(
+            db.String(100),
+            index = True,
     )
     crafts_process_type_erp_id: Mapped[int | None] = mapped_column(
         db.Integer,
@@ -446,16 +461,15 @@ class Commission(db.Model):
         back_populates="commission",
     )
 
-
     @property
     def is_actionable(self) -> bool:
         return (
-            self.erp_id is not None
-            and bool(self.erp_idnum)
-            and self.local_status not in {
-                CommissionLocalStatus.RECORDED.value,
-                CommissionLocalStatus.DELETED.value,
-            }
+                self.erp_id is not None
+                and bool(self.erp_idnum)
+                and self.local_status not in {
+                    CommissionLocalStatus.RECORDED.value,
+                    CommissionLocalStatus.DELETED.value,
+                }
         )
 
     @property
@@ -656,11 +670,11 @@ class CommissionPosition(db.Model):
     @property
     def display_text(self) -> str:
         return (
-            self.internal_description
-            or self.commission_text
-            or self.description
-            or self.code
-            or f"Position {self.position_index + 1}"
+                self.internal_description
+                or self.commission_text
+                or self.description
+                or self.code
+                or f"Position {self.position_index + 1}"
         )
 
     def to_erp_payload(self) -> dict[str, Any]:
@@ -1427,7 +1441,8 @@ class InventoryItem(db.Model):
     name: Mapped[str] = mapped_column(db.String(255), nullable=False)
     unit: Mapped[str] = mapped_column(db.String(40), default="Stk", nullable=False)
     ean: Mapped[str | None] = mapped_column(db.String(80), index=True)
-    qr_code_payload: Mapped[str] = mapped_column(db.String(160), unique=True, nullable=False, default=lambda: f"datlaeuft:item:{uuid4()}")
+    qr_code_payload: Mapped[str] = mapped_column(db.String(160), unique=True, nullable=False,
+                                                 default=lambda: f"datlaeuft:item:{uuid4()}")
     stock_quantity: Mapped[float] = mapped_column(db.Float, default=0, nullable=False)
     reorder_level: Mapped[float] = mapped_column(db.Float, default=0, nullable=False)
     active: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
@@ -1471,12 +1486,18 @@ class InventoryMovement(db.Model):
     movement_type: Mapped[str] = mapped_column(db.String(40), nullable=False, index=True)
     quantity: Mapped[float] = mapped_column(db.Float, nullable=False)
     note: Mapped[str | None] = mapped_column(db.Text)
-    usage_status: Mapped[str] = mapped_column(db.String(40), default=MaterialUsageStatus.INSTALLED.value, server_default=MaterialUsageStatus.INSTALLED.value, nullable=False, index=True)
-    source: Mapped[str] = mapped_column(db.String(40), default=MaterialSource.WAREHOUSE.value, server_default=MaterialSource.WAREHOUSE.value, nullable=False, index=True)
+    usage_status: Mapped[str] = mapped_column(db.String(40), default=MaterialUsageStatus.INSTALLED.value,
+                                              server_default=MaterialUsageStatus.INSTALLED.value, nullable=False,
+                                              index=True)
+    source: Mapped[str] = mapped_column(db.String(40), default=MaterialSource.WAREHOUSE.value,
+                                        server_default=MaterialSource.WAREHOUSE.value, nullable=False, index=True)
     deviation_reason: Mapped[str | None] = mapped_column(db.String(120))
-    review_status: Mapped[str] = mapped_column(db.String(40), default=TimeReviewStatus.OK.value, server_default=TimeReviewStatus.OK.value, nullable=False, index=True)
-    review_level: Mapped[str] = mapped_column(db.String(20), default=ReviewLevel.GREEN.value, server_default=ReviewLevel.GREEN.value, nullable=False, index=True)
-    occurred_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    review_status: Mapped[str] = mapped_column(db.String(40), default=TimeReviewStatus.OK.value,
+                                               server_default=TimeReviewStatus.OK.value, nullable=False, index=True)
+    review_level: Mapped[str] = mapped_column(db.String(20), default=ReviewLevel.GREEN.value,
+                                              server_default=ReviewLevel.GREEN.value, nullable=False, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False,
+                                                  index=True)
     reviewed_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
@@ -1510,7 +1531,8 @@ class TimeTaskTemplate(db.Model):
     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
     craft_activity: Mapped[CraftActivity | None] = relationship(back_populates="service_positions")
-    expected_materials: Mapped[list["TimeTaskExpectedMaterial"]] = relationship(back_populates="task_template", cascade="all, delete-orphan")
+    expected_materials: Mapped[list["TimeTaskExpectedMaterial"]] = relationship(back_populates="task_template",
+                                                                                cascade="all, delete-orphan")
 
 
 class TimeTaskExpectedMaterial(db.Model):
@@ -1548,8 +1570,10 @@ class TimeEntry(db.Model):
     note: Mapped[str | None] = mapped_column(db.Text)
     deviation_minutes: Mapped[int] = mapped_column(db.Integer, default=0, nullable=False)
     deviation_percent: Mapped[float] = mapped_column(db.Float, default=0, nullable=False)
-    review_status: Mapped[str] = mapped_column(db.String(40), default=TimeReviewStatus.OK.value, nullable=False, index=True)
-    review_level: Mapped[str] = mapped_column(db.String(20), default=ReviewLevel.GREEN.value, server_default=ReviewLevel.GREEN.value, nullable=False, index=True)
+    review_status: Mapped[str] = mapped_column(db.String(40), default=TimeReviewStatus.OK.value, nullable=False,
+                                               index=True)
+    review_level: Mapped[str] = mapped_column(db.String(20), default=ReviewLevel.GREEN.value,
+                                              server_default=ReviewLevel.GREEN.value, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
     reviewed_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
@@ -1571,7 +1595,8 @@ class WebhookEvent(db.Model):
     payload: Mapped[dict[str, Any]] = mapped_column(db.JSON, nullable=False)
     processed: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
     message: Mapped[str | None] = mapped_column(db.Text)
-    received_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    received_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False,
+                                                  index=True)
 
     attempt_count: Mapped[int] = mapped_column(
         db.Integer,
@@ -1601,7 +1626,8 @@ class AuditLog(db.Model):
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     ip_address: Mapped[str | None] = mapped_column(db.String(80))
     user_agent: Mapped[str | None] = mapped_column(db.String(255))
-    created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False,
+                                                 index=True)
 
     actor: Mapped[User | None] = relationship()
 
@@ -1615,12 +1641,317 @@ class ApiTokenBlocklist(db.Model):
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class WowiDepartmentType(db.Model):
+    __tablename__ = "wowi_department_type"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+        index=True,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        nullable=False,
+    )
+    synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    craft_activity_mappings: Mapped[
+        list["CraftActivityDepartmentTypeMapping"]
+    ] = relationship(
+        back_populates="department_type",
+    )
+
+
+class CraftActivityDepartmentTypeMapping(db.Model):
+    __tablename__ = "craft_activity_department_type_mapping"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    craft_activity_id: Mapped[int] = mapped_column(
+        db.ForeignKey("craft_activity.id"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    department_type_id: Mapped[int] = mapped_column(
+        db.ForeignKey("wowi_department_type.id"),
+        nullable=False,
+        index=True,
+    )
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    craft_activity: Mapped[CraftActivity] = relationship(
+        back_populates="department_type_mapping"
+    )
+    department_type: Mapped[WowiDepartmentType] = relationship(
+        back_populates="craft_activity_mappings"
+    )
+    updated_by: Mapped[User | None] = relationship()
+
+
+class WowiEconomicUnit(db.Model):
+    __tablename__ = "wowi_economic_unit"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    id_num: Mapped[str | None] = mapped_column(
+        db.String(100),
+        index=True,
+    )
+    name: Mapped[str | None] = mapped_column(
+        db.String(255),
+        index=True,
+    )
+    location: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    company_code_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    company_code_code: Mapped[str | None] = mapped_column(
+        db.String(40),
+        index=True,
+    )
+    universal_responsibility: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        nullable=False,
+    )
+    universal_responsible_official_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    universal_responsible_person_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        nullable=False,
+    )
+    synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    buildings: Mapped[list["WowiBuilding"]] = relationship(
+        back_populates="economic_unit"
+    )
+    use_units: Mapped[list["WowiUseUnit"]] = relationship(
+        back_populates="economic_unit"
+    )
+    jurisdictions: Mapped[
+        list["WowiEconomicUnitJurisdiction"]
+    ] = relationship(
+        back_populates="economic_unit",
+        cascade="all, delete-orphan",
+    )
+
+
+class WowiEconomicUnitJurisdiction(db.Model):
+    __tablename__ = "wowi_economic_unit_jurisdiction"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    economic_unit_id: Mapped[int] = mapped_column(
+        db.ForeignKey("wowi_economic_unit.id"),
+        nullable=False,
+        index=True,
+    )
+    department_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    department_name: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    department_type_erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+        index=True,
+    )
+    department_type_name: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    responsible_official_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    responsible_person_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    responsible_name: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    main_jurisdiction: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        nullable=False,
+    )
+    synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    economic_unit: Mapped[WowiEconomicUnit] = relationship(
+        back_populates="jurisdictions"
+    )
+
+
+class WowiLicenseAgreement(db.Model):
+    __tablename__ = "wowi_license_agreement"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    id_num: Mapped[str | None] = mapped_column(
+        db.String(100),
+        index=True,
+    )
+    use_unit_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    use_unit_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("wowi_use_unit.id"),
+        index=True,
+    )
+    start_date: Mapped[date | None] = mapped_column(db.Date)
+    end_date: Mapped[date | None] = mapped_column(db.Date)
+    is_vacancy: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        nullable=False,
+        index=True,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        nullable=False,
+    )
+    synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    use_unit: Mapped["WowiUseUnit | None"] = relationship(
+        back_populates="license_agreements"
+    )
+    contractors: Mapped[list["WowiContractor"]] = relationship(
+        back_populates="license_agreement",
+        cascade="all, delete-orphan",
+    )
+
+
+class WowiContractor(db.Model):
+    __tablename__ = "wowi_contractor"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    license_agreement_erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+        index=True,
+    )
+    license_agreement_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("wowi_license_agreement.id"),
+        index=True,
+    )
+    person_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    display_name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+        index=True,
+    )
+    contractual_use_from: Mapped[date | None] = mapped_column(
+        db.Date
+    )
+    contractual_use_to: Mapped[date | None] = mapped_column(
+        db.Date
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        nullable=False,
+    )
+    synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    license_agreement: Mapped[
+        WowiLicenseAgreement | None
+    ] = relationship(
+        back_populates="contractors"
+    )
+
+
 class WowiBuilding(db.Model):
     __tablename__ = "wowi_building"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     erp_id: Mapped[int] = mapped_column(db.Integer, unique=True, index=True, nullable=False)
     id_num: Mapped[str | None] = mapped_column(db.String(100), index=True)
+    economic_unit_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    economic_unit_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("wowi_economic_unit.id"),
+        index=True,
+    )
     street: Mapped[str | None] = mapped_column(db.String(255))
     zip_code: Mapped[str | None] = mapped_column(db.String(20))
     town: Mapped[str | None] = mapped_column(db.String(255))
@@ -1632,6 +1963,14 @@ class WowiBuilding(db.Model):
     exit_date: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     active: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    economic_unit: Mapped[
+        WowiEconomicUnit | None
+    ] = relationship(
+        back_populates="buildings"
+    )
+    use_units: Mapped[list["WowiUseUnit"]] = relationship(
+        back_populates="building"
+    )
 
 
 class WowiUseUnit(db.Model):
@@ -1640,12 +1979,38 @@ class WowiUseUnit(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     erp_id: Mapped[int] = mapped_column(db.Integer, unique=True, index=True, nullable=False)
     id_num: Mapped[str | None] = mapped_column(db.String(100), index=True)
+    economic_unit_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    economic_unit_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("wowi_economic_unit.id"),
+        index=True,
+    )
     building_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
     building_id: Mapped[int | None] = mapped_column(db.ForeignKey("wowi_building.id"), index=True)
     floor_name: Mapped[str | None] = mapped_column(db.String(255))
     position_name: Mapped[str | None] = mapped_column(db.String(255))
     description_of_position: Mapped[str | None] = mapped_column(db.String(255))
     address: Mapped[str | None] = mapped_column(db.String(500))
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        nullable=False,
+    )
     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
-
-    building: Mapped[WowiBuilding | None] = relationship()
+    economic_unit: Mapped[
+        WowiEconomicUnit | None
+    ] = relationship(
+        back_populates="use_units"
+    )
+    building: Mapped[
+        WowiBuilding | None
+    ] = relationship(
+        back_populates="use_units"
+    )
+    license_agreements: Mapped[
+        list[WowiLicenseAgreement]
+    ] = relationship(
+        back_populates="use_unit"
+    )

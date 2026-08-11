@@ -723,6 +723,51 @@ class WowiportService:
 
         return []
 
+    def read_all_rows(
+        self,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        limit: int = 100,
+        paginate: bool = True,
+    ) -> list[dict[str, Any]]:
+        rows = []
+        offset = 0
+        base_params = dict(params or {})
+        previous_page = None
+
+        if not paginate:
+            return self._force_read_rows(
+                endpoint,
+                base_params,
+            )
+
+        while True:
+            page_params = {
+                **base_params,
+                "limit": limit,
+                "offset": offset,
+            }
+            page = self._force_read_rows(
+                endpoint,
+                page_params,
+            )
+
+            if previous_page == page:
+                raise RuntimeError(
+                    "OpenWowi-Paginierung wiederholt "
+                    f"Seite für {endpoint}"
+                )
+
+            rows.extend(page)
+
+            if len(page) < limit:
+                break
+
+            offset += len(page)
+            previous_page = page
+
+        return rows
+
     def _resolve_sales_tax_id(
         self,
         company_code_id: int,
@@ -1510,6 +1555,7 @@ class WowiportService:
             external_identification_number=external_identification_number,
             commission_type_id=commission.commission_type_erp_id,
             creditor_id=resolved_creditor_id,
+            economic_unit_id=commission.economic_unit_erp_id,
             use_unit_id=commission.use_unit_id,
             building_id=commission.building_erp_id,
             license_agreement_id=commission.license_agreement_id,

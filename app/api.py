@@ -77,6 +77,10 @@ from .commission_service import (
     normalize_public_id,
     integer_set
 )
+from .object_directory import (
+    commission_creation_tasks,
+    search_commission_objects,
+)
 from .attachment_service import (
     commission_attachment_path,
 )
@@ -349,7 +353,7 @@ def commission_users() -> Any:
 @api_bp.get("/commissions/create-options")
 @jwt_required()
 def commission_create_options() -> Any:
-    user = current_api_user()
+    current_api_user()
 
     allowed_type_ids = integer_set(
         settings.get(
@@ -358,29 +362,43 @@ def commission_create_options() -> Any:
     )
 
     if allowed_type_ids:
-        commission_types = WowiCommissionType.query.filter(
-            WowiCommissionType.active.is_(True),
-            WowiCommissionType.erp_id.in_(
-                allowed_type_ids
-            ),
-        ).order_by(
-            WowiCommissionType.code.asc(),
-            WowiCommissionType.erp_id.asc(),
-        ).all()
+        commission_types = (
+            WowiCommissionType.query.filter(
+                WowiCommissionType.active.is_(
+                    True
+                ),
+                WowiCommissionType.erp_id.in_(
+                    allowed_type_ids
+                ),
+            )
+            .order_by(
+                WowiCommissionType.code.asc(),
+                WowiCommissionType.erp_id.asc(),
+            )
+            .all()
+        )
     else:
         commission_types = []
 
-    company_codes = WowiCompanyCode.query.filter(
-        WowiCompanyCode.active.is_(True)
-    ).order_by(
-        WowiCompanyCode.code.asc()
-    ).all()
+    company_codes = (
+        WowiCompanyCode.query.filter(
+            WowiCompanyCode.active.is_(True)
+        )
+        .order_by(
+            WowiCompanyCode.code.asc()
+        )
+        .all()
+    )
+
+    can_create = (
+        bool(commission_types)
+        and commission_creation_tasks()
+        .first() is not None
+    )
 
     return jsonify(
         {
-            "can_create": (
-                user.craftsman_erp_id is not None
-            ),
+            "can_create": can_create,
             "company_codes": [
                 {
                     "id": item.erp_id,
@@ -416,7 +434,6 @@ def create_commission() -> Any:
     try:
         commission = create_pending_commission(
             data=data,
-            assigned_user=user,
             created_by_user=user,
             source=CommissionSource.IOS,
         )
@@ -429,7 +446,7 @@ def create_commission() -> Any:
             commission.id,
             {
                 "public_id": commission.public_id,
-                "assigned_user_id": user.id,
+                "assigned_user_id": commission.user_id,
                 "position_count": len(
                     commission.positions
                 ),
@@ -488,6 +505,127 @@ def commission_history(
                 serialize_history_entry(entry)
                 for entry in entries
             ]
+        }
+    )
+
+
+@api_bp.get("/commissions/create-tasks")
+@jwt_required()
+def commission_create_tasks() -> Any:
+    current_api_user()
+
+    search_text = request.args.get(
+        "q",
+        "",
+    ).strip()
+
+    try:
+        limit = int(
+            request.args.get(
+                "limit",
+                100,
+            )
+        )
+    except ValueError:
+        limit = 100
+
+    limit = min(
+        max(limit, 1),
+        250,
+    )
+
+    query = (
+        commission_creation_tasks()
+        .outerjoin(
+            CraftActivity,
+            TimeTaskTemplate.craft_activity_id
+            == CraftActivity.id,
+        )
+    )
+
+    terms = [
+        item
+        for item in search_text.split()
+        if item
+    ]
+
+    for term in terms:
+        like_term = f"%{term}%"
+        query = query.filter(
+            or_(
+                TimeTaskTemplate.code.ilike(
+                    like_term
+                ),
+                TimeTaskTemplate.title.ilike(
+                    like_term
+                ),
+                TimeTaskTemplate.erp_idnum.ilike(
+                    like_term
+                ),
+                CraftActivity.code.ilike(
+                    like_term
+                ),
+                CraftActivity.name.ilike(
+                    like_term
+                ),
+            )
+        )
+
+    items = (
+        query
+        .order_by(
+            CraftActivity.name
+            .asc()
+            .nulls_last(),
+            TimeTaskTemplate.title.asc(),
+        )
+        .limit(limit)
+        .all()
+    )
+
+    return jsonify(
+        {
+            "items": [
+                serialize_time_task(item)
+                for item in items
+            ]
+        }
+    )
+
+
+@api_bp.get("/commission-objects/search")
+@jwt_required()
+def commission_objects_search() -> Any:
+    current_api_user()
+
+    search_text = request.args.get(
+        "q",
+        "",
+    ).strip()
+
+    try:
+        limit = int(
+            request.args.get(
+                "limit",
+                30,
+            )
+        )
+    except ValueError:
+        limit = 30
+
+    limit = min(
+        max(limit, 1),
+        50,
+    )
+
+    items = search_commission_objects(
+        search_text,
+        limit=limit,
+    )
+
+    return jsonify(
+        {
+            "items": items,
         }
     )
 
