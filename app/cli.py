@@ -228,19 +228,24 @@ def register_cli(app: Flask) -> None:
             f"Auftragskontexte synchronisiert: {synced_count}"
         )
 
-    @app.cli.command("datlaeuft-sync-service-catalog")
+    @app.cli.command(
+        "datlaeuft-sync-service-catalog"
+    )
     def sync_service_catalog() -> None:
         result = sync_catalogs_from_wowiport()
         db.session.commit()
 
         click.echo(
-            f"Gewerke_neu={result.craft_activities_created} "
-            f"Gewerke_aktualisiert={result.craft_activities_updated} "
-            f"Leistungen_neu={result.service_positions_created} "
+            f"Gewerke_neu="
+            f"{result.craft_activities_created} "
+            f"Gewerke_aktualisiert="
+            f"{result.craft_activities_updated} "
+            f"Leistungen_neu="
+            f"{result.service_positions_created} "
             f"Leistungen_aktualisiert="
             f"{result.service_positions_updated} "
-            f"Leistungen_ohne_Zuordnung_übersprungen="
-            f"{result.service_positions_skipped_unassigned_craft_activity} "
+            f"Leistungen_deaktivierte_Gewerke="
+            f"{result.service_positions_skipped_disabled_craft_activity} "
             f"Leistungen_ohne_Gewerk="
             f"{result.service_positions_without_craft_activity} "
             f"Leistungen_deaktiviert="

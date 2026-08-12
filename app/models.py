@@ -171,6 +171,12 @@ class CraftActivity(db.Model):
     code: Mapped[str | None] = mapped_column(db.String(100), index=True)
     name: Mapped[str] = mapped_column(db.String(255), nullable=False, index=True)
     active: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
+    app_enabled: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
     users: Mapped[list["User"]] = relationship(

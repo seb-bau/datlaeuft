@@ -1392,6 +1392,9 @@ def commission_creation_tasks():
             ),
             TimeTaskTemplate.craft_activity.has(
                 CraftActivity.active.is_(True)
+                & CraftActivity.app_enabled.is_(
+                    True
+                )
                 & CraftActivity.erp_id.isnot(None)
             ),
             WowiDepartment.active.is_(True),

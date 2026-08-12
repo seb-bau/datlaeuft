@@ -32,7 +32,7 @@ from .object_directory import (
     search_commission_objects,
     sync_object_directory,
 )
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from .commission_service import create_pending_commission
 from .models import (
     Commission,
@@ -308,6 +308,71 @@ def settings_page() -> Any:
 
 
 @admin_bp.route(
+    "/admin/craft-activities",
+    methods=["GET", "POST"],
+)
+@admin_required
+def craft_activities() -> Any:
+    items = (
+        CraftActivity.query
+        .order_by(
+            CraftActivity.name.asc(),
+            CraftActivity.erp_id.asc(),
+        )
+        .all()
+    )
+
+    if request.method == "POST":
+        enabled_ids = set()
+
+        for value in request.form.getlist(
+            "enabled_craft_activity_ids"
+        ):
+            try:
+                enabled_ids.add(int(value))
+            except ValueError:
+                continue
+
+        for item in items:
+            item.app_enabled = (
+                item.active
+                and item.id in enabled_ids
+            )
+
+        enabled_count = sum(
+            1
+            for item in items
+            if item.app_enabled
+        )
+
+        audit(
+            "craft_activities.app_access.update",
+            metadata={
+                "enabled_count": enabled_count,
+                "total_count": len(items),
+            },
+        )
+        db.session.commit()
+
+        flash(
+            f"{enabled_count} Gewerke sind "
+            "für die Anwendung freigegeben.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin.craft_activities"
+            )
+        )
+
+    return render_template(
+        "admin/craft_activities.html",
+        items=items,
+    )
+
+
+@admin_bp.route(
     "/admin/craft-department-mappings",
     methods=["GET", "POST"],
 )
@@ -315,8 +380,9 @@ def settings_page() -> Any:
 def craft_department_mappings() -> Any:
     craft_activities = (
         CraftActivity.query
-        .filter_by(
-            active=True
+        .filter(
+            CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
         )
         .order_by(
             CraftActivity.name.asc()
@@ -527,7 +593,17 @@ def import_users_from_entra() -> Any:
 @admin_required
 def user_create() -> Any:
     item = User(email="", display_name="")
-    craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+    craft_activities = (
+        CraftActivity.query
+        .filter(
+            CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
+        )
+        .order_by(
+            CraftActivity.name.asc()
+        )
+        .all()
+    )
 
     if request.method == "POST":
         db.session.add(item)
@@ -539,14 +615,29 @@ def user_create() -> Any:
         flash("Benutzer gespeichert.", "success")
         return redirect(url_for("admin.users"))
 
-    return render_template("admin/user_form.html", item=item, craft_activities=craft_activities)
+    return render_template(
+        "admin/user_form.html",
+        item=item,
+        craft_activities=craft_activities,
+        selected_craft_activities=[],
+    )
 
 
 @admin_bp.route("/admin/users/<int:user_id>", methods=["GET", "POST"])
 @admin_required
 def user_edit(user_id: int) -> Any:
     item = db.get_or_404(User, user_id)
-    craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+    craft_activities = (
+        CraftActivity.query
+        .filter(
+            CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
+        )
+        .order_by(
+            CraftActivity.name.asc()
+        )
+        .all()
+    )
 
     if request.method == "POST":
         save_user_form(item)
@@ -556,7 +647,23 @@ def user_edit(user_id: int) -> Any:
         flash("Benutzer gespeichert.", "success")
         return redirect(url_for("admin.users"))
 
-    return render_template("admin/user_form.html", item=item, craft_activities=craft_activities)
+    selected_craft_activities = [
+        activity
+        for activity in item.craft_activities
+        if (
+            activity.active
+            and activity.app_enabled
+        )
+    ]
+
+    return render_template(
+        "admin/user_form.html",
+        item=item,
+        craft_activities=craft_activities,
+        selected_craft_activities=(
+            selected_craft_activities
+        ),
+    )
 
 
 def save_web_commission_photo(
@@ -677,6 +784,7 @@ def commission_create() -> Any:
             .erp_service_catalogue_id
             .isnot(None),
             CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
             CraftActivity.erp_id.isnot(None),
         )
         .order_by(
@@ -1735,7 +1843,17 @@ def inventory_qr(item_id: int) -> Response:
 @admin_bp.route("/admin/time-templates", methods=["GET", "POST"])
 @foreman_required
 def time_templates() -> Any:
-    craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+    craft_activities = (
+        CraftActivity.query
+        .filter(
+            CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
+        )
+        .order_by(
+            CraftActivity.name.asc()
+        )
+        .all()
+    )
 
     if request.method == "POST":
         item = TimeTaskTemplate()
@@ -1752,9 +1870,30 @@ def time_templates() -> Any:
     status_filter = request.args.get("status", "active").strip()
     source_filter = request.args.get("source", "").strip()
 
-    query = TimeTaskTemplate.query.outerjoin(
-        CraftActivity,
-        TimeTaskTemplate.craft_activity_id == CraftActivity.id,
+    query = (
+        TimeTaskTemplate.query
+        .outerjoin(
+            CraftActivity,
+            (
+                    TimeTaskTemplate.craft_activity_id
+                    == CraftActivity.id
+            ),
+        )
+        .filter(
+            or_(
+                TimeTaskTemplate
+                .craft_activity_id
+                .is_(None),
+                and_(
+                    CraftActivity.active.is_(
+                        True
+                    ),
+                    CraftActivity.app_enabled.is_(
+                        True
+                    ),
+                ),
+            )
+        )
     )
 
     if search_text:
@@ -1800,7 +1939,23 @@ def time_templates() -> Any:
 @foreman_required
 def time_template_edit(item_id: int) -> Any:
     item = db.get_or_404(TimeTaskTemplate, item_id)
-    craft_activities = CraftActivity.query.filter_by(active=True).order_by(CraftActivity.name.asc()).all()
+    craft_activities = (
+        CraftActivity.query
+        .filter(
+            CraftActivity.active.is_(True),
+            or_(
+                CraftActivity.app_enabled.is_(
+                    True
+                ),
+                CraftActivity.id
+                == item.craft_activity_id,
+            ),
+        )
+        .order_by(
+            CraftActivity.name.asc()
+        )
+        .all()
+    )
     inventory_items = InventoryItem.query.filter_by(active=True).order_by(InventoryItem.name.asc()).all()
 
     if request.method == "POST":
@@ -1887,31 +2042,70 @@ def material_movement_review(item_id: int, decision: str) -> Any:
     return redirect(url_for("admin.material_movements"))
 
 
-@admin_bp.post("/admin/service-catalog/sync")
+@admin_bp.post(
+    "/admin/service-catalog/sync"
+)
 @foreman_required
 def service_catalog_sync() -> Any:
     result = sync_catalogs_from_wowiport()
-    audit("service_catalog.sync", metadata={
-        "craft_activities_created": result.craft_activities_created,
-        "craft_activities_updated": result.craft_activities_updated,
-        "service_positions_created": result.service_positions_created,
-        "service_positions_updated": result.service_positions_updated,
-        "service_positions_skipped_unassigned_craft_activity": result.service_positions_skipped_unassigned_craft_activity,
-        "service_positions_without_craft_activity": result.service_positions_without_craft_activity,
-        "service_positions_deactivated": result.service_positions_deactivated,
-    })
+
+    audit(
+        "service_catalog.sync",
+        metadata={
+            "craft_activities_created": (
+                result.craft_activities_created
+            ),
+            "craft_activities_updated": (
+                result.craft_activities_updated
+            ),
+            "service_positions_created": (
+                result.service_positions_created
+            ),
+            "service_positions_updated": (
+                result.service_positions_updated
+            ),
+            (
+                "service_positions_skipped_"
+                "disabled_craft_activity"
+            ): (
+                result
+                .service_positions_skipped_disabled_craft_activity
+            ),
+            "service_positions_without_craft_activity": (
+                result
+                .service_positions_without_craft_activity
+            ),
+            "service_positions_deactivated": (
+                result
+                .service_positions_deactivated
+            ),
+        },
+    )
     db.session.commit()
+
     flash(
-        f"Sync abgeschlossen: {result.craft_activities_created} Gewerke neu, "
-        f"{result.craft_activities_updated} Gewerke aktualisiert, "
-        f"{result.service_positions_created} Leistungspositionen neu, "
-        f"{result.service_positions_updated} Leistungspositionen aktualisiert, "
-        f"{result.service_positions_skipped_unassigned_craft_activity} wegen nicht zugeordnetem Gewerk übersprungen, "
-        f"{result.service_positions_without_craft_activity} ohne Gewerk, "
-        f"{result.service_positions_deactivated} deaktiviert.",
+        "Sync abgeschlossen: "
+        f"{result.craft_activities_created} "
+        "Gewerke neu, "
+        f"{result.craft_activities_updated} "
+        "Gewerke aktualisiert, "
+        f"{result.service_positions_created} "
+        "Leistungspositionen neu, "
+        f"{result.service_positions_updated} "
+        "Leistungspositionen aktualisiert, "
+        f"{result.service_positions_skipped_disabled_craft_activity} "
+        "wegen global deaktiviertem Gewerk "
+        "übersprungen, "
+        f"{result.service_positions_without_craft_activity} "
+        "ohne Gewerk, "
+        f"{result.service_positions_deactivated} "
+        "deaktiviert.",
         "success",
     )
-    return redirect(url_for("admin.time_templates"))
+
+    return redirect(
+        url_for("admin.time_templates")
+    )
 
 
 def save_user_form(item: User) -> None:
@@ -1932,23 +2126,85 @@ def save_user_form(item: User) -> None:
         item.set_password(password)
 
 
-def save_user_craft_activities(item: User) -> None:
-    selected_activity_ids = []
+def save_user_craft_activities(
+    item: User,
+) -> None:
+    selected_activity_ids = set()
 
-    for value in request.form.getlist("craft_activity_ids"):
+    for value in request.form.getlist(
+        "craft_activity_ids"
+    ):
         try:
-            selected_activity_ids.append(int(value))
+            selected_activity_ids.add(
+                int(value)
+            )
         except ValueError:
             continue
 
-    if not selected_activity_ids:
-        item.craft_activities = []
-        return
+    current_activity_ids = {
+        activity.id
+        for activity in item.craft_activities
+    }
+    retained_activity_ids = set()
 
-    item.craft_activities = CraftActivity.query.filter(
-        CraftActivity.id.in_(selected_activity_ids),
-        CraftActivity.active.is_(True),
-    ).order_by(CraftActivity.name.asc()).all()
+    for value in request.form.getlist(
+        "retained_craft_activity_ids"
+    ):
+        try:
+            activity_id = int(value)
+        except ValueError:
+            continue
+
+        if activity_id in current_activity_ids:
+            retained_activity_ids.add(
+                activity_id
+            )
+
+    selected_activities = []
+
+    if selected_activity_ids:
+        selected_activities = (
+            CraftActivity.query
+            .filter(
+                CraftActivity.id.in_(
+                    selected_activity_ids
+                ),
+                CraftActivity.active.is_(True),
+                CraftActivity.app_enabled.is_(
+                    True
+                ),
+            )
+            .all()
+        )
+
+    retained_activities = []
+
+    if retained_activity_ids:
+        retained_activities = (
+            CraftActivity.query
+            .filter(
+                CraftActivity.id.in_(
+                    retained_activity_ids
+                )
+            )
+            .all()
+        )
+
+    activities_by_id = {
+        activity.id: activity
+        for activity in (
+            selected_activities
+            + retained_activities
+        )
+    }
+
+    item.craft_activities = sorted(
+        activities_by_id.values(),
+        key=lambda activity: (
+            activity.name.lower(),
+            activity.id,
+        ),
+    )
 
 
 def save_inventory_location_form(

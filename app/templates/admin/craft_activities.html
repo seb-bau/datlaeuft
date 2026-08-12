@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}Gewerke{% endblock %}
+{% block content %}
+<div
+  class="d-flex justify-content-between align-items-center mb-4"
+>
+  <div>
+    <h1 class="h3 mb-1">
+      Gewerke
+    </h1>
+    <p class="text-muted mb-0">
+      Nur freigegebene Gewerke und ihre
+      Leistungspositionen werden in der
+      Anwendung angezeigt.
+    </p>
+  </div>
+
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.time_templates') }}"
+  >
+    Leistungspositionen
+  </a>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+
+  <div class="card-body border-bottom">
+    <div class="row g-3 align-items-end">
+      <div class="col-lg-6">
+        <label
+          class="form-label"
+          for="craftActivitySearch"
+        >
+          Suche
+        </label>
+        <input
+          id="craftActivitySearch"
+          class="form-control"
+          type="search"
+          placeholder="Name, Code oder Wowiport-ID"
+        >
+      </div>
+
+      <div class="col-lg-6">
+        <div class="d-flex flex-wrap gap-2">
+          <button
+            id="enableVisibleCraftActivities"
+            class="btn btn-outline-primary"
+            type="button"
+          >
+            Sichtbare aktivieren
+          </button>
+
+          <button
+            id="disableVisibleCraftActivities"
+            class="btn btn-outline-secondary"
+            type="button"
+          >
+            Sichtbare deaktivieren
+          </button>
+
+          <button
+            id="invertVisibleCraftActivities"
+            class="btn btn-outline-secondary"
+            type="button"
+          >
+            Sichtbare umkehren
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table
+      class="table table-striped align-middle mb-0"
+    >
+      <thead>
+        <tr>
+          <th style="width: 100px;">
+            Freigabe
+          </th>
+          <th>Gewerk</th>
+          <th>Code</th>
+          <th>Wowiport-ID</th>
+          <th>Wowiport-Status</th>
+          <th class="text-end">
+            Leistungspositionen
+          </th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for item in items %}
+        <tr
+          class="craft-activity-row{% if not item.active %} table-secondary{% endif %}"
+          data-search="{{ item.name|lower }} {{ item.code|lower if item.code else '' }} {{ item.erp_id or '' }}"
+        >
+          <td>
+            <div class="form-check">
+              <input
+                class="form-check-input craft-activity-checkbox"
+                type="checkbox"
+                name="enabled_craft_activity_ids"
+                value="{{ item.id }}"
+                {% if item.app_enabled and item.active %}checked{% endif %}
+                {% if not item.active %}disabled{% endif %}
+              >
+            </div>
+          </td>
+
+          <td>
+            <strong>
+              {{ item.name }}
+            </strong>
+          </td>
+
+          <td>
+            {{ item.code or "–" }}
+          </td>
+
+          <td>
+            {{ item.erp_id or "–" }}
+          </td>
+
+          <td>
+            {% if item.active %}
+            <span class="badge text-bg-success">
+              Aktiv
+            </span>
+            {% else %}
+            <span class="badge text-bg-secondary">
+              Inaktiv
+            </span>
+            {% endif %}
+          </td>
+
+          <td class="text-end">
+            {{ item.service_positions|length }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div
+    class="card-footer d-flex justify-content-between align-items-center"
+  >
+    <span
+      id="craftActivitySelectionCount"
+      class="text-muted"
+    ></span>
+
+    <button
+      class="btn btn-primary"
+      type="submit"
+    >
+      Freigaben speichern
+    </button>
+  </div>
+</form>
+
+<script>
+  const craftActivitySearch =
+    document.getElementById(
+      "craftActivitySearch"
+    );
+
+  const craftActivityRows = Array.from(
+    document.querySelectorAll(
+      ".craft-activity-row"
+    )
+  );
+
+  const selectionCount =
+    document.getElementById(
+      "craftActivitySelectionCount"
+    );
+
+  function visibleCheckboxes() {
+    return craftActivityRows
+      .filter((row) => {
+        return !row.classList.contains(
+          "d-none"
+        );
+      })
+      .map((row) => {
+        return row.querySelector(
+          ".craft-activity-checkbox"
+        );
+      })
+      .filter((checkbox) => {
+        return (
+          checkbox
+          && !checkbox.disabled
+        );
+      });
+  }
+
+  function updateSelectionCount() {
+    const enabledCount = craftActivityRows
+      .map((row) => {
+        return row.querySelector(
+          ".craft-activity-checkbox"
+        );
+      })
+      .filter((checkbox) => {
+        return (
+          checkbox
+          && checkbox.checked
+        );
+      })
+      .length;
+
+    selectionCount.textContent =
+      `${enabledCount} Gewerke freigegeben`;
+  }
+
+  craftActivitySearch.addEventListener(
+    "input",
+    () => {
+      const query = craftActivitySearch
+        .value
+        .trim()
+        .toLowerCase();
+
+      craftActivityRows.forEach((row) => {
+        const searchText =
+          row.dataset.search || "";
+
+        row.classList.toggle(
+          "d-none",
+          (
+            query.length > 0
+            && !searchText.includes(query)
+          )
+        );
+      });
+    }
+  );
+
+  document
+    .getElementById(
+      "enableVisibleCraftActivities"
+    )
+    .addEventListener(
+      "click",
+      () => {
+        visibleCheckboxes().forEach(
+          (checkbox) => {
+            checkbox.checked = true;
+          }
+        );
+
+        updateSelectionCount();
+      }
+    );
+
+  document
+    .getElementById(
+      "disableVisibleCraftActivities"
+    )
+    .addEventListener(
+      "click",
+      () => {
+        visibleCheckboxes().forEach(
+          (checkbox) => {
+            checkbox.checked = false;
+          }
+        );
+
+        updateSelectionCount();
+      }
+    );
+
+  document
+    .getElementById(
+      "invertVisibleCraftActivities"
+    )
+    .addEventListener(
+      "click",
+      () => {
+        visibleCheckboxes().forEach(
+          (checkbox) => {
+            checkbox.checked =
+              !checkbox.checked;
+          }
+        );
+
+        updateSelectionCount();
+      }
+    );
+
+  craftActivityRows.forEach((row) => {
+    const checkbox = row.querySelector(
+      ".craft-activity-checkbox"
+    );
+
+    checkbox?.addEventListener(
+      "change",
+      updateSelectionCount
+    );
+  });
+
+  updateSelectionCount();
+</script>
+{% endblock %}

@@ -286,14 +286,15 @@ def create_pending_commission(
         )
 
         if (
-            craft_activity is None
-            or not craft_activity.active
-            or craft_activity.erp_id is None
+                craft_activity is None
+                or not craft_activity.active
+                or not craft_activity.app_enabled
+                or craft_activity.erp_id is None
         ):
             raise ValueError(
                 "Der Leistungsposition "
                 f"{position_index + 1} "
-                "ist kein gültiges Gewerk "
+                "ist kein freigegebenes Gewerk "
                 "zugeordnet."
             )
 

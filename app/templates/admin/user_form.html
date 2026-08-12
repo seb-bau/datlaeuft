@@ -100,23 +100,53 @@
     <div class="col-12">
       <hr>
     </div>
+        {% for activity in item.craft_activities %}
+      {% if not activity.active or not activity.app_enabled %}
+      <input
+        type="hidden"
+        name="retained_craft_activity_ids"
+        value="{{ activity.id }}"
+      >
+      {% endif %}
+    {% endfor %}
 
-    <div class="col-lg-5">
-      <label class="form-label">Zugeordnete Gewerke</label>
-      <div id="selectedCraftActivities" class="border rounded p-3 bg-light min-vh-10">
-        {% if item.craft_activities %}
+        <div class="col-lg-5">
+      <label class="form-label">
+        Zugeordnete Gewerke
+      </label>
+
+      <div
+        id="selectedCraftActivities"
+        class="border rounded p-3 bg-light min-vh-10"
+      >
+        {% if not item.craft_activities %}
+          <span class="text-muted">
+            Alle global freigegebenen Gewerke
+          </span>
+        {% elif selected_craft_activities %}
           <div class="d-flex flex-wrap gap-2">
-            {% for activity in item.craft_activities|sort(attribute="name") %}
+            {% for activity in selected_craft_activities %}
             <span class="badge text-bg-primary">
-              {{ activity.name }}{% if activity.code %} · {{ activity.code }}{% endif %}
+              {{ activity.name }}
+              {% if activity.code %}
+                · {{ activity.code }}
+              {% endif %}
             </span>
             {% endfor %}
           </div>
         {% else %}
-          <span class="text-muted">Keine Gewerke zugeordnet.</span>
+          <span class="text-warning">
+            Keine der explizit zugeordneten Gewerke
+            ist global freigegeben.
+          </span>
         {% endif %}
       </div>
-      <div class="form-text">Diese Gewerke bestimmen, welche Leistungspositionen der Benutzer in der App auswählen kann.</div>
+
+      <div class="form-text">
+        Ohne Auswahl darf der Benutzer alle global
+        freigegebenen Gewerke verwenden. Eine Auswahl
+        schränkt ihn auf diese Gewerke ein.
+      </div>
     </div>
 
     <div class="col-lg-7">
@@ -138,7 +168,11 @@
         {% endfor %}
       </div>
 
-      <div class="form-text">Mehrere Gewerke können ausgewählt werden. Die Liste ist durchsuchbar.</div>
+            <div class="form-text">
+        Mehrere Gewerke können ausgewählt werden.
+        Keine Auswahl bedeutet „Alle freigegebenen
+        Gewerke“.
+      </div>
     </div>
   </div>
 
@@ -169,8 +203,11 @@
       return checkbox && checkbox.checked;
     });
 
-    if (selectedItems.length === 0) {
-      selectedCraftActivities.innerHTML = '<span class="text-muted">Keine Gewerke zugeordnet.</span>';
+        if (selectedItems.length === 0) {
+      selectedCraftActivities.innerHTML =
+        '<span class="text-muted">' +
+        'Alle global freigegebenen Gewerke' +
+        '</span>';
       return;
     }
 

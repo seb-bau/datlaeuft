@@ -25,7 +25,7 @@ class UserSyncResult:
     updated: int = 0
     unchanged: int = 0
     skipped_domain: int = 0
-    skipped_without_craft_activity: int = 0
+    without_explicit_craft_activity: int = 0
     skipped_protected: int = 0
     skipped_excluded: int = 0
     skipped_conflict: int = 0
@@ -48,7 +48,6 @@ def sync_users_from_wowiport(
     craft_activities_by_erp_id = {
         item.erp_id: item
         for item in CraftActivity.query.filter(
-            CraftActivity.active.is_(True),
             CraftActivity.erp_id.isnot(None),
         ).all()
     }
@@ -83,18 +82,20 @@ def sync_users_from_wowiport(
         craft_activity_ids = (
             _extract_craft_activity_ids(row)
         )
+
+        if not craft_activity_ids:
+            result.without_explicit_craft_activity += 1
+
         craft_activities = [
             craft_activities_by_erp_id[erp_id]
             for erp_id in sorted(
                 craft_activity_ids
             )
-            if erp_id
-            in craft_activities_by_erp_id
+            if (
+                    erp_id
+                    in craft_activities_by_erp_id
+            )
         ]
-
-        if not craft_activities:
-            result.skipped_without_craft_activity += 1
-            continue
 
         craftsman_matches = (
             User.query

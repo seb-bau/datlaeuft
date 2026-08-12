@@ -88,6 +88,14 @@ table.datatable thead tr.datatable-filter-row input:focus {
         </li>
         {% if current_user.is_admin %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.users') }}">Benutzer</a></li>
+                <li class="nav-item">
+          <a
+            class="nav-link"
+            href="{{ url_for('admin.craft_activities') }}"
+          >
+            Gewerke
+          </a>
+        </li>
         <li class="nav-item">
           <a
             class="nav-link"

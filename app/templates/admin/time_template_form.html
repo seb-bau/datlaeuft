@@ -17,9 +17,18 @@
       <label class="form-label">Gewerk</label>
       <select class="form-select" name="craft_activity_id">
         <option value="">Keine Zuordnung</option>
-        {% for activity in craft_activities %}
-        <option value="{{ activity.id }}" {% if item.craft_activity_id == activity.id %}selected{% endif %}>
-          {{ activity.name }}{% if activity.code %} ({{ activity.code }}){% endif %}
+                {% for activity in craft_activities %}
+        <option
+          value="{{ activity.id }}"
+          {% if item.craft_activity_id == activity.id %}selected{% endif %}
+        >
+          {{ activity.name }}
+          {% if activity.code %}
+            ({{ activity.code }})
+          {% endif %}
+          {% if not activity.app_enabled %}
+            – global deaktiviert
+          {% endif %}
         </option>
         {% endfor %}
       </select>

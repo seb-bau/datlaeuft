@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import false, or_
+from sqlalchemy import or_
 
 from .extensions import db
 from .models import CraftActivity, TimeTaskTemplate, User, utc_now
@@ -16,7 +16,7 @@ class CatalogSyncResult:
     craft_activities_updated: int = 0
     service_positions_created: int = 0
     service_positions_updated: int = 0
-    service_positions_skipped_unassigned_craft_activity: int = 0
+    service_positions_skipped_disabled_craft_activity: int = 0
     service_positions_without_craft_activity: int = 0
     service_positions_deactivated: int = 0
 
@@ -35,10 +35,9 @@ def sync_catalogs_from_wowiport() -> CatalogSyncResult:
     result.service_positions_created = service_result.service_positions_created
     result.service_positions_updated = service_result.service_positions_updated
     result.service_positions_without_craft_activity = service_result.service_positions_without_craft_activity
-
-    result.service_positions_skipped_unassigned_craft_activity = (
+    result.service_positions_skipped_disabled_craft_activity = (
         service_result
-        .service_positions_skipped_unassigned_craft_activity
+        .service_positions_skipped_disabled_craft_activity
     )
     result.service_positions_deactivated = (
         service_result.service_positions_deactivated
@@ -58,7 +57,10 @@ def sync_craft_activities_from_wowiport(service: WowiportService | None = None) 
 
         craft_activity = CraftActivity.query.filter_by(erp_id=erp_id).one_or_none()
         if craft_activity is None:
-            craft_activity = CraftActivity(erp_id=erp_id)
+            craft_activity = CraftActivity(
+                erp_id=erp_id,
+                app_enabled=False,
+            )
             db.session.add(craft_activity)
             result.craft_activities_created += 1
         else:
@@ -80,14 +82,11 @@ def sync_service_positions_from_wowiport(service: WowiportService | None = None)
         item.erp_id: item
         for item in (
             CraftActivity.query
-            .join(CraftActivity.users)
             .filter(
                 CraftActivity.active.is_(True),
+                CraftActivity.app_enabled.is_(True),
                 CraftActivity.erp_id.isnot(None),
-                User.is_active_flag.is_(True),
-                User.craftsman_erp_id.isnot(None),
             )
-            .distinct()
             .all()
         )
     }
@@ -124,8 +123,13 @@ def sync_service_positions_from_wowiport(service: WowiportService | None = None)
         )
 
         if craft_activity is None:
-            result.service_positions_skipped_unassigned_craft_activity += 1
-            _deactivate_existing_position(existing_positions_by_erp_id.get(erp_id), result)
+            result.service_positions_skipped_disabled_craft_activity += 1
+            _deactivate_existing_position(
+                existing_positions_by_erp_id.get(
+                    erp_id
+                ),
+                result,
+            )
             continue
 
         service_position = existing_positions_by_erp_id.get(erp_id)
@@ -177,18 +181,44 @@ def sync_service_positions_from_wowiport(service: WowiportService | None = None)
     return result
 
 
-def service_position_query_for_user(user: User):
-    query = TimeTaskTemplate.query.filter(TimeTaskTemplate.active.is_(True))
+def service_position_query_for_user(
+    user: User,
+):
+    query = TimeTaskTemplate.query.filter(
+        TimeTaskTemplate.active.is_(True),
+        or_(
+            TimeTaskTemplate
+            .craft_activity_id
+            .is_(None),
+            TimeTaskTemplate.craft_activity.has(
+                CraftActivity.active.is_(True)
+                & CraftActivity.app_enabled.is_(
+                    True
+                )
+            ),
+        ),
+    )
 
     if user.is_admin or user.is_foreman:
         return query
 
-    craft_activity_ids = [item.id for item in user.craft_activities if item.active]
+    if not user.craft_activities:
+        return query
 
-    if not craft_activity_ids:
-        return query.filter(false())
+    craft_activity_ids = [
+        item.id
+        for item in user.craft_activities
+        if (
+            item.active
+            and item.app_enabled
+        )
+    ]
 
-    return query.filter(TimeTaskTemplate.craft_activity_id.in_(craft_activity_ids))
+    return query.filter(
+        TimeTaskTemplate.craft_activity_id.in_(
+            craft_activity_ids
+        )
+    )
 
 
 def get_user_visible_time_task(user: User, task_template_id: int) -> TimeTaskTemplate | None:

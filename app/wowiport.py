@@ -34,7 +34,6 @@ from .document_sync import sync_commission_documents
 from .push_service import enqueue_commission_push
 from .photo_service import commission_photo_path
 
-
 ERP_LOCAL_STATUS = {
     12: CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
     7: CommissionLocalStatus.IN_PROGRESS.value,
@@ -317,9 +316,9 @@ class WowiportService:
         return rows
 
     def download_media_content(
-        self,
-        entity_name: str,
-        file_guid: str,
+            self,
+            entity_name: str,
+            file_guid: str,
     ) -> bytes:
         result = self.client._rest_adapter.get(
             endpoint=(
@@ -350,9 +349,9 @@ class WowiportService:
             ) from exc
 
     def get_document_rows(
-        self,
-        entity_name: str,
-        entity_id: int,
+            self,
+            entity_name: str,
+            entity_id: int,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         offset = 0
@@ -387,9 +386,9 @@ class WowiportService:
         return rows
 
     def upload_commission_photo(
-        self,
-        commission: Commission,
-        photo: CommissionPhoto,
+            self,
+            commission: Commission,
+            photo: CommissionPhoto,
     ) -> dict[str, Any]:
         if commission.erp_id is None:
             raise RuntimeError(
@@ -406,8 +405,8 @@ class WowiportService:
             )
 
         def row_value(
-            row: dict[str, Any],
-            *keys: str,
+                row: dict[str, Any],
+                *keys: str,
         ) -> Any:
             for key in keys:
                 if key in row:
@@ -430,8 +429,8 @@ class WowiportService:
                 )
 
                 if (
-                    str(row_external_id or "").strip()
-                    == external_document_id
+                        str(row_external_id or "").strip()
+                        == external_document_id
                 ):
                     return row
 
@@ -515,9 +514,9 @@ class WowiportService:
         )
 
         if (
-            isinstance(result_data, list)
-            and result_data
-            and isinstance(result_data[0], dict)
+                isinstance(result_data, list)
+                and result_data
+                and isinstance(result_data[0], dict)
         ):
             return result_data[0]
 
@@ -534,9 +533,9 @@ class WowiportService:
         )
 
     def download_document_content(
-        self,
-        entity_name: str,
-        file_guid: str,
+            self,
+            entity_name: str,
+            file_guid: str,
     ) -> bytes:
         result = self.client._rest_adapter.get(
             endpoint=(
@@ -567,8 +566,8 @@ class WowiportService:
             ) from exc
 
     def get_commission_ticket_rows(
-        self,
-        commission_erp_id: int,
+            self,
+            commission_erp_id: int,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         offset = 0
@@ -609,9 +608,9 @@ class WowiportService:
         self.client.set_commissioning_commission_to_done(commission_id=erp_id)
 
     def mark_commission_refused(
-        self,
-        erp_id: int,
-        reason: str,
+            self,
+            erp_id: int,
+            reason: str,
     ) -> None:
         self.client.set_commissioning_commission_to_refused(
             commission_id=erp_id,
@@ -619,8 +618,8 @@ class WowiportService:
         )
 
     def mark_commission_canceled(
-        self,
-        erp_id: int,
+            self,
+            erp_id: int,
     ) -> None:
         self.client.set_commissioning_commission_to_canceled(
             commission_id=erp_id,
@@ -667,8 +666,8 @@ class WowiportService:
         return []
 
     def _identity_from_rows(
-        self,
-        rows: list[dict[str, Any]],
+            self,
+            rows: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
         for row in rows:
             raw_id = self._row_value(
@@ -701,9 +700,9 @@ class WowiportService:
         return None
 
     def _force_read_rows(
-        self,
-        endpoint: str,
-        params: dict[str, Any],
+            self,
+            endpoint: str,
+            params: dict[str, Any],
     ) -> list[dict[str, Any]]:
         result = self.client._rest_adapter.get(
             endpoint=endpoint,
@@ -724,11 +723,11 @@ class WowiportService:
         return []
 
     def read_all_rows(
-        self,
-        endpoint: str,
-        params: dict[str, Any] | None = None,
-        limit: int = 100,
-        paginate: bool = True,
+            self,
+            endpoint: str,
+            params: dict[str, Any] | None = None,
+            limit: int = 100,
+            paginate: bool = True,
     ) -> list[dict[str, Any]]:
         rows = []
         offset = 0
@@ -769,9 +768,9 @@ class WowiportService:
         return rows
 
     def _resolve_sales_tax_id(
-        self,
-        company_code_id: int,
-        sales_tax_code: str,
+            self,
+            company_code_id: int,
+            sales_tax_code: str,
     ) -> int:
         normalized_code = sales_tax_code.strip()
 
@@ -790,8 +789,8 @@ class WowiportService:
 
         for commission in commissions:
             positions = (
-                commission.get("CommissionItems")
-                or []
+                    commission.get("CommissionItems")
+                    or []
             )
 
             for position in positions:
@@ -834,9 +833,9 @@ class WowiportService:
         return matching_ids.pop()
 
     def _resolve_creditor_id(
-        self,
-        commission: Commission,
-        company_code_id: int,
+            self,
+            commission: Commission,
+            company_code_id: int,
     ) -> int:
         craftsman_id = getattr(
             commission,
@@ -909,8 +908,8 @@ class WowiportService:
         return creditor_id
 
     def _resolve_company_code_id(
-        self,
-        company_code_code: str,
+            self,
+            company_code_code: str,
     ) -> int:
         normalized_code = company_code_code.strip()
 
@@ -931,7 +930,7 @@ class WowiportService:
                 self._row_value(row, "Code")
                 or ""
             ).strip()
-            == normalized_code
+               == normalized_code
         ]
 
         if not matches:
@@ -959,8 +958,8 @@ class WowiportService:
         return company_code_id
 
     def _resolve_craft_process_type_id(
-        self,
-        process_type_code: str,
+            self,
+            process_type_code: str,
     ) -> int:
         normalized_code = process_type_code.strip()
 
@@ -974,7 +973,7 @@ class WowiportService:
             process_type
             for process_type in process_types
             if str(process_type.code or "").strip().casefold()
-            == normalized_code.casefold()
+               == normalized_code.casefold()
         ]
 
         if not matches:
@@ -990,9 +989,9 @@ class WowiportService:
         return int(matches[0].id_)
 
     def _resolve_craft_process_status_id(
-        self,
-        company_code_id: int,
-        process_status_code: str,
+            self,
+            company_code_id: int,
+            process_status_code: str,
     ) -> int:
         normalized_code = process_status_code.strip()
 
@@ -1048,8 +1047,8 @@ class WowiportService:
         return matching_ids.pop()
 
     def _commission_company_code_id(
-        self,
-        commission: Commission,
+            self,
+            commission: Commission,
     ) -> int:
         raw_payload = commission.raw_payload or {}
 
@@ -1074,8 +1073,8 @@ class WowiportService:
         return company_code_id
 
     def _find_crafts_process_by_idnum(
-        self,
-        id_num: str,
+            self,
+            id_num: str,
     ) -> dict[str, Any] | None:
         rows = self._force_read_rows(
             "CommissioningRead/CraftProcesses",
@@ -1101,8 +1100,8 @@ class WowiportService:
         return self._identity_from_rows(matches)
 
     def _find_crafts_process_by_id(
-        self,
-        erp_id: int,
+            self,
+            erp_id: int,
     ) -> dict[str, Any] | None:
         rows = self._force_read_rows(
             "CommissioningRead/CraftProcesses",
@@ -1167,9 +1166,9 @@ class WowiportService:
             or getattr(commission, "license_agreement_id", None),
         )
         short_description = (
-            commission.title
-            or commission.description
-            or "Auftrag aus DatLäuft"
+                commission.title
+                or commission.description
+                or "Auftrag aus DatLäuft"
         )[:255]
 
         process_from = (
@@ -1215,9 +1214,9 @@ class WowiportService:
         return identity["id"]
 
     def _find_existing_commission(
-        self,
-        crafts_process_id: int,
-        external_identification_number: str,
+            self,
+            crafts_process_id: int,
+            external_identification_number: str,
     ) -> dict[str, Any] | None:
         rows = self._force_read_rows(
             "CommissioningRead/Commissions",
@@ -1240,7 +1239,7 @@ class WowiportService:
                 )
                 or ""
             )
-            == external_identification_number
+               == external_identification_number
         ]
 
         if len(matches) > 1:
@@ -1263,8 +1262,8 @@ class WowiportService:
         position_payloads = []
 
         for position_index, position in enumerate(
-            commission.positions,
-            start=1,
+                commission.positions,
+                start=1,
         ):
             payload = dict(
                 position.to_erp_payload()
@@ -1328,12 +1327,11 @@ class WowiportService:
             )
             payload["TransferToCraftsmanPortalWithoutCosts"] = True
 
-
             payload["CommissionText"] = commission_text
             payload["Units"] = units
             payload["PositionNumber"] = (
-                payload.get("PositionNumber")
-                or position_index
+                    payload.get("PositionNumber")
+                    or position_index
             )
             payload["UnitPrice"] = float(
                 raw_unit_price
@@ -1516,7 +1514,6 @@ class WowiportService:
             resolved_process_status_id
         )
 
-
         if existing_commission is not None:
             return Result(
                 200,
@@ -1618,8 +1615,8 @@ class WowiportService:
         return use_unit_list[0]
 
     def resolve_commission_reference_ids(
-        self,
-        commission: Commission,
+            self,
+            commission: Commission,
     ) -> None:
         license_agreement = None
         use_unit = None
@@ -1731,11 +1728,11 @@ class WowiportService:
             )
 
         if not any(
-            [
-                commission.use_unit_id,
-                commission.building_erp_id,
-                commission.license_agreement_id,
-            ]
+                [
+                    commission.use_unit_id,
+                    commission.building_erp_id,
+                    commission.license_agreement_id,
+                ]
         ):
             raise RuntimeError(
                 "Die Objektangabe konnte nicht in eine "
@@ -1881,7 +1878,7 @@ class WowiportService:
         return self.client.get_commissioning_craft_activities(show_null_values=True)
 
     def get_craftsmen_for_user_sync(
-        self,
+            self,
     ) -> list[dict[str, Any]]:
         rows = []
         limit = 100
@@ -1922,13 +1919,13 @@ class WowiportService:
         )
 
     def get_commissions_for_regular_sync(
-        self,
-        status_id: int,
-        craftsman_erp_id: int,
-        date_from: datetime,
-        date_to: datetime,
-        limit: int = 100,
-        offset: int = 0,
+            self,
+            status_id: int,
+            craftsman_erp_id: int,
+            date_from: datetime,
+            date_to: datetime,
+            limit: int = 100,
+            offset: int = 0,
     ) -> list[wowipy.CommissioningCommission]:
         add_args = {
             "commissionStatusId": status_id,
@@ -2072,10 +2069,10 @@ def sync_commission_types_from_wowiport() -> dict[str, int]:
 
 
 def refresh_commission_context_safely(
-    commission: Commission,
-    service: WowiportService,
-    erp_id: int,
-    payload: Any,
+        commission: Commission,
+        service: WowiportService,
+        erp_id: int,
+        payload: Any,
 ) -> bool:
     previous_context = (
         commission.building_erp_id,
@@ -2119,9 +2116,9 @@ def refresh_commission_context_safely(
 
 
 def sync_commission_documents_safely(
-    commission: Commission,
-    service: WowiportService,
-    force: bool = False,
+        commission: Commission,
+        service: WowiportService,
+        force: bool = False,
 ) -> None:
     try:
         result = sync_commission_documents(
@@ -2151,11 +2148,11 @@ def sync_commission_documents_safely(
 
 
 def enqueue_synced_commission_push(
-    commission: Commission,
-    existed_before_sync: bool,
-    previous_user_id: int | None,
-    was_deleted_before_sync: bool,
-    had_sync_signature_before_sync: bool,
+        commission: Commission,
+        existed_before_sync: bool,
+        previous_user_id: int | None,
+        was_deleted_before_sync: bool,
+        had_sync_signature_before_sync: bool,
 ) -> None:
     if commission.user is None:
         return
@@ -2163,9 +2160,9 @@ def enqueue_synced_commission_push(
     current_user_id = commission.user.id
 
     if (
-        not existed_before_sync
-        or was_deleted_before_sync
-        or previous_user_id != current_user_id
+            not existed_before_sync
+            or was_deleted_before_sync
+            or previous_user_id != current_user_id
     ):
         event_type = PushEventType.NEW_COMMISSION
     elif not had_sync_signature_before_sync:
@@ -2181,7 +2178,7 @@ def enqueue_synced_commission_push(
 
 
 def sync_commission_from_erp(
-    erp_id: int,
+        erp_id: int,
 ) -> Commission | None:
     service = WowiportService()
     payload = service.get_commission(erp_id)
@@ -2197,8 +2194,8 @@ def sync_commission_from_erp(
     was_deleted_before_sync = bool(
         existing is not None
         and (
-            existing.local_status == CommissionLocalStatus.DELETED.value
-            or existing.deleted_at is not None
+                existing.local_status == CommissionLocalStatus.DELETED.value
+                or existing.deleted_at is not None
         )
     )
     had_sync_signature_before_sync = bool(
@@ -2219,8 +2216,8 @@ def sync_commission_from_erp(
     status_id = _commission_status_id(payload)
 
     if (
-        existing is None
-        and status_id == 11
+            existing is None
+            and status_id == 11
     ):
         current_app.logger.info(
             "commission_sync_await_invoice_not_local "
@@ -2290,7 +2287,7 @@ def sync_commission_from_erp(
 
 
 def sync_commissions_from_wowiport_regular(
-    full: bool = False,
+        full: bool = False,
 ) -> dict[str, int]:
     service = WowiportService()
     from .catalog import (
@@ -2367,9 +2364,9 @@ def sync_commissions_from_wowiport_regular(
         "users_updated": user_result.updated,
         "users_unchanged": user_result.unchanged,
         "users_skipped_domain": user_result.skipped_domain,
-        "users_skipped_without_craft_activity": (
+        "users_without_explicit_craft_activity": (
             user_result
-            .skipped_without_craft_activity
+            .without_explicit_craft_activity
         ),
         "users_skipped_protected": (
             user_result.skipped_protected
@@ -2398,6 +2395,13 @@ def sync_commissions_from_wowiport_regular(
         "service_positions_updated": (
             service_position_result
             .service_positions_updated
+        ),
+        (
+            "service_positions_skipped_"
+            "disabled_craft_activity"
+        ): (
+            service_position_result
+            .service_positions_skipped_disabled_craft_activity
         ),
         "service_positions_deactivated": (
             service_position_result
@@ -2527,14 +2531,14 @@ def sync_commissions_from_wowiport_regular(
 
 
 def sync_commission_payload_from_erp(
-    payload: wowipy.CommissioningCommission,
-    visible_status_ids: set[int],
-    allowed_type_ids: set[int],
-    date_from: datetime,
-    date_to: datetime,
-    date_field: str,
-    allowed_craftsman_erp_ids: set[int],
-    service: WowiportService,
+        payload: wowipy.CommissioningCommission,
+        visible_status_ids: set[int],
+        allowed_type_ids: set[int],
+        date_from: datetime,
+        date_to: datetime,
+        date_field: str,
+        allowed_craftsman_erp_ids: set[int],
+        service: WowiportService,
 ) -> str:
     erp_id = int(
         _read_first(payload, "id_", "id", "Id")
@@ -2547,8 +2551,8 @@ def sync_commission_payload_from_erp(
     was_deleted_before_sync = bool(
         existing is not None
         and (
-            existing.local_status == CommissionLocalStatus.DELETED.value
-            or existing.deleted_at is not None
+                existing.local_status == CommissionLocalStatus.DELETED.value
+                or existing.deleted_at is not None
         )
     )
     had_sync_signature_before_sync = bool(
@@ -2562,8 +2566,8 @@ def sync_commission_payload_from_erp(
     )
 
     if (
-        existing is None
-        and status_id == 11
+            existing is None
+            and status_id == 11
     ):
         return (
             "ignored_await_invoice_not_local"
@@ -2605,8 +2609,8 @@ def sync_commission_payload_from_erp(
     )
 
     if (
-        commission_date is None
-        or not date_from <= commission_date < date_to
+            commission_date is None
+            or not date_from <= commission_date < date_to
     ):
         if existing is not None:
             mark_commission_deleted(erp_id)
@@ -2689,8 +2693,8 @@ def current_business_year_range() -> tuple[datetime, datetime]:
 
 
 def get_commission_business_year_date(
-    payload: wowipy.CommissioningCommission,
-    date_field: str,
+        payload: wowipy.CommissioningCommission,
+        date_field: str,
 ) -> datetime | None:
     if date_field == "release_date":
         return _as_naive_datetime(parse_datetime(payload.release_date))
@@ -2702,13 +2706,13 @@ def get_commission_business_year_date(
 
 
 def mark_missing_regular_sync_commissions_deleted(
-    date_from: datetime,
-    date_to: datetime,
-    date_field: str,
-    allowed_craftsman_erp_ids: set[int],
-    visible_status_ids: set[int],
-    synced_erp_ids: set[int],
-    result: dict[str, int],
+        date_from: datetime,
+        date_to: datetime,
+        date_field: str,
+        allowed_craftsman_erp_ids: set[int],
+        visible_status_ids: set[int],
+        synced_erp_ids: set[int],
+        result: dict[str, int],
 ) -> None:
     if not allowed_craftsman_erp_ids or not visible_status_ids:
         return
@@ -2749,8 +2753,8 @@ def mark_missing_regular_sync_commissions_deleted(
 
 
 def upsert_commission(
-    payload: Any,
-    sync_signature: str | None = None,
+        payload: Any,
+        sync_signature: str | None = None,
 ) -> Commission:
     erp_id = int(_read_first(payload, "id_", "id", "Id"))
     commission = Commission.query.filter_by(erp_id=erp_id).one_or_none()
@@ -2789,12 +2793,12 @@ def upsert_commission(
     )
     craftsman = _read_first(payload, "craftsman", "Craftsman")
     commission_items = (
-        _read_first(
-            payload,
-            "commission_items",
-            "CommissionItems",
-        )
-        or []
+            _read_first(
+                payload,
+                "commission_items",
+                "CommissionItems",
+            )
+            or []
     )
 
     craftsman_erp_id = _as_int(
@@ -2944,8 +2948,8 @@ def upsert_commission(
 
 
 def replace_commission_positions(
-    commission: Commission,
-    payload_items: list[Any],
+        commission: Commission,
+        payload_items: list[Any],
 ) -> None:
     commission.positions.clear()
 
@@ -3235,6 +3239,7 @@ def _read_first(source: Any, *names: str) -> Any:
 
     return None
 
+
 def _clean_id_num(value: Any) -> str | None:
     if value is None:
         return None
@@ -3244,9 +3249,9 @@ def _clean_id_num(value: Any) -> str | None:
 
 
 def _single_idnum_match(
-    items: list[Any],
-    id_num: str,
-    label: str,
+        items: list[Any],
+        id_num: str,
+        label: str,
 ) -> Any:
     matches = [
         item
@@ -3254,7 +3259,7 @@ def _single_idnum_match(
         if _clean_id_num(
             _attr(item, "id_num")
         )
-        == id_num
+           == id_num
     ]
 
     if not matches:
@@ -3273,9 +3278,9 @@ def _single_idnum_match(
 
 
 def _merge_reference_id(
-    current_id: int | None,
-    resolved_id: int | None,
-    label: str,
+        current_id: int | None,
+        resolved_id: int | None,
+        label: str,
 ) -> int | None:
     if resolved_id is None:
         raise RuntimeError(
@@ -3284,8 +3289,8 @@ def _merge_reference_id(
         )
 
     if (
-        current_id is not None
-        and current_id != resolved_id
+            current_id is not None
+            and current_id != resolved_id
     ):
         raise RuntimeError(
             f"Die angegebene {label}-Nummer passt "
@@ -3296,38 +3301,38 @@ def _merge_reference_id(
 
 
 def _commission_is_unchanged(
-    commission: Commission | None,
-    sync_signature: str,
+        commission: Commission | None,
+        sync_signature: str,
 ) -> bool:
     if commission is None:
         return False
 
     if (
-        commission.local_status
-        == CommissionLocalStatus.DELETED.value
+            commission.local_status
+            == CommissionLocalStatus.DELETED.value
     ):
         return False
 
     if (
-        commission.erp_sync_state
-        != CommissionSyncState.SYNCED.value
+            commission.erp_sync_state
+            != CommissionSyncState.SYNCED.value
     ):
         return False
 
     if not isinstance(
-        commission.raw_payload,
-        dict,
+            commission.raw_payload,
+            dict,
     ):
         return False
 
     return (
-        commission.raw_payload.get("sync_signature")
-        == sync_signature
+            commission.raw_payload.get("sync_signature")
+            == sync_signature
     )
 
 
 def _commission_sync_signature(
-    payload: Any,
+        payload: Any,
 ) -> str:
     commission_status = _read_first(
         payload,
@@ -3350,12 +3355,12 @@ def _commission_sync_signature(
         "Craftsman",
     )
     commission_items = (
-        _read_first(
-            payload,
-            "commission_items",
-            "CommissionItems",
-        )
-        or []
+            _read_first(
+                payload,
+                "commission_items",
+                "CommissionItems",
+            )
+            or []
     )
 
     signature_data = {
@@ -3473,8 +3478,8 @@ def _commission_sync_signature(
 
 
 def _position_signature(
-    payload: Any,
-    position_index: int,
+        payload: Any,
+        position_index: int,
 ) -> dict[str, Any]:
     service_catalogue = _read_first(
         payload,
