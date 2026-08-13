@@ -35,38 +35,37 @@
         </tr>
       </thead>
 
-      <tbody>
+            <tbody>
         {% for item in items %}
         <tr>
           <td>
             {{ item.invoice_number or ("Entwurf " ~ item.id) }}
           </td>
-          <td>
-    {% if invoice.invoice_kind == "cancellation" %}
-        <span class="badge text-bg-warning">
-            Stornorechnung
-        </span>
-    {% else %}
-        Rechnung
-    {% endif %}
-</td>
 
           <td>
-            {% if invoice.status == "draft" %}
-              <span class="badge text-bg-secondary">
-                  Entwurf
-              </span>
-          {% elif invoice.status == "finalized" %}
-              <span class="badge text-bg-success">
-                  Festgeschrieben
-              </span>
-          {% elif invoice.status == "canceled" %}
-              <span class="badge text-bg-warning">
-                  Storniert
-              </span>
-          {% else %}
-              {{ invoice.status }}
-          {% endif %}
+            {% if item.status == "draft" %}
+            <span class="badge text-bg-secondary">
+              Entwurf
+            </span>
+            {% elif item.status == "finalized" %}
+            <span class="badge text-bg-success">
+              Festgeschrieben
+            </span>
+            {% elif item.status == "canceled" %}
+            <span class="badge text-bg-warning">
+              Storniert
+            </span>
+            {% else %}
+            <span class="badge text-bg-secondary">
+              {{ item.status }}
+            </span>
+            {% endif %}
+
+            {% if item.invoice_kind == "cancellation" %}
+            <span class="badge text-bg-warning">
+              Stornorechnung
+            </span>
+            {% endif %}
           </td>
 
           <td
@@ -97,13 +96,20 @@
           </td>
 
           <td>
-            {% if item.dvelop_document_id %}
+            {% if item.dms_archive_status == "archived" %}
             <span class="badge text-bg-success">
               Archiviert
             </span>
-            {% elif item.archive_error %}
-            <span class="badge text-bg-danger">
+            {% elif item.dms_archive_status == "failed" %}
+            <span
+              class="badge text-bg-danger"
+              title="{{ item.dms_archive_error or '' }}"
+            >
               Fehler
+            </span>
+            {% else %}
+            <span class="badge text-bg-secondary">
+              Nicht archiviert
             </span>
             {% endif %}
           </td>

@@ -16,10 +16,10 @@ from .invoice_document import (
 from .models import (
     Invoice,
     InvoiceArchiveStatus,
+    InvoiceKind,
     InvoiceStatus,
     User,
     utc_now,
-InvoiceKind,
 )
 from .settings import SettingKeys, settings
 
@@ -92,7 +92,8 @@ def _archive_values(
             company_code.name or ""
         ),
         "contract_number": str(
-            invoice.contract_number or ""
+            invoice.recipient_license_agreement_idnum
+            or ""
         ),
         "recipient_name": str(
             invoice.recipient_name or ""
@@ -141,7 +142,7 @@ def _render_property_value(
 def _verify_invoice_pdf(
     invoice: Invoice,
 ) -> Path:
-    if not invoice.pdf_storage_name:
+    if not invoice.document_filename:
         raise InvoiceArchiveError(
             "Für die Rechnung ist kein PDF gespeichert."
         )
@@ -149,7 +150,7 @@ def _verify_invoice_pdf(
     try:
         document_path = (
             resolve_invoice_document_path(
-                invoice.pdf_storage_name
+                invoice.document_filename
             )
         )
     except InvoiceDocumentError as exc:
@@ -168,9 +169,9 @@ def _verify_invoice_pdf(
     ).hexdigest()
 
     if (
-        invoice.pdf_sha256
+        invoice.document_sha256
         and content_hash
-        != invoice.pdf_sha256
+        != invoice.document_sha256
     ):
         raise InvoiceArchiveError(
             "Die Prüfsumme der Rechnungsdatei "
@@ -360,7 +361,7 @@ def archive_invoice(
         if (
             invoice.dms_archive_pdf_sha256
             and invoice.dms_archive_pdf_sha256
-            != invoice.pdf_sha256
+                != invoice.document_sha256
         ):
             raise InvoiceArchiveError(
                 "Die archivierte Prüfsumme stimmt "
@@ -443,7 +444,7 @@ def archive_invoice(
     )
     invoice.dms_document_id = document_id
     invoice.dms_archive_pdf_sha256 = (
-        invoice.pdf_sha256
+        invoice.document_sha256
     )
     invoice.dms_archived_at = archived_at
     invoice.dms_archived_by_user_id = (
@@ -462,7 +463,7 @@ def archive_invoice(
             "dms_document_id": document_id,
             "archive_key": archive_key,
             "pdf_sha256": (
-                invoice.pdf_sha256
+                invoice.document_sha256
             ),
             "existing_document": (
                 already_archived

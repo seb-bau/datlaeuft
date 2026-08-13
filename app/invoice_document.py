@@ -296,6 +296,7 @@ def _prepare_positions(
         key=lambda item: (
             _read_value(
                 item,
+                "position_index",
                 "sort_order",
                 "position_number",
                 default=0,
@@ -585,8 +586,12 @@ def _document_context(
     seller_city = _required_text(
         _company_value(
             invoice,
-            ("seller_city",),
             (
+                "seller_town",
+                "seller_city",
+            ),
+            (
+                "seller_town",
                 "invoice_seller_city",
                 "seller_city",
             ),
@@ -736,6 +741,7 @@ def _document_context(
     recipient_city = _required_text(
         _read_value(
             invoice,
+            "recipient_town",
             "recipient_city",
         ),
         "Ort des Rechnungsempfängers",
@@ -784,6 +790,7 @@ def _document_context(
     contract_number = str(
         _read_value(
             invoice,
+            "recipient_license_agreement_idnum",
             "contract_number",
             "recipient_contract_number",
             "external_contract_number",
@@ -930,6 +937,7 @@ def _document_context(
         "closing_text": str(
             _read_value(
                 invoice,
+                "concluding_text",
                 "closing_text",
                 default="",
             )
@@ -938,6 +946,7 @@ def _document_context(
         "currency": str(
             _read_value(
                 invoice,
+                "currency_code",
                 "currency",
                 default="EUR",
             )

@@ -90,7 +90,7 @@ from .models import (
     WowiLicenseAgreement,
     InvoicePositionSource,
     InvoiceArchiveStatus,
-InvoiceKind,
+    InvoiceKind,
 )
 from .invoice_archive import (
     InvoiceArchiveError,
@@ -776,28 +776,40 @@ def invoice_document(
 
     if (
         invoice.status not in {
-        InvoiceStatus.FINALIZED.value,
-        InvoiceStatus.CANCELED.value,
-    }
-        or not invoice.pdf_storage_name
+            InvoiceStatus.FINALIZED.value,
+            InvoiceStatus.CANCELED.value,
+        }
+        or not invoice.document_filename
     ):
         abort(404)
 
-    document_path = (
-        resolve_invoice_document_path(
-            invoice.pdf_storage_name
+    try:
+        document_path = (
+            resolve_invoice_document_path(
+                invoice.document_filename
+            )
         )
-    )
+    except InvoiceDocumentError:
+        abort(404)
 
     if not document_path.is_file():
         abort(404)
+
+    document_label = (
+        "Stornorechnung"
+        if (
+            invoice.invoice_kind
+            == InvoiceKind.CANCELLATION.value
+        )
+        else "Rechnung"
+    )
 
     return send_file(
         document_path,
         mimetype="application/pdf",
         as_attachment=False,
         download_name=(
-            "Rechnung-"
+            f"{document_label}-"
             f"{invoice.invoice_number}.pdf"
         ),
     )

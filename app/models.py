@@ -1837,16 +1837,6 @@ class Invoice(db.Model):
         unique=True,
         index=True,
     )
-    cancellation_reason: Mapped[str | None] = mapped_column(
-        db.Text,
-    )
-    canceled_at: Mapped[datetime | None] = mapped_column(
-        db.DateTime(timezone=True),
-    )
-    canceled_by_user_id: Mapped[int | None] = mapped_column(
-        db.ForeignKey("user_account.id"),
-        index=True,
-    )
     document_type: Mapped[str] = mapped_column(
         db.String(40),
         default=InvoiceDocumentType.INVOICE.value,
@@ -2133,9 +2123,6 @@ class Invoice(db.Model):
         foreign_keys="Invoice.original_invoice_id",
         back_populates="original_invoice",
         uselist=False,
-    )
-    canceled_by: Mapped[User | None] = relationship(
-        foreign_keys=[canceled_by_user_id],
     )
 
 

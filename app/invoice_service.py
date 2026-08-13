@@ -10,46 +10,43 @@ from decimal import (
     Decimal,
     ROUND_HALF_UP,
 )
-from typing import Any
-
-from sqlalchemy import or_
-
-from .extensions import db
-from .models import (
-    Commission,
-    InventoryMovementType,
-    Invoice,
-    InvoiceBillingRule,
-    InvoiceBillingRuleType,
-    InvoiceCommission,
-    InvoicePosition,
-    InvoicePositionSource,
-    MaterialUsageStatus,
-    TimeReviewStatus,
-    CommissionLocalStatus,
-    ErpOperationType,
-    InvoiceDocumentType,
-    InvoiceStatus,
-    User,
-    WowiCompanyCode,
-    utc_now,
-InvoiceKind,
-InvoicePosition,
-)
 import re
+from typing import Any
 
 from sqlalchemy import (
     inspect as sqlalchemy_inspect,
+    or_,
     select,
 )
 
 from .audit import audit
 from .erp_sync import enqueue_erp_operation
+from .extensions import db
 from .invoice_document import (
     InvoiceDocumentError,
     InvoiceDocumentResult,
     create_invoice_document,
     remove_invoice_documents,
+)
+from .models import (
+    Commission,
+    CommissionLocalStatus,
+    ErpOperationType,
+    InventoryMovementType,
+    Invoice,
+    InvoiceBillingRule,
+    InvoiceBillingRuleType,
+    InvoiceCommission,
+    InvoiceDocumentType,
+    InvoiceKind,
+    InvoicePosition,
+    InvoicePositionSource,
+    InvoiceStatus,
+    MaterialUsageStatus,
+    TimeReviewStatus,
+    User,
+    WowiCompanyCode,
+    utc_now,
 )
 from .settings import SettingKeys, settings
 
@@ -265,6 +262,7 @@ def create_invoice_draft(
 
     invoice = Invoice(
         status=InvoiceStatus.DRAFT.value,
+        invoice_kind=InvoiceKind.INVOICE.value,
         document_type=(
             InvoiceDocumentType.INVOICE.value
         ),
@@ -1226,7 +1224,7 @@ def _validate_invoice_for_finalization(
             "Die Postleitzahl des Empfängers fehlt.",
         ),
         (
-            invoice.recipient_city,
+            invoice.recipient_town,
             "Der Ort des Empfängers fehlt.",
         ),
     )
@@ -1361,16 +1359,33 @@ def _render_invoice_number(
     year: int,
     counter: int,
 ) -> str:
-    mask = str(
+    raw_mask = str(
         company_code.invoice_number_mask
-        or "{company_code}-{year}-{counter}"
+        or "<company_code>-<year>-<counter>"
     ).strip()
+
+    mask = (
+        raw_mask
+        .replace(
+            "<company_code>",
+            "{company_code}",
+        )
+        .replace(
+            "<year>",
+            "{year}",
+        )
+        .replace(
+            "<counter>",
+            "{counter}",
+        )
+    )
+
     digits = max(
         1,
         min(
             12,
             int(
-                company_code.invoice_number_digits
+                company_code.invoice_counter_digits
                 or 5
             ),
         ),
@@ -1382,7 +1397,7 @@ def _render_invoice_number(
     ):
         raise InvoiceFinalizationError(
             "Die Rechnungsnummernmaske muss "
-            "{year} und {counter} enthalten."
+            "<year> und <counter> enthalten."
         )
 
     allowed_fields = {
@@ -1396,9 +1411,15 @@ def _render_invoice_number(
             mask,
         )
     )
+    unresolved_fields = set(
+        re.findall(
+            r"<([^<>]+)>",
+            mask,
+        )
+    )
     unknown_fields = (
         used_fields - allowed_fields
-    )
+    ) | unresolved_fields
 
     if unknown_fields:
         raise InvoiceFinalizationError(
@@ -1447,31 +1468,31 @@ def _allocate_invoice_number(
     ).scalar_one()
 
     if (
-        company_code.invoice_number_year
+        company_code.invoice_counter_year
         != year
     ):
-        company_code.invoice_number_year = (
+        company_code.invoice_counter_year = (
             year
         )
-        company_code.invoice_number_counter = (
-            0
-        )
+        company_code.invoice_counter = 0
 
     for _ in range(100):
-        company_code.invoice_number_counter = (
+        company_code.invoice_counter = (
             int(
-                company_code.invoice_number_counter
+                company_code.invoice_counter
                 or 0
             )
             + 1
         )
+
         invoice_number = (
             _render_invoice_number(
                 company_code,
                 year,
-                company_code.invoice_number_counter,
+                company_code.invoice_counter,
             )
         )
+
         existing_invoice = (
             Invoice.query
             .filter(
@@ -1539,22 +1560,25 @@ def finalize_invoice(
     invoice.invoice_date = invoice_date
 
     if (
-            invoice.due_date is None
-            and invoice.invoice_kind
-            != InvoiceKind.CANCELLATION.value
+        invoice.invoice_kind
+        == InvoiceKind.CANCELLATION.value
     ):
-        if (
-                invoice.invoice_kind
-                == InvoiceKind.CANCELLATION.value
-        ):
-            invoice.due_date = None
-            invoice.payment_terms_text = ""
+        invoice.due_date = None
+    elif invoice.due_date is None:
+        payment_terms_days = (
+            invoice.company_code
+            .invoice_payment_terms_days
+        )
+
+        if payment_terms_days is None:
+            payment_terms_days = settings.get(
+                SettingKeys
+                .INVOICE_PAYMENT_TERMS_DAYS
+            )
+
         payment_terms_days = max(
             0,
-            int(
-                invoice.payment_terms_days
-                or 0
-            ),
+            int(payment_terms_days or 0),
         )
         invoice.due_date = (
             invoice_date
@@ -1586,29 +1610,24 @@ def finalize_invoice(
         )
 
         invoice.document_type = (
-            InvoiceDocumentType.ZUGFERD.value
+            InvoiceDocumentType.CANCELLATION.value
+            if (
+                invoice.invoice_kind
+                == InvoiceKind.CANCELLATION.value
+            )
+            else InvoiceDocumentType.INVOICE.value
         )
-        invoice.pdf_storage_name = (
+        invoice.document_filename = (
             document_result.pdf_storage_name
         )
-        invoice.xml_storage_name = (
-            document_result.xml_storage_name
-        )
-        invoice.pdf_sha256 = (
+        invoice.document_sha256 = (
             document_result.pdf_sha256
-        )
-        invoice.xml_sha256 = (
-            document_result.xml_sha256
         )
         invoice.status = (
             InvoiceStatus.FINALIZED.value
         )
-        invoice.finalized_at = (
-            finalized_at
-        )
-        invoice.finalized_by_user_id = (
-            user.id
-        )
+        invoice.finalized_at = finalized_at
+        invoice.finalized_by_user_id = user.id
 
         commission_ids = (
             _enqueue_invoice_commissions(
@@ -1639,11 +1658,11 @@ def finalize_invoice(
                 "total_gross": str(
                     invoice.total_gross
                 ),
-                "pdf_sha256": (
-                    invoice.pdf_sha256
+                "document_sha256": (
+                    invoice.document_sha256
                 ),
                 "xml_sha256": (
-                    invoice.xml_sha256
+                    document_result.xml_sha256
                 ),
             },
         )
@@ -1674,10 +1693,12 @@ INVOICE_CANCELLATION_EXCLUDED_COLUMNS = {
     "canceled_by_user_id",
     "payment_reference",
     "document_type",
-    "pdf_storage_name",
-    "xml_storage_name",
-    "pdf_sha256",
-    "xml_sha256",
+    "document_filename",
+    "document_sha256",
+    "dvelop_document_id",
+    "archived_at",
+    "archive_error",
+    "reference_invoice_id",
     "finalized_at",
     "finalized_by_user_id",
     "dms_archive_status",
@@ -1842,6 +1863,9 @@ def create_cancellation_invoice(
     cancellation_invoice.invoice_kind = (
         InvoiceKind.CANCELLATION.value
     )
+    cancellation_invoice.document_type = (
+        InvoiceDocumentType.CANCELLATION.value
+    )
     cancellation_invoice.original_invoice = (
         original_invoice
     )
@@ -1855,9 +1879,8 @@ def create_cancellation_invoice(
     cancellation_invoice.payment_reference = (
         original_invoice.invoice_number
     )
-    cancellation_invoice.payment_terms_text = ""
-    cancellation_invoice.intro_text = ""
-    cancellation_invoice.closing_text = ""
+    cancellation_invoice.introductory_text = ""
+    cancellation_invoice.concluding_text = ""
 
     if hasattr(
         cancellation_invoice,
