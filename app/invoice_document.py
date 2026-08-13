@@ -1128,7 +1128,7 @@ def _zugferd_data(context: dict) -> dict:
         "BT-32": context["seller_tax_number"],
         "BT-34": context["seller_email"],
         "BT-34-1": (
-            "EM"
+            "0225"
             if context["seller_email"]
             else None
         ),
@@ -1142,7 +1142,7 @@ def _zugferd_data(context: dict) -> dict:
         "BT-48": context["recipient_vat_id"],
         "BT-49": context["recipient_email"],
         "BT-49-1": (
-            "EM"
+            "0225"
             if context["recipient_email"]
             else None
         ),
@@ -1153,6 +1153,7 @@ def _zugferd_data(context: dict) -> dict:
             context["recipient_country_code"]
         ),
         "BT-58": context["recipient_email"],
+        "BT-72": context["service_date_to"],
         "BT-73": context["service_date_from"],
         "BT-74": context["service_date_to"],
         "BG-3": (
