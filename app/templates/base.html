@@ -62,18 +62,106 @@ table.datatable thead tr.datatable-filter-row input:focus {
     </button>
     <div id="mainNav" class="collapse navbar-collapse">
       {% if current_user.is_authenticated %}
-      <ul class="navbar-nav me-auto">
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.commissions') }}">Aufträge</a></li>
+            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
         <li class="nav-item">
           <a
             class="nav-link"
-            href="{{ url_for('admin.commission_reviews') }}"
+            href="{{ url_for('admin.dashboard') }}"
           >
-            Auftragsprüfung
+            Dashboard
           </a>
         </li>
-                {% if
+
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            href="{{ url_for('admin.commissions') }}"
+          >
+            Aufträge
+          </a>
+        </li>
+
+        <li class="nav-item dropdown">
+          <a
+            class="nav-link dropdown-toggle"
+            href="#"
+            role="button"
+            data-bs-toggle="dropdown"
+            aria-expanded="false"
+          >
+            Prüfung
+          </a>
+
+          <ul class="dropdown-menu dropdown-menu-dark">
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.commission_reviews'
+                ) }}"
+              >
+                Auftragsprüfung
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.time_entries'
+                ) }}"
+              >
+                Stundenzettel
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.material_movements'
+                ) }}"
+              >
+                Materialprüfung
+              </a>
+            </li>
+          </ul>
+        </li>
+
+        <li class="nav-item dropdown">
+          <a
+            class="nav-link dropdown-toggle"
+            href="#"
+            role="button"
+            data-bs-toggle="dropdown"
+            aria-expanded="false"
+          >
+            Lager
+          </a>
+
+          <ul class="dropdown-menu dropdown-menu-dark">
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.inventory'
+                ) }}"
+              >
+                Lagerbestand
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.inventory_locations'
+                ) }}"
+              >
+                Lagerorte
+              </a>
+            </li>
+          </ul>
+        </li>
+
+        {% if
           current_user.is_admin
           or current_user.can_manage_invoices
         %}
@@ -86,63 +174,138 @@ table.datatable thead tr.datatable-filter-row input:focus {
           </a>
         </li>
         {% endif %}
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.inventory') }}">Lager</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.inventory_locations') }}">Lagerorte</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_entries') }}">Stundenzettel</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.material_movements') }}">Materialprüfung</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_templates') }}">Leistungspositionen</a></li>
-        <li class="nav-item">
+
+        <li class="nav-item dropdown">
           <a
-            class="nav-link"
-            href="{{ url_for('admin.appointment_windows') }}"
+            class="nav-link dropdown-toggle"
+            href="#"
+            role="button"
+            data-bs-toggle="dropdown"
+            aria-expanded="false"
           >
-            Terminzeitfenster
+            Planung
           </a>
+
+          <ul class="dropdown-menu dropdown-menu-dark">
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.time_templates'
+                ) }}"
+              >
+                Leistungspositionen
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.appointment_windows'
+                ) }}"
+              >
+                Terminzeitfenster
+              </a>
+            </li>
+          </ul>
         </li>
+
         {% if current_user.is_admin %}
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.users') }}">Benutzer</a></li>
-                <li class="nav-item">
+        <li class="nav-item dropdown">
           <a
-            class="nav-link"
-            href="{{ url_for('admin.craft_activities') }}"
+            class="nav-link dropdown-toggle"
+            href="#"
+            role="button"
+            data-bs-toggle="dropdown"
+            aria-expanded="false"
           >
-            Gewerke
+            Administration
           </a>
-        </li>
-        <li class="nav-item">
-          <a
-            class="nav-link"
-            href="{{ url_for('admin.craft_department_mappings') }}"
-          >
-            Gewerk-Zuständigkeiten
-          </a>
-        </li>
-                <li class="nav-item">
-          <a
-            class="nav-link"
-            href="{{ url_for('admin.company_codes') }}"
-          >
-            Buchwerke
-          </a>
-        </li>
-        <li class="nav-item">
-          <a
-            class="nav-link"
-            href="{{ url_for(
-              'admin.invoice_billing_rules'
-            ) }}"
-          >
-            Abrechnungssätze
-          </a>
-        </li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.settings_page') }}">Einstellungen</a></li>
-        <li class="nav-item">
-          <a
-            class="nav-link"
-            href="{{ url_for('admin.sync_health') }}"
-          >
-            Synchronisierung
-          </a>
+
+          <ul class="dropdown-menu dropdown-menu-dark">
+            <li>
+              <h6 class="dropdown-header">
+                Stammdaten
+              </h6>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for('admin.users') }}"
+              >
+                Benutzer
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.craft_activities'
+                ) }}"
+              >
+                Gewerke
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.craft_department_mappings'
+                ) }}"
+              >
+                Gewerk-Zuständigkeiten
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.company_codes'
+                ) }}"
+              >
+                Buchwerke
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.invoice_billing_rules'
+                ) }}"
+              >
+                Abrechnungssätze
+              </a>
+            </li>
+
+            <li>
+              <hr class="dropdown-divider">
+            </li>
+            <li>
+              <h6 class="dropdown-header">
+                System
+              </h6>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.settings_page'
+                ) }}"
+              >
+                Einstellungen
+              </a>
+            </li>
+            <li>
+              <a
+                class="dropdown-item"
+                href="{{ url_for(
+                  'admin.sync_health'
+                ) }}"
+              >
+                Synchronisierung
+              </a>
+            </li>
+          </ul>
         </li>
         {% endif %}
       </ul>
