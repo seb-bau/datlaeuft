@@ -324,6 +324,14 @@ def _prepare_positions(
             ),
             f"Bezeichnung der Position {number}",
         )
+        details = str(
+            _read_value(
+                position,
+                "details",
+                default="",
+            )
+            or ""
+        ).strip()
         quantity = _decimal(
             _read_value(
                 position,
@@ -389,6 +397,7 @@ def _prepare_positions(
             {
                 "number": number,
                 "description": description,
+                "details": details,
                 "quantity": quantity,
                 "quantity_formatted": (
                     _format_quantity(quantity)
@@ -762,7 +771,14 @@ def _document_context(
         )
         or ""
     ).strip()
-
+    recipient_vat_id = str(
+        _read_value(
+            invoice,
+            "recipient_vat_id",
+            default="",
+        )
+        or ""
+    ).replace(" ", "")
     if not recipient_street:
         raise InvoiceDocumentError(
             "Straße des Rechnungsempfängers fehlt."
@@ -845,6 +861,13 @@ def _document_context(
         invoice.invoice_kind
         == InvoiceKind.CANCELLATION.value
     )
+    if (
+        not is_cancellation
+        and not seller_iban
+    ):
+        raise InvoiceDocumentError(
+            "Die IBAN des Rechnungsausstellers fehlt."
+        )
     original_invoice = (
         invoice.original_invoice
         if is_cancellation
@@ -914,6 +937,7 @@ def _document_context(
             recipient_country_code
         ),
         "recipient_email": recipient_email,
+        "recipient_vat_id": recipient_vat_id,
         "recipient_address": [
             value
             for value in recipient_address
@@ -1019,6 +1043,9 @@ def _zugferd_data(context: dict) -> dict:
                     "BT-153": (
                         position["description"]
                     ),
+                    "BT-127": (
+                        position["details"]
+                    ),
                     "BT-155": (
                         position["item_code"]
                     ),
@@ -1112,6 +1139,7 @@ def _zugferd_data(context: dict) -> dict:
         "BT-42": context["seller_phone"],
         "BT-43": context["seller_email"],
         "BT-44": context["recipient_name"],
+        "BT-48": context["recipient_vat_id"],
         "BT-49": context["recipient_email"],
         "BT-49-1": (
             "EM"

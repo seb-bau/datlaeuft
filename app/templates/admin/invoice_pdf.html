@@ -278,7 +278,16 @@
             {% for position in positions %}
                 <tr>
                     <td class="number">{{ position.number }}</td>
-                    <td class="description">{{ position.description }}</td>
+                    <td class="description">
+                        <div>
+                            {{ position.description }}
+                        </div>
+                        {% if position.details %}
+                            <div style="font-size: 8.5pt; color: #555;">
+                                {{ position.details }}
+                            </div>
+                        {% endif %}
+                    </td>
                     <td class="quantity">
                         {{ position.quantity_formatted }} {{ position.unit }}
                     </td>
