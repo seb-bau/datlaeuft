@@ -1,0 +1,1295 @@
+{% extends "base.html" %}
+{% block title %}Rechnung{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h1 class="h3 mb-1">
+      {{ item.invoice_number or ("Entwurf " ~ item.id) }}
+    </h1>
+    <div class="text-muted">
+      {{ item.company_code_code }}
+      {% if item.recipient_name %}
+      · {{ item.recipient_name }}
+      {% endif %}
+    </div>
+  </div>
+
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.invoices') }}"
+  >
+    Zurück
+  </a>
+</div>
+
+{% if not editable %}
+<div class="alert alert-info">
+  Diese Rechnung ist festgeschrieben und kann
+  nicht mehr bearbeitet werden.
+</div>
+{% endif %}
+
+<form
+    method="post"
+    id="invoice-draft-form"
+>
+  {% if invoice.status == "draft" %}
+    <div class="card mt-4">
+        <div class="card-body">
+            <h2 class="h5">Rechnung festschreiben</h2>
+
+            <p class="text-danger mb-3">
+                Nach dem Festschreiben können Empfänger,
+                Positionen und Beträge nicht mehr geändert
+                werden. Die verknüpften Aufträge werden über
+                die ERP-Synchronisierung auf Erledigt gesetzt.
+            </p>
+
+            <form
+                method="post"
+                action="{{ url_for(
+                    'admin.invoice_finalize',
+                    invoice_id=invoice.id
+                ) }}"
+                id="invoice-finalize-form"
+            >
+                <input
+                    type="hidden"
+                    name="csrf_token"
+                    value="{{ csrf_token() }}"
+                >
+
+                <button
+                    type="submit"
+                    class="btn btn-danger"
+                >
+                    Rechnung endgültig festschreiben
+                </button>
+            </form>
+        </div>
+    </div>
+{% elif invoice.status in ["finalized", "canceled"] %}
+    <div class="card mt-4">
+        <div class="card-body">
+            <h2 class="h5">
+                Rechnung {{ invoice.invoice_number }}
+            </h2>
+
+            <a
+                class="btn btn-primary"
+                href="{{ url_for(
+                    'admin.invoice_document',
+                    invoice_id=invoice.id
+                ) }}"
+                target="_blank"
+                rel="noopener"
+            >
+                Rechnung öffnen
+            </a>
+                      {% if invoice.invoice_kind == "cancellation" %}
+                <div class="alert alert-warning mt-3">
+                    <div>
+                        Stornorechnung zu
+                        <a href="{{ url_for(
+                            'admin.invoice_edit',
+                            invoice_id=invoice.original_invoice_id
+                        ) }}">
+                            {{ invoice.original_invoice.invoice_number }}
+                        </a>
+                    </div>
+                    <div class="small mt-1">
+                        Grund:
+                        {{ invoice.cancellation_reason }}
+                    </div>
+                </div>
+            {% elif invoice.status == "canceled" %}
+                <div class="alert alert-warning mt-3">
+                    <div>
+                        Diese Rechnung wurde storniert.
+                    </div>
+                    {% if invoice.cancellation_invoice %}
+                        <div class="mt-1">
+                            Stornorechnung:
+                            <a href="{{ url_for(
+                                'admin.invoice_edit',
+                                invoice_id=invoice.cancellation_invoice.id
+                            ) }}">
+                                {{
+                                    invoice
+                                    .cancellation_invoice
+                                    .invoice_number
+                                }}
+                            </a>
+                        </div>
+                    {% endif %}
+                    {% if invoice.cancellation_reason %}
+                        <div class="small mt-1">
+                            Grund:
+                            {{ invoice.cancellation_reason }}
+                        </div>
+                    {% endif %}
+                </div>
+            {% elif invoice.invoice_kind == "invoice" %}
+                <div class="card border-danger mt-4">
+                    <div class="card-body">
+                        <h3 class="h6">
+                            Rechnung stornieren
+                        </h3>
+
+                        <form
+                            method="post"
+                            action="{{ url_for(
+                                'admin.invoice_cancel',
+                                invoice_id=invoice.id
+                            ) }}"
+                            id="invoice-cancel-form"
+                        >
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="{{ csrf_token() }}"
+                            >
+
+                            <label
+                                class="form-label"
+                                for="cancellation-reason"
+                            >
+                                Stornogrund
+                            </label>
+
+                            <textarea
+                                class="form-control"
+                                id="cancellation-reason"
+                                name="reason"
+                                rows="3"
+                                required
+                            ></textarea>
+
+                            <button
+                                type="submit"
+                                class="btn btn-danger mt-3"
+                            >
+                                Stornorechnung erstellen
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            {% endif %}
+                      {% if invoice.dms_archive_status == "archived" %}
+                <div class="alert alert-success mt-3 mb-0">
+                    <div>
+                        In d.velop archiviert
+                    </div>
+                    <div class="small">
+                        Dokument-ID:
+                        {{ invoice.dms_document_id }}
+                    </div>
+                    {% if invoice.dms_archived_at %}
+                        <div class="small">
+                            Archiviert am:
+                            {{ invoice.dms_archived_at.strftime(
+                                "%d.%m.%Y %H:%M"
+                            ) }}
+                        </div>
+                    {% endif %}
+                </div>
+            {% else %}
+                {% if invoice.dms_archive_error %}
+                    <div class="alert alert-danger mt-3">
+                        {{ invoice.dms_archive_error }}
+                    </div>
+                {% endif %}
+
+                <form
+                    method="post"
+                    action="{{ url_for(
+                        'admin.invoice_archive',
+                        invoice_id=invoice.id
+                    ) }}"
+                    class="mt-3"
+                    id="invoice-archive-form"
+                >
+                    <input
+                        type="hidden"
+                        name="csrf_token"
+                        value="{{ csrf_token() }}"
+                    >
+
+                    <button
+                        type="submit"
+                        class="btn btn-outline-primary"
+                    >
+                        {% if invoice.dms_archive_status == "failed" %}
+                            Archivierung erneut versuchen
+                        {% else %}
+                            In d.velop archivieren
+                        {% endif %}
+                    </button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+{% endif %}
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+  <input
+    type="hidden"
+    id="recipientPersonErpId"
+    name="recipient_person_erp_id"
+    value="{{ item.recipient_person_erp_id or '' }}"
+  >
+  <input
+    type="hidden"
+    id="recipientLicenseAgreementErpId"
+    name="recipient_license_agreement_erp_id"
+    value="{{ item.recipient_license_agreement_erp_id or '' }}"
+  >
+
+  <fieldset {% if not editable %}disabled{% endif %}>
+    <div class="row g-4">
+      <div class="col-lg-7">
+        <div class="card shadow-sm mb-4">
+          <div class="card-header">
+            Rechnungsempfänger
+          </div>
+
+          <div class="card-body">
+            {% if editable %}
+            <div class="mb-4">
+              <label class="form-label">
+                Mieter oder Vertrag suchen
+              </label>
+
+              <div class="input-group">
+                <input
+                  class="form-control"
+                  id="tenantSearch"
+                  type="search"
+                  placeholder="Name oder Vertragsnummer"
+                >
+                <button
+                  class="btn btn-outline-secondary"
+                  id="tenantSearchButton"
+                  type="button"
+                >
+                  Suchen
+                </button>
+              </div>
+
+              <div
+                class="list-group mt-2"
+                id="tenantSearchResults"
+              ></div>
+            </div>
+
+            <div class="border rounded p-3 mb-4 bg-light">
+              <div class="fw-semibold mb-2">
+                Ausgewählter Vertrag
+              </div>
+              <div id="selectedAgreement">
+                {% if item.recipient_license_agreement_idnum %}
+                Vertrag
+                {{ item.recipient_license_agreement_idnum }}
+                {% else %}
+                Kein Vertrag ausgewählt
+                {% endif %}
+              </div>
+
+              <button
+                class="btn btn-outline-primary btn-sm mt-3"
+                id="loadRecipientButton"
+                type="button"
+                {% if not item.recipient_license_agreement_erp_id %}disabled{% endif %}
+              >
+                Anschrift aus Wowiport abrufen
+              </button>
+
+              <div
+                class="mt-3 d-none"
+                id="recipientCandidateContainer"
+              >
+                <label class="form-label">
+                  Vertragspartner
+                </label>
+                <select
+                  class="form-select"
+                  id="recipientCandidateSelect"
+                ></select>
+              </div>
+
+              <div
+                class="text-danger small mt-2"
+                id="recipientMessage"
+              ></div>
+            </div>
+            {% endif %}
+
+            <div class="row g-3">
+              <div class="col-md-5">
+                <label class="form-label">
+                  Empfängerart
+                </label>
+                <select
+                  class="form-select"
+                  name="recipient_type"
+                  id="recipientType"
+                >
+                  <option
+                    value="private"
+                    {% if item.recipient_type == "private" %}selected{% endif %}
+                  >
+                    Privatperson
+                  </option>
+                  <option
+                    value="business"
+                    {% if item.recipient_type == "business" %}selected{% endif %}
+                  >
+                    Unternehmen
+                  </option>
+                </select>
+              </div>
+
+              <div class="col-md-7">
+                <label class="form-label">
+                  Name oder Firma
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_name"
+                  id="recipientName"
+                  value="{{ item.recipient_name or '' }}"
+                >
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">
+                  Namenszusatz
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_name_addition"
+                  id="recipientNameAddition"
+                  value="{{ item.recipient_name_addition or '' }}"
+                >
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">
+                  Straße und Hausnummer
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_street"
+                  id="recipientStreet"
+                  value="{{ item.recipient_street or '' }}"
+                >
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">
+                  Postleitzahl
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_postal_code"
+                  id="recipientPostalCode"
+                  value="{{ item.recipient_postal_code or '' }}"
+                >
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">
+                  Ort
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_town"
+                  id="recipientTown"
+                  value="{{ item.recipient_town or '' }}"
+                >
+              </div>
+
+              <div class="col-md-2">
+                <label class="form-label">
+                  Land
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_country_code"
+                  id="recipientCountryCode"
+                  maxlength="2"
+                  value="{{ item.recipient_country_code or 'DE' }}"
+                >
+              </div>
+
+              <div class="col-md-7">
+                <label class="form-label">
+                  E-Mail
+                </label>
+                <input
+                  class="form-control"
+                  type="email"
+                  name="recipient_email"
+                  id="recipientEmail"
+                  value="{{ item.recipient_email or '' }}"
+                >
+              </div>
+
+              <div class="col-md-5">
+                <label class="form-label">
+                  Umsatzsteuer-ID
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_vat_id"
+                  id="recipientVatId"
+                  value="{{ item.recipient_vat_id or '' }}"
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card shadow-sm">
+          <div class="card-header">
+            Rechnungstexte
+          </div>
+
+          <div class="card-body">
+            <div class="mb-3">
+              <label class="form-label">
+                Einleitung
+              </label>
+              <textarea
+                class="form-control"
+                name="introductory_text"
+                rows="3"
+              >{{ item.introductory_text or '' }}</textarea>
+            </div>
+
+            <div>
+              <label class="form-label">
+                Schlusstext
+              </label>
+              <textarea
+                class="form-control"
+                name="concluding_text"
+                rows="3"
+              >{{ item.concluding_text or '' }}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-5">
+        <div class="card shadow-sm mb-4">
+          <div class="card-header">
+            Rechnungsdaten
+          </div>
+
+          <div class="card-body row g-3">
+            <div class="col-12">
+              <label class="form-label">
+                Buchwerk
+              </label>
+              <input
+                class="form-control"
+                value="{{ item.company_code_code }} · {{ item.company_code.name }}"
+                readonly
+              >
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">
+                Rechnungsdatum
+              </label>
+              <input
+                class="form-control"
+                type="date"
+                name="invoice_date"
+                value="{{ item.invoice_date.isoformat() if item.invoice_date else '' }}"
+              >
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">
+                Fällig am
+              </label>
+              <input
+                class="form-control"
+                type="date"
+                name="due_date"
+                value="{{ item.due_date.isoformat() if item.due_date else '' }}"
+              >
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">
+                Leistungsbeginn
+              </label>
+              <input
+                class="form-control"
+                type="date"
+                name="service_date_from"
+                value="{{ item.service_date_from.isoformat() if item.service_date_from else '' }}"
+              >
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">
+                Leistungsende
+              </label>
+              <input
+                class="form-control"
+                type="date"
+                name="service_date_to"
+                value="{{ item.service_date_to.isoformat() if item.service_date_to else '' }}"
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+          <div class="card-header">
+            Zugeordnete Aufträge
+          </div>
+
+          <div class="card-body">
+            {% for link in item.commission_links %}
+            <div class="border-bottom py-2">
+              <a
+                href="{{ url_for(
+                  'admin.commission_detail',
+                  commission_id=link.commission.id
+                ) }}"
+              >
+                {{ link.commission.erp_idnum or link.commission.id }}
+              </a>
+              <div class="small">
+                {{ link.commission.display_title }}
+              </div>
+            </div>
+            {% endfor %}
+
+            {% if not item.commission_links %}
+            <div class="text-muted">
+              Freie Rechnung
+            </div>
+            {% endif %}
+          </div>
+        </div>
+
+        {% if editable %}
+        <div class="text-end">
+          <button
+            class="btn btn-primary"
+            type="submit"
+          >
+            Entwurf speichern
+          </button>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+        <div class="card shadow-sm mt-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Rechnungspositionen</span>
+
+        {% if editable %}
+        <div class="d-flex gap-2">
+          <select
+            class="form-select form-select-sm"
+            id="cataloguePosition"
+          >
+            <option value="">
+              Leistungsposition auswählen
+            </option>
+            {% for task_template in task_templates %}
+            <option value="{{ task_template.id }}">
+              {{ task_template.code }} · {{ task_template.title }}
+            </option>
+            {% endfor %}
+          </select>
+
+          <button
+            class="btn btn-sm btn-outline-primary"
+            id="addCataloguePosition"
+            type="button"
+          >
+            Aus Katalog einfügen
+          </button>
+
+          <button
+            class="btn btn-sm btn-outline-primary"
+            id="addFreePosition"
+            type="button"
+          >
+            Freie Position
+          </button>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="card-body">
+        <div class="alert alert-secondary">
+          Zeit- und Materialvorschläge sind normale
+          Entwurfspositionen. Bezeichnung, Menge, Preis
+          und Umsatzsteuer können geändert werden.
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th style="width: 90px;">Quelle</th>
+                <th>Bezeichnung</th>
+                <th>Zusatz</th>
+                <th style="width: 110px;">Menge</th>
+                <th style="width: 90px;">Einheit</th>
+                <th style="width: 130px;">Netto/Einheit</th>
+                <th style="width: 100px;">USt.</th>
+                <th style="width: 110px;"></th>
+              </tr>
+            </thead>
+
+            <tbody id="invoicePositions">
+              {% for position in item.positions %}
+              <tr class="invoice-position-row">
+                <td>
+                  <span class="badge text-bg-secondary">
+                    {{ position_source_labels.get(
+                      position.source_type,
+                      position.source_type
+                    ) }}
+                  </span>
+
+                  <input
+                    type="hidden"
+                    name="position_source_type"
+                    value="{{ position.source_type }}"
+                  >
+                  <input
+                    type="hidden"
+                    name="position_task_template_id"
+                    value="{{ position.task_template_id or '' }}"
+                  >
+                  <input
+                    type="hidden"
+                    name="position_inventory_item_id"
+                    value="{{ position.inventory_item_id or '' }}"
+                  >
+                  <input
+                    type="hidden"
+                    name="position_source_data"
+                    value="{{ position.source_data|tojson|forceescape if position.source_data else '{}' }}"
+                  >
+                </td>
+
+                <td>
+                  <textarea
+                    class="form-control form-control-sm"
+                    name="position_description"
+                    rows="2"
+                    required
+                  >{{ position.description }}</textarea>
+                </td>
+
+                <td>
+                  <textarea
+                    class="form-control form-control-sm"
+                    name="position_details"
+                    rows="2"
+                  >{{ position.details or '' }}</textarea>
+                </td>
+
+                <td>
+                  <input
+                    class="form-control form-control-sm"
+                    name="position_quantity"
+                    inputmode="decimal"
+                    value="{{ position.quantity }}"
+                    required
+                  >
+                </td>
+
+                <td>
+                  <input
+                    class="form-control form-control-sm"
+                    name="position_unit"
+                    value="{{ position.unit }}"
+                    required
+                  >
+                </td>
+
+                <td>
+                  <input
+                    class="form-control form-control-sm"
+                    name="position_unit_price_net"
+                    inputmode="decimal"
+                    value="{{ position.unit_price_net }}"
+                    required
+                  >
+                </td>
+
+                <td>
+                  <div class="input-group input-group-sm">
+                    <input
+                      class="form-control"
+                      name="position_vat_rate"
+                      inputmode="decimal"
+                      value="{{ position.vat_rate }}"
+                      required
+                    >
+                    <span class="input-group-text">%</span>
+                  </div>
+                </td>
+
+                <td>
+                  {% if editable %}
+                  <div class="btn-group btn-group-sm">
+                    <button
+                      class="btn btn-outline-secondary move-position-up"
+                      type="button"
+                      title="Nach oben"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      class="btn btn-outline-secondary move-position-down"
+                      type="button"
+                      title="Nach unten"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      class="btn btn-outline-danger remove-position"
+                      type="button"
+                      title="Entfernen"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {% if not item.positions %}
+        <div
+          class="text-center text-muted py-4"
+          id="emptyPositionMessage"
+        >
+          Noch keine Rechnungspositionen vorhanden.
+        </div>
+        {% else %}
+        <div
+          class="text-center text-muted py-4 d-none"
+          id="emptyPositionMessage"
+        >
+          Noch keine Rechnungspositionen vorhanden.
+        </div>
+        {% endif %}
+
+        <div class="row justify-content-end mt-3">
+          <div class="col-md-4">
+            <table class="table table-sm">
+              <tr>
+                <th>Netto</th>
+                <td class="text-end">
+                  {{ "%.2f"|format(item.total_net) }}
+                  {{ item.currency_code }}
+                </td>
+              </tr>
+              <tr>
+                <th>Umsatzsteuer</th>
+                <td class="text-end">
+                  {{ "%.2f"|format(item.total_vat) }}
+                  {{ item.currency_code }}
+                </td>
+              </tr>
+              <tr class="fw-bold">
+                <th>Brutto</th>
+                <td class="text-end">
+                  {{ "%.2f"|format(item.total_gross) }}
+                  {{ item.currency_code }}
+                </td>
+              </tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+</form>
+{% if editable and item.commission_links %}
+<form
+  method="post"
+  action="{{ url_for(
+    'admin.invoice_add_suggestions',
+    invoice_id=item.id
+  ) }}"
+  class="mt-4"
+>
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+
+  <button
+    class="btn btn-outline-primary"
+    type="submit"
+  >
+    Neue Zeit- und Materialvorschläge ergänzen
+  </button>
+
+  <div class="form-text">
+    Bereits vorhandene Vorschlagspositionen werden
+    nicht doppelt eingefügt. Gelöschte Vorschläge
+    können erneut übernommen werden.
+  </div>
+</form>
+{% endif %}
+{% if editable %}
+<form
+  method="post"
+  action="{{ url_for(
+    'admin.invoice_delete',
+    invoice_id=item.id
+  ) }}"
+  class="mt-4 text-end"
+  onsubmit="return confirm('Rechnungsentwurf wirklich löschen?')"
+>
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+  <button
+    class="btn btn-outline-danger"
+    type="submit"
+  >
+    Entwurf löschen
+  </button>
+</form>
+
+<script>
+  const tenantSearch = document.getElementById("tenantSearch");
+  const tenantSearchButton = document.getElementById("tenantSearchButton");
+  const tenantSearchResults = document.getElementById("tenantSearchResults");
+  const selectedAgreement = document.getElementById("selectedAgreement");
+  const agreementIdInput = document.getElementById("recipientLicenseAgreementErpId");
+  const personIdInput = document.getElementById("recipientPersonErpId");
+  const loadRecipientButton = document.getElementById("loadRecipientButton");
+  const recipientMessage = document.getElementById("recipientMessage");
+  const candidateContainer = document.getElementById("recipientCandidateContainer");
+  const candidateSelect = document.getElementById("recipientCandidateSelect");
+  let recipientCandidates = [];
+
+  async function searchTenants() {
+    const query = tenantSearch.value.trim();
+    tenantSearchResults.innerHTML = "";
+
+    if (query.length < 2) {
+      return;
+    }
+
+    const response = await fetch(
+      "{{ url_for('admin.invoice_recipient_search', invoice_id=item.id) }}"
+      + "?q="
+      + encodeURIComponent(query)
+    );
+    const data = await response.json();
+
+    data.items.forEach(function (result) {
+      const agreement = result.license_agreement || {};
+      const economicUnit = result.economic_unit || {};
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "list-group-item list-group-item-action";
+
+      const tenantName = result.tenant_name || result.label || "Mieter";
+      const agreementNumber = agreement.id_num || "";
+      const economicUnitNumber = economicUnit.id_num || "";
+
+      button.textContent = [
+        tenantName,
+        agreementNumber ? `Vertrag ${agreementNumber}` : "",
+        economicUnitNumber ? `WE ${economicUnitNumber}` : ""
+      ].filter(Boolean).join(" · ");
+
+      button.addEventListener("click", function () {
+        agreementIdInput.value = agreement.erp_id || "";
+        personIdInput.value = "";
+        selectedAgreement.textContent = agreementNumber
+          ? `Vertrag ${agreementNumber} · ${tenantName}`
+          : tenantName;
+        loadRecipientButton.disabled = !agreement.erp_id;
+        tenantSearchResults.innerHTML = "";
+        recipientMessage.textContent = "";
+        candidateContainer.classList.add("d-none");
+      });
+
+      tenantSearchResults.appendChild(button);
+    });
+
+    if (data.items.length === 0) {
+      tenantSearchResults.innerHTML =
+        '<div class="list-group-item text-muted">Keine passenden Verträge gefunden.</div>';
+    }
+  }
+
+  function applyRecipient(candidate) {
+    personIdInput.value = candidate.person_id || "";
+    document.getElementById("recipientType").value =
+      candidate.recipient_type || "private";
+    document.getElementById("recipientName").value =
+      candidate.name || "";
+    document.getElementById("recipientNameAddition").value =
+      candidate.name_addition || "";
+    document.getElementById("recipientStreet").value =
+      candidate.street || "";
+    document.getElementById("recipientPostalCode").value =
+      candidate.postal_code || "";
+    document.getElementById("recipientTown").value =
+      candidate.town || "";
+    document.getElementById("recipientCountryCode").value =
+      candidate.country_code || "DE";
+    document.getElementById("recipientEmail").value =
+      candidate.email || "";
+    document.getElementById("recipientVatId").value =
+      candidate.vat_id || "";
+  }
+
+  async function loadRecipient() {
+    const agreementId = agreementIdInput.value;
+    recipientMessage.textContent = "";
+    candidateContainer.classList.add("d-none");
+
+    if (!agreementId) {
+      recipientMessage.textContent =
+        "Bitte zuerst einen Vertrag auswählen.";
+      return;
+    }
+
+    loadRecipientButton.disabled = true;
+
+    try {
+      const response = await fetch(
+        "{{ url_for('admin.invoice_recipient_candidates', invoice_id=item.id) }}"
+        + "?license_agreement_id="
+        + encodeURIComponent(agreementId)
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.message || "Die Anschrift konnte nicht geladen werden."
+        );
+      }
+
+      recipientCandidates = data.items || [];
+
+      if (recipientCandidates.length === 1) {
+        applyRecipient(recipientCandidates[0]);
+        return;
+      }
+
+      candidateSelect.innerHTML =
+        '<option value="">Bitte auswählen</option>';
+
+      recipientCandidates.forEach(function (candidate, index) {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = [
+          candidate.name,
+          candidate.role
+        ].filter(Boolean).join(" · ");
+        candidateSelect.appendChild(option);
+      });
+
+      candidateContainer.classList.remove("d-none");
+    } catch (error) {
+      recipientMessage.textContent = error.message;
+    } finally {
+      loadRecipientButton.disabled = false;
+    }
+  }
+
+  tenantSearchButton.addEventListener("click", searchTenants);
+  tenantSearch.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchTenants();
+    }
+  });
+  loadRecipientButton.addEventListener("click", loadRecipient);
+  candidateSelect.addEventListener("change", function () {
+    if (candidateSelect.value === "") {
+      return;
+    }
+
+    applyRecipient(
+      recipientCandidates[
+        Number(candidateSelect.value)
+      ]
+    );
+  });
+    const catalogueItems = {{ catalogue_items|tojson }};
+  const positionsBody = document.getElementById("invoicePositions");
+  const emptyPositionMessage = document.getElementById("emptyPositionMessage");
+  const addFreePosition = document.getElementById("addFreePosition");
+  const addCataloguePosition = document.getElementById("addCataloguePosition");
+  const cataloguePosition = document.getElementById("cataloguePosition");
+
+  function escapePositionValue(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function createPositionRow(values) {
+    const row = document.createElement("tr");
+    row.className = "invoice-position-row";
+
+    const sourceLabels = {
+      time: "Zeit",
+      material: "Material",
+      catalog: "Katalog",
+      free: "Freie Position"
+    };
+
+    row.innerHTML = `
+      <td>
+        <span class="badge text-bg-secondary">
+          ${escapePositionValue(sourceLabels[values.sourceType] || values.sourceType)}
+        </span>
+        <input type="hidden" name="position_source_type" value="${escapePositionValue(values.sourceType)}">
+        <input type="hidden" name="position_task_template_id" value="${escapePositionValue(values.taskTemplateId)}">
+        <input type="hidden" name="position_inventory_item_id" value="">
+        <input type="hidden" name="position_source_data" value="{}">
+      </td>
+      <td>
+        <textarea class="form-control form-control-sm" name="position_description" rows="2" required>${escapePositionValue(values.description)}</textarea>
+      </td>
+      <td>
+        <textarea class="form-control form-control-sm" name="position_details" rows="2"></textarea>
+      </td>
+      <td>
+        <input class="form-control form-control-sm" name="position_quantity" inputmode="decimal" value="1" required>
+      </td>
+      <td>
+        <input class="form-control form-control-sm" name="position_unit" value="Stk" required>
+      </td>
+      <td>
+        <input class="form-control form-control-sm" name="position_unit_price_net" inputmode="decimal" value="0.00" required>
+      </td>
+      <td>
+        <div class="input-group input-group-sm">
+          <input class="form-control" name="position_vat_rate" inputmode="decimal" value="19.00" required>
+          <span class="input-group-text">%</span>
+        </div>
+      </td>
+      <td>
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-secondary move-position-up" type="button">↑</button>
+          <button class="btn btn-outline-secondary move-position-down" type="button">↓</button>
+          <button class="btn btn-outline-danger remove-position" type="button">×</button>
+        </div>
+      </td>
+    `;
+
+    positionsBody.appendChild(row);
+    updateEmptyPositionMessage();
+  }
+
+  function updateEmptyPositionMessage() {
+    emptyPositionMessage.classList.toggle(
+      "d-none",
+      positionsBody.querySelectorAll(".invoice-position-row").length > 0
+    );
+  }
+
+  positionsBody.addEventListener("click", function (event) {
+    const row = event.target.closest(".invoice-position-row");
+
+    if (!row) {
+      return;
+    }
+
+    if (event.target.closest(".remove-position")) {
+      row.remove();
+      updateEmptyPositionMessage();
+      return;
+    }
+
+    if (event.target.closest(".move-position-up")) {
+      const previousRow = row.previousElementSibling;
+
+      if (previousRow) {
+        positionsBody.insertBefore(row, previousRow);
+      }
+
+      return;
+    }
+
+    if (event.target.closest(".move-position-down")) {
+      const nextRow = row.nextElementSibling;
+
+      if (nextRow) {
+        positionsBody.insertBefore(nextRow, row);
+      }
+    }
+  });
+
+  addFreePosition.addEventListener("click", function () {
+    createPositionRow({
+      sourceType: "free",
+      taskTemplateId: "",
+      description: ""
+    });
+  });
+
+  addCataloguePosition.addEventListener("click", function () {
+    const selectedId = Number(cataloguePosition.value);
+    const selectedItem = catalogueItems.find(function (item) {
+      return item.id === selectedId;
+    });
+
+    if (!selectedItem) {
+      return;
+    }
+
+    createPositionRow({
+      sourceType: "catalog",
+      taskTemplateId: selectedItem.id,
+      description: selectedItem.title
+    });
+  });
+
+  updateEmptyPositionMessage();
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    const draftForm = document.getElementById(
+        "invoice-draft-form"
+    );
+    const finalizeForm = document.getElementById(
+        "invoice-finalize-form"
+    );
+    let draftChanged = false;
+
+    if (draftForm) {
+        draftForm.addEventListener(
+            "input",
+            () => {
+                draftChanged = true;
+            }
+        );
+        draftForm.addEventListener(
+            "change",
+            () => {
+                draftChanged = true;
+            }
+        );
+        draftForm.addEventListener(
+            "submit",
+            () => {
+                draftChanged = false;
+            }
+        );
+    }
+        const cancelForm = document.getElementById(
+        "invoice-cancel-form"
+    );
+
+    if (cancelForm) {
+        cancelForm.addEventListener(
+            "submit",
+            event => {
+                if (
+                    !window.confirm(
+                        "Soll die Rechnung wirklich "
+                        + "vollständig storniert werden?"
+                    )
+                ) {
+                    event.preventDefault();
+                    return;
+                }
+
+                const submitButton = (
+                    cancelForm.querySelector(
+                        "button[type='submit']"
+                    )
+                );
+
+                if (submitButton) {
+                    submitButton.disabled = true;
+                    submitButton.textContent = (
+                        "Stornorechnung wird erstellt …"
+                    );
+                }
+            }
+        );
+    }
+
+    if (finalizeForm) {
+        finalizeForm.addEventListener(
+            "submit",
+            event => {
+                if (draftChanged) {
+                    event.preventDefault();
+                    window.alert(
+                        "Bitte speichern Sie zuerst "
+                        + "die geänderten Rechnungsdaten."
+                    );
+                    return;
+                }
+
+                if (
+                    !window.confirm(
+                        "Soll die Rechnung endgültig "
+                        + "festgeschrieben werden?"
+                    )
+                ) {
+                    event.preventDefault();
+                }
+            }
+        );
+    }
+});
+    const archiveForm = document.getElementById(
+        "invoice-archive-form"
+    );
+
+    if (archiveForm) {
+        archiveForm.addEventListener(
+            "submit",
+            () => {
+                const submitButton = (
+                    archiveForm.querySelector(
+                        "button[type='submit']"
+                    )
+                );
+
+                if (submitButton) {
+                    submitButton.disabled = true;
+                    submitButton.textContent = (
+                        "Archivierung läuft …"
+                    );
+                }
+            }
+        );
+    }
+</script>
+{% endif %}
+{% endblock %}

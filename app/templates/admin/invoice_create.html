@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Rechnung erstellen{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">
+      Rechnung erstellen
+    </h1>
+    <div class="text-muted">
+      Auftrag übernehmen oder freie Rechnung anlegen
+    </div>
+  </div>
+
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.invoices') }}"
+  >
+    Zurück
+  </a>
+</div>
+
+<form method="post">
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-header">
+      Freie Rechnung
+    </div>
+
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <div class="col-lg-6">
+          <label class="form-label">
+            Buchwerk
+          </label>
+          <select
+            class="form-select"
+            name="company_code_id"
+          >
+            <option value="">
+              Bitte auswählen
+            </option>
+            {% for item in company_codes %}
+            <option value="{{ item.id }}">
+              {{ item.code }} · {{ item.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-lg-auto">
+          <button
+            class="btn btn-outline-primary"
+            type="submit"
+            name="mode"
+            value="free"
+          >
+            Freien Entwurf anlegen
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-header">
+      Aufträge mit Mieterbelastung
+    </div>
+
+    <div class="card-body">
+      <div class="alert alert-secondary">
+        Mehrere Aufträge können gemeinsam übernommen
+        werden, wenn Buchwerk und Vertrag übereinstimmen.
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-striped datatable align-middle">
+          <thead>
+            <tr>
+              <th data-filter="false"></th>
+              <th>Auftragsnummer</th>
+              <th>Mieter</th>
+              <th>Vertrag</th>
+              <th>Buchwerk</th>
+              <th>Adresse</th>
+              <th>Leistung</th>
+              <th>Abschluss</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {% for item in commissions %}
+            <tr>
+              <td>
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  name="commission_ids"
+                  value="{{ item.id }}"
+                  aria-label="Auftrag auswählen"
+                >
+              </td>
+
+              <td>
+                {{ item.erp_idnum or item.code or item.id }}
+              </td>
+
+              <td>
+                {{ item.tenant_name or "" }}
+              </td>
+
+              <td>
+                {{ item.license_agreement_idnum or "" }}
+              </td>
+
+              <td>
+                {{ item.company_code_code or "" }}
+              </td>
+
+              <td>
+                {{ item.apartment_address or "" }}
+              </td>
+
+              <td>
+                {{ item.display_title }}
+              </td>
+
+              <td
+                data-order="{{ item.completed_at.isoformat() if item.completed_at else '' }}"
+              >
+                {{ item.completed_at.strftime("%d.%m.%Y") if item.completed_at else "" }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if commissions %}
+      <div class="text-end mt-3">
+        <button
+          class="btn btn-primary"
+          type="submit"
+          name="mode"
+          value="selected"
+        >
+          Ausgewählte Aufträge übernehmen
+        </button>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4">
+        Keine freien Aufträge mit Mieterbelastung vorhanden.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</form>
+{% endblock %}

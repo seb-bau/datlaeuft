@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% block title %}Abrechnungssätze{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h1 class="h3 mb-1">
+      Abrechnungssätze
+    </h1>
+    <div class="text-muted">
+      Zeitarten und Leistungspositionen
+      für Rechnungsvorschläge
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <form
+      method="get"
+      class="row g-3 align-items-end"
+    >
+      <div class="col-lg-6">
+        <label class="form-label">
+          Geltungsbereich
+        </label>
+        <select
+          class="form-select"
+          name="company_code_id"
+        >
+          <option value="">
+            Globale Grundregeln
+          </option>
+          {% for item in company_codes %}
+          <option
+            value="{{ item.id }}"
+            {% if
+              company_code
+              and company_code.id == item.id
+            %}selected{% endif %}
+          >
+            {{ item.code }} · {{ item.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-lg-3">
+        <button
+          class="btn btn-primary"
+          type="submit"
+        >
+          Anzeigen
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if company_code %}
+<div class="alert alert-info">
+  Angezeigt werden die Überschreibungen für
+  <strong>
+    {{ company_code.code }} · {{ company_code.name }}
+  </strong>.
+  „Globale Regel verwenden“ entfernt eine vorhandene
+  Buchwerksüberschreibung.
+</div>
+{% else %}
+<div class="alert alert-secondary">
+  Diese Regeln bilden die globale Grundlage.
+  Leistungspositionen ohne eigene Regel werden anhand
+  der enthaltenen Zeitarten abgerechnet.
+</div>
+{% endif %}
+
+<form method="post">
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+  <input
+    type="hidden"
+    name="company_code_id"
+    value="{{ company_code.id if company_code else '' }}"
+  >
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-header">
+      Zeitarten
+    </div>
+
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Zeitart</th>
+              <th>Status</th>
+              <th>Rechnungsbezeichnung</th>
+              <th>Stundensatz netto</th>
+              <th>Umsatzsteuer</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for time_type in time_types %}
+            {% set rule = time_rules.get(time_type.key) %}
+            <tr>
+              <td>
+                <strong>
+                  {{ time_type.label }}
+                </strong>
+              </td>
+
+              <td style="min-width: 210px;">
+                <select
+                  class="form-select"
+                  name="time_state_{{ time_type.key }}"
+                >
+                  {% if company_code %}
+                  <option
+                    value="inherit"
+                    {% if not rule %}selected{% endif %}
+                  >
+                    Globale Regel verwenden
+                  </option>
+                  {% endif %}
+
+                  <option
+                    value="enabled"
+                    {% if
+                      rule and rule.enabled
+                      or not company_code and not rule
+                    %}selected{% endif %}
+                  >
+                    Abrechnen
+                  </option>
+
+                  <option
+                    value="disabled"
+                    {% if
+                      rule and not rule.enabled
+                    %}selected{% endif %}
+                  >
+                    Nicht abrechnen
+                  </option>
+                </select>
+              </td>
+
+              <td>
+                <input
+                  class="form-control"
+                  name="time_title_{{ time_type.key }}"
+                  value="{{ rule.position_title if rule and rule.position_title else '' }}"
+                  placeholder="{{ time_type.label }}"
+                >
+              </td>
+
+              <td>
+                <div class="input-group">
+                  <input
+                    class="form-control"
+                    name="time_rate_{{ time_type.key }}"
+                    inputmode="decimal"
+                    value="{{ rule.hourly_rate_net if rule and rule.hourly_rate_net is not none else '' }}"
+                    placeholder="Standard"
+                  >
+                  <span class="input-group-text">
+                    EUR
+                  </span>
+                </div>
+              </td>
+
+              <td>
+                <div class="input-group">
+                  <input
+                    class="form-control"
+                    name="time_vat_{{ time_type.key }}"
+                    inputmode="decimal"
+                    value="{{ rule.vat_rate if rule and rule.vat_rate is not none else '' }}"
+                    placeholder="Standard"
+                  >
+                  <span class="input-group-text">
+                    %
+                  </span>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-header">
+      Leistungspositionsbezogene Regeln
+    </div>
+
+    <div class="card-body">
+      <div class="text-muted mb-3">
+        Eine aktivierte Regel rechnet die gesamte erfasste
+        Zeit dieser Leistungsposition als eine Position ab.
+        Ohne eigene Regel werden die einzelnen Zeitarten
+        verwendet.
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-striped datatable align-middle">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Leistungsposition</th>
+              <th>Gewerk</th>
+              <th>Status</th>
+              <th>Rechnungsbezeichnung</th>
+              <th>Stundensatz netto</th>
+              <th>Umsatzsteuer</th>
+              <th>Sortierung</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {% for item in task_templates %}
+            {% set rule = task_rules.get(item.id) %}
+            <tr>
+              <td>{{ item.code }}</td>
+              <td>{{ item.title }}</td>
+              <td>
+                {{ item.craft_activity.name if item.craft_activity else '' }}
+              </td>
+
+              <td style="min-width: 190px;">
+                <select
+                  class="form-select form-select-sm"
+                  name="task_state_{{ item.id }}"
+                >
+                  <option
+                    value="inherit"
+                    {% if not rule %}selected{% endif %}
+                  >
+                    Zeitarten verwenden
+                  </option>
+
+                  <option
+                    value="enabled"
+                    {% if rule and rule.enabled %}selected{% endif %}
+                  >
+                    Eigene Regel
+                  </option>
+
+                  <option
+                    value="disabled"
+                    {% if rule and not rule.enabled %}selected{% endif %}
+                  >
+                    Nicht abrechnen
+                  </option>
+                </select>
+              </td>
+
+              <td>
+                <input
+                  class="form-control form-control-sm"
+                  name="task_title_{{ item.id }}"
+                  value="{{ rule.position_title if rule and rule.position_title else '' }}"
+                  placeholder="{{ item.title }}"
+                >
+              </td>
+
+              <td>
+                <input
+                  class="form-control form-control-sm"
+                  name="task_rate_{{ item.id }}"
+                  inputmode="decimal"
+                  value="{{ rule.hourly_rate_net if rule and rule.hourly_rate_net is not none else '' }}"
+                  placeholder="Standard"
+                >
+              </td>
+
+              <td>
+                <input
+                  class="form-control form-control-sm"
+                  name="task_vat_{{ item.id }}"
+                  inputmode="decimal"
+                  value="{{ rule.vat_rate if rule and rule.vat_rate is not none else '' }}"
+                  placeholder="Standard"
+                >
+              </td>
+
+              <td>
+                <input
+                  class="form-control form-control-sm"
+                  type="number"
+                  name="task_sort_{{ item.id }}"
+                  value="{{ rule.sort_order if rule else 100 }}"
+                >
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if not task_templates %}
+      <div class="text-center text-muted py-4">
+        Keine Leistungspositionen vorhanden.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="text-end">
+    <button
+      class="btn btn-primary"
+      type="submit"
+    >
+      Abrechnungssätze speichern
+    </button>
+  </div>
+</form>
+{% endblock %}

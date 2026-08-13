@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import base64
 
 from typing import Any
@@ -1777,6 +1777,221 @@ class WowiportService:
     def get_contractors(self, erp_id: int) -> list[dict[str, Any]] | None:
         contact_items = self.get_commission_contact_items(erp_id=erp_id)
         return contact_items if contact_items else None
+
+
+    def get_invoice_recipient_candidates(
+        self,
+        license_agreement_id: int,
+    ) -> list[dict[str, Any]]:
+        contractors = self.client.get_contractors(
+            license_agreement_id=(
+                license_agreement_id
+            ),
+            add_args={
+                "includeMainAddress": "true",
+                "includeMainCommunication": "true",
+                "includePersonAddresses": "true",
+                "includePersonCommunications": "true",
+                "showNullValues": "true",
+            },
+        )
+
+        candidates = []
+
+        for contractor in contractors:
+            person = _attr(
+                contractor,
+                "person",
+            )
+
+            if person is None:
+                continue
+
+            natural_person = _attr(
+                person,
+                "natural_person",
+            )
+            legal_person = _attr(
+                person,
+                "legal_person",
+            )
+            is_natural_person = bool(
+                _attr(
+                    person,
+                    "is_natural_person",
+                )
+            )
+
+            if (
+                is_natural_person
+                and natural_person is not None
+            ):
+                name = _join_text(
+                    _attr(
+                        natural_person,
+                        "title",
+                    ),
+                    _attr(
+                        natural_person,
+                        "first_name",
+                    ),
+                    _attr(
+                        natural_person,
+                        "last_name",
+                    ),
+                )
+                name_addition = _first_text(
+                    _attr(
+                        natural_person,
+                        "care_of",
+                    )
+                )
+                recipient_type = "private"
+                vat_id = None
+            else:
+                name = _first_text(
+                    _attr(
+                        legal_person,
+                        "long_name1",
+                    ),
+                    _attr(person, "name"),
+                )
+                name_addition = _first_text(
+                    _attr(
+                        legal_person,
+                        "long_name2",
+                    )
+                )
+                recipient_type = "business"
+                vat_id = _first_text(
+                    _attr(
+                        legal_person,
+                        "vat_id",
+                    )
+                )
+
+            address = _attr(
+                contractor,
+                "default_address",
+            )
+
+            if address is None:
+                addresses = list(
+                    _attr(
+                        person,
+                        "addresses",
+                    )
+                    or []
+                )
+                address = next(
+                    (
+                        item
+                        for item in addresses
+                        if _attr(
+                            item,
+                            "main_address",
+                        )
+                    ),
+                    (
+                        addresses[0]
+                        if addresses
+                        else None
+                    ),
+                )
+
+            email_entry = _first_communication(
+                preferred=_attr(
+                    person,
+                    "first_email_communication",
+                ),
+                fallback_items=(
+                    _get_comm_items_of_type(
+                        [5],
+                        list(
+                            _attr(
+                                person,
+                                "communications",
+                            )
+                            or []
+                        ),
+                    )
+                ),
+            )
+
+            country = _attr(
+                address,
+                "country",
+            )
+
+            candidates.append(
+                {
+                    "person_id": _as_int(
+                        _attr(person, "id_")
+                    ),
+                    "recipient_type": (
+                        recipient_type
+                    ),
+                    "name": name,
+                    "name_addition": (
+                        name_addition
+                    ),
+                    "street": _first_text(
+                        _attr(
+                            address,
+                            "street_complete",
+                        ),
+                        _join_text(
+                            _attr(
+                                address,
+                                "street",
+                            ),
+                            _attr(
+                                address,
+                                "house_number_complete",
+                            ),
+                        ),
+                    ),
+                    "postal_code": _first_text(
+                        _attr(
+                            address,
+                            "zip_",
+                        )
+                    ),
+                    "town": _first_text(
+                        _attr(
+                            address,
+                            "town",
+                        )
+                    ),
+                    "country_code": (
+                        _first_text(
+                            _attr(
+                                country,
+                                "code",
+                            )
+                        )
+                        or "DE"
+                    ),
+                    "email": _first_text(
+                        _attr(
+                            email_entry,
+                            "content",
+                        )
+                    ),
+                    "vat_id": vat_id,
+                    "role": _first_text(
+                        _attr(
+                            _attr(
+                                contractor,
+                                "contractor_type",
+                            ),
+                            "name",
+                        )
+                    ),
+                }
+            )
+
+        return candidates
 
     def get_commission_contact_items(
             self,

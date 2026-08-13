@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}Buchwerk{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">
+      {{ item.code }} · {{ item.name }}
+    </h1>
+    <div class="text-muted">
+      Rechnungseinstellungen
+    </div>
+  </div>
+
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.company_codes') }}"
+  >
+    Zurück
+  </a>
+</div>
+
+<form
+  method="post"
+  enctype="multipart/form-data"
+  class="row g-4"
+>
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header">
+        Rechnungsaussteller
+      </div>
+
+      <div class="card-body row g-3">
+        <div class="col-12">
+          <label class="form-label">
+            Name
+          </label>
+          <input
+            class="form-control"
+            name="seller_name"
+            value="{{ item.seller_name or '' }}"
+          >
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">
+            Straße und Hausnummer
+          </label>
+          <input
+            class="form-control"
+            name="seller_street"
+            value="{{ item.seller_street or '' }}"
+          >
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">
+            Postleitzahl
+          </label>
+          <input
+            class="form-control"
+            name="seller_postal_code"
+            value="{{ item.seller_postal_code or '' }}"
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Ort
+          </label>
+          <input
+            class="form-control"
+            name="seller_town"
+            value="{{ item.seller_town or '' }}"
+          >
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">
+            Land
+          </label>
+          <input
+            class="form-control"
+            name="seller_country_code"
+            maxlength="2"
+            value="{{ item.seller_country_code or 'DE' }}"
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Umsatzsteuer-ID
+          </label>
+          <input
+            class="form-control"
+            name="seller_vat_id"
+            value="{{ item.seller_vat_id or '' }}"
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Steuernummer
+          </label>
+          <input
+            class="form-control"
+            name="seller_tax_number"
+            value="{{ item.seller_tax_number or '' }}"
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            E-Mail
+          </label>
+          <input
+            class="form-control"
+            type="email"
+            name="seller_email"
+            value="{{ item.seller_email or '' }}"
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Telefon
+          </label>
+          <input
+            class="form-control"
+            name="seller_phone"
+            value="{{ item.seller_phone or '' }}"
+          >
+        </div>
+
+        <div class="col-md-8">
+          <label class="form-label">
+            IBAN
+          </label>
+          <input
+            class="form-control"
+            name="seller_iban"
+            value="{{ item.seller_iban or '' }}"
+          >
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">
+            BIC
+          </label>
+          <input
+            class="form-control"
+            name="seller_bic"
+            value="{{ item.seller_bic or '' }}"
+          >
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm mb-4">
+      <div class="card-header">
+        Nummernkreis
+      </div>
+
+      <div class="card-body row g-3">
+        <div class="col-12">
+          <label class="form-label">
+            Rechnungsnummernmaske
+          </label>
+          <input
+            class="form-control"
+            name="invoice_number_mask"
+            value="{{ item.invoice_number_mask }}"
+            required
+          >
+          <div class="form-text">
+            Verfügbar: &lt;company_code&gt;,
+            &lt;year&gt; und &lt;counter&gt;
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Ziffern des Zählers
+          </label>
+          <input
+            class="form-control"
+            type="number"
+            min="1"
+            max="12"
+            name="invoice_counter_digits"
+            value="{{ item.invoice_counter_digits }}"
+            required
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Aktueller Zähler
+          </label>
+          <input
+            class="form-control"
+            value="{{ item.invoice_counter }}"
+            readonly
+          >
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-header">
+        Abrechnungsvorgaben
+      </div>
+
+      <div class="card-body row g-3">
+        <div class="col-md-6">
+          <label class="form-label">
+            Stundensatz netto
+          </label>
+          <input
+            class="form-control"
+            name="invoice_default_hourly_rate_net"
+            inputmode="decimal"
+            value="{{ item.invoice_default_hourly_rate_net if item.invoice_default_hourly_rate_net is not none else '' }}"
+            placeholder="Globaler Standard"
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Umsatzsteuer in Prozent
+          </label>
+          <input
+            class="form-control"
+            name="invoice_default_vat_rate"
+            inputmode="decimal"
+            value="{{ item.invoice_default_vat_rate if item.invoice_default_vat_rate is not none else '' }}"
+            placeholder="Globaler Standard"
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Materialaufschlag in Prozent
+          </label>
+          <input
+            class="form-control"
+            name="invoice_material_markup_percent"
+            inputmode="decimal"
+            value="{{ item.invoice_material_markup_percent if item.invoice_material_markup_percent is not none else '' }}"
+            placeholder="Globaler Standard"
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Zahlungsziel in Tagen
+          </label>
+          <input
+            class="form-control"
+            type="number"
+            min="0"
+            name="invoice_payment_terms_days"
+            value="{{ item.invoice_payment_terms_days if item.invoice_payment_terms_days is not none else '' }}"
+            placeholder="Globaler Standard"
+          >
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-header">
+        Briefbogen
+      </div>
+
+      <div class="card-body">
+        <input
+          class="form-control"
+          type="file"
+          name="stationery"
+          accept="application/pdf,.pdf"
+        >
+
+        {% if item.stationery_filename %}
+        <div class="mt-3">
+          <a
+            href="{{ url_for(
+              'admin.company_code_stationery',
+              item_id=item.id
+            ) }}"
+            target="_blank"
+          >
+            Aktuellen Briefbogen öffnen
+          </a>
+        </div>
+
+        <div class="form-check mt-3">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="remove_stationery"
+            id="removeStationery"
+          >
+          <label
+            class="form-check-label"
+            for="removeStationery"
+          >
+            Vorhandenen Briefbogen entfernen
+          </label>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 text-end">
+    <button
+      class="btn btn-primary"
+      type="submit"
+    >
+      Speichern
+    </button>
+  </div>
+</form>
+{% endblock %}

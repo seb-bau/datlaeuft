@@ -18,7 +18,18 @@
           <label class="form-check-label">Aktiv</label>
         </div>
         {% elif definition.secret %}
-        <input class="form-control" type="password" name="{{ definition.key }}" placeholder="Leer lassen, um den Wert beizubehalten">
+        <input
+          class="form-control"
+          type="password"
+          name="{{ definition.key }}"
+          placeholder="Leer lassen, um den Wert beizubehalten"
+        >
+        {% elif definition.value_type.value == "json" %}
+        <textarea
+          class="form-control font-monospace"
+          name="{{ definition.key }}"
+          rows="6"
+        >{{ value | tojson }}</textarea>
         {% else %}
         <input class="form-control" type="text" name="{{ definition.key }}" value="{{ value }}">
         {% endif %}

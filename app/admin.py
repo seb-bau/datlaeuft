@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+
 from io import BytesIO
 from typing import Any
-
+import json
 import qrcode
 from flask import (
     Blueprint,
@@ -15,12 +18,17 @@ from flask import (
     render_template,
     request,
     send_file,
+    send_from_directory,
     url_for,
 )
 from flask_login import current_user, login_required
 
 from .audit import audit
-from .auth import admin_required, foreman_required
+from .auth import (
+    admin_required,
+    foreman_required,
+    invoice_required,
+)
 from .entra import import_entra_users
 from .extensions import db
 from .logging_service import configure_logging
@@ -32,7 +40,12 @@ from .object_directory import (
     search_commission_objects,
     sync_object_directory,
 )
-from sqlalchemy import and_, or_
+from sqlalchemy import (
+    and_,
+    or_,
+    select,
+)
+from sqlalchemy.exc import IntegrityError
 from .commission_service import create_pending_commission
 from .models import (
     Commission,
@@ -68,6 +81,20 @@ from .models import (
     PushEventType,
     CraftActivityDepartmentMapping,
     WowiDepartment,
+    InvoiceBillingRule,
+    InvoiceBillingRuleType,
+    Invoice,
+    InvoiceCommission,
+    InvoiceStatus,
+    InvoiceRecipientType,
+    WowiLicenseAgreement,
+    InvoicePositionSource,
+    InvoiceArchiveStatus,
+InvoiceKind,
+)
+from .invoice_archive import (
+    InvoiceArchiveError,
+    archive_invoice,
 )
 from .inventory_service import (
     book_inventory_movement,
@@ -83,11 +110,53 @@ from .push_service import enqueue_commission_push
 from .wowiport import (
     configured_commission_type_ids,
     sync_commission_from_erp,
+    WowiportService,
 )
-from datetime import time
+from .invoice_service import (
+    add_invoice_suggestions,
+    available_invoice_commissions,
+    create_commission_invoice_draft,
+    create_free_invoice_draft,
+    replace_invoice_positions,
+    InvoiceFinalizationError,
+    finalize_invoice,
+    create_cancellation_invoice,
+)
+from .invoice_document import (
+    InvoiceDocumentError,
+    remove_invoice_documents,
+    resolve_invoice_document_path,
+)
+from datetime import date, time
 from uuid import uuid4
 
 admin_bp = Blueprint("admin", __name__)
+INVOICE_TIME_TYPES = (
+    {
+        "key": "work_minutes",
+        "label": "Arbeitszeit",
+    },
+    {
+        "key": "waiting_minutes",
+        "label": "Wartezeit",
+    },
+    {
+        "key": "material_minutes",
+        "label": "Materialbeschaffung",
+    },
+    {
+        "key": "travel_minutes",
+        "label": "Fahrtzeit",
+    },
+    {
+        "key": "documentation_minutes",
+        "label": "Dokumentationszeit",
+    },
+    {
+        "key": "extra_minutes",
+        "label": "Zusatzzeit",
+    },
+)
 
 
 @admin_bp.get("/")
@@ -305,6 +374,433 @@ def settings_page() -> Any:
         flash("Einstellungen gespeichert.", "success")
         return redirect(url_for("admin.settings_page"))
     return render_template("admin/settings.html", groups=grouped_definitions(), settings=settings)
+
+
+@admin_bp.get(
+    "/admin/company-codes"
+)
+@admin_required
+def company_codes() -> Any:
+    items = (
+        WowiCompanyCode.query
+        .order_by(
+            WowiCompanyCode.code.asc()
+        )
+        .all()
+    )
+
+    return render_template(
+        "admin/company_codes.html",
+        items=items,
+    )
+
+
+@admin_bp.route(
+    "/admin/company-codes/<int:item_id>/invoicing",
+    methods=["GET", "POST"],
+)
+@admin_required
+def company_code_invoicing(
+    item_id: int,
+) -> Any:
+    item = db.get_or_404(
+        WowiCompanyCode,
+        item_id,
+    )
+
+    if request.method == "POST":
+        try:
+            save_company_code_invoice_form(
+                item
+            )
+
+            if (
+                "remove_stationery"
+                in request.form
+            ):
+                remove_company_code_stationery(
+                    item
+                )
+
+            stationery = request.files.get(
+                "stationery"
+            )
+
+            if (
+                stationery is not None
+                and stationery.filename
+            ):
+                store_company_code_stationery(
+                    item,
+                    stationery,
+                )
+
+            audit(
+                "company_code.invoicing.update",
+                "wowi_company_code",
+                item.id,
+            )
+            db.session.commit()
+
+        except ValueError as exc:
+            db.session.rollback()
+            flash(
+                str(exc),
+                "danger",
+            )
+
+            return render_template(
+                "admin/company_code_invoicing.html",
+                item=item,
+            )
+
+        flash(
+            "Rechnungseinstellungen gespeichert.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin.company_code_invoicing",
+                item_id=item.id,
+            )
+        )
+
+    return render_template(
+        "admin/company_code_invoicing.html",
+        item=item,
+    )
+
+
+@admin_bp.get(
+    "/admin/company-codes/<int:item_id>/stationery"
+)
+@admin_required
+def company_code_stationery(
+    item_id: int,
+) -> Any:
+    item = db.get_or_404(
+        WowiCompanyCode,
+        item_id,
+    )
+
+    if not item.stationery_filename:
+        abort(404)
+
+    directory = invoice_stationery_directory()
+    file_path = (
+        directory
+        / item.stationery_filename
+    )
+
+    if not file_path.is_file():
+        abort(404)
+
+    return send_from_directory(
+        directory,
+        item.stationery_filename,
+        mimetype="application/pdf",
+        as_attachment=False,
+    )
+
+
+@admin_bp.route(
+    "/admin/invoice-billing-rules",
+    methods=["GET", "POST"],
+)
+@admin_required
+def invoice_billing_rules() -> Any:
+    company_codes = (
+        WowiCompanyCode.query
+        .filter(
+            WowiCompanyCode.active.is_(True)
+        )
+        .order_by(
+            WowiCompanyCode.code.asc()
+        )
+        .all()
+    )
+
+    try:
+        company_code = (
+            invoice_rule_company_code_from_request()
+        )
+    except ValueError as exc:
+        flash(
+            str(exc),
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_billing_rules"
+            )
+        )
+
+    rules_query = (
+        InvoiceBillingRule.query
+    )
+
+    if company_code is None:
+        rules_query = rules_query.filter(
+            InvoiceBillingRule
+            .company_code_id
+            .is_(None)
+        )
+    else:
+        rules_query = rules_query.filter(
+            InvoiceBillingRule
+            .company_code_id
+            == company_code.id
+        )
+
+    existing_rules = rules_query.all()
+
+    time_rules = {
+        rule.time_type: rule
+        for rule in existing_rules
+        if (
+            rule.rule_type
+            == InvoiceBillingRuleType
+            .TIME_TYPE.value
+            and rule.time_type
+        )
+    }
+
+    task_rules = {
+        rule.task_template_id: rule
+        for rule in existing_rules
+        if (
+            rule.rule_type
+            == InvoiceBillingRuleType
+            .TASK_TEMPLATE.value
+            and rule.task_template_id
+            is not None
+        )
+    }
+
+    task_template_query = (
+        TimeTaskTemplate.query
+    )
+
+    if task_rules:
+        task_template_query = (
+            task_template_query.filter(
+                or_(
+                    TimeTaskTemplate.active.is_(
+                        True
+                    ),
+                    TimeTaskTemplate.id.in_(
+                        task_rules.keys()
+                    ),
+                )
+            )
+        )
+    else:
+        task_template_query = (
+            task_template_query.filter(
+                TimeTaskTemplate.active.is_(
+                    True
+                )
+            )
+        )
+
+    task_templates = (
+        task_template_query
+        .order_by(
+            TimeTaskTemplate.title.asc(),
+            TimeTaskTemplate.code.asc(),
+        )
+        .all()
+    )
+
+    if request.method == "POST":
+        try:
+            save_invoice_time_rules(
+                company_code,
+                time_rules,
+            )
+            save_invoice_task_rules(
+                company_code,
+                task_rules,
+                task_templates,
+            )
+
+            audit(
+                "invoice_billing_rules.update",
+                "wowi_company_code",
+                (
+                    company_code.id
+                    if company_code
+                    else None
+                ),
+                {
+                    "scope": (
+                        company_code.code
+                        if company_code
+                        else "global"
+                    ),
+                },
+            )
+            db.session.commit()
+
+        except ValueError as exc:
+            db.session.rollback()
+            flash(
+                str(exc),
+                "danger",
+            )
+
+            return redirect(
+                invoice_billing_rules_url(
+                    company_code
+                )
+            )
+
+        flash(
+            "Abrechnungssätze gespeichert.",
+            "success",
+        )
+
+        return redirect(
+            invoice_billing_rules_url(
+                company_code
+            )
+        )
+
+    return render_template(
+        "admin/invoice_billing_rules.html",
+        company_codes=company_codes,
+        company_code=company_code,
+        time_types=INVOICE_TIME_TYPES,
+        time_rules=time_rules,
+        task_templates=task_templates,
+        task_rules=task_rules,
+    )
+
+
+@admin_bp.post(
+    "/admin/invoices/<int:invoice_id>/finalize"
+)
+@login_required
+@invoice_required
+def invoice_finalize(
+    invoice_id: int,
+) -> Any:
+    invoice = Invoice.query.get_or_404(
+        invoice_id
+    )
+    document_result = None
+
+    try:
+        document_result = finalize_invoice(
+            invoice,
+            current_user,
+        )
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+
+        if document_result is not None:
+            remove_invoice_documents(
+                document_result
+            )
+
+        current_app.logger.exception(
+            "invoice_finalization_conflict "
+            "invoice_id=%s",
+            invoice_id,
+        )
+        flash(
+            "Die Rechnungsnummer wurde "
+            "gleichzeitig bereits vergeben. "
+            "Bitte erneut versuchen.",
+            "danger",
+        )
+    except (
+        InvoiceFinalizationError,
+        InvoiceDocumentError,
+    ) as exc:
+        db.session.rollback()
+        flash(
+            str(exc),
+            "danger",
+        )
+    except Exception:
+        db.session.rollback()
+
+        if document_result is not None:
+            remove_invoice_documents(
+                document_result
+            )
+
+        current_app.logger.exception(
+            "invoice_finalization_failed "
+            "invoice_id=%s",
+            invoice_id,
+        )
+        flash(
+            "Die Rechnung konnte nicht "
+            "festgeschrieben werden.",
+            "danger",
+        )
+    else:
+        flash(
+            "Die Rechnung wurde als "
+            f"{invoice.invoice_number} "
+            "festgeschrieben. Die verknüpften "
+            "Aufträge wurden zur Erledigung "
+            "an Wowiport vorgemerkt.",
+            "success",
+        )
+
+    return redirect(
+        url_for(
+            "admin.invoice_edit",
+            invoice_id=invoice_id,
+        )
+    )
+
+
+@admin_bp.get(
+    "/admin/invoices/<int:invoice_id>/document"
+)
+@login_required
+@invoice_required
+def invoice_document(
+    invoice_id: int,
+) -> Any:
+    invoice = Invoice.query.get_or_404(
+        invoice_id
+    )
+
+    if (
+        invoice.status not in {
+        InvoiceStatus.FINALIZED.value,
+        InvoiceStatus.CANCELED.value,
+    }
+        or not invoice.pdf_storage_name
+    ):
+        abort(404)
+
+    document_path = (
+        resolve_invoice_document_path(
+            invoice.pdf_storage_name
+        )
+    )
+
+    if not document_path.is_file():
+        abort(404)
+
+    return send_file(
+        document_path,
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=(
+            "Rechnung-"
+            f"{invoice.invoice_number}.pdf"
+        ),
+    )
 
 
 @admin_bp.route(
@@ -952,6 +1448,978 @@ def commission_object_search() -> Any:
             "items": items,
         }
     )
+
+
+@admin_bp.get("/admin/invoices")
+@invoice_required
+def invoices() -> Any:
+    items = (
+        Invoice.query
+        .order_by(
+            Invoice.created_at.desc(),
+            Invoice.id.desc(),
+        )
+        .all()
+    )
+
+    status_labels = {
+        InvoiceStatus.DRAFT.value:
+            "Entwurf",
+        InvoiceStatus.FINALIZED.value:
+            "Festgeschrieben",
+        InvoiceStatus.CANCELED.value:
+            "Storniert",
+    }
+
+    return render_template(
+        "admin/invoices.html",
+        items=items,
+        status_labels=status_labels,
+    )
+
+
+@admin_bp.route(
+    "/admin/invoices/new",
+    methods=["GET", "POST"],
+)
+@invoice_required
+def invoice_create() -> Any:
+    company_codes = (
+        WowiCompanyCode.query
+        .filter(
+            WowiCompanyCode.active.is_(True)
+        )
+        .order_by(
+            WowiCompanyCode.code.asc()
+        )
+        .all()
+    )
+    commissions = (
+        available_invoice_commissions()
+    )
+
+    if request.method == "POST":
+        mode = request.form.get(
+            "mode",
+            "",
+        ).strip()
+
+        try:
+            if mode == "free":
+                company_code_id = (
+                    required_form_int(
+                        request.form.get(
+                            "company_code_id"
+                        ),
+                        "Buchwerk",
+                    )
+                )
+                company_code = db.session.get(
+                    WowiCompanyCode,
+                    company_code_id,
+                )
+
+                if (
+                    company_code is None
+                    or not company_code.active
+                ):
+                    raise ValueError(
+                        "Das ausgewählte Buchwerk "
+                        "ist nicht verfügbar."
+                    )
+
+                invoice = (
+                    create_free_invoice_draft(
+                        company_code,
+                        current_user,
+                    )
+                )
+
+            elif mode == "selected":
+                commission_ids = (
+                    selected_invoice_commission_ids()
+                )
+
+                selected_commissions = (
+                    Commission.query
+                    .filter(
+                        Commission.id.in_(
+                            commission_ids
+                        )
+                    )
+                    .all()
+                )
+
+                if (
+                    len(selected_commissions)
+                    != len(commission_ids)
+                ):
+                    raise ValueError(
+                        "Mindestens ein Auftrag "
+                        "wurde nicht gefunden."
+                    )
+
+                invoice = (
+                    create_commission_invoice_draft(
+                        selected_commissions,
+                        current_user,
+                    )
+                )
+
+            else:
+                raise ValueError(
+                    "Die Art der Rechnung "
+                    "ist ungültig."
+                )
+
+            db.session.flush()
+
+            audit(
+                "invoice.create",
+                "invoice",
+                invoice.id,
+                {
+                    "mode": mode,
+                    "commission_ids": [
+                        link.commission_id
+                        for link
+                        in invoice.commission_links
+                    ],
+                },
+            )
+            db.session.commit()
+
+        except ValueError as exc:
+            db.session.rollback()
+            flash(
+                str(exc),
+                "danger",
+            )
+
+            return render_template(
+                "admin/invoice_create.html",
+                company_codes=company_codes,
+                commissions=commissions,
+            )
+
+        flash(
+            "Rechnungsentwurf angelegt.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_edit",
+                invoice_id=invoice.id,
+            )
+        )
+
+    return render_template(
+        "admin/invoice_create.html",
+        company_codes=company_codes,
+        commissions=commissions,
+    )
+
+
+@admin_bp.route(
+    "/admin/invoices/<int:invoice_id>",
+    methods=["GET", "POST"],
+)
+@invoice_required
+def invoice_edit(
+    invoice_id: int,
+) -> Any:
+    item = db.get_or_404(
+        Invoice,
+        invoice_id,
+    )
+    editable = (
+        item.status
+        == InvoiceStatus.DRAFT.value
+    )
+
+    if request.method == "POST":
+        if not editable:
+            flash(
+                "Eine festgeschriebene Rechnung "
+                "kann nicht geändert werden.",
+                "danger",
+            )
+
+            return redirect(
+                url_for(
+                    "admin.invoice_edit",
+                    invoice_id=item.id,
+                )
+            )
+
+        try:
+            save_invoice_draft_form(
+                item
+            )
+            save_invoice_positions_form(
+                item
+            )
+
+            audit(
+                "invoice.update",
+                "invoice",
+                item.id,
+            )
+            db.session.commit()
+
+        except ValueError as exc:
+            db.session.rollback()
+            flash(
+                str(exc),
+                "danger",
+            )
+
+            return render_template(
+                "admin/invoice_draft.html",
+                **invoice_edit_context(item),
+            )
+
+        flash(
+            "Rechnungsentwurf gespeichert.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_edit",
+                invoice_id=item.id,
+            )
+        )
+
+    return render_template(
+        "admin/invoice_draft.html",
+        **invoice_edit_context(item),
+    )
+
+
+@admin_bp.post(
+    "/admin/invoices/<int:invoice_id>/suggestions"
+)
+@invoice_required
+def invoice_add_suggestions(
+    invoice_id: int,
+) -> Any:
+    item = db.get_or_404(
+        Invoice,
+        invoice_id,
+    )
+
+    try:
+        added_count = add_invoice_suggestions(
+            item
+        )
+
+        audit(
+            "invoice.suggestions.add",
+            "invoice",
+            item.id,
+            {
+                "added_count": added_count,
+            },
+        )
+        db.session.commit()
+
+    except ValueError as exc:
+        db.session.rollback()
+        flash(
+            str(exc),
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_edit",
+                invoice_id=item.id,
+            )
+        )
+
+    if added_count:
+        flash(
+            f"{added_count} Positionen "
+            "wurden ergänzt.",
+            "success",
+        )
+    else:
+        flash(
+            "Es wurden keine neuen "
+            "Positionen gefunden.",
+            "info",
+        )
+
+    return redirect(
+        url_for(
+            "admin.invoice_edit",
+            invoice_id=item.id,
+        )
+    )
+
+
+@admin_bp.get(
+    "/admin/invoices/<int:invoice_id>/recipients/search"
+)
+@invoice_required
+def invoice_recipient_search(
+    invoice_id: int,
+) -> Any:
+    invoice = db.get_or_404(
+        Invoice,
+        invoice_id,
+    )
+    search_text = request.args.get(
+        "q",
+        "",
+    ).strip()
+
+    items = []
+
+    for item in search_commission_objects(
+        search_text,
+        limit=50,
+    ):
+        if (
+            item.get("object_type")
+            != "license_agreement"
+        ):
+            continue
+
+        company_code = (
+            item.get("company_code")
+            or {}
+        )
+
+        if (
+            company_code.get("erp_id")
+            != invoice.company_code_erp_id
+        ):
+            continue
+
+        items.append(item)
+
+    return jsonify(
+        {
+            "items": items,
+        }
+    )
+
+
+@admin_bp.get(
+    "/admin/invoices/<int:invoice_id>/recipient-candidates"
+)
+@invoice_required
+def invoice_recipient_candidates(
+    invoice_id: int,
+) -> Any:
+    invoice = db.get_or_404(
+        Invoice,
+        invoice_id,
+    )
+    license_agreement_id = (
+        required_form_int(
+            request.args.get(
+                "license_agreement_id"
+            ),
+            "Vertrag",
+        )
+    )
+
+    agreement = invoice_agreement(
+        invoice,
+        license_agreement_id,
+    )
+
+    try:
+        service = WowiportService()
+        items = (
+            service
+            .get_invoice_recipient_candidates(
+                agreement.erp_id
+            )
+        )
+    except Exception:
+        current_app.logger.exception(
+            "invoice_recipient_fetch_failed "
+            "invoice_id=%s "
+            "license_agreement_id=%s",
+            invoice.id,
+            agreement.erp_id,
+        )
+
+        return jsonify(
+            {
+                "message": (
+                    "Die Anschrift konnte nicht "
+                    "aus Wowiport geladen werden."
+                ),
+            }
+        ), 502
+
+    if not items:
+        return jsonify(
+            {
+                "message": (
+                    "Für den Vertrag wurden keine "
+                    "Rechnungsempfänger gefunden."
+                ),
+            }
+        ), 404
+
+    return jsonify(
+        {
+            "items": items,
+            "license_agreement": {
+                "erp_id": agreement.erp_id,
+                "id_num": agreement.id_num,
+            },
+        }
+    )
+
+
+@admin_bp.post(
+    "/admin/invoices/<int:invoice_id>/delete"
+)
+@invoice_required
+def invoice_delete(
+    invoice_id: int,
+) -> Any:
+    item = db.get_or_404(
+        Invoice,
+        invoice_id,
+    )
+
+    if (
+        item.status
+        != InvoiceStatus.DRAFT.value
+    ):
+        flash(
+            "Nur Entwürfe können "
+            "gelöscht werden.",
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_edit",
+                invoice_id=item.id,
+            )
+        )
+
+    audit(
+        "invoice.delete",
+        "invoice",
+        item.id,
+        {
+            "commission_ids": [
+                link.commission_id
+                for link
+                in item.commission_links
+            ],
+        },
+    )
+    db.session.delete(item)
+    db.session.commit()
+
+    flash(
+        "Rechnungsentwurf gelöscht.",
+        "success",
+    )
+
+    return redirect(
+        url_for("admin.invoices")
+    )
+
+
+def invoice_edit_context(
+    item: Invoice,
+) -> dict[str, Any]:
+    task_templates = (
+        TimeTaskTemplate.query
+        .filter(
+            TimeTaskTemplate.active.is_(True)
+        )
+        .order_by(
+            TimeTaskTemplate.title.asc(),
+            TimeTaskTemplate.code.asc(),
+        )
+        .all()
+    )
+
+    catalogue_items = [
+        {
+            "id": task_template.id,
+            "code": task_template.code,
+            "title": task_template.title,
+        }
+        for task_template in task_templates
+    ]
+
+    return {
+        "item": item,
+        "editable": (
+            item.status
+            == InvoiceStatus.DRAFT.value
+        ),
+        "task_templates": task_templates,
+        "catalogue_items": catalogue_items,
+        "position_source_labels": {
+            "time": "Zeit",
+            "material": "Material",
+            "catalog": "Katalog",
+            "free": "Freie Position",
+            "cancellation": "Storno",
+        },
+    }
+
+
+def save_invoice_positions_form(
+    item: Invoice,
+) -> None:
+    descriptions = request.form.getlist(
+        "position_description"
+    )
+    details = request.form.getlist(
+        "position_details"
+    )
+    quantities = request.form.getlist(
+        "position_quantity"
+    )
+    units = request.form.getlist(
+        "position_unit"
+    )
+    unit_prices = request.form.getlist(
+        "position_unit_price_net"
+    )
+    vat_rates = request.form.getlist(
+        "position_vat_rate"
+    )
+    source_types = request.form.getlist(
+        "position_source_type"
+    )
+    task_template_ids = request.form.getlist(
+        "position_task_template_id"
+    )
+    inventory_item_ids = request.form.getlist(
+        "position_inventory_item_id"
+    )
+    source_data_values = request.form.getlist(
+        "position_source_data"
+    )
+
+    allowed_source_types = {
+        InvoicePositionSource.TIME.value,
+        InvoicePositionSource.MATERIAL.value,
+        InvoicePositionSource.CATALOG.value,
+        InvoicePositionSource.FREE.value,
+    }
+    rows = []
+
+    for index, description in enumerate(
+        descriptions
+    ):
+        description = description.strip()
+
+        if not description:
+            raise ValueError(
+                f"Position {index + 1} "
+                "benötigt eine Bezeichnung."
+            )
+
+        quantity = required_position_decimal(
+            list_value(
+                quantities,
+                index,
+            ),
+            (
+                f"Menge der Position "
+                f"{index + 1}"
+            ),
+        )
+        unit_price_net = (
+            required_position_decimal(
+                list_value(
+                    unit_prices,
+                    index,
+                ),
+                (
+                    "Einzelpreis der Position "
+                    f"{index + 1}"
+                ),
+            )
+        )
+        vat_rate = required_position_decimal(
+            list_value(
+                vat_rates,
+                index,
+            ),
+            (
+                "Umsatzsteuersatz der "
+                f"Position {index + 1}"
+            ),
+        )
+
+        if quantity <= 0:
+            raise ValueError(
+                f"Die Menge der Position "
+                f"{index + 1} muss größer "
+                "als null sein."
+            )
+
+        if (
+            vat_rate < 0
+            or vat_rate > 100
+        ):
+            raise ValueError(
+                "Der Umsatzsteuersatz der "
+                f"Position {index + 1} muss "
+                "zwischen 0 und 100 liegen."
+            )
+
+        source_type = (
+            list_value(
+                source_types,
+                index,
+            )
+            or InvoicePositionSource
+            .FREE.value
+        )
+
+        if source_type not in allowed_source_types:
+            source_type = (
+                InvoicePositionSource
+                .FREE.value
+            )
+
+        source_data = {}
+        raw_source_data = list_value(
+            source_data_values,
+            index,
+        )
+
+        if raw_source_data:
+            try:
+                parsed_source_data = (
+                    json.loads(
+                        raw_source_data
+                    )
+                )
+
+                if isinstance(
+                    parsed_source_data,
+                    dict,
+                ):
+                    source_data = (
+                        parsed_source_data
+                    )
+            except json.JSONDecodeError:
+                source_data = {}
+
+        rows.append(
+            {
+                "source_type": source_type,
+                "task_template_id": (
+                    optional_position_id(
+                        list_value(
+                            task_template_ids,
+                            index,
+                        )
+                    )
+                ),
+                "inventory_item_id": (
+                    optional_position_id(
+                        list_value(
+                            inventory_item_ids,
+                            index,
+                        )
+                    )
+                ),
+                "source_data": source_data,
+                "description": description,
+                "details": (
+                    list_value(
+                        details,
+                        index,
+                    )
+                    or None
+                ),
+                "quantity": quantity,
+                "unit": (
+                    list_value(
+                        units,
+                        index,
+                    )
+                    or "Stk"
+                ),
+                "unit_price_net": (
+                    unit_price_net
+                ),
+                "vat_rate": vat_rate,
+            }
+        )
+
+    replace_invoice_positions(
+        item,
+        rows,
+    )
+
+
+def required_position_decimal(
+    value: str,
+    label: str,
+) -> Decimal:
+    result = optional_form_decimal(
+        value,
+        label,
+    )
+
+    if result is None:
+        raise ValueError(
+            f"{label} muss angegeben werden."
+        )
+
+    return result
+
+
+def optional_position_id(
+    value: str,
+) -> int | None:
+    if not value:
+        return None
+
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def save_invoice_draft_form(
+    item: Invoice,
+) -> None:
+    recipient_type = request.form.get(
+        "recipient_type",
+        InvoiceRecipientType.PRIVATE.value,
+    ).strip()
+
+    if recipient_type not in {
+        InvoiceRecipientType.PRIVATE.value,
+        InvoiceRecipientType.BUSINESS.value,
+    }:
+        raise ValueError(
+            "Die Empfängerart ist ungültig."
+        )
+
+    license_agreement_id = (
+        optional_form_int(
+            request.form.get(
+                "recipient_license_agreement_erp_id"
+            ),
+            "Vertrag",
+        )
+    )
+
+    if license_agreement_id is not None:
+        agreement = invoice_agreement(
+            item,
+            license_agreement_id,
+        )
+        item.recipient_license_agreement_erp_id = (
+            agreement.erp_id
+        )
+        item.recipient_license_agreement_idnum = (
+            agreement.id_num
+        )
+    else:
+        item.recipient_license_agreement_erp_id = None
+        item.recipient_license_agreement_idnum = None
+
+    item.recipient_person_erp_id = (
+        optional_form_int(
+            request.form.get(
+                "recipient_person_erp_id"
+            ),
+            "Person",
+        )
+    )
+    item.recipient_type = recipient_type
+    item.recipient_name = optional_form_text(
+        "recipient_name"
+    )
+    item.recipient_name_addition = (
+        optional_form_text(
+            "recipient_name_addition"
+        )
+    )
+    item.recipient_street = optional_form_text(
+        "recipient_street"
+    )
+    item.recipient_postal_code = (
+        optional_form_text(
+            "recipient_postal_code"
+        )
+    )
+    item.recipient_town = optional_form_text(
+        "recipient_town"
+    )
+    item.recipient_country_code = (
+        request.form.get(
+            "recipient_country_code",
+            "DE",
+        ).strip().upper()
+        or "DE"
+    )
+    item.recipient_email = optional_form_text(
+        "recipient_email"
+    )
+    item.recipient_vat_id = optional_form_text(
+        "recipient_vat_id"
+    )
+    item.invoice_date = optional_form_date(
+        request.form.get(
+            "invoice_date"
+        ),
+        "Rechnungsdatum",
+    )
+    item.service_date_from = (
+        optional_form_date(
+            request.form.get(
+                "service_date_from"
+            ),
+            "Leistungsbeginn",
+        )
+    )
+    item.service_date_to = (
+        optional_form_date(
+            request.form.get(
+                "service_date_to"
+            ),
+            "Leistungsende",
+        )
+    )
+    item.due_date = optional_form_date(
+        request.form.get(
+            "due_date"
+        ),
+        "Fälligkeitsdatum",
+    )
+    item.introductory_text = (
+        optional_form_text(
+            "introductory_text"
+        )
+    )
+    item.concluding_text = optional_form_text(
+        "concluding_text"
+    )
+
+    if (
+        len(item.recipient_country_code)
+        != 2
+    ):
+        raise ValueError(
+            "Der Ländercode des Empfängers "
+            "muss zweistellig sein."
+        )
+
+    if (
+        item.service_date_from
+        and item.service_date_to
+        and item.service_date_from
+        > item.service_date_to
+    ):
+        raise ValueError(
+            "Das Ende des Leistungszeitraums "
+            "darf nicht vor dem Beginn liegen."
+        )
+
+    if (
+        item.invoice_date
+        and item.due_date
+        and item.due_date
+        < item.invoice_date
+    ):
+        raise ValueError(
+            "Das Fälligkeitsdatum darf nicht "
+            "vor dem Rechnungsdatum liegen."
+        )
+
+
+def invoice_agreement(
+    invoice: Invoice,
+    license_agreement_erp_id: int,
+) -> WowiLicenseAgreement:
+    agreement = (
+        WowiLicenseAgreement.query
+        .filter_by(
+            erp_id=license_agreement_erp_id,
+            active=True,
+        )
+        .one_or_none()
+    )
+
+    if (
+        agreement is None
+        or agreement.use_unit is None
+        or agreement.use_unit.economic_unit
+        is None
+        or (
+            agreement.use_unit
+            .economic_unit
+            .company_code_erp_id
+            != invoice.company_code_erp_id
+        )
+    ):
+        raise ValueError(
+            "Der ausgewählte Vertrag gehört "
+            "nicht zum Buchwerk der Rechnung."
+        )
+
+    return agreement
+
+
+def optional_form_date(
+    value: str | None,
+    label: str,
+) -> date | None:
+    if value is None or not value.strip():
+        return None
+
+    try:
+        return date.fromisoformat(
+            value.strip()
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"{label} ist ungültig."
+        ) from exc
+
+
+def selected_invoice_commission_ids(
+) -> list[int]:
+    commission_ids = []
+
+    for value in request.form.getlist(
+        "commission_ids"
+    ):
+        try:
+            commission_id = int(value)
+        except ValueError:
+            continue
+
+        if commission_id not in commission_ids:
+            commission_ids.append(
+                commission_id
+            )
+
+    if not commission_ids:
+        raise ValueError(
+            "Mindestens ein Auftrag "
+            "muss ausgewählt werden."
+        )
+
+    return commission_ids
 
 
 @admin_bp.get("/admin/commissions")
@@ -2116,6 +3584,10 @@ def save_user_form(item: User) -> None:
     item.craftsman_erp_id = int(raw_craftsman_id) if raw_craftsman_id else None
     item.is_admin = "is_admin" in request.form
     item.is_foreman = "is_foreman" in request.form
+    item.can_manage_invoices = (
+        "can_manage_invoices"
+        in request.form
+    )
     item.is_active_flag = "is_active_flag" in request.form
     item.exclude_from_wowiport_sync = (
         "exclude_from_wowiport_sync"
@@ -2336,12 +3808,621 @@ def inventory_barcode_conflicts(
     return other_item is not None
 
 
-def save_inventory_form(item: InventoryItem) -> None:
-    item.item_number = request.form.get("item_number", "").strip()
-    item.name = request.form.get("name", "").strip()
-    item.unit = request.form.get("unit", "Stk").strip()
-    item.ean = request.form.get("ean") or None
-    item.reorder_level = float(request.form.get("reorder_level", 0))
+def invoice_rule_company_code_from_request(
+) -> WowiCompanyCode | None:
+    raw_company_code_id = (
+        request.values.get(
+            "company_code_id",
+            "",
+        ).strip()
+    )
+
+    if not raw_company_code_id:
+        return None
+
+    try:
+        company_code_id = int(
+            raw_company_code_id
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Das ausgewählte Buchwerk "
+            "ist ungültig."
+        ) from exc
+
+    company_code = db.session.get(
+        WowiCompanyCode,
+        company_code_id,
+    )
+
+    if (
+        company_code is None
+        or not company_code.active
+    ):
+        raise ValueError(
+            "Das ausgewählte Buchwerk "
+            "ist nicht verfügbar."
+        )
+
+    return company_code
+
+
+def invoice_billing_rules_url(
+    company_code: WowiCompanyCode | None,
+) -> str:
+    if company_code is None:
+        return url_for(
+            "admin.invoice_billing_rules"
+        )
+
+    return url_for(
+        "admin.invoice_billing_rules",
+        company_code_id=company_code.id,
+    )
+
+
+def save_invoice_time_rules(
+    company_code: WowiCompanyCode | None,
+    existing_rules: dict[
+        str,
+        InvoiceBillingRule,
+    ],
+) -> None:
+    for sort_order, time_type in enumerate(
+        INVOICE_TIME_TYPES
+    ):
+        time_type_key = time_type["key"]
+        state = request.form.get(
+            f"time_state_{time_type_key}",
+            "inherit",
+        )
+        rule = existing_rules.get(
+            time_type_key
+        )
+
+        if (
+            company_code is not None
+            and state == "inherit"
+        ):
+            if rule is not None:
+                db.session.delete(rule)
+
+            continue
+
+        if state not in {
+            "enabled",
+            "disabled",
+        }:
+            raise ValueError(
+                "Der Status einer Zeitart "
+                "ist ungültig."
+            )
+
+        if rule is None:
+            rule = InvoiceBillingRule(
+                company_code=company_code,
+                rule_type=(
+                    InvoiceBillingRuleType
+                    .TIME_TYPE.value
+                ),
+                time_type=time_type_key,
+            )
+            db.session.add(rule)
+
+        hourly_rate = optional_form_decimal(
+            request.form.get(
+                f"time_rate_{time_type_key}"
+            ),
+            (
+                "Stundensatz für "
+                f"{time_type['label']}"
+            ),
+        )
+        vat_rate = optional_form_decimal(
+            request.form.get(
+                f"time_vat_{time_type_key}"
+            ),
+            (
+                "Umsatzsteuersatz für "
+                f"{time_type['label']}"
+            ),
+        )
+
+        validate_invoice_rule_values(
+            hourly_rate,
+            vat_rate,
+        )
+
+        rule.enabled = state == "enabled"
+        rule.position_title = (
+            request.form.get(
+                f"time_title_{time_type_key}",
+                "",
+            ).strip()
+            or None
+        )
+        rule.hourly_rate_net = hourly_rate
+        rule.vat_rate = vat_rate
+        rule.sort_order = sort_order
+
+
+def save_invoice_task_rules(
+    company_code: WowiCompanyCode | None,
+    existing_rules: dict[
+        int,
+        InvoiceBillingRule,
+    ],
+    task_templates: list[
+        TimeTaskTemplate
+    ],
+) -> None:
+    for task_template in task_templates:
+        state = request.form.get(
+            (
+                "task_state_"
+                f"{task_template.id}"
+            ),
+            "inherit",
+        )
+        rule = existing_rules.get(
+            task_template.id
+        )
+
+        if state == "inherit":
+            if rule is not None:
+                db.session.delete(rule)
+
+            continue
+
+        if state not in {
+            "enabled",
+            "disabled",
+        }:
+            raise ValueError(
+                "Der Status einer "
+                "Leistungsposition ist ungültig."
+            )
+
+        if rule is None:
+            rule = InvoiceBillingRule(
+                company_code=company_code,
+                rule_type=(
+                    InvoiceBillingRuleType
+                    .TASK_TEMPLATE.value
+                ),
+                task_template=task_template,
+            )
+            db.session.add(rule)
+
+        hourly_rate = optional_form_decimal(
+            request.form.get(
+                (
+                    "task_rate_"
+                    f"{task_template.id}"
+                )
+            ),
+            (
+                "Stundensatz für "
+                f"{task_template.title}"
+            ),
+        )
+        vat_rate = optional_form_decimal(
+            request.form.get(
+                (
+                    "task_vat_"
+                    f"{task_template.id}"
+                )
+            ),
+            (
+                "Umsatzsteuersatz für "
+                f"{task_template.title}"
+            ),
+        )
+
+        validate_invoice_rule_values(
+            hourly_rate,
+            vat_rate,
+        )
+
+        sort_order = optional_form_int(
+            request.form.get(
+                (
+                    "task_sort_"
+                    f"{task_template.id}"
+                )
+            ),
+            (
+                "Sortierung für "
+                f"{task_template.title}"
+            ),
+        )
+
+        rule.enabled = state == "enabled"
+        rule.position_title = (
+            request.form.get(
+                (
+                    "task_title_"
+                    f"{task_template.id}"
+                ),
+                "",
+            ).strip()
+            or None
+        )
+        rule.hourly_rate_net = hourly_rate
+        rule.vat_rate = vat_rate
+        rule.sort_order = (
+            sort_order
+            if sort_order is not None
+            else 100
+        )
+
+
+def validate_invoice_rule_values(
+    hourly_rate: Decimal | None,
+    vat_rate: Decimal | None,
+) -> None:
+    if (
+        hourly_rate is not None
+        and hourly_rate < 0
+    ):
+        raise ValueError(
+            "Ein Stundensatz darf "
+            "nicht negativ sein."
+        )
+
+    if (
+        vat_rate is not None
+        and (
+            vat_rate < 0
+            or vat_rate > 100
+        )
+    ):
+        raise ValueError(
+            "Ein Umsatzsteuersatz muss "
+            "zwischen 0 und 100 liegen."
+        )
+
+
+
+def save_company_code_invoice_form(
+    item: WowiCompanyCode,
+) -> None:
+    invoice_number_mask = (
+        request.form.get(
+            "invoice_number_mask",
+            "",
+        ).strip()
+    )
+
+    if not invoice_number_mask:
+        raise ValueError(
+            "Die Rechnungsnummernmaske "
+            "muss angegeben werden."
+        )
+
+    if "<counter>" not in invoice_number_mask:
+        raise ValueError(
+            "Die Rechnungsnummernmaske "
+            "muss <counter> enthalten."
+        )
+
+    counter_digits = required_form_int(
+        request.form.get(
+            "invoice_counter_digits"
+        ),
+        "Anzahl der Ziffern",
+    )
+
+    if (
+        counter_digits < 1
+        or counter_digits > 12
+    ):
+        raise ValueError(
+            "Die Anzahl der Ziffern muss "
+            "zwischen 1 und 12 liegen."
+        )
+
+    payment_terms_days = optional_form_int(
+        request.form.get(
+            "invoice_payment_terms_days"
+        ),
+        "Zahlungsziel",
+    )
+
+    if (
+        payment_terms_days is not None
+        and payment_terms_days < 0
+    ):
+        raise ValueError(
+            "Das Zahlungsziel darf "
+            "nicht negativ sein."
+        )
+
+    hourly_rate = optional_form_decimal(
+        request.form.get(
+            "invoice_default_hourly_rate_net"
+        ),
+        "Stundensatz",
+    )
+    vat_rate = optional_form_decimal(
+        request.form.get(
+            "invoice_default_vat_rate"
+        ),
+        "Umsatzsteuersatz",
+    )
+    material_markup = optional_form_decimal(
+        request.form.get(
+            "invoice_material_markup_percent"
+        ),
+        "Materialaufschlag",
+    )
+
+    for value, label in (
+        (hourly_rate, "Stundensatz"),
+        (vat_rate, "Umsatzsteuersatz"),
+        (
+            material_markup,
+            "Materialaufschlag",
+        ),
+    ):
+        if value is not None and value < 0:
+            raise ValueError(
+                f"{label} darf nicht "
+                "negativ sein."
+            )
+
+    country_code = (
+        request.form.get(
+            "seller_country_code",
+            "DE",
+        ).strip().upper()
+        or "DE"
+    )
+
+    if len(country_code) != 2:
+        raise ValueError(
+            "Der Ländercode muss "
+            "zweistellig sein."
+        )
+
+    item.invoice_number_mask = (
+        invoice_number_mask
+    )
+    item.invoice_counter_digits = (
+        counter_digits
+    )
+    item.invoice_default_hourly_rate_net = (
+        hourly_rate
+    )
+    item.invoice_default_vat_rate = (
+        vat_rate
+    )
+    item.invoice_material_markup_percent = (
+        material_markup
+    )
+    item.invoice_payment_terms_days = (
+        payment_terms_days
+    )
+    item.seller_name = optional_form_text(
+        "seller_name"
+    )
+    item.seller_street = optional_form_text(
+        "seller_street"
+    )
+    item.seller_postal_code = (
+        optional_form_text(
+            "seller_postal_code"
+        )
+    )
+    item.seller_town = optional_form_text(
+        "seller_town"
+    )
+    item.seller_country_code = country_code
+    item.seller_vat_id = optional_form_text(
+        "seller_vat_id"
+    )
+    item.seller_tax_number = (
+        optional_form_text(
+            "seller_tax_number"
+        )
+    )
+    item.seller_email = optional_form_text(
+        "seller_email"
+    )
+    item.seller_phone = optional_form_text(
+        "seller_phone"
+    )
+    item.seller_iban = optional_form_text(
+        "seller_iban"
+    )
+    item.seller_bic = optional_form_text(
+        "seller_bic"
+    )
+
+
+def invoice_stationery_directory() -> Path:
+    directory = (
+        Path(current_app.instance_path)
+        / "invoice_stationery"
+    )
+    directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    return directory
+
+
+def store_company_code_stationery(
+    item: WowiCompanyCode,
+    upload: Any,
+) -> None:
+    prefix = upload.stream.read(5)
+    upload.stream.seek(0)
+
+    if prefix != b"%PDF-":
+        raise ValueError(
+            "Der Briefbogen muss eine "
+            "gültige PDF-Datei sein."
+        )
+
+    directory = invoice_stationery_directory()
+    filename = (
+        f"company-code-{item.id}-"
+        f"{uuid4().hex}.pdf"
+    )
+    file_path = directory / filename
+
+    upload.save(file_path)
+
+    previous_filename = (
+        item.stationery_filename
+    )
+    item.stationery_filename = filename
+
+    if (
+        previous_filename
+        and previous_filename != filename
+    ):
+        previous_path = (
+            directory
+            / previous_filename
+        )
+        previous_path.unlink(
+            missing_ok=True
+        )
+
+
+def remove_company_code_stationery(
+    item: WowiCompanyCode,
+) -> None:
+    if not item.stationery_filename:
+        return
+
+    file_path = (
+        invoice_stationery_directory()
+        / item.stationery_filename
+    )
+    file_path.unlink(
+        missing_ok=True
+    )
+    item.stationery_filename = None
+
+
+def optional_form_text(
+    field_name: str,
+) -> str | None:
+    return (
+        request.form.get(
+            field_name,
+            "",
+        ).strip()
+        or None
+    )
+
+
+def optional_form_int(
+    value: str | None,
+    label: str,
+) -> int | None:
+    if value is None or not value.strip():
+        return None
+
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{label} ist ungültig."
+        ) from exc
+
+
+def optional_form_decimal(
+    value: str | None,
+    label: str,
+) -> Decimal | None:
+    if value is None or not value.strip():
+        return None
+
+    normalized = (
+        value.strip()
+        .replace(" ", "")
+        .replace(",", ".")
+    )
+
+    try:
+        return Decimal(normalized)
+    except InvalidOperation as exc:
+        raise ValueError(
+            f"{label} ist ungültig."
+        ) from exc
+
+
+def save_inventory_form(
+    item: InventoryItem,
+) -> None:
+    item.item_number = request.form.get(
+        "item_number",
+        "",
+    ).strip()
+    item.name = request.form.get(
+        "name",
+        "",
+    ).strip()
+    item.unit = request.form.get(
+        "unit",
+        "Stk",
+    ).strip()
+    item.ean = (
+        request.form.get("ean")
+        or None
+    )
+    item.reorder_level = float(
+        request.form.get(
+            "reorder_level",
+            0,
+        )
+    )
+
+    billing_base_price_net = (
+        optional_form_decimal(
+            request.form.get(
+                "billing_base_price_net"
+            ),
+            "Netto-Verkaufspreis",
+        )
+    )
+    billing_vat_rate = (
+        optional_form_decimal(
+            request.form.get(
+                "billing_vat_rate"
+            ),
+            "Umsatzsteuersatz",
+        )
+    )
+
+    if (
+        billing_base_price_net is not None
+        and billing_base_price_net < 0
+    ):
+        raise ValueError(
+            "Der Netto-Verkaufspreis "
+            "darf nicht negativ sein."
+        )
+
+    if (
+        billing_vat_rate is not None
+        and billing_vat_rate < 0
+    ):
+        raise ValueError(
+            "Der Umsatzsteuersatz "
+            "darf nicht negativ sein."
+        )
+
+    item.billing_base_price_net = (
+        billing_base_price_net
+    )
+    item.billing_vat_rate = (
+        billing_vat_rate
+    )
     item.active = "active" in request.form
 
 
@@ -2924,4 +5005,238 @@ def sync_health_retry_webhook(
 
     return redirect(
         url_for("admin.sync_health")
+    )
+
+
+def _store_invoice_archive_failure(
+    invoice_id: int,
+    error_message: str,
+) -> None:
+    invoice = db.session.get(
+        Invoice,
+        invoice_id,
+    )
+
+    if invoice is None:
+        return
+
+    if (
+        invoice.dms_archive_status
+        != InvoiceArchiveStatus.ARCHIVED.value
+    ):
+        invoice.dms_archive_status = (
+            InvoiceArchiveStatus.FAILED.value
+        )
+        invoice.dms_archive_attempted_at = (
+            utc_now()
+        )
+        invoice.dms_archive_error = (
+            error_message[:4000]
+        )
+
+    audit(
+        "invoice.archive_failed",
+        "invoice",
+        invoice.id,
+        {
+            "invoice_number": (
+                invoice.invoice_number
+            ),
+            "error": error_message[:4000],
+        },
+    )
+
+    db.session.commit()
+
+
+@admin_bp.post(
+    "/admin/invoices/<int:invoice_id>/archive"
+)
+@login_required
+@invoice_required
+def invoice_archive(
+    invoice_id: int,
+) -> Any:
+    invoice = db.session.execute(
+        select(Invoice)
+        .where(
+            Invoice.id == invoice_id
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if invoice is None:
+        abort(404)
+
+    try:
+        result = archive_invoice(
+            invoice,
+            current_user,
+        )
+        db.session.commit()
+    except InvoiceArchiveError as exc:
+        db.session.rollback()
+        _store_invoice_archive_failure(
+            invoice_id,
+            str(exc),
+        )
+        current_app.logger.exception(
+            "invoice_archive_failed "
+            "invoice_id=%s",
+            invoice_id,
+        )
+        flash(
+            str(exc),
+            "danger",
+        )
+    except Exception:
+        db.session.rollback()
+        _store_invoice_archive_failure(
+            invoice_id,
+            "Unerwarteter Fehler bei der "
+            "d.velop-Archivierung.",
+        )
+        current_app.logger.exception(
+            "invoice_archive_failed "
+            "invoice_id=%s",
+            invoice_id,
+        )
+        flash(
+            "Die Rechnung konnte nicht nach "
+            "d.velop übertragen werden.",
+            "danger",
+        )
+    else:
+        if result.already_archived:
+            flash(
+                "Die Rechnung war bereits in "
+                "d.velop archiviert. Die lokale "
+                "Zuordnung wurde aktualisiert.",
+                "success",
+            )
+        else:
+            flash(
+                "Die Rechnung wurde erfolgreich "
+                "in d.velop archiviert.",
+                "success",
+            )
+
+    return redirect(
+        url_for(
+            "admin.invoice_edit",
+            invoice_id=invoice_id,
+        )
+    )
+
+
+@admin_bp.post(
+    "/admin/invoices/<int:invoice_id>/cancel"
+)
+@login_required
+@invoice_required
+def invoice_cancel(
+    invoice_id: int,
+) -> Any:
+    original_invoice = db.session.execute(
+        select(Invoice)
+        .where(
+            Invoice.id == invoice_id
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if original_invoice is None:
+        abort(404)
+
+    document_result = None
+    cancellation_invoice = None
+
+    try:
+        (
+            cancellation_invoice,
+            document_result,
+        ) = create_cancellation_invoice(
+            original_invoice,
+            request.form.get(
+                "reason",
+                "",
+            ),
+            current_user,
+        )
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+
+        if document_result is not None:
+            remove_invoice_documents(
+                document_result
+            )
+
+        current_app.logger.exception(
+            "invoice_cancellation_conflict "
+            "invoice_id=%s",
+            invoice_id,
+        )
+        flash(
+            "Die Rechnung wurde gleichzeitig "
+            "bereits storniert. Bitte laden Sie "
+            "die Seite neu.",
+            "danger",
+        )
+    except (
+        InvoiceFinalizationError,
+        InvoiceDocumentError,
+    ) as exc:
+        db.session.rollback()
+
+        if document_result is not None:
+            remove_invoice_documents(
+                document_result
+            )
+
+        flash(
+            str(exc),
+            "danger",
+        )
+    except Exception:
+        db.session.rollback()
+
+        if document_result is not None:
+            remove_invoice_documents(
+                document_result
+            )
+
+        current_app.logger.exception(
+            "invoice_cancellation_failed "
+            "invoice_id=%s",
+            invoice_id,
+        )
+        flash(
+            "Die Stornorechnung konnte nicht "
+            "erstellt werden.",
+            "danger",
+        )
+    else:
+        flash(
+            "Die Rechnung wurde storniert. "
+            "Die Stornorechnung "
+            f"{cancellation_invoice.invoice_number} "
+            "wurde erstellt.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_edit",
+                invoice_id=(
+                    cancellation_invoice.id
+                ),
+            )
+        )
+
+    return redirect(
+        url_for(
+            "admin.invoice_edit",
+            invoice_id=invoice_id,
+        )
     )

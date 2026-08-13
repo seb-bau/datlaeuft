@@ -73,6 +73,19 @@ table.datatable thead tr.datatable-filter-row input:focus {
             Auftragsprüfung
           </a>
         </li>
+                {% if
+          current_user.is_admin
+          or current_user.can_manage_invoices
+        %}
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            href="{{ url_for('admin.invoices') }}"
+          >
+            Rechnungen
+          </a>
+        </li>
+        {% endif %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.inventory') }}">Lager</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.inventory_locations') }}">Lagerorte</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.time_entries') }}">Stundenzettel</a></li>
@@ -102,6 +115,24 @@ table.datatable thead tr.datatable-filter-row input:focus {
             href="{{ url_for('admin.craft_department_mappings') }}"
           >
             Gewerk-Zuständigkeiten
+          </a>
+        </li>
+                <li class="nav-item">
+          <a
+            class="nav-link"
+            href="{{ url_for('admin.company_codes') }}"
+          >
+            Buchwerke
+          </a>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            href="{{ url_for(
+              'admin.invoice_billing_rules'
+            ) }}"
+          >
+            Abrechnungssätze
           </a>
         </li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.settings_page') }}">Einstellungen</a></li>

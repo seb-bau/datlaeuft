@@ -112,6 +112,54 @@ class SettingKeys:
         "Erlaubte E-Mail-Domains für Handwerker (kommagetrennt)",
         "Wowiport",
     )
+    DMS_HOSTNAME = SettingDefinition[str](
+        "dms.hostname",
+        SettingValueType.STRING,
+        "",
+        "d.velop Hostname",
+        "d.velop",
+    )
+
+    DMS_API_KEY = SettingDefinition[str](
+        "dms.api_key",
+        SettingValueType.SECRET,
+        "",
+        "d.velop API-Key",
+        "d.velop",
+        True,
+    )
+
+    DMS_REPOSITORY = SettingDefinition[str](
+        "dms.repository",
+        SettingValueType.STRING,
+        "",
+        "d.velop Repository-ID",
+        "d.velop",
+    )
+
+    DMS_INVOICE_CATEGORY_ID = SettingDefinition[str](
+        "dms.invoice_category_id",
+        SettingValueType.STRING,
+        "",
+        "Kategorie-ID für Rechnungen",
+        "d.velop",
+    )
+
+    DMS_INVOICE_ID_PROPERTY_ID = SettingDefinition[str](
+        "dms.invoice_id_property_id",
+        SettingValueType.STRING,
+        "",
+        "Eigenschafts-ID für den eindeutigen Rechnungsschlüssel",
+        "d.velop",
+    )
+
+    DMS_INVOICE_PROPERTY_MAP = SettingDefinition[dict](
+        "dms.invoice_property_map",
+        SettingValueType.JSON,
+        {},
+        "Weitere Eigenschaften für Rechnungen",
+        "d.velop",
+    )
     SMTP_HOST = SettingDefinition[str](
         "smtp.host",
         SettingValueType.STRING,
@@ -158,6 +206,34 @@ class SettingKeys:
     )
     TIME_DEVIATION_PERCENT = SettingDefinition[float]("time.deviation_percent", SettingValueType.FLOAT, 20.0, "Abweichung in Prozent", "Zeiterfassung")
     TIME_DEVIATION_MINUTES = SettingDefinition[int]("time.deviation_minutes", SettingValueType.INT, 15, "Abweichung in Minuten", "Zeiterfassung")
+    INVOICE_DEFAULT_HOURLY_RATE_NET = SettingDefinition[float](
+        "invoice.default_hourly_rate_net",
+        SettingValueType.FLOAT,
+        0.0,
+        "Standard-Stundensatz netto",
+        "Rechnungen",
+    )
+    INVOICE_DEFAULT_VAT_RATE = SettingDefinition[float](
+        "invoice.default_vat_rate",
+        SettingValueType.FLOAT,
+        19.0,
+        "Standard-Umsatzsteuersatz",
+        "Rechnungen",
+    )
+    INVOICE_MATERIAL_MARKUP_PERCENT = SettingDefinition[float](
+        "invoice.material_markup_percent",
+        SettingValueType.FLOAT,
+        0.0,
+        "Standard-Materialaufschlag in Prozent",
+        "Rechnungen",
+    )
+    INVOICE_PAYMENT_TERMS_DAYS = SettingDefinition[int](
+        "invoice.payment_terms_days",
+        SettingValueType.INT,
+        14,
+        "Standard-Zahlungsziel in Tagen",
+        "Rechnungen",
+    )
     LOG_LEVEL = SettingDefinition[str]("logging.level", SettingValueType.STRING, "INFO", "Log-Level", "Logging")
     LOG_HANDLER = SettingDefinition[str]("logging.handler", SettingValueType.STRING, "file", "Logging-Ziel", "Logging")
     LOG_FILE_PATH = SettingDefinition[str]("logging.file_path", SettingValueType.STRING, "logs/datlaeuft.log", "Logdatei", "Logging")

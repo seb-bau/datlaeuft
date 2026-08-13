@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Rechnungen{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Rechnungen</h1>
+    <div class="text-muted">
+      Ausgangsrechnungen und Mieterbelastungen
+    </div>
+  </div>
+
+  <a
+    class="btn btn-primary"
+    href="{{ url_for('admin.invoice_create') }}"
+  >
+    Rechnung erstellen
+  </a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <table class="table table-striped datatable align-middle">
+      <thead>
+        <tr>
+          <th>Rechnungsnummer</th>
+          <th>Status</th>
+          <th>Datum</th>
+          <th>Buchwerk</th>
+          <th>Empfänger</th>
+          <th>Vertrag</th>
+          <th>Aufträge</th>
+          <th class="text-end">Brutto</th>
+          <th>d.velop</th>
+          <th></th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>
+            {{ item.invoice_number or ("Entwurf " ~ item.id) }}
+          </td>
+          <td>
+    {% if invoice.invoice_kind == "cancellation" %}
+        <span class="badge text-bg-warning">
+            Stornorechnung
+        </span>
+    {% else %}
+        Rechnung
+    {% endif %}
+</td>
+
+          <td>
+            {% if invoice.status == "draft" %}
+              <span class="badge text-bg-secondary">
+                  Entwurf
+              </span>
+          {% elif invoice.status == "finalized" %}
+              <span class="badge text-bg-success">
+                  Festgeschrieben
+              </span>
+          {% elif invoice.status == "canceled" %}
+              <span class="badge text-bg-warning">
+                  Storniert
+              </span>
+          {% else %}
+              {{ invoice.status }}
+          {% endif %}
+          </td>
+
+          <td
+            data-order="{{ item.invoice_date.isoformat() if item.invoice_date else '' }}"
+          >
+            {{ item.invoice_date.strftime("%d.%m.%Y") if item.invoice_date else "" }}
+          </td>
+
+          <td>
+            {{ item.company_code_code }}
+          </td>
+
+          <td>
+            {{ item.recipient_name or "" }}
+          </td>
+
+          <td>
+            {{ item.recipient_license_agreement_idnum or "" }}
+          </td>
+
+          <td>
+            {{ item.commission_links|length }}
+          </td>
+
+          <td class="text-end">
+            {{ "%.2f"|format(item.total_gross) }}
+            {{ item.currency_code }}
+          </td>
+
+          <td>
+            {% if item.dvelop_document_id %}
+            <span class="badge text-bg-success">
+              Archiviert
+            </span>
+            {% elif item.archive_error %}
+            <span class="badge text-bg-danger">
+              Fehler
+            </span>
+            {% endif %}
+          </td>
+
+          <td class="text-end">
+            <a
+              class="btn btn-sm btn-outline-secondary"
+              href="{{ url_for(
+                'admin.invoice_edit',
+                invoice_id=item.id
+              ) }}"
+            >
+              Öffnen
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not items %}
+    <div class="text-center text-muted py-4">
+      Noch keine Rechnungen vorhanden.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

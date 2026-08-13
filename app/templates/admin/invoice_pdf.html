@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 20mm 18mm 22mm 24mm;
+        }
+
+        @page:first {
+            margin-top: 45mm;
+        }
+
+        html {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 10pt;
+            color: #111827;
+        }
+
+        body {
+            margin: 0;
+        }
+
+        .sender-line {
+            margin-bottom: 4mm;
+            font-size: 7.5pt;
+            text-decoration: underline;
+        }
+
+        .recipient {
+            min-height: 38mm;
+            line-height: 1.35;
+        }
+
+        .invoice-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 15mm;
+            margin-bottom: 8mm;
+        }
+
+        .invoice-header h1 {
+            margin: 0;
+            font-size: 18pt;
+            font-weight: 600;
+        }
+
+        .metadata {
+            min-width: 72mm;
+            border-collapse: collapse;
+        }
+
+        .metadata td {
+            padding: 0 0 1.5mm 3mm;
+            vertical-align: top;
+        }
+
+        .metadata td:first-child {
+            padding-left: 0;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .text-section {
+            margin: 0 0 6mm 0;
+            line-height: 1.45;
+            white-space: pre-line;
+        }
+
+        .positions {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 5mm;
+        }
+
+        .positions thead {
+            display: table-header-group;
+        }
+
+        .positions th {
+            padding: 2mm 1.5mm;
+            border-bottom: 0.4mm solid #374151;
+            text-align: left;
+            font-size: 8.5pt;
+        }
+
+        .positions td {
+            padding: 2.2mm 1.5mm;
+            border-bottom: 0.2mm solid #d1d5db;
+            vertical-align: top;
+        }
+
+        .positions tr {
+            break-inside: avoid;
+        }
+
+        .number {
+            width: 8mm;
+            text-align: right;
+        }
+
+        .quantity {
+            width: 20mm;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .price {
+            width: 25mm;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .vat {
+            width: 14mm;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .description {
+            white-space: pre-line;
+        }
+
+        .summary-wrapper {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 6mm;
+            break-inside: avoid;
+        }
+
+        .summary {
+            width: 80mm;
+            border-collapse: collapse;
+        }
+
+        .summary td {
+            padding: 1.3mm 0 1.3mm 4mm;
+        }
+
+        .summary td:last-child {
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .summary .gross td {
+            padding-top: 2mm;
+            border-top: 0.4mm solid #374151;
+            font-size: 11pt;
+            font-weight: 700;
+        }
+
+        .vat-summary {
+            margin-top: 5mm;
+            font-size: 8.5pt;
+            break-inside: avoid;
+        }
+
+        .vat-summary table {
+            border-collapse: collapse;
+        }
+
+        .vat-summary td,
+        .vat-summary th {
+            padding: 1mm 5mm 1mm 0;
+            text-align: right;
+        }
+
+        .vat-summary td:first-child,
+        .vat-summary th:first-child {
+            text-align: left;
+        }
+
+        .payment {
+            margin-top: 8mm;
+            line-height: 1.45;
+            break-inside: avoid;
+        }
+
+        .bank-details {
+            margin-top: 3mm;
+            border-collapse: collapse;
+        }
+
+        .bank-details td {
+            padding: 0.6mm 4mm 0.6mm 0;
+        }
+
+        .bank-details td:first-child {
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="sender-line">
+        {{ seller_address | join(" · ") }}
+    </div>
+
+    <div class="recipient">
+        {% for line in recipient_address %}
+            <div>{{ line }}</div>
+        {% endfor %}
+    </div>
+
+    <div class="invoice-header">
+        <h1>{{ document_title }}</h1>
+
+        <table class="metadata">
+            <tr>
+                <td>Rechnungsnummer</td>
+                <td>{{ invoice_number }}</td>
+            </tr>
+                        {% if is_cancellation %}
+                <tr>
+                    <td>Storniert Rechnung</td>
+                    <td>{{ original_invoice_number }}</td>
+                </tr>
+                {% if original_invoice_date_formatted %}
+                    <tr>
+                        <td>Ursprungsdatum</td>
+                        <td>
+                            {{ original_invoice_date_formatted }}
+                        </td>
+                    </tr>
+                {% endif %}
+            {% endif %}
+            <tr>
+                <td>Rechnungsdatum</td>
+                <td>{{ invoice_date_formatted }}</td>
+            </tr>
+            {% if due_date_formatted %}
+                <tr>
+                    <td>Fällig am</td>
+                    <td>{{ due_date_formatted }}</td>
+                </tr>
+            {% endif %}
+            {% if service_date_formatted %}
+                <tr>
+                    <td>Leistungsdatum</td>
+                    <td>{{ service_date_formatted }}</td>
+                </tr>
+            {% endif %}
+            {% if contract_number %}
+                <tr>
+                    <td>Vertragsnummer</td>
+                    <td>{{ contract_number }}</td>
+                </tr>
+            {% endif %}
+        </table>
+    </div>
+
+    {% if intro_text %}
+        <div class="text-section">{{ intro_text }}</div>
+    {% endif %}
+
+        {% if is_cancellation %}
+        <div class="text-section">
+            Hiermit stornieren wir die Rechnung
+            {{ original_invoice_number }} vollständig.
+            {% if cancellation_reason %}
+                Grund: {{ cancellation_reason }}
+            {% endif %}
+        </div>
+    {% endif %}
+
+    <table class="positions">
+        <thead>
+            <tr>
+                <th class="number">Pos.</th>
+                <th>Bezeichnung</th>
+                <th class="quantity">Menge</th>
+                <th class="price">Einzelpreis</th>
+                <th class="vat">MwSt.</th>
+                <th class="price">Gesamt</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for position in positions %}
+                <tr>
+                    <td class="number">{{ position.number }}</td>
+                    <td class="description">{{ position.description }}</td>
+                    <td class="quantity">
+                        {{ position.quantity_formatted }} {{ position.unit }}
+                    </td>
+                    <td class="price">
+                        {{ position.unit_price_formatted }} {{ currency }}
+                    </td>
+                    <td class="vat">
+                        {{ position.vat_rate_formatted }} %
+                    </td>
+                    <td class="price">
+                        {{ position.total_net_formatted }} {{ currency }}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="summary-wrapper">
+        <table class="summary">
+            <tr>
+                <td>Nettobetrag</td>
+                <td>{{ total_net_formatted }} {{ currency }}</td>
+            </tr>
+            <tr>
+                <td>Umsatzsteuer</td>
+                <td>{{ total_vat_formatted }} {{ currency }}</td>
+            </tr>
+            <tr class="gross">
+                <td>{{ total_label }}</td>
+                <td>{{ total_gross_formatted }} {{ currency }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="vat-summary">
+        <table>
+            <thead>
+                <tr>
+                    <th>Steuersatz</th>
+                    <th>Netto</th>
+                    <th>Umsatzsteuer</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in vat_rows %}
+                    <tr>
+                        <td>{{ row.rate_formatted }} %</td>
+                        <td>{{ row.net_formatted }} {{ currency }}</td>
+                        <td>{{ row.vat_formatted }} {{ currency }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if closing_text %}
+        <div class="text-section">{{ closing_text }}</div>
+    {% endif %}
+
+    {% if not is_cancellation %}
+        <div class="payment">
+            {% if payment_terms_text %}
+                <div>{{ payment_terms_text }}</div>
+            {% endif %}
+
+            {% if seller_iban %}
+                <table class="bank-details">
+                    {% if seller_bank_name %}
+                        <tr>
+                            <td>Bank</td>
+                            <td>{{ seller_bank_name }}</td>
+                        </tr>
+                    {% endif %}
+                    <tr>
+                        <td>IBAN</td>
+                        <td>{{ seller_iban }}</td>
+                    </tr>
+                    {% if seller_bic %}
+                        <tr>
+                            <td>BIC</td>
+                            <td>{{ seller_bic }}</td>
+                        </tr>
+                    {% endif %}
+                    <tr>
+                        <td>Verwendungszweck</td>
+                        <td>{{ payment_reference }}</td>
+                    </tr>
+                </table>
+            {% endif %}
+        </div>
+    {% endif %}
+</body>
+</html>

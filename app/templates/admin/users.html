@@ -46,7 +46,16 @@
             {% if item.is_foreman %}
             <span class="badge text-bg-warning">Vorarbeiter</span>
             {% endif %}
-            {% if not item.is_admin and not item.is_foreman %}
+                        {% if item.can_manage_invoices %}
+            <span class="badge text-bg-primary">
+              Rechnungen
+            </span>
+            {% endif %}
+            {% if
+              not item.is_admin
+              and not item.is_foreman
+              and not item.can_manage_invoices
+            %}
             <span class="text-muted">Handwerker</span>
             {% endif %}
           </td>
