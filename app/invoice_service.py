@@ -1056,7 +1056,6 @@ def append_invoice_position(
     )
 
     position = InvoicePosition(
-        invoice=invoice,
         position_index=position_index,
         source_type=values.get(
             "source_type",
