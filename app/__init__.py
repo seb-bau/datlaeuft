@@ -15,7 +15,7 @@ from .webhooks import webhooks_bp
 from .appointments import appointments_bp
 
 
-# Worker starten: flask datlaeuft-worker --poll-seconds 10 --reconcile-seconds 900
+# Worker starten: flask datlaeuft-worker --poll-seconds 10
 # fällige Aufgaben: flask datlaeuft-process-erp-work
 
 

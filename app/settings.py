@@ -264,23 +264,6 @@ class SettingKeys:
         "Synchronisierung",
     )
 
-
-    SYNC_QUICK_RECONCILIATION_LOOKBACK_DAYS = SettingDefinition[int](
-        "sync.quick_reconciliation_lookback_days",
-        SettingValueType.INT,
-        14,
-        "Zeitraum des schnellen Auftragsabgleichs in Tagen",
-        "Synchronisierung",
-    )
-
-    SYNC_FULL_RECONCILIATION_INTERVAL_HOURS = SettingDefinition[int](
-        "sync.full_reconciliation_interval_hours",
-        SettingValueType.INT,
-        24,
-        "Intervall des vollständigen Auftragsabgleichs in Stunden",
-        "Synchronisierung",
-    )
-
     GEOAPIFY_API_KEY = SettingDefinition[str](
         "geoapify.api_key",
         SettingValueType.STRING,

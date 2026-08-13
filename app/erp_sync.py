@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from time import sleep
 from typing import Any
 
@@ -10,7 +10,6 @@ from sqlalchemy import or_
 from .audit import audit
 from .extensions import db
 from app.models import (
-    AppSetting,
     Commission,
     CommissionLocalStatus,
     CommissionSyncState,
@@ -21,8 +20,11 @@ from app.models import (
     utc_now,
     CommissionPhoto
 )
-from app.settings import SettingKeys, settings
-from .wowiport import WowiportService, mark_commission_deleted, sync_commission_from_erp, sync_commissions_from_wowiport_regular
+from .wowiport import (
+    WowiportService,
+    mark_commission_deleted,
+    sync_commission_from_erp,
+)
 from .document_sync import sync_commission_documents
 from .push_service import (
     process_push_batch,
@@ -261,25 +263,6 @@ def execute_outbox_operation(
         commission.status_id = 12
         commission.status_code = "WaitForCraftsmanFeedback"
         commission.local_status = CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value
-        try:
-            current_app.logger.info(
-                "commission_media_sync_completed "
-                "commission_id=%s erp_id=%s result=%s",
-                commission.id,
-                commission.erp_id,
-                media_result,
-            )
-        except Exception as exc:
-            commission.media_sync_error = (
-                str(exc)[:4000]
-            )
-
-            current_app.logger.exception(
-                "commission_media_sync_failed "
-                "commission_id=%s erp_id=%s",
-                commission.id,
-                commission.erp_id,
-            )
 
         try:
             document_result = (
@@ -660,174 +643,15 @@ def require_erp_id(commission: Commission) -> None:
         raise RuntimeError("Der Auftrag besitzt noch keine OPENWOWI-ID.")
 
 
-FULL_RECONCILIATION_CHECKPOINT_KEY = (
-    "internal.wowi_full_reconciliation_completed_at"
-)
-
-
-def full_reconciliation_due_at() -> datetime:
-    interval_hours = max(
-        settings.get(
-            SettingKeys
-            .SYNC_FULL_RECONCILIATION_INTERVAL_HOURS
-        ),
-        1,
-    )
-    interval = timedelta(hours=interval_hours)
-    now = utc_now()
-
-    row = AppSetting.query.filter_by(
-        key=FULL_RECONCILIATION_CHECKPOINT_KEY
-    ).one_or_none()
-
-    if row is None:
-        row = AppSetting(
-            key=FULL_RECONCILIATION_CHECKPOINT_KEY,
-            value_text=now.isoformat(),
-            value_type="string",
-            label=(
-                "Letzter vollständiger "
-                "Wowiport-Auftragsabgleich"
-            ),
-            group="Intern",
-            is_secret=False,
-        )
-        db.session.add(row)
-        db.session.commit()
-        return now + interval
-
-    try:
-        completed_at = datetime.fromisoformat(
-            row.value_text
-        )
-    except (TypeError, ValueError):
-        return now
-
-    if completed_at.tzinfo is None:
-        completed_at = completed_at.replace(
-            tzinfo=timezone.utc
-        )
-
-    return completed_at + interval
-
-
-def mark_full_reconciliation_completed() -> None:
-    row = AppSetting.query.filter_by(
-        key=FULL_RECONCILIATION_CHECKPOINT_KEY
-    ).one_or_none()
-
-    if row is None:
-        row = AppSetting(
-            key=FULL_RECONCILIATION_CHECKPOINT_KEY,
-            value_type="string",
-            label=(
-                "Letzter vollständiger "
-                "Wowiport-Auftragsabgleich"
-            ),
-            group="Intern",
-            is_secret=False,
-        )
-        db.session.add(row)
-
-    row.value_text = utc_now().isoformat()
-    db.session.commit()
-
-
 def run_worker(
     poll_seconds: int,
-    reconcile_seconds: int,
 ) -> None:
-    next_quick_reconciliation_at = utc_now()
-    next_full_reconciliation_at = (
-        full_reconciliation_due_at()
-    )
-
     while True:
         result = process_due_work()
-        now = utc_now()
-        reconciliation_ran = False
-
-        if now >= next_full_reconciliation_at:
-            reconciliation_ran = True
-
-            try:
-                reconciliation = (
-                    sync_commissions_from_wowiport_regular(
-                        full=True
-                    )
-                )
-                db.session.commit()
-                mark_full_reconciliation_completed()
-
-                current_app.logger.info(
-                    "commission_reconciliation_completed "
-                    "mode=full result=%s",
-                    reconciliation,
-                )
-
-                interval_hours = max(
-                    settings.get(
-                        SettingKeys
-                        .SYNC_FULL_RECONCILIATION_INTERVAL_HOURS
-                    ),
-                    1,
-                )
-                next_full_reconciliation_at = (
-                    utc_now()
-                    + timedelta(hours=interval_hours)
-                )
-            except Exception:
-                db.session.rollback()
-                current_app.logger.exception(
-                    "commission_reconciliation_failed "
-                    "mode=full"
-                )
-                next_full_reconciliation_at = (
-                    utc_now()
-                    + timedelta(minutes=5)
-                )
-
-            next_quick_reconciliation_at = (
-                utc_now()
-                + timedelta(
-                    seconds=reconcile_seconds
-                )
-            )
-
-        elif now >= next_quick_reconciliation_at:
-            reconciliation_ran = True
-
-            try:
-                reconciliation = (
-                    sync_commissions_from_wowiport_regular(
-                        full=False
-                    )
-                )
-                db.session.commit()
-
-                current_app.logger.info(
-                    "commission_reconciliation_completed "
-                    "mode=quick result=%s",
-                    reconciliation,
-                )
-            except Exception:
-                db.session.rollback()
-                current_app.logger.exception(
-                    "commission_reconciliation_failed "
-                    "mode=quick"
-                )
-
-            next_quick_reconciliation_at = (
-                utc_now()
-                + timedelta(
-                    seconds=reconcile_seconds
-                )
-            )
 
         if (
                 result["webhooks"] == 0
                 and result["outbox"] == 0
                 and result["push"] == 0
-                and not reconciliation_ran
         ):
             sleep(poll_seconds)

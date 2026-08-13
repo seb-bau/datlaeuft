@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import base64
 
-from datetime import datetime
 from typing import Any
 
 from flask import current_app
@@ -1922,15 +1921,11 @@ class WowiportService:
             self,
             status_id: int,
             craftsman_erp_id: int,
-            date_from: datetime,
-            date_to: datetime,
             limit: int = 100,
             offset: int = 0,
     ) -> list[wowipy.CommissioningCommission]:
         add_args = {
             "commissionStatusId": status_id,
-            "recordingDateFrom": date_from.strftime("%Y-%m-%d"),
-            "recordingDateTo": date_to.strftime("%Y-%m-%d"),
         }
 
         return self.client.get_commissioning_commissions(
@@ -2287,7 +2282,6 @@ def sync_commission_from_erp(
 
 
 def sync_commissions_from_wowiport_regular(
-        full: bool = False,
 ) -> dict[str, int]:
     service = WowiportService()
     from .catalog import (
@@ -2324,14 +2318,9 @@ def sync_commissions_from_wowiport_regular(
         SettingKeys.SYNC_COMMISSION_DATE_FIELD
     )
 
-    if full:
-        date_from, date_to = (
-            current_business_year_range()
-        )
-    else:
-        date_from, date_to = (
-            quick_reconciliation_range()
-        )
+    date_from, date_to = (
+        current_business_year_range()
+    )
 
     craftsman_erp_ids = {
         int(row[0])
@@ -2430,10 +2419,9 @@ def sync_commissions_from_wowiport_regular(
             while True:
                 current_app.logger.info(
                     "regular_commission_sync_page "
-                    "full=%s craftsman_erp_id=%s "
+                    "craftsman_erp_id=%s "
                     "offset=%s limit=%s status_id=%s "
                     "date_from=%s date_to=%s",
-                    full,
                     craftsman_erp_id,
                     offset,
                     limit,
@@ -2443,13 +2431,16 @@ def sync_commissions_from_wowiport_regular(
                 )
 
                 try:
-                    payloads = service.get_commissions_for_regular_sync(
-                        status_id=status_id,
-                        craftsman_erp_id=craftsman_erp_id,
-                        date_from=date_from,
-                        date_to=date_to,
-                        limit=limit,
-                        offset=offset,
+                    payloads = (
+                        service
+                        .get_commissions_for_regular_sync(
+                            status_id=status_id,
+                            craftsman_erp_id=(
+                                craftsman_erp_id
+                            ),
+                            limit=limit,
+                            offset=offset,
+                        )
                     )
                 except Exception as exc:
                     current_app.logger.exception(
@@ -2654,27 +2645,6 @@ def sync_commission_payload_from_erp(
     )
 
     return "synced"
-
-
-def quick_reconciliation_range() -> tuple[
-    datetime,
-    datetime,
-]:
-    lookback_days = max(
-        settings.get(
-            SettingKeys
-            .SYNC_QUICK_RECONCILIATION_LOOKBACK_DAYS
-        ),
-        1,
-    )
-    now = datetime.now()
-    start = now - timedelta(days=lookback_days)
-    end = now + timedelta(days=1)
-
-    return (
-        _as_naive_datetime(start),
-        _as_naive_datetime(end),
-    )
 
 
 def current_business_year_range() -> tuple[datetime, datetime]:

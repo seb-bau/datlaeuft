@@ -31,12 +31,12 @@
               <div class="d-flex flex-wrap gap-1">
                 {% for activity in item.craft_activities|sort(attribute="name") %}
                 <span class="badge text-bg-light border">
-                  {{ activity.name }}{% if activity.code %} · {{ activity.code }}{% endif %}
+                  {{ activity.name }}
                 </span>
                 {% endfor %}
               </div>
             {% else %}
-              <span class="text-muted">Keine Gewerke</span>
+              <span class="text-muted">Alle Gewerke</span>
             {% endif %}
           </td>
           <td>

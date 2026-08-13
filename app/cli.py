@@ -255,27 +255,13 @@ def register_cli(app: Flask) -> None:
     @app.cli.command(
         "datlaeuft-sync-commissions"
     )
-    @click.option(
-        "--full",
-        "full_sync",
-        is_flag=True,
-    )
-    def sync_commissions(
-        full_sync: bool,
-    ) -> None:
+    def sync_commissions() -> None:
         result = (
-            sync_commissions_from_wowiport_regular(
-                full=full_sync
-            )
-        )
-        mode_label = (
-            "vollständig"
-            if full_sync
-            else "schnell"
+            sync_commissions_from_wowiport_regular()
         )
 
         click.echo(
-            f"Modus={mode_label} "
+            f"Modus=vollständig "
             f"Handwerker={result['craftsmen']} "
             f"Status={result['statuses']} "
             f"Gesehen={result['seen']} "
@@ -430,12 +416,9 @@ def register_cli(app: Flask) -> None:
 
     @app.cli.command("datlaeuft-worker")
     @click.option("--poll-seconds", type=int, default=10)
-    @click.option("--reconcile-seconds", type=int, default=900)
     def worker(
         poll_seconds: int,
-        reconcile_seconds: int,
     ) -> None:
         run_worker(
             poll_seconds=max(poll_seconds, 1),
-            reconcile_seconds=max(reconcile_seconds, 60),
         )
