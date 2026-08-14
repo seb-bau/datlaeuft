@@ -1109,6 +1109,7 @@ def replace_invoice_positions(
     rows: list[dict[str, Any]],
 ) -> None:
     invoice.positions.clear()
+    db.session.flush()
 
     for row in rows:
         append_invoice_position(
@@ -1235,6 +1236,34 @@ def _validate_invoice_for_finalization(
             raise InvoiceFinalizationError(
                 message
             )
+
+    if (
+        invoice.service_date_from is None
+        and invoice.service_date_to is None
+    ):
+        raise InvoiceFinalizationError(
+            "Bitte geben Sie mindestens ein "
+            "Leistungsdatum an."
+        )
+
+    if invoice.service_date_from is None:
+        invoice.service_date_from = (
+            invoice.service_date_to
+        )
+
+    if invoice.service_date_to is None:
+        invoice.service_date_to = (
+            invoice.service_date_from
+        )
+
+    if (
+        invoice.service_date_from
+        > invoice.service_date_to
+    ):
+        raise InvoiceFinalizationError(
+            "Das Ende des Leistungszeitraums "
+            "darf nicht vor dem Beginn liegen."
+        )
 
     positions = list(
         invoice.positions
