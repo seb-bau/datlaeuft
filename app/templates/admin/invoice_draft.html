@@ -82,6 +82,35 @@
             >
                 Rechnung öffnen
             </a>
+            {% if
+    current_user.is_admin
+    and item.dms_archive_status == "not_archived"
+    and not item.dms_archive_key
+    and not item.dms_document_id
+    and not item.dms_archived_at
+%}
+<form
+    method="post"
+    action="{{ url_for(
+        'admin.invoice_document_regenerate',
+        invoice_id=item.id
+    ) }}"
+    class="d-inline-block ms-2"
+    onsubmit="return window.confirm('PDF und ZUGFeRD-XML wirklich neu erzeugen?')"
+>
+    <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+    >
+    <button
+        type="submit"
+        class="btn btn-outline-secondary"
+    >
+        PDF neu erzeugen
+    </button>
+</form>
+{% endif %}
                       {% if item.invoice_kind == "cancellation" %}
                 <div class="alert alert-warning mt-3">
                     <div>

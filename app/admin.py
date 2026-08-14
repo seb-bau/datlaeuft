@@ -124,6 +124,7 @@ from .invoice_service import (
 )
 from .invoice_document import (
     InvoiceDocumentError,
+    create_invoice_document,
     remove_invoice_documents,
     resolve_invoice_document_path,
 )
@@ -813,6 +814,210 @@ def invoice_document(
             f"{invoice.invoice_number}.pdf"
         ),
     )
+
+
+@admin_bp.post(
+    "/admin/invoices/<int:invoice_id>/document/regenerate"
+)
+@admin_required
+def invoice_document_regenerate(
+    invoice_id: int,
+) -> Any:
+    invoice = (
+        Invoice.query
+        .filter(Invoice.id == invoice_id)
+        .with_for_update()
+        .one_or_none()
+    )
+
+    if invoice is None:
+        abort(404)
+
+    redirect_url = url_for(
+        "admin.invoice_edit",
+        invoice_id=invoice.id,
+    )
+
+    if invoice.status not in {
+        InvoiceStatus.FINALIZED.value,
+        InvoiceStatus.CANCELED.value,
+    }:
+        flash(
+            "Nur festgeschriebene Rechnungen können "
+            "neu erzeugt werden.",
+            "danger",
+        )
+        return redirect(redirect_url)
+
+    if (
+        invoice.dms_archive_status
+        != InvoiceArchiveStatus.NOT_ARCHIVED.value
+        or invoice.dms_archive_key
+        or invoice.dms_document_id
+        or invoice.dms_archived_at is not None
+    ):
+        flash(
+            "Die PDF-Datei kann nach einer begonnenen "
+            "oder abgeschlossenen d.velop-Archivierung "
+            "nicht mehr neu erzeugt werden.",
+            "danger",
+        )
+        return redirect(redirect_url)
+
+    previous_document_filename = (
+        invoice.document_filename
+    )
+    previous_document_sha256 = (
+        invoice.document_sha256
+    )
+    previous_pdf_path = None
+    previous_xml_path = None
+    previous_pdf_bytes = None
+    previous_xml_bytes = None
+
+    if previous_document_filename:
+        try:
+            previous_pdf_path = (
+                resolve_invoice_document_path(
+                    previous_document_filename
+                )
+            )
+            previous_xml_path = (
+                previous_pdf_path.with_suffix(".xml")
+            )
+
+            if previous_pdf_path.is_file():
+                previous_pdf_bytes = (
+                    previous_pdf_path.read_bytes()
+                )
+
+            if previous_xml_path.is_file():
+                previous_xml_bytes = (
+                    previous_xml_path.read_bytes()
+                )
+        except (InvoiceDocumentError, OSError):
+            current_app.logger.exception(
+                "invoice_document_backup_failed "
+                "invoice_id=%s",
+                invoice.id,
+            )
+            flash(
+                "Die bisherige Rechnungsdatei konnte "
+                "nicht gesichert werden.",
+                "danger",
+            )
+            return redirect(redirect_url)
+
+    def restore_previous_documents() -> None:
+        documents = (
+            (
+                previous_pdf_path,
+                previous_pdf_bytes,
+            ),
+            (
+                previous_xml_path,
+                previous_xml_bytes,
+            ),
+        )
+
+        for document_path, document_bytes in documents:
+            if document_path is None:
+                continue
+
+            try:
+                if document_bytes is None:
+                    document_path.unlink(
+                        missing_ok=True
+                    )
+                else:
+                    document_path.parent.mkdir(
+                        parents=True,
+                        exist_ok=True,
+                    )
+                    document_path.write_bytes(
+                        document_bytes
+                    )
+            except OSError:
+                current_app.logger.exception(
+                    "invoice_document_restore_failed "
+                    "invoice_id=%s path=%s",
+                    invoice.id,
+                    document_path,
+                )
+
+    document_result = None
+
+    try:
+        if current_app.jinja_env.cache is not None:
+            current_app.jinja_env.cache.clear()
+
+        document_result = create_invoice_document(
+            invoice
+        )
+
+        invoice.document_filename = (
+            document_result.pdf_storage_name
+        )
+        invoice.document_sha256 = (
+            document_result.pdf_sha256
+        )
+
+        audit(
+            "invoice.document.regenerate",
+            "invoice",
+            invoice.id,
+            {
+                "invoice_number": (
+                    invoice.invoice_number
+                ),
+                "previous_document_sha256": (
+                    previous_document_sha256
+                ),
+                "document_sha256": (
+                    document_result.pdf_sha256
+                ),
+                "xml_sha256": (
+                    document_result.xml_sha256
+                ),
+            },
+        )
+
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+
+        if document_result is not None:
+            remove_invoice_documents(
+                document_result
+            )
+
+        restore_previous_documents()
+
+        current_app.logger.exception(
+            "invoice_document_regeneration_failed "
+            "invoice_id=%s",
+            invoice.id,
+        )
+
+        if isinstance(
+            exc,
+            InvoiceDocumentError,
+        ):
+            flash(str(exc), "danger")
+        else:
+            flash(
+                "PDF und ZUGFeRD-XML konnten nicht "
+                "neu erzeugt werden.",
+                "danger",
+            )
+
+        return redirect(redirect_url)
+
+    flash(
+        "PDF und ZUGFeRD-XML wurden neu erzeugt.",
+        "success",
+    )
+    return redirect(redirect_url)
 
 
 @admin_bp.route(
