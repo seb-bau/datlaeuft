@@ -1772,6 +1772,12 @@ class TimeEntry(db.Model):
     task_template_id: Mapped[int | None] = mapped_column(db.ForeignKey("time_task_template.id"), index=True)
     started_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    service_date: Mapped[date] = mapped_column(
+        db.Date,
+        default=date.today,
+        nullable=False,
+        index=True,
+    )
     minutes: Mapped[int] = mapped_column(db.Integer, nullable=False)
     work_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
     waiting_minutes: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)

@@ -82,6 +82,43 @@
             >
                 Rechnung öffnen
             </a>
+                        {% if has_any_work_reports %}
+            <form
+              method="get"
+              action="{{ url_for(
+                'admin.invoice_document_with_work_reports',
+                invoice_id=item.id
+              ) }}"
+              class="d-inline-flex align-items-center gap-2 ms-2"
+            >
+              <select
+                class="form-select"
+                name="scope"
+              >
+                <option
+                  value="billed"
+                  {% if not has_billed_work_reports %}disabled{% endif %}
+                  {% if has_billed_work_reports %}selected{% endif %}
+                >
+                  Nur berechnete Zeitnachweise
+                </option>
+                <option
+                  value="all"
+                  {% if not has_billed_work_reports %}selected{% endif %}
+                >
+                  Alle Zeitnachweise der Aufträge
+                </option>
+              </select>
+
+              <button
+                class="btn btn-outline-primary text-nowrap"
+                type="submit"
+              >
+                Rechnung mit Arbeitsnachweisen
+              </button>
+            </form>
+            {% endif %}
+
             {% if
     current_user.is_admin
     and item.dms_archive_status == "not_archived"
@@ -600,6 +637,44 @@
               <div class="small">
                 {{ link.commission.display_title }}
               </div>
+                              {% set report_count = work_report_counts.get(
+                link.commission.id,
+                {}
+              ) %}
+
+              {% if report_count.get("all", 0) %}
+              <div class="d-flex flex-wrap gap-2 mt-2">
+                <a
+                  class="btn btn-sm btn-outline-secondary"
+                  href="{{ url_for(
+                    'admin.invoice_commission_work_report',
+                    invoice_id=item.id,
+                    commission_id=link.commission.id,
+                    scope='all'
+                  ) }}"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Arbeitsnachweis öffnen
+                </a>
+
+                {% if report_count.get("billed", 0) %}
+                <a
+                  class="btn btn-sm btn-outline-secondary"
+                  href="{{ url_for(
+                    'admin.invoice_commission_work_report',
+                    invoice_id=item.id,
+                    commission_id=link.commission.id,
+                    scope='billed'
+                  ) }}"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Berechneten Nachweis öffnen
+                </a>
+                {% endif %}
+              </div>
+              {% endif %}
             </div>
             {% endfor %}
 

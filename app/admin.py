@@ -139,6 +139,18 @@ from .invoice_document import (
     remove_invoice_documents,
     resolve_invoice_document_path,
 )
+from .work_report_document import (
+    WORK_REPORT_SCOPE_ALL,
+    WORK_REPORT_SCOPE_BILLED,
+    WorkReportDocumentError,
+    commission_work_report_entries,
+    create_invoice_with_work_reports_pdf,
+    create_work_report_pdf,
+    invoice_work_report_groups,
+    invoice_work_reports_filename,
+    work_report_counts,
+    work_report_filename,
+)
 from .offer_document import (
     OfferDocumentError,
     resolve_offer_document_path,
@@ -1177,6 +1189,186 @@ def invoice_document(
         download_name=(
             f"{document_label}-"
             f"{invoice.invoice_number}.pdf"
+        ),
+    )
+
+
+@admin_bp.get(
+    "/admin/invoices/<int:invoice_id>/"
+    "document-with-work-reports"
+)
+@login_required
+@invoice_required
+def invoice_document_with_work_reports(
+    invoice_id: int,
+) -> Any:
+    invoice = db.get_or_404(
+        Invoice,
+        invoice_id,
+    )
+    scope = request.args.get(
+        "scope",
+        WORK_REPORT_SCOPE_BILLED,
+    )
+
+    try:
+        document = (
+            create_invoice_with_work_reports_pdf(
+                invoice,
+                scope,
+            )
+        )
+    except WorkReportDocumentError as exc:
+        flash(
+            str(exc),
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_edit",
+                invoice_id=invoice.id,
+            )
+        )
+
+    return send_file(
+        document,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=(
+            invoice_work_reports_filename(
+                invoice
+            )
+        ),
+    )
+
+
+@admin_bp.get(
+    "/admin/invoices/<int:invoice_id>/"
+    "commissions/<int:commission_id>/"
+    "work-report"
+)
+@login_required
+@invoice_required
+def invoice_commission_work_report(
+    invoice_id: int,
+    commission_id: int,
+) -> Any:
+    invoice = db.get_or_404(
+        Invoice,
+        invoice_id,
+    )
+    scope = request.args.get(
+        "scope",
+        WORK_REPORT_SCOPE_ALL,
+    )
+
+    try:
+        groups = {
+            commission.id: (
+                commission,
+                entries,
+            )
+            for commission, entries
+            in invoice_work_report_groups(
+                invoice,
+                scope,
+            )
+        }
+    except WorkReportDocumentError as exc:
+        flash(
+            str(exc),
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_edit",
+                invoice_id=invoice.id,
+            )
+        )
+
+    group = groups.get(
+        commission_id
+    )
+
+    if group is None:
+        abort(404)
+
+    commission, entries = group
+
+    try:
+        document = create_work_report_pdf(
+            commission,
+            entries,
+            scope,
+        )
+    except WorkReportDocumentError as exc:
+        flash(
+            str(exc),
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.invoice_edit",
+                invoice_id=invoice.id,
+            )
+        )
+
+    return send_file(
+        document,
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=work_report_filename(
+            commission
+        ),
+    )
+
+
+@admin_bp.get(
+    "/admin/commissions/"
+    "<int:commission_id>/work-report"
+)
+@foreman_required
+def commission_work_report(
+    commission_id: int,
+) -> Any:
+    commission = db.get_or_404(
+        Commission,
+        commission_id,
+    )
+    entries = (
+        commission_work_report_entries(
+            commission
+        )
+    )
+
+    try:
+        document = create_work_report_pdf(
+            commission,
+            entries,
+            WORK_REPORT_SCOPE_ALL,
+        )
+    except WorkReportDocumentError as exc:
+        flash(
+            str(exc),
+            "danger",
+        )
+
+        return redirect(
+            url_for(
+                "admin.commission_detail",
+                commission_id=commission.id,
+            )
+        )
+
+    return send_file(
+        document,
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=work_report_filename(
+            commission
         ),
     )
 
@@ -3790,6 +3982,22 @@ def invoice_edit_context(
         for task_template in task_templates
     ]
 
+    report_counts = work_report_counts(
+        item
+    )
+    has_billed_work_reports = any(
+        values[
+            WORK_REPORT_SCOPE_BILLED
+        ] > 0
+        for values in report_counts.values()
+    )
+    has_any_work_reports = any(
+        values[
+            WORK_REPORT_SCOPE_ALL
+        ] > 0
+        for values in report_counts.values()
+    )
+
     return {
         "item": item,
         "editable": (
@@ -3805,6 +4013,13 @@ def invoice_edit_context(
             "free": "Freie Position",
             "cancellation": "Storno",
         },
+        "work_report_counts": report_counts,
+        "has_billed_work_reports": (
+            has_billed_work_reports
+        ),
+        "has_any_work_reports": (
+            has_any_work_reports
+        ),
     }
 
 
@@ -4399,6 +4614,9 @@ def commission_detail(
         local_status_labels=local_status_labels,
         appointment_status_labels=appointment_status_labels,
         history_titles=history_titles,
+        has_work_report=bool(
+            item.time_entries
+        ),
     )
 
 
@@ -5284,7 +5502,11 @@ def time_entries() -> Any:
         for term in [item.strip() for item in search_text.split() if item.strip()]:
             like_term = f"%{term}%"
             query = query.filter(or_(Commission.code.ilike(like_term), Commission.erp_idnum.ilike(like_term), Commission.title.ilike(like_term), TimeTaskTemplate.code.ilike(like_term), TimeTaskTemplate.title.ilike(like_term), User.display_name.ilike(like_term)))
-    items = query.order_by(TimeEntry.created_at.desc()).all()
+    items = query.order_by(
+        TimeEntry.service_date.desc(),
+        TimeEntry.created_at.desc(),
+        TimeEntry.id.desc(),
+    ).all()
     return render_template("admin/time_entries.html", items=items, status_filter=status_filter, review_level_filter=review_level_filter, search_text=search_text)
 
 

@@ -46,6 +46,19 @@
         name="next"
         value="{{ request.full_path }}"
       >
+          {% if has_work_report %}
+    <a
+      class="btn btn-outline-primary"
+      href="{{ url_for(
+        'admin.commission_work_report',
+        commission_id=item.id
+      ) }}"
+      target="_blank"
+      rel="noopener"
+    >
+      Arbeitsnachweis öffnen
+    </a>
+    {% endif %}
       <button
         class="btn btn-outline-primary"
         type="submit"

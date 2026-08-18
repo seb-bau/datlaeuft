@@ -2346,7 +2346,11 @@ def commission_time_entries(commission_id: int) -> Any:
     if not can_view_colleague_commissions(user):
         query = query.filter_by(user_id=user.id)
 
-    entries = query.order_by(TimeEntry.created_at.desc()).all()
+    entries = query.order_by(
+        TimeEntry.service_date.desc(),
+        TimeEntry.created_at.desc(),
+        TimeEntry.id.desc(),
+    ).all()
     return jsonify({"items": [serialize_time_entry(item, viewer=user) for item in entries]})
 
 
@@ -2361,6 +2365,10 @@ def add_time_entry(commission_id: int) -> Any:
         commission=commission,
         user=user,
         task_template=values["task"],
+        service_date=(
+                values["service_date"]
+                or date.today()
+        ),
         minutes=values["minutes"],
         work_minutes=values["work_minutes"],
         waiting_minutes=values["waiting_minutes"],
@@ -2374,8 +2382,20 @@ def add_time_entry(commission_id: int) -> Any:
     db.session.add(entry)
     with db.session.no_autoflush:
         apply_time_review(entry)
-    audit("time.create", "commission", commission.id,
-          {"minutes": entry.minutes, "task_template_id": entry.task_template_id})
+    audit(
+        "time.create",
+        "commission",
+        commission.id,
+        {
+            "minutes": entry.minutes,
+            "task_template_id": (
+                entry.task_template_id
+            ),
+            "service_date": (
+                entry.service_date.isoformat()
+            ),
+        },
+    )
     db.session.commit()
     return jsonify({"item": serialize_time_entry(entry, viewer=user)}), 201
 
@@ -2388,6 +2408,10 @@ def update_time_entry(commission_id: int, entry_id: int) -> Any:
     data = request.get_json(silent=True) or {}
     values = time_entry_values_from_payload(data, user)
     entry.task_template = values["task"]
+    if values["service_date"] is not None:
+        entry.service_date = (
+            values["service_date"]
+        )
     entry.minutes = values["minutes"]
     entry.work_minutes = values["work_minutes"]
     entry.waiting_minutes = values["waiting_minutes"]
@@ -2400,7 +2424,21 @@ def update_time_entry(commission_id: int, entry_id: int) -> Any:
     entry.reviewed_by_user_id = None
     entry.reviewed_at = None
     apply_time_review(entry)
-    audit("time.update", "time_entry", entry.id, {"commission_id": commission.id, "minutes": entry.minutes, "task_template_id": entry.task_template_id})
+    audit(
+        "time.update",
+        "time_entry",
+        entry.id,
+        {
+            "commission_id": commission.id,
+            "minutes": entry.minutes,
+            "task_template_id": (
+                entry.task_template_id
+            ),
+            "service_date": (
+                entry.service_date.isoformat()
+            ),
+        },
+    )
     db.session.commit()
     return jsonify({"item": serialize_time_entry(entry, viewer=user)})
 
@@ -2481,7 +2519,13 @@ def review_time_entries() -> Any:
                 TimeTaskTemplate.title.ilike(like_term),
                 User.display_name.ilike(like_term),
             ))
-    items = query.order_by(TimeEntry.created_at.desc()).limit(query_limit()).all()
+    items = query.order_by(
+        TimeEntry.service_date.desc(),
+        TimeEntry.created_at.desc(),
+        TimeEntry.id.desc(),
+    ).limit(
+        query_limit()
+    ).all()
     return jsonify({"items": [serialize_time_entry(item, viewer=user) for item in items]})
 
 
@@ -2692,6 +2736,23 @@ def query_limit() -> int:
 
 
 def time_entry_values_from_payload(data: dict[str, Any], user: User) -> dict[str, Any]:
+    service_date_text = str(
+        data.get("service_date") or ""
+    ).strip()
+    service_date = None
+
+    if service_date_text:
+        try:
+            service_date = date.fromisoformat(
+                service_date_text
+            )
+        except ValueError:
+            abort(
+                400,
+                description=(
+                    "Das Leistungsdatum ist ungültig."
+                ),
+            )
     work_minutes = int_payload(data, "work_minutes")
     waiting_minutes = int_payload(data, "waiting_minutes")
     material_minutes = int_payload(data, "material_minutes")
@@ -2721,6 +2782,7 @@ def time_entry_values_from_payload(data: dict[str, Any], user: User) -> dict[str
         "extra_minutes": extra_minutes,
         "deviation_reason": data.get("deviation_reason"),
         "note": data.get("note"),
+        "service_date": service_date,
     }
 
 
@@ -3294,6 +3356,9 @@ def serialize_time_entry(item: TimeEntry, viewer: User | None = None) -> dict[st
         "deviation_percent": item.deviation_percent,
         "review_status": item.review_status,
         "review_level": item.review_level,
+        "service_date": (
+            item.service_date.isoformat()
+        ),
         "created_at": iso_datetime(item.created_at),
         "can_edit": can_edit,
     }

@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page {
+      size: A4;
+      margin: 16mm 17mm 18mm 17mm;
+    }
+
+    html {
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 9pt;
+      color: #111827;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    h1 {
+      margin: 0 0 5mm 0;
+      font-size: 18pt;
+      font-weight: 600;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 11pt;
+    }
+
+    .subtitle {
+      margin-bottom: 5mm;
+      color: #4b5563;
+    }
+
+    .metadata {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 6mm;
+    }
+
+    .metadata th,
+    .metadata td {
+      padding: 1.2mm 2mm;
+      border-bottom: 0.2mm solid #d1d5db;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .metadata th {
+      width: 35mm;
+      font-weight: 600;
+      color: #374151;
+    }
+
+    .entry {
+      margin-bottom: 4mm;
+      padding: 3mm;
+      border: 0.25mm solid #9ca3af;
+      border-radius: 1.5mm;
+      break-inside: avoid;
+    }
+
+    .entry-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 5mm;
+      margin-bottom: 2mm;
+    }
+
+    .entry-meta {
+      margin-top: 0.8mm;
+      color: #4b5563;
+      font-size: 8pt;
+    }
+
+    .duration {
+      font-size: 11pt;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .components {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 2mm;
+      font-size: 8pt;
+    }
+
+    .components td {
+      padding: 0.7mm 2mm 0.7mm 0;
+      border-bottom: 0.15mm solid #e5e7eb;
+    }
+
+    .components td:last-child {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .entry-text {
+      margin-top: 2mm;
+      line-height: 1.3;
+      white-space: pre-line;
+    }
+
+    .entry-text-label {
+      font-weight: 600;
+    }
+
+    .summary {
+      width: 100%;
+      margin-top: 5mm;
+      padding-top: 3mm;
+      border-top: 0.5mm solid #374151;
+      break-inside: avoid;
+    }
+
+    .summary-table {
+      width: 75mm;
+      margin-left: auto;
+      border-collapse: collapse;
+    }
+
+    .summary-table td {
+      padding: 0.8mm 0 0.8mm 3mm;
+    }
+
+    .summary-table td:last-child {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .summary-total {
+      font-size: 11pt;
+      font-weight: 700;
+      border-top: 0.3mm solid #6b7280;
+    }
+
+    .footer {
+      margin-top: 8mm;
+      color: #6b7280;
+      font-size: 7.5pt;
+    }
+  </style>
+</head>
+<body>
+  <h1>Arbeitsnachweis</h1>
+
+  <div class="subtitle">
+    {{ scope_label }}
+  </div>
+
+  <table class="metadata">
+    <tbody>
+      <tr>
+        <th>Auftrag</th>
+        <td>
+          {{ commission_number }} ·
+          {{ commission_title }}
+        </td>
+      </tr>
+      <tr>
+        <th>Leistungszeitraum</th>
+        <td>
+          {% if service_date_from == service_date_to %}
+          {{ service_date_from }}
+          {% else %}
+          {{ service_date_from }} bis
+          {{ service_date_to }}
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Adresse</th>
+        <td>
+          {{ address }}
+          {% if location %}
+          · {{ location }}
+          {% endif %}
+        </td>
+      </tr>
+      {% if tenant_name %}
+      <tr>
+        <th>Mieter</th>
+        <td>{{ tenant_name }}</td>
+      </tr>
+      {% endif %}
+      {% if contract_number %}
+      <tr>
+        <th>Vertrag</th>
+        <td>{{ contract_number }}</td>
+      </tr>
+      {% endif %}
+      {% if company_code %}
+      <tr>
+        <th>Buchwerk</th>
+        <td>{{ company_code }}</td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  {% for entry in entries %}
+  <div class="entry">
+    <div class="entry-header">
+      <div>
+        <h2>
+          {% if entry.task_code %}
+          {{ entry.task_code }} ·
+          {% endif %}
+          {{ entry.task_title }}
+        </h2>
+
+        <div class="entry-meta">
+          Leistungsdatum:
+          {{ entry.service_date }}
+          · Handwerker:
+          {{ entry.user_name }}
+        </div>
+      </div>
+
+      <div class="duration">
+        {{ entry.duration }}
+      </div>
+    </div>
+
+    {% if entry.component_rows %}
+    <table class="components">
+      <tbody>
+        {% for component in entry.component_rows %}
+        <tr>
+          <td>{{ component.label }}</td>
+          <td>{{ component.duration }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if entry.deviation_reason %}
+    <div class="entry-text">
+      <span class="entry-text-label">
+        Besonderheit:
+      </span>
+      {{ entry.deviation_reason }}
+    </div>
+    {% endif %}
+
+    {% if entry.note %}
+    <div class="entry-text">
+      <span class="entry-text-label">
+        Erläuterung:
+      </span>
+      {{ entry.note }}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="summary">
+    <table class="summary-table">
+      <tbody>
+        {% for component in component_totals %}
+        <tr>
+          <td>{{ component.label }}</td>
+          <td>{{ component.duration }}</td>
+        </tr>
+        {% endfor %}
+
+        <tr class="summary-total">
+          <td>Gesamtzeit</td>
+          <td>{{ total_duration }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    Erstellt am {{ generated_at }} ·
+    {{ entry_count }}
+    {% if entry_count == 1 %}
+    Zeitbuchung
+    {% else %}
+    Zeitbuchungen
+    {% endif %}
+  </div>
+</body>
+</html>

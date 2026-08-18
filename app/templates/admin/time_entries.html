@@ -42,7 +42,8 @@
     <table class="table table-striped datatable">
       <thead>
         <tr>
-          <th>Zeitpunkt</th>
+          <th>Leistungsdatum</th>
+          <th>Erfasst am</th>
           <th>Auftrag</th>
           <th>Benutzer</th>
           <th>Position</th>
@@ -58,8 +59,46 @@
       <tbody>
         {% for item in items %}
         <tr>
-          <td>{{ item.created_at.strftime("%d.%m.%Y %H:%M") }}</td>
-          <td>{{ item.commission.erp_id }}</td>
+                    <td
+            data-order="{{ item.service_date.isoformat() }}"
+          >
+            {{ item.service_date.strftime("%d.%m.%Y") }}
+          </td>
+
+          <td
+            data-order="{{ item.created_at.isoformat() }}"
+          >
+            {{ item.created_at.strftime("%d.%m.%Y %H:%M") }}
+          </td>
+
+          <td>
+            <a
+              href="{{ url_for(
+                'admin.commission_detail',
+                commission_id=item.commission.id
+              ) }}"
+            >
+              {{
+                item.commission.erp_idnum
+                or item.commission.code
+                or item.commission.id
+              }}
+            </a>
+
+            <div class="mt-1">
+              <a
+                class="btn btn-sm btn-outline-secondary"
+                href="{{ url_for(
+                  'admin.commission_work_report',
+                  commission_id=item.commission.id
+                ) }}"
+                target="_blank"
+                rel="noopener"
+              >
+                Arbeitsnachweis
+              </a>
+            </div>
+          </td>
           <td>{{ item.user.display_name }}</td>
           <td>{{ item.task_template.title if item.task_template else "" }}</td>
           <td>{{ item.minutes }} Min.</td>
