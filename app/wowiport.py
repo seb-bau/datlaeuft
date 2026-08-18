@@ -28,7 +28,10 @@ from .models import (
     PushEventType,
 )
 from .settings import SettingKeys, settings
-from .utils import parse_datetime
+from .utils import (
+    normalize_country_code,
+    parse_datetime,
+)
 from .document_sync import sync_commission_documents
 from .push_service import enqueue_commission_push
 from .photo_service import commission_photo_path
@@ -1963,14 +1966,13 @@ class WowiportService:
                             "town",
                         )
                     ),
-                    "country_code": (
+                    "country_code": normalize_country_code(
                         _first_text(
-                            _attr(
-                                country,
-                                "code",
-                            )
+                            _attr(country, "iso_code"),
+                            _attr(country, "country_code"),
+                            _attr(country, "code"),
+                            _attr(country, "name"),
                         )
-                        or "DE"
                     ),
                     "email": _first_text(
                         _attr(

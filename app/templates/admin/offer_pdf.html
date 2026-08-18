@@ -124,7 +124,8 @@
       white-space: nowrap;
     }
 
-    .description {
+    .description-text,
+    .details {
       white-space: pre-line;
     }
 
@@ -254,13 +255,9 @@
           {{ position.number }}
         </td>
         <td class="description">
-          <div>
-            {{ position.description }}
-          </div>
+          <div class="description-text">{{ position.description }}</div>
           {% if position.details %}
-          <div class="details">
-            {{ position.details }}
-          </div>
+          <div class="details">{{ position.details }}</div>
           {% endif %}
         </td>
         <td class="quantity">
