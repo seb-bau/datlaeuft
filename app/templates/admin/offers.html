@@ -1,975 +1,166 @@
-@admin_bp.get("/admin/offers")
-@offer_required
-def offers() -> Any:
-    expired_items = (
-        Offer.query
-        .filter(
-            Offer.status
-            == OfferStatus
-            .AWAITING_RESPONSE.value,
-            Offer.valid_until.isnot(None),
-            Offer.valid_until < date.today(),
-        )
-        .all()
-    )
-
-    for item in expired_items:
-        item.status = OfferStatus.EXPIRED.value
-        item.status_note = (
-            "Die Angebotsgültigkeit ist "
-            "abgelaufen."
-        )
-
-        audit(
-            "offer.expire",
-            "offer",
-            item.id,
-        )
-
-    if expired_items:
-        db.session.commit()
-
-    items = (
-        Offer.query
-        .order_by(
-            Offer.created_at.desc(),
-            Offer.id.desc(),
-        )
-        .all()
-    )
-
-    return render_template(
-        "admin/offers.html",
-        items=items,
-        status_labels=OFFER_STATUS_LABELS,
-    )
-
-
-@admin_bp.route(
-    "/admin/offers/new",
-    methods=["GET", "POST"],
-)
-@offer_required
-def offer_create() -> Any:
-    company_codes = (
-        WowiCompanyCode.query
-        .filter(
-            WowiCompanyCode.active.is_(True)
-        )
-        .order_by(
-            WowiCompanyCode.code.asc()
-        )
-        .all()
-    )
-
-    if request.method == "POST":
-        try:
-            company_code_id = required_form_int(
-                request.form.get(
-                    "company_code_id"
-                ),
-                "Buchwerk",
-            )
-            company_code = db.session.get(
-                WowiCompanyCode,
-                company_code_id,
-            )
-
-            if (
-                company_code is None
-                or not company_code.active
-            ):
-                raise ValueError(
-                    "Das ausgewählte Buchwerk "
-                    "ist nicht verfügbar."
-                )
-
-            item = create_offer_draft(
-                company_code,
-                current_user,
-            )
-
-            db.session.flush()
-
-            audit(
-                "offer.create",
-                "offer",
-                item.id,
-                {
-                    "company_code_id": (
-                        company_code.id
-                    ),
-                },
-            )
-            db.session.commit()
-
-        except ValueError as exc:
-            db.session.rollback()
-            flash(
-                str(exc),
-                "danger",
-            )
-
-            return render_template(
-                "admin/offer_create.html",
-                company_codes=company_codes,
-            )
-
-        flash(
-            "Angebotsentwurf angelegt.",
-            "success",
-        )
-
-        return redirect(
-            url_for(
-                "admin.offer_edit",
-                offer_id=item.id,
-            )
-        )
-
-    return render_template(
-        "admin/offer_create.html",
-        company_codes=company_codes,
-    )
-
-
-@admin_bp.route(
-    "/admin/offers/<int:offer_id>",
-    methods=["GET", "POST"],
-)
-@offer_required
-def offer_edit(
-    offer_id: int,
-) -> Any:
-    item = db.get_or_404(
-        Offer,
-        offer_id,
-    )
-    editable = (
-        item.status
-        == OfferStatus.DRAFT.value
-    )
-
-    if request.method == "POST":
-        if not editable:
-            flash(
-                "Ein freigegebenes Angebot "
-                "kann nicht geändert werden.",
-                "danger",
-            )
-
-            return redirect(
-                url_for(
-                    "admin.offer_edit",
-                    offer_id=item.id,
-                )
-            )
-
-        try:
-            save_offer_draft_form(item)
-            save_offer_positions_form(item)
-
-            audit(
-                "offer.update",
-                "offer",
-                item.id,
-            )
-            db.session.commit()
-
-        except ValueError as exc:
-            db.session.rollback()
-            flash(
-                str(exc),
-                "danger",
-            )
-
-            return render_template(
-                "admin/offer_draft.html",
-                **offer_edit_context(item),
-            )
-
-        flash(
-            "Angebotsentwurf gespeichert.",
-            "success",
-        )
-
-        return redirect(
-            url_for(
-                "admin.offer_edit",
-                offer_id=item.id,
-            )
-        )
-
-    return render_template(
-        "admin/offer_draft.html",
-        **offer_edit_context(item),
-    )
-
-
-@admin_bp.get(
-    "/admin/offers/<int:offer_id>/objects/search"
-)
-@offer_required
-def offer_object_search(
-    offer_id: int,
-) -> Any:
-    item = db.get_or_404(
-        Offer,
-        offer_id,
-    )
-    search_text = request.args.get(
-        "q",
-        "",
-    ).strip()
-    items = []
-
-    for result in search_commission_objects(
-        search_text,
-        limit=50,
-    ):
-        company_code = (
-            result.get("company_code")
-            or {}
-        )
-
-        if (
-            company_code.get("erp_id")
-            != item.company_code_erp_id
-        ):
-            continue
-
-        items.append(result)
-
-    return jsonify(
-        {
-            "items": items,
-        }
-    )
-
-
-@admin_bp.get(
-    "/admin/offers/"
-    "<int:offer_id>/recipient-candidates"
-)
-@offer_required
-def offer_recipient_candidates(
-    offer_id: int,
-) -> Any:
-    item = db.get_or_404(
-        Offer,
-        offer_id,
-    )
-    license_agreement_erp_id = (
-        required_form_int(
-            request.args.get(
-                "license_agreement_id"
-            ),
-            "Vertrag",
-        )
-    )
-    agreement = offer_agreement(
-        item,
-        license_agreement_erp_id,
-    )
-
-    try:
-        service = WowiportService()
-        items = (
-            service
-            .get_invoice_recipient_candidates(
-                agreement.erp_id
-            )
-        )
-
-    except Exception:
-        current_app.logger.exception(
-            "offer_recipient_fetch_failed "
-            "offer_id=%s "
-            "license_agreement_id=%s",
-            item.id,
-            agreement.erp_id,
-        )
-
-        return jsonify(
-            {
-                "message": (
-                    "Die Anschrift konnte nicht "
-                    "aus Wowiport geladen werden."
-                ),
-            }
-        ), 502
-
-    if not items:
-        return jsonify(
-            {
-                "message": (
-                    "Für den Vertrag wurden "
-                    "keine Empfänger gefunden."
-                ),
-            }
-        ), 404
-
-    return jsonify(
-        {
-            "items": items,
-            "license_agreement": {
-                "erp_id": agreement.erp_id,
-                "id_num": agreement.id_num,
-            },
-        }
-    )
-
-
-@admin_bp.post(
-    "/admin/offers/<int:offer_id>/release"
-)
-@offer_required
-def offer_release(
-    offer_id: int,
-) -> Any:
-    item = db.get_or_404(
-        Offer,
-        offer_id,
-    )
-
-    try:
-        release_offer(
-            item,
-            current_user,
-        )
-        db.session.commit()
-
-    except (
-        ValueError,
-        OfferFinalizationError,
-        OfferDocumentError,
-    ) as exc:
-        db.session.rollback()
-
-        current_app.logger.exception(
-            "offer_release_failed "
-            "offer_id=%s",
-            item.id,
-        )
-
-        flash(
-            str(exc),
-            "danger",
-        )
-
-        return redirect(
-            url_for(
-                "admin.offer_edit",
-                offer_id=item.id,
-            )
-        )
-
-    except IntegrityError:
-        db.session.rollback()
-
-        current_app.logger.exception(
-            "offer_number_conflict "
-            "offer_id=%s",
-            item.id,
-        )
-
-        flash(
-            "Die Angebotsnummer konnte "
-            "nicht eindeutig vergeben werden. "
-            "Bitte versuchen Sie es erneut.",
-            "danger",
-        )
-
-        return redirect(
-            url_for(
-                "admin.offer_edit",
-                offer_id=item.id,
-            )
-        )
-
-    flash(
-        "Das Angebot wurde freigegeben.",
-        "success",
-    )
-
-    return redirect(
-        url_for(
-            "admin.offer_edit",
-            offer_id=item.id,
-        )
-    )
-
-
-@admin_bp.get(
-    "/admin/offers/<int:offer_id>/document"
-)
-@offer_required
-def offer_document(
-    offer_id: int,
-) -> Any:
-    item = db.get_or_404(
-        Offer,
-        offer_id,
-    )
-
-    if not item.document_filename:
-        abort(404)
-
-    document_path = (
-        resolve_offer_document_path(
-            item.document_filename
-        )
-    )
-
-    if not document_path.is_file():
-        abort(404)
-
-    download_name = (
-        f"Angebot_{item.offer_number}.pdf"
-        if item.offer_number
-        else f"Angebot_{item.id}.pdf"
-    )
-
-    return send_file(
-        document_path,
-        mimetype="application/pdf",
-        download_name=download_name,
-        as_attachment=False,
-    )
-
-
-@admin_bp.post(
-    "/admin/offers/<int:offer_id>/delete"
-)
-@offer_required
-def offer_delete(
-    offer_id: int,
-) -> Any:
-    item = db.get_or_404(
-        Offer,
-        offer_id,
-    )
-
-    if (
-        item.status
-        != OfferStatus.DRAFT.value
-    ):
-        flash(
-            "Nur Angebotsentwürfe können "
-            "gelöscht werden.",
-            "danger",
-        )
-
-        return redirect(
-            url_for(
-                "admin.offer_edit",
-                offer_id=item.id,
-            )
-        )
-
-    audit(
-        "offer.delete",
-        "offer",
-        item.id,
-    )
-    db.session.delete(item)
-    db.session.commit()
-
-    flash(
-        "Angebotsentwurf gelöscht.",
-        "success",
-    )
-
-    return redirect(
-        url_for("admin.offers")
-    )
-
-
-def offer_edit_context(
-    item: Offer,
-) -> dict[str, Any]:
-    craft_activities = (
-        CraftActivity.query
-        .filter(
-            CraftActivity.active.is_(True),
-            CraftActivity.app_enabled.is_(True),
-        )
-        .order_by(
-            CraftActivity.name.asc()
-        )
-        .all()
-    )
-    task_templates = (
-        TimeTaskTemplate.query
-        .join(
-            CraftActivity,
-            TimeTaskTemplate.craft_activity_id
-            == CraftActivity.id,
-        )
-        .filter(
-            TimeTaskTemplate.active.is_(True),
-            TimeTaskTemplate
-            .craft_activity_id
-            .isnot(None),
-            CraftActivity.active.is_(True),
-            CraftActivity.app_enabled.is_(True),
-        )
-        .order_by(
-            CraftActivity.name.asc(),
-            TimeTaskTemplate.title.asc(),
-            TimeTaskTemplate.code.asc(),
-        )
-        .all()
-    )
-    catalogue_items = [
-        {
-            "id": task_template.id,
-            "craft_activity_id": (
-                task_template.craft_activity_id
-            ),
-            "code": task_template.code,
-            "title": task_template.title,
-        }
-        for task_template in task_templates
-    ]
-    selected_object = None
-
-    if (
-        item.object_type
-        and item.object_id
-    ):
-        try:
-            selected_object = (
-                get_commission_object_choice(
-                    item.object_type,
-                    item.object_id,
-                )
-            )
-        except ValueError:
-            selected_object = None
-
-    return {
-        "item": item,
-        "editable": (
-            item.status
-            == OfferStatus.DRAFT.value
-        ),
-        "craft_activities": craft_activities,
-        "catalogue_items": catalogue_items,
-        "selected_object": selected_object,
-        "status_labels": OFFER_STATUS_LABELS,
-        "position_source_labels": {
-            OfferPositionSource.CATALOG.value:
-                "Katalog",
-            OfferPositionSource.FREE.value:
-                "Freie Position",
-        },
-    }
-
-
-def save_offer_draft_form(
-    item: Offer,
-) -> None:
-    craft_activity_id = optional_form_int(
-        request.form.get(
-            "craft_activity_id"
-        ),
-        "Gewerk",
-    )
-
-    if craft_activity_id is not None:
-        craft_activity = db.session.get(
-            CraftActivity,
-            craft_activity_id,
-        )
-
-        if (
-            craft_activity is None
-            or not craft_activity.active
-            or not craft_activity.app_enabled
-        ):
-            raise ValueError(
-                "Das ausgewählte Gewerk "
-                "ist nicht verfügbar."
-            )
-
-        item.craft_activity = craft_activity
-    else:
-        item.craft_activity = None
-
-    item.offer_date = optional_form_date(
-        request.form.get(
-            "offer_date"
-        ),
-        "Angebotsdatum",
-    )
-    item.valid_until = optional_form_date(
-        request.form.get(
-            "valid_until"
-        ),
-        "Gültigkeitsdatum",
-    )
-    item.title = optional_form_text(
-        "title"
-    )
-    item.introductory_text = (
-        optional_form_text(
-            "introductory_text"
-        )
-    )
-    item.concluding_text = (
-        optional_form_text(
-            "concluding_text"
-        )
-    )
-
-    if (
-        item.offer_date
-        and item.valid_until
-        and item.valid_until
-        < item.offer_date
-    ):
-        raise ValueError(
-            "Das Gültigkeitsdatum darf nicht "
-            "vor dem Angebotsdatum liegen."
-        )
-
-    recipient_type = request.form.get(
-        "recipient_type",
-        InvoiceRecipientType.PRIVATE.value,
-    ).strip()
-
-    if recipient_type not in {
-        InvoiceRecipientType.PRIVATE.value,
-        InvoiceRecipientType.BUSINESS.value,
-    }:
-        raise ValueError(
-            "Die Empfängerart ist ungültig."
-        )
-
-    item.recipient_type = recipient_type
-    item.recipient_person_erp_id = (
-        optional_form_int(
-            request.form.get(
-                "recipient_person_erp_id"
-            ),
-            "Person",
-        )
-    )
-    item.recipient_name = optional_form_text(
-        "recipient_name"
-    )
-    item.recipient_name_addition = (
-        optional_form_text(
-            "recipient_name_addition"
-        )
-    )
-    item.recipient_street = optional_form_text(
-        "recipient_street"
-    )
-    item.recipient_postal_code = (
-        optional_form_text(
-            "recipient_postal_code"
-        )
-    )
-    item.recipient_town = optional_form_text(
-        "recipient_town"
-    )
-    item.recipient_country_code = (
-        request.form.get(
-            "recipient_country_code",
-            "DE",
-        ).strip().upper()
-        or "DE"
-    )
-    item.recipient_email = optional_form_text(
-        "recipient_email"
-    )
-    item.recipient_vat_id = optional_form_text(
-        "recipient_vat_id"
-    )
-
-    if (
-        len(item.recipient_country_code)
-        != 2
-    ):
-        raise ValueError(
-            "Der Ländercode des Empfängers "
-            "muss zweistellig sein."
-        )
-
-    save_offer_object(item)
-
-
-def save_offer_object(
-    item: Offer,
-) -> None:
-    object_type = request.form.get(
-        "object_type",
-        "",
-    ).strip()
-    object_id = optional_form_int(
-        request.form.get(
-            "object_id"
-        ),
-        "Objekt",
-    )
-
-    if not object_type and object_id is None:
-        item.object_type = None
-        item.object_id = None
-        item.economic_unit_erp_id = None
-        item.building_erp_id = None
-        item.use_unit_erp_id = None
-        item.license_agreement_erp_id = None
-        item.license_agreement_idnum = None
-        item.object_address = None
-        item.object_location = None
-        item.tenant_name = None
-        return
-
-    if not object_type or object_id is None:
-        raise ValueError(
-            "Die Objektauswahl ist unvollständig."
-        )
-
-    context = resolve_commission_object(
-        {
-            "object_type": object_type,
-            "object_id": object_id,
-            "company_code_code": (
-                item.company_code_code
-            ),
-        }
-    )
-
-    item.object_type = object_type
-    item.object_id = object_id
-    item.economic_unit_erp_id = (
-        context.economic_unit.erp_id
-    )
-    item.building_erp_id = (
-        context.building.erp_id
-        if context.building
-        else None
-    )
-    item.use_unit_erp_id = (
-        context.use_unit.erp_id
-        if context.use_unit
-        else None
-    )
-    item.license_agreement_erp_id = (
-        context.license_agreement.erp_id
-        if context.license_agreement
-        else None
-    )
-    item.license_agreement_idnum = (
-        context.license_agreement.id_num
-        if context.license_agreement
-        else None
-    )
-    item.object_address = (
-        context.use_unit.address
-        if (
-            context.use_unit
-            and context.use_unit.address
-        )
-        else (
-            context.building.address
-            if context.building
-            else None
-        )
-    )
-
-    location_parts = []
-
-    if context.use_unit:
-        location_parts.extend(
-            [
-                context.use_unit.floor_name,
-                context.use_unit.position_name,
-                (
-                    context.use_unit
-                    .description_of_position
-                ),
-            ]
-        )
-
-    item.object_location = (
-        " · ".join(
-            value
-            for value in location_parts
-            if value
-        )
-        or None
-    )
-    item.tenant_name = context.tenant_name
-
-    if (
-        not item.recipient_name
-        and context.tenant_name
-    ):
-        item.recipient_name = (
-            context.tenant_name
-        )
-
-
-def save_offer_positions_form(
-    item: Offer,
-) -> None:
-    descriptions = request.form.getlist(
-        "position_description"
-    )
-    details = request.form.getlist(
-        "position_details"
-    )
-    quantities = request.form.getlist(
-        "position_quantity"
-    )
-    units = request.form.getlist(
-        "position_unit"
-    )
-    unit_prices = request.form.getlist(
-        "position_unit_price_net"
-    )
-    vat_rates = request.form.getlist(
-        "position_vat_rate"
-    )
-    source_types = request.form.getlist(
-        "position_source_type"
-    )
-    task_template_ids = request.form.getlist(
-        "position_task_template_id"
-    )
-    rows = []
-
-    for index, raw_description in enumerate(
-        descriptions
-    ):
-        description = raw_description.strip()
-
-        if not description:
-            raise ValueError(
-                f"Position {index + 1} "
-                "benötigt eine Bezeichnung."
-            )
-
-        source_type = (
-            list_value(
-                source_types,
-                index,
-            )
-            or OfferPositionSource.FREE.value
-        )
-
-        if source_type not in {
-            OfferPositionSource.CATALOG.value,
-            OfferPositionSource.FREE.value,
-        }:
-            raise ValueError(
-                f"Die Quelle der Position "
-                f"{index + 1} ist ungültig."
-            )
-
-        rows.append(
-            {
-                "source_type": source_type,
-                "task_template_id": (
-                    optional_position_id(
-                        list_value(
-                            task_template_ids,
-                            index,
-                        )
-                    )
-                ),
-                "description": description,
-                "details": (
-                    list_value(
-                        details,
-                        index,
-                    )
-                    or None
-                ),
-                "quantity": (
-                    required_position_decimal(
-                        list_value(
-                            quantities,
-                            index,
-                        ),
-                        (
-                            "Menge der Position "
-                            f"{index + 1}"
-                        ),
-                    )
-                ),
-                "unit": (
-                    list_value(
-                        units,
-                        index,
-                    )
-                    or "Stk"
-                ),
-                "unit_price_net": (
-                    required_position_decimal(
-                        list_value(
-                            unit_prices,
-                            index,
-                        ),
-                        (
-                            "Einzelpreis der "
-                            f"Position {index + 1}"
-                        ),
-                    )
-                ),
-                "vat_rate": (
-                    required_position_decimal(
-                        list_value(
-                            vat_rates,
-                            index,
-                        ),
-                        (
-                            "Umsatzsteuersatz der "
-                            f"Position {index + 1}"
-                        ),
-                    )
-                ),
-            }
-        )
-
-    replace_offer_positions(
-        item,
-        rows,
-    )
-
-
-def offer_agreement(
-    item: Offer,
-    license_agreement_erp_id: int,
-) -> WowiLicenseAgreement:
-    agreement = (
-        WowiLicenseAgreement.query
-        .filter_by(
-            erp_id=license_agreement_erp_id,
-            active=True,
-        )
-        .one_or_none()
-    )
-
-    if (
-        agreement is None
-        or agreement.use_unit is None
-        or agreement.use_unit.economic_unit
-        is None
-        or (
-            agreement.use_unit
-            .economic_unit
-            .company_code_erp_id
-            != item.company_code_erp_id
-        )
-    ):
-        raise ValueError(
-            "Der ausgewählte Vertrag gehört "
-            "nicht zum Buchwerk des Angebots."
-        )
-
-    return agreement
+{% extends "base.html" %}
+{% block title %}Angebote{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h1 class="h3 mb-1">Angebote</h1>
+    <div class="text-muted">
+      Angebote, Auftragsübergang und Rechnungsstatus
+    </div>
+  </div>
+
+  <a
+    class="btn btn-primary"
+    href="{{ url_for('admin.offer_create') }}"
+  >
+    Neues Angebot
+  </a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover datatable">
+        <thead>
+          <tr>
+            <th>Nummer</th>
+            <th>Datum</th>
+            <th>Status</th>
+            <th>Empfänger</th>
+            <th>Buchwerk</th>
+            <th>Gewerk</th>
+            <th>Gültig bis</th>
+            <th class="text-end">Brutto</th>
+            <th>Auftrag</th>
+            <th>Rechnung</th>
+            <th data-filter="false"></th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td>
+              {{ item.offer_number or ("Entwurf " ~ item.id) }}
+            </td>
+
+            <td
+              data-order="{{ item.offer_date.isoformat() if item.offer_date else '' }}"
+            >
+              {{
+                item.offer_date.strftime("%d.%m.%Y")
+                if item.offer_date
+                else ""
+              }}
+            </td>
+
+            <td>
+              {% if item.status == "draft" %}
+              <span class="badge text-bg-secondary">
+              {% elif item.status == "awaiting_response" %}
+              <span class="badge text-bg-info">
+              {% elif item.status in [
+                "in_progress",
+                "ready_for_invoice"
+              ] %}
+              <span class="badge text-bg-primary">
+              {% elif item.status == "invoiced" %}
+              <span class="badge text-bg-success">
+              {% elif item.status == "review_required" %}
+              <span class="badge text-bg-warning">
+              {% elif item.status in [
+                "rejected",
+                "canceled",
+                "expired"
+              ] %}
+              <span class="badge text-bg-dark">
+              {% else %}
+              <span class="badge text-bg-secondary">
+              {% endif %}
+                {{
+                  status_labels.get(
+                    item.status,
+                    item.status
+                  )
+                }}
+              </span>
+            </td>
+
+            <td>
+              {{ item.recipient_name or "" }}
+            </td>
+
+            <td>
+              {{ item.company_code_code }}
+            </td>
+
+            <td>
+              {{
+                item.craft_activity.name
+                if item.craft_activity
+                else ""
+              }}
+            </td>
+
+            <td
+              data-order="{{ item.valid_until.isoformat() if item.valid_until else '' }}"
+            >
+              {{
+                item.valid_until.strftime("%d.%m.%Y")
+                if item.valid_until
+                else ""
+              }}
+            </td>
+
+            <td class="text-end">
+              {{ "%.2f"|format(item.total_gross) }}
+              {{ item.currency_code }}
+            </td>
+
+            <td>
+              {% if item.commission %}
+              <a href="{{ url_for(
+                'admin.commission_detail',
+                commission_id=item.commission.id
+              ) }}">
+                {{
+                  item.commission.erp_idnum
+                  or item.commission.id
+                }}
+              </a>
+              {% endif %}
+            </td>
+
+            <td>
+              {% if item.invoice %}
+              <a href="{{ url_for(
+                'admin.invoice_edit',
+                invoice_id=item.invoice.id
+              ) }}">
+                {{
+                  item.invoice.invoice_number
+                  or ("Entwurf " ~ item.invoice.id)
+                }}
+              </a>
+              {% endif %}
+            </td>
+
+            <td class="text-end">
+              <a
+                class="btn btn-sm btn-outline-primary"
+                href="{{ url_for(
+                  'admin.offer_edit',
+                  offer_id=item.id
+                ) }}"
+              >
+                Öffnen
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
