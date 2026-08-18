@@ -34,6 +34,9 @@ from .wowiport import (
 from .media_sync import (
     sync_object_photos_from_wowiport,
 )
+from .offer_service import (
+    reconcile_offer_workflows,
+)
 
 
 def register_cli(app: Flask) -> None:
@@ -259,6 +262,10 @@ def register_cli(app: Flask) -> None:
         result = (
             sync_commissions_from_wowiport_regular()
         )
+        offer_result = (
+            reconcile_offer_workflows()
+        )
+        db.session.commit()
 
         click.echo(
             f"Modus=vollständig "
@@ -282,6 +289,48 @@ def register_cli(app: Flask) -> None:
             f"{result['configuration_missing']} "
             f"Abgleich_übersprungen="
             f"{result['reconciliation_skipped']}"
+        )
+        click.echo(
+            f"Angebote_geprüft="
+            f"{offer_result['seen']} "
+            f"Angebote_geändert="
+            f"{offer_result['changed']} "
+            f"Angebote_unverändert="
+            f"{offer_result['unchanged']} "
+            f"Angebote_abgelaufen="
+            f"{offer_result['expired']} "
+            f"Rechnungen_erstellt="
+            f"{offer_result['invoices_created']} "
+            f"Angebotsfehler="
+            f"{offer_result['errors']}"
+        )
+
+    @app.cli.command(
+        "datlaeuft-reconcile-offers"
+    )
+    @click.option(
+        "--offer-id",
+        type=int,
+        default=None,
+    )
+    def reconcile_offers(
+        offer_id: int | None,
+    ) -> None:
+        result = (
+            reconcile_offer_workflows(
+                offer_id=offer_id
+            )
+        )
+        db.session.commit()
+
+        click.echo(
+            f"Geprüft={result['seen']} "
+            f"Geändert={result['changed']} "
+            f"Unverändert={result['unchanged']} "
+            f"Abgelaufen={result['expired']} "
+            f"Rechnungen_erstellt="
+            f"{result['invoices_created']} "
+            f"Fehler={result['errors']}"
         )
 
     @app.cli.command(

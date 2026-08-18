@@ -71,6 +71,19 @@ table.datatable thead tr.datatable-filter-row input:focus {
             Dashboard
           </a>
         </li>
+              {% if
+          current_user.is_admin
+          or current_user.can_manage_offers
+        %}
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            href="{{ url_for('admin.offers') }}"
+          >
+            Angebote
+          </a>
+        </li>
+        {% endif %}
 
         <li class="nav-item">
           <a

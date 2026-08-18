@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page {
+      size: A4;
+      margin: 20mm 18mm 22mm 24mm;
+    }
+
+    @page:first {
+      margin-top: 45mm;
+    }
+
+    html {
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 9.5pt;
+      color: #111827;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    .recipient {
+      min-height: 38mm;
+      line-height: 1.3;
+      margin-top: 15mm;
+    }
+
+    .document-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10mm;
+      margin-bottom: 4mm;
+    }
+
+    .document-header h1 {
+      margin: 0;
+      font-size: 17pt;
+      font-weight: 600;
+    }
+
+    .metadata {
+      min-width: 66mm;
+      border-collapse: collapse;
+      font-size: 8pt;
+      line-height: 1.15;
+    }
+
+    .metadata td {
+      padding: 0 0 0.6mm 2mm;
+      vertical-align: top;
+    }
+
+    .metadata td:first-child {
+      padding-left: 0;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .title {
+      margin-bottom: 3mm;
+      font-size: 11pt;
+      font-weight: 600;
+    }
+
+    .text-section {
+      margin: 0 0 4mm 0;
+      line-height: 1.3;
+      white-space: pre-line;
+    }
+
+    .positions {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 3mm;
+      font-size: 9pt;
+      line-height: 1.18;
+    }
+
+    .positions thead {
+      display: table-header-group;
+    }
+
+    .positions th {
+      padding: 1.2mm 1mm;
+      border-bottom: 0.4mm solid #374151;
+      text-align: left;
+      font-size: 8pt;
+    }
+
+    .positions td {
+      padding: 0.9mm 1mm;
+      border-bottom: 0.2mm solid #d1d5db;
+      vertical-align: top;
+    }
+
+    .positions tr {
+      break-inside: avoid;
+    }
+
+    .number {
+      width: 8mm;
+      text-align: right;
+    }
+
+    .quantity {
+      width: 20mm;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .price {
+      width: 25mm;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .vat {
+      width: 14mm;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .description {
+      white-space: pre-line;
+    }
+
+    .details {
+      font-size: 7.8pt;
+      line-height: 1.15;
+      color: #555;
+    }
+
+    .summary-wrapper {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 3mm;
+      break-inside: avoid;
+    }
+
+    .summary {
+      width: 76mm;
+      border-collapse: collapse;
+      font-size: 9pt;
+    }
+
+    .summary td {
+      padding: 0.7mm 0 0.7mm 3mm;
+    }
+
+    .summary td:last-child {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .summary .gross td {
+      padding-top: 1.2mm;
+      border-top: 0.4mm solid #374151;
+      font-size: 10.5pt;
+      font-weight: 700;
+    }
+
+    .vat-summary {
+      margin-top: 2.5mm;
+      font-size: 8pt;
+      line-height: 1.15;
+      break-inside: avoid;
+    }
+
+    .vat-summary table {
+      border-collapse: collapse;
+    }
+
+    .vat-summary td,
+    .vat-summary th {
+      padding: 0.5mm 4mm 0.5mm 0;
+      text-align: right;
+    }
+
+    .vat-summary td:first-child,
+    .vat-summary th:first-child {
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <div class="recipient">
+    {% for line in recipient_address %}
+    <div>{{ line }}</div>
+    {% endfor %}
+  </div>
+
+  <div class="document-header">
+    <h1>{{ document_title }}</h1>
+
+    <table class="metadata">
+      <tr>
+        <td>Angebotsnummer</td>
+        <td>{{ offer_number }}</td>
+      </tr>
+      <tr>
+        <td>Angebotsdatum</td>
+        <td>{{ offer_date_formatted }}</td>
+      </tr>
+      <tr>
+        <td>Gültig bis</td>
+        <td>{{ valid_until_formatted }}</td>
+      </tr>
+      {% if contract_number %}
+      <tr>
+        <td>Vertragsnummer</td>
+        <td>{{ contract_number }}</td>
+      </tr>
+      {% endif %}
+      {% if craft_activity_name %}
+      <tr>
+        <td>Gewerk</td>
+        <td>{{ craft_activity_name }}</td>
+      </tr>
+      {% endif %}
+    </table>
+  </div>
+
+  {% if title %}
+  <div class="title">
+    {{ title }}
+  </div>
+  {% endif %}
+
+  {% if introductory_text %}
+  <div class="text-section">
+    {{ introductory_text }}
+  </div>
+  {% endif %}
+
+  <table class="positions">
+    <thead>
+      <tr>
+        <th class="number">Pos.</th>
+        <th>Bezeichnung</th>
+        <th class="quantity">Menge</th>
+        <th class="price">Einzelpreis</th>
+        <th class="vat">MwSt.</th>
+        <th class="price">Gesamt</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for position in positions %}
+      <tr>
+        <td class="number">
+          {{ position.number }}
+        </td>
+        <td class="description">
+          <div>
+            {{ position.description }}
+          </div>
+          {% if position.details %}
+          <div class="details">
+            {{ position.details }}
+          </div>
+          {% endif %}
+        </td>
+        <td class="quantity">
+          {{ position.quantity_formatted }}
+          {{ position.unit }}
+        </td>
+        <td class="price">
+          {{ position.unit_price_formatted }}
+          {{ currency }}
+        </td>
+        <td class="vat">
+          {{ position.vat_rate_formatted }} %
+        </td>
+        <td class="price">
+          {{ position.total_net_formatted }}
+          {{ currency }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="summary-wrapper">
+    <table class="summary">
+      <tr>
+        <td>Nettobetrag</td>
+        <td>
+          {{ total_net_formatted }}
+          {{ currency }}
+        </td>
+      </tr>
+      <tr>
+        <td>Umsatzsteuer</td>
+        <td>
+          {{ total_vat_formatted }}
+          {{ currency }}
+        </td>
+      </tr>
+      <tr class="gross">
+        <td>Angebotssumme</td>
+        <td>
+          {{ total_gross_formatted }}
+          {{ currency }}
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="vat-summary">
+    <table>
+      <thead>
+        <tr>
+          <th>Steuersatz</th>
+          <th>Netto</th>
+          <th>Umsatzsteuer</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in vat_rows %}
+        <tr>
+          <td>{{ row.rate_formatted }} %</td>
+          <td>
+            {{ row.net_formatted }}
+            {{ currency }}
+          </td>
+          <td>
+            {{ row.vat_formatted }}
+            {{ currency }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if concluding_text %}
+  <div class="text-section">
+    {{ concluding_text }}
+  </div>
+  {% endif %}
+</body>
+</html>

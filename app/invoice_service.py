@@ -47,6 +47,9 @@ from .models import (
     User,
     WowiCompanyCode,
     utc_now,
+    Offer,
+    OfferPositionSource,
+    OfferStatus,
 )
 from .settings import SettingKeys, settings
 
@@ -127,6 +130,156 @@ def create_free_invoice_draft(
         created_by=created_by,
         commissions=[],
     )
+
+
+def create_offer_invoice_draft(
+    offer: Offer,
+) -> Invoice:
+    if offer.commission is None:
+        raise ValueError(
+            "Dem Angebot ist kein Auftrag "
+            "zugeordnet."
+        )
+
+    if offer.invoice is not None:
+        return offer.invoice
+
+    created_by = (
+        offer.accepted_by
+        or offer.created_by
+    )
+
+    if created_by is None:
+        raise ValueError(
+            "Für den Rechnungsentwurf fehlt "
+            "der zuständige Benutzer."
+        )
+
+    invoice = create_free_invoice_draft(
+        offer.company_code,
+        created_by,
+    )
+    invoice.recipient_type = (
+        offer.recipient_type
+    )
+    invoice.recipient_person_erp_id = (
+        offer.recipient_person_erp_id
+    )
+    invoice.recipient_license_agreement_erp_id = (
+        offer.license_agreement_erp_id
+    )
+    invoice.recipient_license_agreement_idnum = (
+        offer.license_agreement_idnum
+    )
+    invoice.recipient_name = (
+        offer.recipient_name
+    )
+    invoice.recipient_name_addition = (
+        offer.recipient_name_addition
+    )
+    invoice.recipient_street = (
+        offer.recipient_street
+    )
+    invoice.recipient_postal_code = (
+        offer.recipient_postal_code
+    )
+    invoice.recipient_town = (
+        offer.recipient_town
+    )
+    invoice.recipient_country_code = (
+        offer.recipient_country_code
+    )
+    invoice.recipient_email = (
+        offer.recipient_email
+    )
+    invoice.recipient_vat_id = (
+        offer.recipient_vat_id
+    )
+
+    service_date = (
+        offer.commission.completed_at
+        or offer.commission.execution_to
+        or offer.commission.execution_from
+    )
+
+    if isinstance(service_date, datetime):
+        service_date = service_date.date()
+
+    if not isinstance(service_date, date):
+        service_date = date.today()
+
+    invoice.service_date_from = service_date
+    invoice.service_date_to = service_date
+    invoice.introductory_text = (
+        "Für die ausgeführten und im Angebot "
+        f"{offer.offer_number} vereinbarten "
+        "Leistungen berechnen wir:"
+    )
+    invoice.commission_links.append(
+        InvoiceCommission(
+            commission=offer.commission
+        )
+    )
+
+    rows = []
+
+    for position in offer.positions:
+        source_type = (
+            InvoicePositionSource.CATALOG.value
+            if (
+                position.source_type
+                == OfferPositionSource.CATALOG.value
+            )
+            else InvoicePositionSource.FREE.value
+        )
+
+        rows.append(
+            {
+                "source_type": source_type,
+                "task_template_id": (
+                    position.task_template_id
+                ),
+                "inventory_item_id": None,
+                "source_data": {
+                    "source_key": (
+                        "offer-position:"
+                        f"{position.id}"
+                    ),
+                    "offer_id": offer.id,
+                    "offer_position_id": (
+                        position.id
+                    ),
+                    "commission_id": (
+                        offer.commission_id
+                    ),
+                },
+                "description": (
+                    position.description
+                ),
+                "details": position.details,
+                "quantity": position.quantity,
+                "unit": position.unit,
+                "unit_price_net": (
+                    position.unit_price_net
+                ),
+                "vat_rate": position.vat_rate,
+            }
+        )
+
+    if not rows:
+        raise ValueError(
+            "Das Angebot besitzt keine "
+            "abrechenbaren Positionen."
+        )
+
+    replace_invoice_positions(
+        invoice,
+        rows,
+    )
+
+    offer.invoice = invoice
+
+    return invoice
 
 
 def create_commission_invoice_draft(
@@ -1657,6 +1810,35 @@ def finalize_invoice(
         invoice.finalized_at = finalized_at
         invoice.finalized_by_user_id = user.id
 
+        linked_offer = (
+            Offer.query
+            .filter_by(
+                invoice_id=invoice.id
+            )
+            .one_or_none()
+        )
+
+        if linked_offer is not None:
+            linked_offer.status = (
+                OfferStatus.INVOICED.value
+            )
+            linked_offer.status_note = None
+            linked_offer.invoiced_at = (
+                finalized_at
+            )
+
+            audit(
+                "offer.invoice.finalize",
+                "offer",
+                linked_offer.id,
+                {
+                    "invoice_id": invoice.id,
+                    "invoice_number": (
+                        invoice.invoice_number
+                    ),
+                },
+            )
+
         commission_ids = (
             _enqueue_invoice_commissions(
                 invoice
@@ -1952,6 +2134,41 @@ def create_cancellation_invoice(
         original_invoice.canceled_by_user_id = (
             user.id
         )
+        linked_offer = (
+            Offer.query
+            .filter_by(
+                invoice_id=original_invoice.id
+            )
+            .one_or_none()
+        )
+
+        if linked_offer is not None:
+            linked_offer.status = (
+                OfferStatus
+                .REVIEW_REQUIRED.value
+            )
+            linked_offer.status_note = (
+                "Die Rechnung "
+                f"{original_invoice.invoice_number} "
+                "wurde storniert: "
+                f"{normalized_reason}"
+            )
+            linked_offer.invoiced_at = None
+
+            audit(
+                "offer.invoice.cancel",
+                "offer",
+                linked_offer.id,
+                {
+                    "invoice_id": (
+                        original_invoice.id
+                    ),
+                    "cancellation_invoice_id": (
+                        cancellation_invoice.id
+                    ),
+                    "reason": normalized_reason,
+                },
+            )
 
         audit(
             "invoice.cancel",

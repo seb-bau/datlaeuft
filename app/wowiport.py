@@ -3129,6 +3129,15 @@ def upsert_commission(
         )
         commission.raw_payload = raw_payload
 
+    if commission.id is not None:
+        from .offer_service import (
+            sync_offer_from_commission,
+        )
+
+        sync_offer_from_commission(
+            commission
+        )
+
     return commission
 
 

@@ -49,6 +49,9 @@ from .models import (
     CommissionAppointmentRequest,
     CommissionAttachment,
 )
+from .offer_service import (
+    sync_offer_from_commission,
+)
 from .appointment_service import (
     create_appointment_request,
     send_appointment_request_email,
@@ -810,6 +813,9 @@ def complete_commission(
             "tenant_charge": tenant_charge,
             "reason": reason or None,
         },
+    )
+    sync_offer_from_commission(
+        commission
     )
 
     db.session.commit()

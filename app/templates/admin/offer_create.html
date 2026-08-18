@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Neues Angebot{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Neues Angebot</h1>
+
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.offers') }}"
+  >
+    Zurück
+  </a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <form method="post">
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+
+      <div class="mb-3">
+        <label class="form-label">
+          Buchwerk
+        </label>
+        <select
+          class="form-select"
+          name="company_code_id"
+          required
+        >
+          <option value="">
+            Bitte auswählen
+          </option>
+          {% for company_code in company_codes %}
+          <option value="{{ company_code.id }}">
+            {{ company_code.code }}
+            ·
+            {{ company_code.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="alert alert-secondary">
+        Das Buchwerk kann nach dem Anlegen des
+        Entwurfs nicht mehr geändert werden.
+      </div>
+
+      <button
+        class="btn btn-primary"
+        type="submit"
+      >
+        Entwurf anlegen
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

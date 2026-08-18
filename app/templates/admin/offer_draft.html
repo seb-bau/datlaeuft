@@ -1,0 +1,1327 @@
+{% extends "base.html" %}
+{% block title %}Angebot{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h1 class="h3 mb-1">
+      {{ item.offer_number or ("Entwurf " ~ item.id) }}
+    </h1>
+    <div class="text-muted">
+      {{ item.company_code_code }}
+      ·
+      {{ status_labels.get(item.status, item.status) }}
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    {% if item.document_filename %}
+    <a
+      class="btn btn-outline-primary"
+      href="{{ url_for(
+        'admin.offer_document',
+        offer_id=item.id
+      ) }}"
+      target="_blank"
+      rel="noopener"
+    >
+      PDF öffnen
+    </a>
+    {% endif %}
+
+    <a
+      class="btn btn-outline-secondary"
+      href="{{ url_for('admin.offers') }}"
+    >
+      Zurück
+    </a>
+  </div>
+</div>
+
+{% if not editable %}
+<div class="alert alert-info">
+  Dieses Angebot ist freigegeben und kann nicht
+  mehr bearbeitet werden.
+</div>
+{% endif %}
+
+{% if not editable and item.document_filename %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header">
+    Dokument und Archiv
+  </div>
+
+  <div class="card-body">
+    <a
+      class="btn btn-primary"
+      href="{{ url_for(
+        'admin.offer_document',
+        offer_id=item.id
+      ) }}"
+      target="_blank"
+      rel="noopener"
+    >
+      Angebot öffnen
+    </a>
+
+    {% if item.dms_archive_status == "archived" %}
+    <div class="alert alert-success mt-3 mb-0">
+      <div>
+        In d.velop archiviert
+      </div>
+
+      <div class="small">
+        Dokument-ID:
+        {{ item.dms_document_id }}
+      </div>
+
+      {% if item.dms_archived_at %}
+      <div class="small">
+        Archiviert am:
+        {{ item.dms_archived_at.strftime(
+          "%d.%m.%Y %H:%M"
+        ) }}
+      </div>
+      {% endif %}
+
+      {% if item.dms_archived_by %}
+      <div class="small">
+        Archiviert durch:
+        {{ item.dms_archived_by.display_name }}
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+      {% if item.dms_archive_error %}
+      <div class="alert alert-danger mt-3">
+        {{ item.dms_archive_error }}
+      </div>
+      {% endif %}
+
+      <form
+        method="post"
+        action="{{ url_for(
+          'admin.offer_archive',
+          offer_id=item.id
+        ) }}"
+        class="mt-3"
+        onsubmit="return window.confirm(
+          'Angebot jetzt in d.velop archivieren?'
+        )"
+      >
+        <input
+          type="hidden"
+          name="csrf_token"
+          value="{{ csrf_token() }}"
+        >
+
+        <button
+          type="submit"
+          class="btn btn-outline-primary"
+        >
+          {% if item.dms_archive_status == "failed" %}
+            Archivierung erneut versuchen
+          {% else %}
+            In d.velop archivieren
+          {% endif %}
+        </button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if item.status_note %}
+<div class="alert alert-warning">
+  {{ item.status_note }}
+</div>
+{% endif %}
+
+<form method="post" id="offerDraftForm">
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+  <input
+    type="hidden"
+    id="objectType"
+    name="object_type"
+    value="{{ item.object_type or '' }}"
+  >
+  <input
+    type="hidden"
+    id="objectId"
+    name="object_id"
+    value="{{ item.object_id or '' }}"
+  >
+  <input
+    type="hidden"
+    id="recipientPersonErpId"
+    name="recipient_person_erp_id"
+    value="{{ item.recipient_person_erp_id or '' }}"
+  >
+
+  <fieldset {% if not editable %}disabled{% endif %}>
+    <div class="row g-4">
+      <div class="col-lg-7">
+        <div class="card shadow-sm mb-4">
+          <div class="card-header">
+            Objekt und Empfänger
+          </div>
+
+          <div class="card-body">
+            {% if editable %}
+            <div class="mb-3">
+              <label class="form-label">
+                Mieter, Vertrag oder Objekt suchen
+              </label>
+
+              <div class="input-group">
+                <input
+                  class="form-control"
+                  id="objectSearch"
+                  type="search"
+                  placeholder="Name, Vertrag, Adresse oder Objekt"
+                >
+                <button
+                  class="btn btn-outline-secondary"
+                  id="objectSearchButton"
+                  type="button"
+                >
+                  Suchen
+                </button>
+              </div>
+
+              <div
+                class="list-group mt-2"
+                id="objectSearchResults"
+              ></div>
+            </div>
+            {% endif %}
+
+            <div class="border rounded p-3 mb-4 bg-light">
+              <div class="fw-semibold">
+                Ausgewähltes Objekt
+              </div>
+              <div id="selectedObject" class="mt-1">
+                {% if selected_object %}
+                  {{ selected_object.label }}
+                  {% if selected_object.license_agreement %}
+                    · Vertrag
+                    {{ selected_object.license_agreement.id_num }}
+                  {% endif %}
+                  {% if selected_object.building %}
+                    · {{ selected_object.building.address }}
+                  {% endif %}
+                {% else %}
+                  Kein Objekt ausgewählt
+                {% endif %}
+              </div>
+
+              {% if editable %}
+              <div class="mt-3 d-flex gap-2">
+                <button
+                  class="btn btn-sm btn-outline-primary"
+                  id="loadRecipientButton"
+                  type="button"
+                  {% if not item.license_agreement_erp_id %}disabled{% endif %}
+                >
+                  Anschrift aus Wowiport abrufen
+                </button>
+
+                <button
+                  class="btn btn-sm btn-outline-secondary"
+                  id="clearObjectButton"
+                  type="button"
+                >
+                  Auswahl entfernen
+                </button>
+              </div>
+
+              <div
+                class="mt-3 d-none"
+                id="recipientCandidateContainer"
+              >
+                <label class="form-label">
+                  Vertragspartner
+                </label>
+                <select
+                  class="form-select"
+                  id="recipientCandidateSelect"
+                ></select>
+              </div>
+
+              <div
+                class="text-danger small mt-2"
+                id="recipientMessage"
+              ></div>
+              {% endif %}
+            </div>
+
+            <div class="row g-3">
+              <div class="col-md-5">
+                <label class="form-label">
+                  Empfängerart
+                </label>
+                <select
+                  class="form-select"
+                  name="recipient_type"
+                  id="recipientType"
+                >
+                  <option
+                    value="private"
+                    {% if item.recipient_type == "private" %}selected{% endif %}
+                  >
+                    Privatperson
+                  </option>
+                  <option
+                    value="business"
+                    {% if item.recipient_type == "business" %}selected{% endif %}
+                  >
+                    Unternehmen
+                  </option>
+                </select>
+              </div>
+
+              <div class="col-md-7">
+                <label class="form-label">
+                  Name oder Firma
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_name"
+                  id="recipientName"
+                  value="{{ item.recipient_name or '' }}"
+                >
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">
+                  Namenszusatz
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_name_addition"
+                  id="recipientNameAddition"
+                  value="{{ item.recipient_name_addition or '' }}"
+                >
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">
+                  Straße und Hausnummer
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_street"
+                  id="recipientStreet"
+                  value="{{ item.recipient_street or '' }}"
+                >
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">
+                  Postleitzahl
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_postal_code"
+                  id="recipientPostalCode"
+                  value="{{ item.recipient_postal_code or '' }}"
+                >
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">
+                  Ort
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_town"
+                  id="recipientTown"
+                  value="{{ item.recipient_town or '' }}"
+                >
+              </div>
+
+              <div class="col-md-2">
+                <label class="form-label">
+                  Land
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_country_code"
+                  id="recipientCountryCode"
+                  maxlength="2"
+                  value="{{ item.recipient_country_code or 'DE' }}"
+                >
+              </div>
+
+              <div class="col-md-7">
+                <label class="form-label">
+                  E-Mail
+                </label>
+                <input
+                  class="form-control"
+                  type="email"
+                  name="recipient_email"
+                  id="recipientEmail"
+                  value="{{ item.recipient_email or '' }}"
+                >
+              </div>
+
+              <div class="col-md-5">
+                <label class="form-label">
+                  Umsatzsteuer-ID
+                </label>
+                <input
+                  class="form-control"
+                  name="recipient_vat_id"
+                  id="recipientVatId"
+                  value="{{ item.recipient_vat_id or '' }}"
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card shadow-sm">
+          <div class="card-header">
+            Angebotstexte
+          </div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label class="form-label">
+                Einleitung
+              </label>
+              <textarea
+                class="form-control"
+                name="introductory_text"
+                rows="3"
+              >{{ item.introductory_text or '' }}</textarea>
+            </div>
+
+            <div>
+              <label class="form-label">
+                Schlusstext
+              </label>
+              <textarea
+                class="form-control"
+                name="concluding_text"
+                rows="3"
+              >{{ item.concluding_text or '' }}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-5">
+        <div class="card shadow-sm mb-4">
+          <div class="card-header">
+            Angebotsdaten
+          </div>
+          <div class="card-body row g-3">
+            <div class="col-12">
+              <label class="form-label">
+                Buchwerk
+              </label>
+              <input
+                class="form-control"
+                value="{{ item.company_code_code }} · {{ item.company_code.name }}"
+                readonly
+              >
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">
+                Gewerk
+              </label>
+              <select
+                class="form-select"
+                name="craft_activity_id"
+                id="craftActivity"
+              >
+                <option value="">
+                  Bitte auswählen
+                </option>
+                {% for craft_activity in craft_activities %}
+                <option
+                  value="{{ craft_activity.id }}"
+                  {% if item.craft_activity_id == craft_activity.id %}selected{% endif %}
+                >
+                  {{ craft_activity.name }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">
+                Angebotsdatum
+              </label>
+              <input
+                class="form-control"
+                type="date"
+                name="offer_date"
+                value="{{ item.offer_date.isoformat() if item.offer_date else '' }}"
+              >
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">
+                Gültig bis
+              </label>
+              <input
+                class="form-control"
+                type="date"
+                name="valid_until"
+                value="{{ item.valid_until.isoformat() if item.valid_until else '' }}"
+              >
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">
+                Betreff
+              </label>
+              <input
+                class="form-control"
+                name="title"
+                value="{{ item.title or '' }}"
+              >
+            </div>
+          </div>
+        </div>
+
+        {% if item.commission %}
+        <div class="card shadow-sm mb-4">
+          <div class="card-header">
+            Zugeordneter Auftrag
+          </div>
+          <div class="card-body">
+            <a href="{{ url_for(
+              'admin.commission_detail',
+              commission_id=item.commission.id
+            ) }}">
+              {{ item.commission.erp_idnum or item.commission.id }}
+            </a>
+          </div>
+        </div>
+        {% endif %}
+
+          {% if item.invoice %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header">
+    Zugeordnete Rechnung
+  </div>
+
+  <div class="card-body">
+    <a href="{{ url_for(
+      'admin.invoice_edit',
+      invoice_id=item.invoice.id
+    ) }}">
+      {{
+        item.invoice.invoice_number
+        or ("Entwurf " ~ item.invoice.id)
+      }}
+    </a>
+
+    <div class="small text-muted mt-1">
+      {% if item.invoice.status == "draft" %}
+        Rechnungsentwurf
+      {% elif item.invoice.status == "finalized" %}
+        Festgeschrieben
+      {% elif item.invoice.status == "canceled" %}
+        Storniert
+      {% else %}
+        {{ item.invoice.status }}
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+        {% if editable %}
+        <div class="text-end">
+          <button
+            class="btn btn-primary"
+            type="submit"
+          >
+            Entwurf speichern
+          </button>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Angebotspositionen</span>
+
+        {% if editable %}
+        <div class="d-flex gap-2">
+          <select
+            class="form-select form-select-sm"
+            id="cataloguePosition"
+          ></select>
+
+          <button
+            class="btn btn-sm btn-outline-primary"
+            id="addCataloguePosition"
+            type="button"
+          >
+            Aus Katalog
+          </button>
+
+          <button
+            class="btn btn-sm btn-outline-primary"
+            id="addFreePosition"
+            type="button"
+          >
+            Freie Position
+          </button>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th style="width: 90px;">Quelle</th>
+                <th>Bezeichnung</th>
+                <th>Zusatz</th>
+                <th style="width: 105px;">Menge</th>
+                <th style="width: 85px;">Einheit</th>
+                <th style="width: 125px;">Netto/Einheit</th>
+                <th style="width: 95px;">USt.</th>
+                <th style="width: 110px;"></th>
+              </tr>
+            </thead>
+
+            <tbody id="offerPositions">
+              {% for position in item.positions %}
+              <tr class="offer-position-row">
+                <td>
+                  <span class="badge text-bg-secondary">
+                    {{ position_source_labels.get(
+                      position.source_type,
+                      position.source_type
+                    ) }}
+                  </span>
+                  <input
+                    type="hidden"
+                    name="position_source_type"
+                    value="{{ position.source_type }}"
+                  >
+                  <input
+                    type="hidden"
+                    name="position_task_template_id"
+                    value="{{ position.task_template_id or '' }}"
+                  >
+                </td>
+                <td>
+                  <textarea
+                    class="form-control form-control-sm"
+                    name="position_description"
+                    rows="2"
+                    required
+                  >{{ position.description }}</textarea>
+                </td>
+                <td>
+                  <textarea
+                    class="form-control form-control-sm"
+                    name="position_details"
+                    rows="2"
+                  >{{ position.details or '' }}</textarea>
+                </td>
+                <td>
+                  <input
+                    class="form-control form-control-sm"
+                    name="position_quantity"
+                    inputmode="decimal"
+                    value="{{ position.quantity }}"
+                    required
+                  >
+                </td>
+                <td>
+                  <input
+                    class="form-control form-control-sm"
+                    name="position_unit"
+                    value="{{ position.unit }}"
+                    required
+                  >
+                </td>
+                <td>
+                  <input
+                    class="form-control form-control-sm"
+                    name="position_unit_price_net"
+                    inputmode="decimal"
+                    value="{{ position.unit_price_net }}"
+                    required
+                  >
+                </td>
+                <td>
+                  <div class="input-group input-group-sm">
+                    <input
+                      class="form-control"
+                      name="position_vat_rate"
+                      inputmode="decimal"
+                      value="{{ position.vat_rate }}"
+                      required
+                    >
+                    <span class="input-group-text">%</span>
+                  </div>
+                </td>
+                <td>
+                  {% if editable %}
+                  <div class="btn-group btn-group-sm">
+                    <button
+                      class="btn btn-outline-secondary move-position-up"
+                      type="button"
+                    >↑</button>
+                    <button
+                      class="btn btn-outline-secondary move-position-down"
+                      type="button"
+                    >↓</button>
+                    <button
+                      class="btn btn-outline-danger remove-position"
+                      type="button"
+                    >×</button>
+                  </div>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div
+          class="text-center text-muted py-4 {% if item.positions %}d-none{% endif %}"
+          id="emptyPositionMessage"
+        >
+          Noch keine Angebotspositionen vorhanden.
+        </div>
+
+        <div class="row justify-content-end mt-3">
+          <div class="col-md-4">
+            <table class="table table-sm">
+              <tr>
+                <th>Netto</th>
+                <td class="text-end">
+                  {{ "%.2f"|format(item.total_net) }}
+                  {{ item.currency_code }}
+                </td>
+              </tr>
+              <tr>
+                <th>Umsatzsteuer</th>
+                <td class="text-end">
+                  {{ "%.2f"|format(item.total_vat) }}
+                  {{ item.currency_code }}
+                </td>
+              </tr>
+              <tr class="fw-bold">
+                <th>Brutto</th>
+                <td class="text-end">
+                  {{ "%.2f"|format(item.total_gross) }}
+                  {{ item.currency_code }}
+                </td>
+              </tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+</form>
+
+{% if editable %}
+<div class="d-flex justify-content-between mt-4">
+  <form
+    method="post"
+    action="{{ url_for(
+      'admin.offer_delete',
+      offer_id=item.id
+    ) }}"
+    onsubmit="return confirm('Angebotsentwurf wirklich löschen?')"
+  >
+    <input
+      type="hidden"
+      name="csrf_token"
+      value="{{ csrf_token() }}"
+    >
+    <button
+      class="btn btn-outline-danger"
+      type="submit"
+    >
+      Entwurf löschen
+    </button>
+  </form>
+
+  <form
+    method="post"
+    action="{{ url_for(
+      'admin.offer_release',
+      offer_id=item.id
+    ) }}"
+    id="offerReleaseForm"
+  >
+    <input
+      type="hidden"
+      name="csrf_token"
+      value="{{ csrf_token() }}"
+    >
+    <button
+      class="btn btn-danger"
+      type="submit"
+    >
+      Angebot freigeben
+    </button>
+  </form>
+</div>
+{% else %}
+<div class="card shadow-sm mt-4">
+  <div class="card-header">
+    Angebotsaktionen
+  </div>
+
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-2">
+      <form
+        method="post"
+        action="{{ url_for(
+          'admin.offer_copy',
+          offer_id=item.id
+        ) }}"
+      >
+        <input
+          type="hidden"
+          name="csrf_token"
+          value="{{ csrf_token() }}"
+        >
+        <button
+          class="btn btn-outline-primary"
+          type="submit"
+        >
+          Als neue Fassung kopieren
+        </button>
+      </form>
+
+      {% if item.status == "awaiting_response" %}
+      <form
+        method="post"
+        action="{{ url_for(
+          'admin.offer_accept',
+          offer_id=item.id
+        ) }}"
+        onsubmit="return confirm(
+          'Annahme erfassen und Auftrag anlegen?'
+        )"
+      >
+        <input
+          type="hidden"
+          name="csrf_token"
+          value="{{ csrf_token() }}"
+        >
+        <button
+          class="btn btn-success"
+          type="submit"
+        >
+          Annahme erfassen und Auftrag anlegen
+        </button>
+      </form>
+      {% endif %}
+    </div>
+
+    {% if item.status in [
+      "awaiting_response",
+      "expired"
+    ] %}
+    <div class="row g-4 mt-2">
+      <div class="col-lg-6">
+        <form
+          method="post"
+          action="{{ url_for(
+            'admin.offer_reject',
+            offer_id=item.id
+          ) }}"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <label class="form-label">
+            Ablehnungsgrund
+          </label>
+          <textarea
+            class="form-control mb-2"
+            name="reason"
+            rows="2"
+            required
+          ></textarea>
+
+          <button
+            class="btn btn-outline-warning"
+            type="submit"
+          >
+            Als abgelehnt markieren
+          </button>
+        </form>
+      </div>
+
+      <div class="col-lg-6">
+        <form
+          method="post"
+          action="{{ url_for(
+            'admin.offer_cancel',
+            offer_id=item.id
+          ) }}"
+          onsubmit="return confirm(
+            'Angebot wirklich stornieren?'
+          )"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <label class="form-label">
+            Stornierungsgrund
+          </label>
+          <textarea
+            class="form-control mb-2"
+            name="reason"
+            rows="2"
+            required
+          ></textarea>
+
+          <button
+            class="btn btn-outline-danger"
+            type="submit"
+          >
+            Angebot stornieren
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if editable %}
+<script>
+const catalogueItems = {{ catalogue_items|tojson }};
+const offerDraftForm = document.getElementById("offerDraftForm");
+const offerReleaseForm = document.getElementById("offerReleaseForm");
+const craftActivity = document.getElementById("craftActivity");
+const cataloguePosition = document.getElementById("cataloguePosition");
+const positionsBody = document.getElementById("offerPositions");
+const emptyPositionMessage = document.getElementById("emptyPositionMessage");
+const objectSearch = document.getElementById("objectSearch");
+const objectSearchButton = document.getElementById("objectSearchButton");
+const objectSearchResults = document.getElementById("objectSearchResults");
+const objectTypeInput = document.getElementById("objectType");
+const objectIdInput = document.getElementById("objectId");
+const selectedObject = document.getElementById("selectedObject");
+const loadRecipientButton = document.getElementById("loadRecipientButton");
+const clearObjectButton = document.getElementById("clearObjectButton");
+const recipientMessage = document.getElementById("recipientMessage");
+const candidateContainer = document.getElementById("recipientCandidateContainer");
+const candidateSelect = document.getElementById("recipientCandidateSelect");
+const personIdInput = document.getElementById("recipientPersonErpId");
+let selectedAgreementErpId = {{ item.license_agreement_erp_id|tojson }};
+let recipientCandidates = [];
+let draftChanged = false;
+
+function escapeValue(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function refreshCatalogue() {
+  const craftId = Number(craftActivity.value);
+  cataloguePosition.innerHTML =
+    '<option value="">Leistungsposition auswählen</option>';
+
+  catalogueItems
+    .filter(item => item.craft_activity_id === craftId)
+    .forEach(item => {
+      const option = document.createElement("option");
+      option.value = String(item.id);
+      option.textContent = [
+        item.code,
+        item.title
+      ].filter(Boolean).join(" · ");
+      cataloguePosition.appendChild(option);
+    });
+}
+
+function updateEmptyMessage() {
+  emptyPositionMessage.classList.toggle(
+    "d-none",
+    positionsBody.querySelectorAll(
+      ".offer-position-row"
+    ).length > 0
+  );
+}
+
+function createPositionRow(values) {
+  const row = document.createElement("tr");
+  row.className = "offer-position-row";
+
+  row.innerHTML = `
+    <td>
+      <span class="badge text-bg-secondary">
+        ${values.sourceType === "catalog" ? "Katalog" : "Freie Position"}
+      </span>
+      <input type="hidden" name="position_source_type" value="${escapeValue(values.sourceType)}">
+      <input type="hidden" name="position_task_template_id" value="${escapeValue(values.taskTemplateId)}">
+    </td>
+    <td>
+      <textarea class="form-control form-control-sm" name="position_description" rows="2" required>${escapeValue(values.description)}</textarea>
+    </td>
+    <td>
+      <textarea class="form-control form-control-sm" name="position_details" rows="2"></textarea>
+    </td>
+    <td>
+      <input class="form-control form-control-sm" name="position_quantity" inputmode="decimal" value="1" required>
+    </td>
+    <td>
+      <input class="form-control form-control-sm" name="position_unit" value="Stk" required>
+    </td>
+    <td>
+      <input class="form-control form-control-sm" name="position_unit_price_net" inputmode="decimal" value="0.00" required>
+    </td>
+    <td>
+      <div class="input-group input-group-sm">
+        <input class="form-control" name="position_vat_rate" inputmode="decimal" value="19.00" required>
+        <span class="input-group-text">%</span>
+      </div>
+    </td>
+    <td>
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-secondary move-position-up" type="button">↑</button>
+        <button class="btn btn-outline-secondary move-position-down" type="button">↓</button>
+        <button class="btn btn-outline-danger remove-position" type="button">×</button>
+      </div>
+    </td>
+  `;
+
+  positionsBody.appendChild(row);
+  updateEmptyMessage();
+  draftChanged = true;
+}
+
+async function searchObjects() {
+  const query = objectSearch.value.trim();
+  objectSearchResults.innerHTML = "";
+
+  if (query.length < 2) {
+    return;
+  }
+
+  const response = await fetch(
+    "{{ url_for('admin.offer_object_search', offer_id=item.id) }}"
+    + "?q="
+    + encodeURIComponent(query)
+  );
+  const data = await response.json();
+
+  data.items.forEach(result => {
+    const agreement = result.license_agreement || {};
+    const economicUnit = result.economic_unit || {};
+    const building = result.building || {};
+    const button = document.createElement("button");
+
+    button.type = "button";
+    button.className =
+      "list-group-item list-group-item-action";
+    button.textContent = [
+      result.tenant_name || result.label,
+      agreement.id_num
+        ? `Vertrag ${agreement.id_num}`
+        : "",
+      economicUnit.id_num
+        ? `WE ${economicUnit.id_num}`
+        : "",
+      building.address || ""
+    ].filter(Boolean).join(" · ");
+
+    button.addEventListener("click", () => {
+      objectTypeInput.value =
+        result.object_type || "";
+      objectIdInput.value =
+        result.object_id || "";
+      selectedAgreementErpId =
+        agreement.erp_id || null;
+      selectedObject.textContent =
+        button.textContent;
+      loadRecipientButton.disabled =
+        !selectedAgreementErpId;
+      objectSearchResults.innerHTML = "";
+      recipientMessage.textContent = "";
+      candidateContainer.classList.add("d-none");
+      draftChanged = true;
+    });
+
+    objectSearchResults.appendChild(button);
+  });
+
+  if (data.items.length === 0) {
+    objectSearchResults.innerHTML =
+      '<div class="list-group-item text-muted">Keine passenden Objekte gefunden.</div>';
+  }
+}
+
+function applyRecipient(candidate) {
+  personIdInput.value =
+    candidate.person_id || "";
+  document.getElementById("recipientType").value =
+    candidate.recipient_type || "private";
+  document.getElementById("recipientName").value =
+    candidate.name || "";
+  document.getElementById("recipientNameAddition").value =
+    candidate.name_addition || "";
+  document.getElementById("recipientStreet").value =
+    candidate.street || "";
+  document.getElementById("recipientPostalCode").value =
+    candidate.postal_code || "";
+  document.getElementById("recipientTown").value =
+    candidate.town || "";
+  document.getElementById("recipientCountryCode").value =
+    candidate.country_code || "DE";
+  document.getElementById("recipientEmail").value =
+    candidate.email || "";
+  document.getElementById("recipientVatId").value =
+    candidate.vat_id || "";
+  draftChanged = true;
+}
+
+async function loadRecipient() {
+  recipientMessage.textContent = "";
+  candidateContainer.classList.add("d-none");
+
+  if (!selectedAgreementErpId) {
+    recipientMessage.textContent =
+      "Bitte zuerst einen Mietvertrag auswählen.";
+    return;
+  }
+
+  loadRecipientButton.disabled = true;
+
+  try {
+    const response = await fetch(
+      "{{ url_for('admin.offer_recipient_candidates', offer_id=item.id) }}"
+      + "?license_agreement_id="
+      + encodeURIComponent(selectedAgreementErpId)
+    );
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.message
+        || "Die Anschrift konnte nicht geladen werden."
+      );
+    }
+
+    recipientCandidates = data.items || [];
+
+    if (recipientCandidates.length === 1) {
+      applyRecipient(recipientCandidates[0]);
+      return;
+    }
+
+    candidateSelect.innerHTML =
+      '<option value="">Bitte auswählen</option>';
+
+    recipientCandidates.forEach((candidate, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = [
+        candidate.name,
+        candidate.role
+      ].filter(Boolean).join(" · ");
+      candidateSelect.appendChild(option);
+    });
+
+    candidateContainer.classList.remove("d-none");
+  } catch (error) {
+    recipientMessage.textContent = error.message;
+  } finally {
+    loadRecipientButton.disabled =
+      !selectedAgreementErpId;
+  }
+}
+
+craftActivity.addEventListener(
+  "change",
+  refreshCatalogue
+);
+
+document.getElementById(
+  "addFreePosition"
+).addEventListener("click", () => {
+  createPositionRow({
+    sourceType: "free",
+    taskTemplateId: "",
+    description: ""
+  });
+});
+
+document.getElementById(
+  "addCataloguePosition"
+).addEventListener("click", () => {
+  const selectedId = Number(
+    cataloguePosition.value
+  );
+  const selectedItem = catalogueItems.find(
+    item => item.id === selectedId
+  );
+
+  if (!selectedItem) {
+    return;
+  }
+
+  createPositionRow({
+    sourceType: "catalog",
+    taskTemplateId: selectedItem.id,
+    description: selectedItem.title
+  });
+});
+
+positionsBody.addEventListener("click", event => {
+  const row = event.target.closest(
+    ".offer-position-row"
+  );
+
+  if (!row) {
+    return;
+  }
+
+  if (event.target.closest(".remove-position")) {
+    row.remove();
+    updateEmptyMessage();
+    draftChanged = true;
+    return;
+  }
+
+  if (event.target.closest(".move-position-up")) {
+    const previous = row.previousElementSibling;
+
+    if (previous) {
+      positionsBody.insertBefore(row, previous);
+      draftChanged = true;
+    }
+
+    return;
+  }
+
+  if (event.target.closest(".move-position-down")) {
+    const next = row.nextElementSibling;
+
+    if (next) {
+      positionsBody.insertBefore(next, row);
+      draftChanged = true;
+    }
+  }
+});
+
+objectSearchButton.addEventListener(
+  "click",
+  searchObjects
+);
+objectSearch.addEventListener(
+  "keydown",
+  event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchObjects();
+    }
+  }
+);
+loadRecipientButton.addEventListener(
+  "click",
+  loadRecipient
+);
+candidateSelect.addEventListener(
+  "change",
+  () => {
+    if (candidateSelect.value === "") {
+      return;
+    }
+
+    applyRecipient(
+      recipientCandidates[
+        Number(candidateSelect.value)
+      ]
+    );
+  }
+);
+clearObjectButton.addEventListener(
+  "click",
+  () => {
+    objectTypeInput.value = "";
+    objectIdInput.value = "";
+    selectedAgreementErpId = null;
+    selectedObject.textContent =
+      "Kein Objekt ausgewählt";
+    loadRecipientButton.disabled = true;
+    candidateContainer.classList.add("d-none");
+    recipientMessage.textContent = "";
+    draftChanged = true;
+  }
+);
+
+offerDraftForm.addEventListener(
+  "input",
+  () => {
+    draftChanged = true;
+  }
+);
+offerDraftForm.addEventListener(
+  "change",
+  () => {
+    draftChanged = true;
+  }
+);
+offerDraftForm.addEventListener(
+  "submit",
+  () => {
+    draftChanged = false;
+  }
+);
+
+offerReleaseForm.addEventListener(
+  "submit",
+  event => {
+    if (draftChanged) {
+      event.preventDefault();
+      window.alert(
+        "Bitte speichern Sie zuerst "
+        + "die geänderten Angebotsdaten."
+      );
+      return;
+    }
+
+    if (!window.confirm(
+      "Soll das Angebot freigegeben und "
+      + "festgeschrieben werden?"
+    )) {
+      event.preventDefault();
+    }
+  }
+);
+
+refreshCatalogue();
+updateEmptyMessage();
+</script>
+{% endif %}
+{% endblock %}
