@@ -70,6 +70,20 @@
     </div>
 
     <div class="col-md-4">
+  <div class="form-check mt-4">
+    <input
+      class="form-check-input"
+      type="checkbox"
+      name="can_manage_offers"
+      {% if item.can_manage_offers %}checked{% endif %}
+    >
+    <label class="form-check-label">
+      Angebote bearbeiten
+    </label>
+  </div>
+</div>
+
+    <div class="col-md-4">
       <div class="form-check mt-4">
         <input class="form-check-input" type="checkbox" name="is_foreman" {% if item.is_foreman %}checked{% endif %}>
         <label class="form-check-label">Vorarbeiter</label>

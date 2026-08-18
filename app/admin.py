@@ -91,6 +91,7 @@ from .models import (
     InvoicePositionSource,
     InvoiceArchiveStatus,
     InvoiceKind,
+    OfferCraftFallback,
 )
 from .invoice_archive import (
     InvoiceArchiveError,
@@ -456,7 +457,8 @@ def company_code_invoicing(
             )
 
         flash(
-            "Rechnungseinstellungen gespeichert.",
+            "Rechnungs- und Angebotseinstellungen "
+            "gespeichert.",
             "success",
         )
 
@@ -502,6 +504,198 @@ def company_code_stationery(
         item.stationery_filename,
         mimetype="application/pdf",
         as_attachment=False,
+    )
+
+
+@admin_bp.route(
+    "/admin/offer-settings",
+    methods=["GET", "POST"],
+)
+@admin_required
+def offer_settings() -> Any:
+    craft_activities = (
+        CraftActivity.query
+        .filter(
+            CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
+        )
+        .order_by(
+            CraftActivity.name.asc(),
+            CraftActivity.id.asc(),
+        )
+        .all()
+    )
+
+    service_positions = (
+        TimeTaskTemplate.query
+        .filter(
+            TimeTaskTemplate.active.is_(True),
+            TimeTaskTemplate
+            .erp_service_catalogue_id
+            .isnot(None),
+            TimeTaskTemplate
+            .craft_activity_id
+            .isnot(None),
+        )
+        .order_by(
+            TimeTaskTemplate.title.asc(),
+            TimeTaskTemplate.code.asc(),
+        )
+        .all()
+    )
+
+    positions_by_craft = {
+        craft_activity.id: []
+        for craft_activity in craft_activities
+    }
+
+    for service_position in service_positions:
+        craft_positions = (
+            positions_by_craft.get(
+                service_position.craft_activity_id
+            )
+        )
+
+        if craft_positions is not None:
+            craft_positions.append(
+                service_position
+            )
+
+    mappings = {
+        mapping.craft_activity_id: mapping
+        for mapping in (
+            OfferCraftFallback.query.all()
+        )
+    }
+
+    if request.method == "POST":
+        positions_by_id = {
+            service_position.id:
+                service_position
+            for service_position
+            in service_positions
+        }
+        selected_positions = {}
+
+        try:
+            for craft_activity in craft_activities:
+                raw_position_id = (
+                    request.form.get(
+                        (
+                            "fallback_position_"
+                            f"{craft_activity.id}"
+                        ),
+                        "",
+                    ).strip()
+                )
+
+                if not raw_position_id:
+                    continue
+
+                try:
+                    position_id = int(
+                        raw_position_id
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        "Eine ausgewählte "
+                        "Leistungsposition ist "
+                        "ungültig."
+                    ) from exc
+
+                service_position = (
+                    positions_by_id.get(
+                        position_id
+                    )
+                )
+
+                if (
+                    service_position is None
+                    or (
+                        service_position
+                        .craft_activity_id
+                        != craft_activity.id
+                    )
+                ):
+                    raise ValueError(
+                        "Die Leistungsposition für "
+                        f"{craft_activity.name} "
+                        "gehört nicht zum Gewerk."
+                    )
+
+                selected_positions[
+                    craft_activity.id
+                ] = service_position
+
+            for craft_activity in craft_activities:
+                mapping = mappings.get(
+                    craft_activity.id
+                )
+                service_position = (
+                    selected_positions.get(
+                        craft_activity.id
+                    )
+                )
+
+                if service_position is None:
+                    if mapping is not None:
+                        db.session.delete(mapping)
+
+                    continue
+
+                if mapping is None:
+                    mapping = OfferCraftFallback(
+                        craft_activity=craft_activity
+                    )
+                    db.session.add(mapping)
+
+                mapping.task_template = (
+                    service_position
+                )
+                mapping.updated_by = current_user
+                mapping.updated_at = utc_now()
+
+            audit(
+                "offer.settings.update",
+                metadata={
+                    "fallback_count": len(
+                        selected_positions
+                    ),
+                },
+            )
+            db.session.commit()
+
+        except ValueError as exc:
+            db.session.rollback()
+            flash(
+                str(exc),
+                "danger",
+            )
+
+            return redirect(
+                url_for(
+                    "admin.offer_settings"
+                )
+            )
+
+        flash(
+            "Angebotsvorgaben gespeichert.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin.offer_settings"
+            )
+        )
+
+    return render_template(
+        "admin/offer_settings.html",
+        craft_activities=craft_activities,
+        positions_by_craft=(
+            positions_by_craft
+        ),
+        mappings=mappings,
     )
 
 
@@ -3805,6 +3999,10 @@ def save_user_form(item: User) -> None:
         "can_manage_invoices"
         in request.form
     )
+    item.can_manage_offers = (
+        "can_manage_offers"
+        in request.form
+    )
     item.is_active_flag = "is_active_flag" in request.form
     item.exclude_from_wowiport_sync = (
         "exclude_from_wowiport_sync"
@@ -4339,6 +4537,44 @@ def save_company_code_invoice_form(
             "zwischen 1 und 12 liegen."
         )
 
+    offer_number_mask = (
+        request.form.get(
+            "offer_number_mask",
+            "",
+        ).strip()
+    )
+
+    if not offer_number_mask:
+        raise ValueError(
+            "Die Angebotsnummernmaske "
+            "muss angegeben werden."
+        )
+
+    if (
+        "<year>" not in offer_number_mask
+        or "<counter>" not in offer_number_mask
+    ):
+        raise ValueError(
+            "Die Angebotsnummernmaske muss "
+            "<year> und <counter> enthalten."
+        )
+
+    offer_counter_digits = required_form_int(
+        request.form.get(
+            "offer_counter_digits"
+        ),
+        "Ziffern des Angebotszählers",
+    )
+
+    if (
+        offer_counter_digits < 1
+        or offer_counter_digits > 12
+    ):
+        raise ValueError(
+            "Die Ziffern des Angebotszählers "
+            "müssen zwischen 1 und 12 liegen."
+        )
+
     payment_terms_days = optional_form_int(
         request.form.get(
             "invoice_payment_terms_days"
@@ -4407,6 +4643,12 @@ def save_company_code_invoice_form(
     )
     item.invoice_counter_digits = (
         counter_digits
+    )
+    item.offer_number_mask = (
+        offer_number_mask
+    )
+    item.offer_counter_digits = (
+        offer_counter_digits
     )
     item.invoice_default_hourly_rate_net = (
         hourly_rate

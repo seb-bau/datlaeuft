@@ -7,7 +7,7 @@
       {{ item.code }} · {{ item.name }}
     </h1>
     <div class="text-muted">
-      Rechnungseinstellungen
+      Rechnungs- und Angebotseinstellungen
     </div>
   </div>
 
@@ -166,7 +166,7 @@
   <div class="col-lg-6">
     <div class="card shadow-sm mb-4">
       <div class="card-header">
-        Nummernkreis
+        Rechnungsnummernkreis
       </div>
 
       <div class="card-body row g-3">
@@ -208,6 +208,56 @@
           <input
             class="form-control"
             value="{{ item.invoice_counter }}"
+            readonly
+          >
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-header">
+        Angebotsnummernkreis
+      </div>
+
+      <div class="card-body row g-3">
+        <div class="col-12">
+          <label class="form-label">
+            Angebotsnummernmaske
+          </label>
+          <input
+            class="form-control"
+            name="offer_number_mask"
+            value="{{ item.offer_number_mask }}"
+            required
+          >
+          <div class="form-text">
+            Verfügbar: &lt;company_code&gt;,
+            &lt;year&gt; und &lt;counter&gt;
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Ziffern des Zählers
+          </label>
+          <input
+            class="form-control"
+            type="number"
+            min="1"
+            max="12"
+            name="offer_counter_digits"
+            value="{{ item.offer_counter_digits }}"
+            required
+          >
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">
+            Aktueller Angebotszähler
+          </label>
+          <input
+            class="form-control"
+            value="{{ item.offer_counter }}"
             readonly
           >
         </div>

@@ -178,6 +178,29 @@ class InvoiceKind(str, Enum):
     CANCELLATION = "cancellation"
 
 
+class OfferStatus(str, Enum):
+    DRAFT = "draft"
+    AWAITING_RESPONSE = "awaiting_response"
+    IN_PROGRESS = "in_progress"
+    READY_FOR_INVOICE = "ready_for_invoice"
+    REVIEW_REQUIRED = "review_required"
+    INVOICED = "invoiced"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    CANCELED = "canceled"
+
+
+class OfferPositionSource(str, Enum):
+    CATALOG = "catalog"
+    FREE = "free"
+
+
+class OfferArchiveStatus(str, Enum):
+    NOT_ARCHIVED = "not_archived"
+    FAILED = "failed"
+    ARCHIVED = "archived"
+
+
 user_craft_activity = db.Table(
     "user_craft_activity",
     db.Column("user_id", db.ForeignKey("user_account.id"), primary_key=True),
@@ -263,6 +286,12 @@ class User(UserMixin, db.Model):
     is_admin: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
     is_foreman: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
     can_manage_invoices: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    can_manage_offers: Mapped[bool] = mapped_column(
         db.Boolean,
         default=False,
         server_default=false(),
@@ -1293,6 +1322,37 @@ class WowiCompanyCode(db.Model):
         server_default="5",
         nullable=False,
     )
+    offer_number_mask: Mapped[str] = mapped_column(
+        db.String(160),
+        default=(
+            "<company_code>-ANG-"
+            "<year>-<counter>"
+        ),
+        server_default=(
+            "<company_code>-ANG-"
+            "<year>-<counter>"
+        ),
+        nullable=False,
+    )
+    offer_counter: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    offer_counter_year: Mapped[int | None] = (
+        mapped_column(
+            db.Integer
+        )
+    )
+    offer_counter_digits: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            default=5,
+            server_default="5",
+            nullable=False,
+        )
+    )
     stationery_filename: Mapped[str | None] = mapped_column(
         db.String(255)
     )
@@ -2272,6 +2332,640 @@ class InvoiceCommission(db.Model):
     )
     commission: Mapped[Commission] = relationship(
         back_populates="invoice_links"
+    )
+
+
+class Offer(db.Model):
+    __tablename__ = "offer"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    public_id: Mapped[str] = mapped_column(
+        db.String(36),
+        unique=True,
+        nullable=False,
+        index=True,
+        default=lambda: str(uuid4()),
+    )
+    status: Mapped[str] = mapped_column(
+        db.String(40),
+        default=OfferStatus.DRAFT.value,
+        server_default=OfferStatus.DRAFT.value,
+        nullable=False,
+        index=True,
+    )
+    source_offer_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("offer.id"),
+            index=True,
+        )
+    )
+    company_code_id: Mapped[int] = mapped_column(
+        db.ForeignKey("wowi_company_code.id"),
+        nullable=False,
+        index=True,
+    )
+    company_code_erp_id: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+            index=True,
+        )
+    )
+    company_code_code: Mapped[str] = (
+        mapped_column(
+            db.String(40),
+            nullable=False,
+            index=True,
+        )
+    )
+    craft_activity_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("craft_activity.id"),
+            index=True,
+        )
+    )
+    offer_number: Mapped[str | None] = (
+        mapped_column(
+            db.String(160),
+            unique=True,
+            index=True,
+        )
+    )
+    offer_date: Mapped[date | None] = (
+        mapped_column(
+            db.Date
+        )
+    )
+    valid_until: Mapped[date | None] = (
+        mapped_column(
+            db.Date,
+            index=True,
+        )
+    )
+    title: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    object_type: Mapped[str | None] = (
+        mapped_column(
+            db.String(40),
+            index=True,
+        )
+    )
+    object_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    economic_unit_erp_id: Mapped[int | None] = (
+        mapped_column(
+            db.Integer,
+            index=True,
+        )
+    )
+    building_erp_id: Mapped[int | None] = (
+        mapped_column(
+            db.Integer,
+            index=True,
+        )
+    )
+    use_unit_erp_id: Mapped[int | None] = (
+        mapped_column(
+            db.Integer,
+            index=True,
+        )
+    )
+    license_agreement_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    license_agreement_idnum: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(100),
+        index=True,
+    )
+    object_address: Mapped[str | None] = (
+        mapped_column(
+            db.String(500)
+        )
+    )
+    object_location: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    tenant_name: Mapped[str | None] = (
+        mapped_column(
+            db.String(255),
+            index=True,
+        )
+    )
+    recipient_type: Mapped[str] = mapped_column(
+        db.String(40),
+        default=InvoiceRecipientType.PRIVATE.value,
+        server_default=(
+            InvoiceRecipientType.PRIVATE.value
+        ),
+        nullable=False,
+    )
+    recipient_person_erp_id: Mapped[int | None] = (
+        mapped_column(
+            db.Integer,
+            index=True,
+        )
+    )
+    recipient_name: Mapped[str | None] = (
+        mapped_column(
+            db.String(255),
+            index=True,
+        )
+    )
+    recipient_name_addition: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(255)
+    )
+    recipient_street: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    recipient_postal_code: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(20)
+    )
+    recipient_town: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    recipient_country_code: Mapped[str] = (
+        mapped_column(
+            db.String(2),
+            default="DE",
+            server_default="DE",
+            nullable=False,
+        )
+    )
+    recipient_email: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    recipient_vat_id: Mapped[str | None] = (
+        mapped_column(
+            db.String(80)
+        )
+    )
+    seller_name: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    seller_street: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    seller_postal_code: Mapped[str | None] = (
+        mapped_column(
+            db.String(20)
+        )
+    )
+    seller_town: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    seller_country_code: Mapped[str] = (
+        mapped_column(
+            db.String(2),
+            default="DE",
+            server_default="DE",
+            nullable=False,
+        )
+    )
+    seller_vat_id: Mapped[str | None] = (
+        mapped_column(
+            db.String(80)
+        )
+    )
+    seller_tax_number: Mapped[str | None] = (
+        mapped_column(
+            db.String(80)
+        )
+    )
+    seller_email: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    seller_phone: Mapped[str | None] = (
+        mapped_column(
+            db.String(80)
+        )
+    )
+    currency_code: Mapped[str] = mapped_column(
+        db.String(3),
+        default="EUR",
+        server_default="EUR",
+        nullable=False,
+    )
+    introductory_text: Mapped[str | None] = (
+        mapped_column(
+            db.Text
+        )
+    )
+    concluding_text: Mapped[str | None] = (
+        mapped_column(
+            db.Text
+        )
+    )
+    total_net: Mapped[float] = mapped_column(
+        db.Numeric(14, 2),
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    total_vat: Mapped[float] = mapped_column(
+        db.Numeric(14, 2),
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    total_gross: Mapped[float] = (
+        mapped_column(
+            db.Numeric(14, 2),
+            default=0,
+            server_default="0",
+            nullable=False,
+        )
+    )
+    document_filename: Mapped[str | None] = (
+        mapped_column(
+            db.String(255)
+        )
+    )
+    document_sha256: Mapped[str | None] = (
+        mapped_column(
+            db.String(64)
+        )
+    )
+    commission_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("commission.id"),
+            unique=True,
+            index=True,
+        )
+    )
+    invoice_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("invoice.id"),
+            unique=True,
+            index=True,
+        )
+    )
+    status_note: Mapped[str | None] = (
+        mapped_column(
+            db.Text
+        )
+    )
+    dms_archive_status: Mapped[str] = (
+        mapped_column(
+            db.String(30),
+            default=(
+                OfferArchiveStatus
+                .NOT_ARCHIVED.value
+            ),
+            server_default=(
+                OfferArchiveStatus
+                .NOT_ARCHIVED.value
+            ),
+            nullable=False,
+            index=True,
+        )
+    )
+    dms_archive_key: Mapped[str | None] = (
+        mapped_column(
+            db.String(180),
+            unique=True,
+            index=True,
+        )
+    )
+    dms_document_id: Mapped[str | None] = (
+        mapped_column(
+            db.String(255),
+            unique=True,
+            index=True,
+        )
+    )
+    dms_archive_pdf_sha256: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(64)
+    )
+    dms_archive_attempted_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    dms_archived_at: Mapped[datetime | None] = (
+        mapped_column(
+            db.DateTime(timezone=True)
+        )
+    )
+    dms_archived_by_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    dms_archive_error: Mapped[str | None] = (
+        mapped_column(
+            db.Text
+        )
+    )
+    created_by_user_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+            nullable=False,
+            index=True,
+        )
+    )
+    released_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+            index=True,
+        )
+    )
+    accepted_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+            index=True,
+        )
+    )
+    rejected_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+            index=True,
+        )
+    )
+    canceled_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+            index=True,
+        )
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+    released_at: Mapped[datetime | None] = (
+        mapped_column(
+            db.DateTime(timezone=True)
+        )
+    )
+    accepted_at: Mapped[datetime | None] = (
+        mapped_column(
+            db.DateTime(timezone=True)
+        )
+    )
+    rejected_at: Mapped[datetime | None] = (
+        mapped_column(
+            db.DateTime(timezone=True)
+        )
+    )
+    canceled_at: Mapped[datetime | None] = (
+        mapped_column(
+            db.DateTime(timezone=True)
+        )
+    )
+    invoiced_at: Mapped[datetime | None] = (
+        mapped_column(
+            db.DateTime(timezone=True)
+        )
+    )
+
+    company_code: Mapped[WowiCompanyCode] = (
+        relationship()
+    )
+    craft_activity: Mapped[
+        CraftActivity | None
+    ] = relationship()
+    commission: Mapped[
+        Commission | None
+    ] = relationship()
+    invoice: Mapped[Invoice | None] = relationship()
+    positions: Mapped[list["OfferPosition"]] = (
+        relationship(
+            back_populates="offer",
+            cascade="all, delete-orphan",
+            order_by="OfferPosition.position_index",
+        )
+    )
+    source_offer: Mapped["Offer | None"] = (
+        relationship(
+            "Offer",
+            remote_side=[id],
+            foreign_keys=[source_offer_id],
+        )
+    )
+    created_by: Mapped[User] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+    released_by: Mapped[User | None] = (
+        relationship(
+            foreign_keys=[released_by_user_id]
+        )
+    )
+    accepted_by: Mapped[User | None] = (
+        relationship(
+            foreign_keys=[accepted_by_user_id]
+        )
+    )
+    rejected_by: Mapped[User | None] = (
+        relationship(
+            foreign_keys=[rejected_by_user_id]
+        )
+    )
+    canceled_by: Mapped[User | None] = (
+        relationship(
+            foreign_keys=[canceled_by_user_id]
+        )
+    )
+    dms_archived_by: Mapped[User | None] = (
+        relationship(
+            foreign_keys=[
+                dms_archived_by_user_id
+            ]
+        )
+    )
+
+
+class OfferPosition(db.Model):
+    __tablename__ = "offer_position"
+    __table_args__ = (
+        UniqueConstraint(
+            "offer_id",
+            "position_index",
+            name="uq_offer_position_index",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    offer_id: Mapped[int] = mapped_column(
+        db.ForeignKey("offer.id"),
+        nullable=False,
+        index=True,
+    )
+    position_index: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+    )
+    source_type: Mapped[str] = mapped_column(
+        db.String(40),
+        default=OfferPositionSource.FREE.value,
+        server_default=(
+            OfferPositionSource.FREE.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    task_template_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("time_task_template.id"),
+            index=True,
+        )
+    )
+    description: Mapped[str] = mapped_column(
+        db.Text,
+        nullable=False,
+    )
+    details: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+    quantity: Mapped[float] = mapped_column(
+        db.Numeric(12, 4),
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
+    unit: Mapped[str] = mapped_column(
+        db.String(40),
+        default="Stk",
+        server_default="Stk",
+        nullable=False,
+    )
+    unit_price_net: Mapped[float] = (
+        mapped_column(
+            db.Numeric(14, 4),
+            default=0,
+            server_default="0",
+            nullable=False,
+        )
+    )
+    vat_rate: Mapped[float] = mapped_column(
+        db.Numeric(5, 2),
+        default=19,
+        server_default="19",
+        nullable=False,
+    )
+    net_amount: Mapped[float] = mapped_column(
+        db.Numeric(14, 2),
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    vat_amount: Mapped[float] = mapped_column(
+        db.Numeric(14, 2),
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    gross_amount: Mapped[float] = (
+        mapped_column(
+            db.Numeric(14, 2),
+            default=0,
+            server_default="0",
+            nullable=False,
+        )
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    offer: Mapped[Offer] = relationship(
+        back_populates="positions"
+    )
+    task_template: Mapped[
+        TimeTaskTemplate | None
+    ] = relationship()
+
+
+class OfferCraftFallback(db.Model):
+    __tablename__ = "offer_craft_fallback"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    craft_activity_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey("craft_activity.id"),
+            unique=True,
+            nullable=False,
+            index=True,
+        )
+    )
+    task_template_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey("time_task_template.id"),
+            unique=True,
+            nullable=False,
+            index=True,
+        )
+    )
+    updated_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+            index=True,
+        )
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    craft_activity: Mapped[CraftActivity] = (
+        relationship()
+    )
+    task_template: Mapped[TimeTaskTemplate] = (
+        relationship()
+    )
+    updated_by: Mapped[User | None] = (
+        relationship()
     )
 
 

@@ -160,6 +160,27 @@ class SettingKeys:
         "Weitere Eigenschaften für Rechnungen",
         "d.velop",
     )
+    DMS_OFFER_CATEGORY_ID = SettingDefinition[str](
+        "dms.offer_category_id",
+        SettingValueType.STRING,
+        "",
+        "Kategorie-ID für Angebote",
+        "d.velop",
+    )
+    DMS_OFFER_ID_PROPERTY_ID = SettingDefinition[str](
+        "dms.offer_id_property_id",
+        SettingValueType.STRING,
+        "",
+        "Eigenschafts-ID für den Angebotsschlüssel",
+        "d.velop",
+    )
+    DMS_OFFER_PROPERTY_MAP = SettingDefinition[dict](
+        "dms.offer_property_map",
+        SettingValueType.JSON,
+        {},
+        "Weitere Eigenschaften für Angebote",
+        "d.velop",
+    )
     SMTP_HOST = SettingDefinition[str](
         "smtp.host",
         SettingValueType.STRING,
@@ -233,6 +254,20 @@ class SettingKeys:
         14,
         "Standard-Zahlungsziel in Tagen",
         "Rechnungen",
+    )
+    OFFER_VALIDITY_DAYS = SettingDefinition[int](
+        "offer.validity_days",
+        SettingValueType.INT,
+        30,
+        "Standardgültigkeit in Tagen",
+        "Angebote",
+    )
+    OFFER_COMMISSION_TYPE_ID = SettingDefinition[int](
+        "offer.commission_type_id",
+        SettingValueType.INT,
+        0,
+        "Auftragsart für angenommene Angebote",
+        "Angebote",
     )
     LOG_LEVEL = SettingDefinition[str]("logging.level", SettingValueType.STRING, "INFO", "Log-Level", "Logging")
     LOG_HANDLER = SettingDefinition[str]("logging.handler", SettingValueType.STRING, "file", "Logging-Ziel", "Logging")

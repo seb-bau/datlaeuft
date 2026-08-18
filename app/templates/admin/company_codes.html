@@ -5,7 +5,7 @@
   <div>
     <h1 class="h3 mb-1">Buchwerke</h1>
     <div class="text-muted">
-      Rechnungsaussteller, Nummernkreise und Briefbögen
+      Aussteller, Nummernkreise und Briefbögen
     </div>
   </div>
 
@@ -27,6 +27,7 @@
           <th>Code</th>
           <th>Name</th>
           <th>Rechnungsnummer</th>
+          <th>Angebotsnummer</th>
           <th>Aussteller</th>
           <th>Briefbogen</th>
           <th>Aktiv</th>
@@ -40,6 +41,9 @@
           <td>{{ item.name }}</td>
           <td>
             {{ item.invoice_number_mask }}
+          </td>
+          <td>
+            {{ item.offer_number_mask }}
           </td>
           <td>
             {{ item.seller_name or "Nicht eingerichtet" }}

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Angebotsvorgaben{% endblock %}
+{% block content %}
+<div
+  class="d-flex justify-content-between align-items-center mb-4"
+>
+  <div>
+    <h1 class="h3 mb-1">
+      Angebotsvorgaben
+    </h1>
+    <div class="text-muted">
+      Allgemeine Leistungsposition für freie
+      Angebotspositionen je Gewerk
+    </div>
+  </div>
+
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.settings_page') }}"
+  >
+    Globale Einstellungen
+  </a>
+</div>
+
+<div class="alert alert-info">
+  Die ausgewählte Leistungsposition wird bei der
+  Auftragserzeugung für freie Angebotspositionen
+  verwendet. Beschreibung, Menge und Auftragstext
+  werden weiterhin aus dem Angebot übernommen.
+</div>
+
+<form method="post" class="card shadow-sm">
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+
+  <div class="card-body">
+    <table
+      class="table table-striped datatable align-middle"
+    >
+      <thead>
+        <tr>
+          <th>Gewerk</th>
+          <th>Code</th>
+          <th
+            data-filter="false"
+            data-dt-order="disable"
+          >
+            Leistungsposition für freie Positionen
+          </th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for craft_activity in craft_activities %}
+        {% set mapping = mappings.get(
+          craft_activity.id
+        ) %}
+        <tr>
+          <td>
+            {{ craft_activity.name }}
+          </td>
+          <td>
+            {{ craft_activity.code or "" }}
+          </td>
+          <td>
+            <select
+              class="form-select form-select-sm"
+              name="fallback_position_{{ craft_activity.id }}"
+            >
+              <option value="">
+                Keine Zuordnung
+              </option>
+
+              {% for service_position in positions_by_craft.get(
+                craft_activity.id,
+                []
+              ) %}
+              <option
+                value="{{ service_position.id }}"
+                {% if mapping and mapping.task_template_id == service_position.id %}selected{% endif %}
+              >
+                {{ service_position.code }}
+                ·
+                {{ service_position.title }}
+                {% if service_position.erp_idnum %}
+                · {{ service_position.erp_idnum }}
+                {% endif %}
+              </option>
+              {% endfor %}
+            </select>
+
+            {% if not positions_by_craft.get(
+              craft_activity.id
+            ) %}
+            <div class="form-text text-danger">
+              Für dieses Gewerk sind keine aktiven
+              Wowiport-Leistungspositionen vorhanden.
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not craft_activities %}
+    <div class="text-center text-muted py-4">
+      Keine freigegebenen Gewerke vorhanden.
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="card-footer text-end">
+    <button
+      class="btn btn-primary"
+      type="submit"
+    >
+      Angebotsvorgaben speichern
+    </button>
+  </div>
+</form>
+{% endblock %}
