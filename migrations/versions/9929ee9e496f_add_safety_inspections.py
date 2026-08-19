@@ -414,178 +414,103 @@ def upgrade():
         batch_op.create_index(batch_op.f('ix_safety_inspection_defect_commission_created_by_user_id'), ['created_by_user_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_safety_inspection_defect_commission_defect_id'), ['defect_id'], unique=False)
 
-    with op.batch_alter_table('wowi_department_type', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_wowi_department_type_erp_id'))
-        batch_op.drop_index(batch_op.f('ix_wowi_department_type_name'))
+    with op.batch_alter_table(
+            "push_delivery",
+            schema=None,
+    ) as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "safety_inspection_job_id",
+                sa.Integer(),
+                nullable=True,
+            )
+        )
+        batch_op.create_index(
+            batch_op.f(
+                "ix_push_delivery_"
+                "safety_inspection_job_id"
+            ),
+            ["safety_inspection_job_id"],
+            unique=False,
+        )
+        batch_op.create_foreign_key(
+            (
+                "fk_push_delivery_"
+                "safety_inspection_job"
+            ),
+            "safety_inspection_job",
+            ["safety_inspection_job_id"],
+            ["id"],
+        )
 
-    op.drop_table('wowi_department_type')
-    with op.batch_alter_table('craft_activity_department_type_mapping', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_craft_activity_department_type_mapping_craft_activity_id'))
-        batch_op.drop_index(batch_op.f('ix_craft_activity_department_type_mapping_department_type_id'))
-        batch_op.drop_index(batch_op.f('ix_craft_activity_department_type_mapping_updated_by_user_id'))
-
-    op.drop_table('craft_activity_department_type_mapping')
-    with op.batch_alter_table('invoice', schema=None) as batch_op:
-        batch_op.drop_constraint(batch_op.f('uq_invoice_dms_archive_key'), type_='unique')
-        batch_op.drop_constraint(batch_op.f('uq_invoice_dms_document_id'), type_='unique')
-        batch_op.drop_constraint(batch_op.f('uq_invoice_original_invoice_id'), type_='unique')
-        batch_op.drop_index(batch_op.f('ix_invoice_dms_archive_key'))
-        batch_op.create_index(batch_op.f('ix_invoice_dms_archive_key'), ['dms_archive_key'], unique=True)
-        batch_op.drop_index(batch_op.f('ix_invoice_dms_document_id'))
-        batch_op.create_index(batch_op.f('ix_invoice_dms_document_id'), ['dms_document_id'], unique=True)
-        batch_op.drop_index(batch_op.f('ix_invoice_original_invoice_id'))
-        batch_op.create_index(batch_op.f('ix_invoice_original_invoice_id'), ['original_invoice_id'], unique=True)
-
-    with op.batch_alter_table('offer', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_offer_created_at'))
-        batch_op.drop_index(batch_op.f('ix_offer_object_reference'))
-        batch_op.drop_constraint(batch_op.f('uq_offer_commission_id'), type_='unique')
-        batch_op.drop_constraint(batch_op.f('uq_offer_dms_archive_key'), type_='unique')
-        batch_op.drop_constraint(batch_op.f('uq_offer_dms_document_id'), type_='unique')
-        batch_op.drop_constraint(batch_op.f('uq_offer_invoice_id'), type_='unique')
-        batch_op.drop_constraint(batch_op.f('uq_offer_number'), type_='unique')
-        batch_op.drop_constraint(batch_op.f('uq_offer_public_id'), type_='unique')
-        batch_op.create_index(batch_op.f('ix_offer_accepted_by_user_id'), ['accepted_by_user_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_building_erp_id'), ['building_erp_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_canceled_by_user_id'), ['canceled_by_user_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_commission_id'), ['commission_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_offer_company_code_code'), ['company_code_code'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_company_code_erp_id'), ['company_code_erp_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_created_by_user_id'), ['created_by_user_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_dms_archive_key'), ['dms_archive_key'], unique=True)
-        batch_op.create_index(batch_op.f('ix_offer_dms_archived_by_user_id'), ['dms_archived_by_user_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_dms_document_id'), ['dms_document_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_offer_economic_unit_erp_id'), ['economic_unit_erp_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_invoice_id'), ['invoice_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_offer_license_agreement_erp_id'), ['license_agreement_erp_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_license_agreement_idnum'), ['license_agreement_idnum'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_object_id'), ['object_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_object_type'), ['object_type'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_offer_number'), ['offer_number'], unique=True)
-        batch_op.create_index(batch_op.f('ix_offer_public_id'), ['public_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_offer_recipient_name'), ['recipient_name'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_recipient_person_erp_id'), ['recipient_person_erp_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_rejected_by_user_id'), ['rejected_by_user_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_released_by_user_id'), ['released_by_user_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_tenant_name'), ['tenant_name'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_use_unit_erp_id'), ['use_unit_erp_id'], unique=False)
-
-    with op.batch_alter_table('offer_craft_fallback', schema=None) as batch_op:
-        batch_op.drop_constraint(batch_op.f('uq_offer_craft_fallback_craft_activity'), type_='unique')
-        batch_op.drop_constraint(batch_op.f('uq_offer_craft_fallback_task_template'), type_='unique')
-        batch_op.drop_index(batch_op.f('ix_offer_craft_fallback_craft_activity_id'))
-        batch_op.create_index(batch_op.f('ix_offer_craft_fallback_craft_activity_id'), ['craft_activity_id'], unique=True)
-        batch_op.drop_index(batch_op.f('ix_offer_craft_fallback_task_template_id'))
-        batch_op.create_index(batch_op.f('ix_offer_craft_fallback_task_template_id'), ['task_template_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_offer_craft_fallback_updated_by_user_id'), ['updated_by_user_id'], unique=False)
-
-    with op.batch_alter_table('push_delivery', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('safety_inspection_job_id', sa.Integer(), nullable=True))
-        batch_op.create_index(batch_op.f('ix_push_delivery_safety_inspection_job_id'), ['safety_inspection_job_id'], unique=False)
-        batch_op.create_foreign_key(None, 'safety_inspection_job', ['safety_inspection_job_id'], ['id'])
-
-    with op.batch_alter_table('user_account', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('can_manage_safety_inspections', sa.Boolean(), server_default=sa.text('0'), nullable=False))
-        batch_op.add_column(sa.Column('can_review_safety_inspections', sa.Boolean(), server_default=sa.text('0'), nullable=False))
-        batch_op.add_column(sa.Column('push_safety_inspection_enabled', sa.Boolean(), server_default=sa.text('1'), nullable=False))
+    with op.batch_alter_table(
+            "user_account",
+            schema=None,
+    ) as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "can_manage_safety_inspections",
+                sa.Boolean(),
+                server_default=sa.false(),
+                nullable=False,
+            )
+        )
+        batch_op.add_column(
+            sa.Column(
+                "can_review_safety_inspections",
+                sa.Boolean(),
+                server_default=sa.false(),
+                nullable=False,
+            )
+        )
+        batch_op.add_column(
+            sa.Column(
+                "push_safety_inspection_enabled",
+                sa.Boolean(),
+                server_default=sa.true(),
+                nullable=False,
+            )
+        )
 
     # ### end Alembic commands ###
 
 
 def downgrade():
     # ### commands auto generated by Alembic - please adjust! ###
-    with op.batch_alter_table('user_account', schema=None) as batch_op:
-        batch_op.drop_column('push_safety_inspection_enabled')
-        batch_op.drop_column('can_review_safety_inspections')
-        batch_op.drop_column('can_manage_safety_inspections')
+    with op.batch_alter_table(
+            "user_account",
+            schema=None,
+    ) as batch_op:
+        batch_op.drop_column(
+            "push_safety_inspection_enabled"
+        )
+        batch_op.drop_column(
+            "can_review_safety_inspections"
+        )
+        batch_op.drop_column(
+            "can_manage_safety_inspections"
+        )
 
-    with op.batch_alter_table('push_delivery', schema=None) as batch_op:
-        batch_op.drop_constraint(None, type_='foreignkey')
-        batch_op.drop_index(batch_op.f('ix_push_delivery_safety_inspection_job_id'))
-        batch_op.drop_column('safety_inspection_job_id')
-
-    with op.batch_alter_table('offer_craft_fallback', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_offer_craft_fallback_updated_by_user_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_craft_fallback_task_template_id'))
-        batch_op.create_index(batch_op.f('ix_offer_craft_fallback_task_template_id'), ['task_template_id'], unique=False)
-        batch_op.drop_index(batch_op.f('ix_offer_craft_fallback_craft_activity_id'))
-        batch_op.create_index(batch_op.f('ix_offer_craft_fallback_craft_activity_id'), ['craft_activity_id'], unique=False)
-        batch_op.create_unique_constraint(batch_op.f('uq_offer_craft_fallback_task_template'), ['task_template_id'])
-        batch_op.create_unique_constraint(batch_op.f('uq_offer_craft_fallback_craft_activity'), ['craft_activity_id'])
-
-    with op.batch_alter_table('offer', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_offer_use_unit_erp_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_tenant_name'))
-        batch_op.drop_index(batch_op.f('ix_offer_released_by_user_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_rejected_by_user_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_recipient_person_erp_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_recipient_name'))
-        batch_op.drop_index(batch_op.f('ix_offer_public_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_offer_number'))
-        batch_op.drop_index(batch_op.f('ix_offer_object_type'))
-        batch_op.drop_index(batch_op.f('ix_offer_object_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_license_agreement_idnum'))
-        batch_op.drop_index(batch_op.f('ix_offer_license_agreement_erp_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_invoice_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_economic_unit_erp_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_dms_document_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_dms_archived_by_user_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_dms_archive_key'))
-        batch_op.drop_index(batch_op.f('ix_offer_created_by_user_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_company_code_erp_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_company_code_code'))
-        batch_op.drop_index(batch_op.f('ix_offer_commission_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_canceled_by_user_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_building_erp_id'))
-        batch_op.drop_index(batch_op.f('ix_offer_accepted_by_user_id'))
-        batch_op.create_unique_constraint(batch_op.f('uq_offer_public_id'), ['public_id'])
-        batch_op.create_unique_constraint(batch_op.f('uq_offer_number'), ['offer_number'])
-        batch_op.create_unique_constraint(batch_op.f('uq_offer_invoice_id'), ['invoice_id'])
-        batch_op.create_unique_constraint(batch_op.f('uq_offer_dms_document_id'), ['dms_document_id'])
-        batch_op.create_unique_constraint(batch_op.f('uq_offer_dms_archive_key'), ['dms_archive_key'])
-        batch_op.create_unique_constraint(batch_op.f('uq_offer_commission_id'), ['commission_id'])
-        batch_op.create_index(batch_op.f('ix_offer_object_reference'), ['object_type', 'object_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_offer_created_at'), ['created_at'], unique=False)
-
-    with op.batch_alter_table('invoice', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_invoice_original_invoice_id'))
-        batch_op.create_index(batch_op.f('ix_invoice_original_invoice_id'), ['original_invoice_id'], unique=False)
-        batch_op.drop_index(batch_op.f('ix_invoice_dms_document_id'))
-        batch_op.create_index(batch_op.f('ix_invoice_dms_document_id'), ['dms_document_id'], unique=False)
-        batch_op.drop_index(batch_op.f('ix_invoice_dms_archive_key'))
-        batch_op.create_index(batch_op.f('ix_invoice_dms_archive_key'), ['dms_archive_key'], unique=False)
-        batch_op.create_unique_constraint(batch_op.f('uq_invoice_original_invoice_id'), ['original_invoice_id'])
-        batch_op.create_unique_constraint(batch_op.f('uq_invoice_dms_document_id'), ['dms_document_id'])
-        batch_op.create_unique_constraint(batch_op.f('uq_invoice_dms_archive_key'), ['dms_archive_key'])
-
-    op.create_table('craft_activity_department_type_mapping',
-    sa.Column('id', sa.INTEGER(), nullable=False),
-    sa.Column('craft_activity_id', sa.INTEGER(), nullable=False),
-    sa.Column('department_type_id', sa.INTEGER(), nullable=False),
-    sa.Column('updated_by_user_id', sa.INTEGER(), nullable=True),
-    sa.Column('updated_at', sa.DATETIME(), nullable=False),
-    sa.ForeignKeyConstraint(['craft_activity_id'], ['craft_activity.id'], name=op.f('fk_craft_department_type_mapping_craft_activity')),
-    sa.ForeignKeyConstraint(['department_type_id'], ['wowi_department_type.id'], name=op.f('fk_craft_department_type_mapping_department_type')),
-    sa.ForeignKeyConstraint(['updated_by_user_id'], ['user_account.id'], name=op.f('fk_craft_department_type_mapping_updated_by')),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('craft_activity_id')
-    )
-    with op.batch_alter_table('craft_activity_department_type_mapping', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_craft_activity_department_type_mapping_updated_by_user_id'), ['updated_by_user_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_craft_activity_department_type_mapping_department_type_id'), ['department_type_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_craft_activity_department_type_mapping_craft_activity_id'), ['craft_activity_id'], unique=1)
-
-    op.create_table('wowi_department_type',
-    sa.Column('id', sa.INTEGER(), nullable=False),
-    sa.Column('erp_id', sa.INTEGER(), nullable=False),
-    sa.Column('name', sa.VARCHAR(length=255), nullable=False),
-    sa.Column('active', sa.BOOLEAN(), nullable=False),
-    sa.Column('synced_at', sa.DATETIME(), nullable=True),
-    sa.PrimaryKeyConstraint('id')
-    )
-    with op.batch_alter_table('wowi_department_type', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_wowi_department_type_name'), ['name'], unique=False)
-        batch_op.create_index(batch_op.f('ix_wowi_department_type_erp_id'), ['erp_id'], unique=1)
+    with op.batch_alter_table(
+            "push_delivery",
+            schema=None,
+    ) as batch_op:
+        batch_op.drop_constraint(
+            (
+                "fk_push_delivery_"
+                "safety_inspection_job"
+            ),
+            type_="foreignkey",
+        )
+        batch_op.drop_index(
+            batch_op.f(
+                "ix_push_delivery_"
+                "safety_inspection_job_id"
+            )
+        )
+        batch_op.drop_column(
+            "safety_inspection_job_id"
+        )
 
     with op.batch_alter_table('safety_inspection_defect_commission', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_safety_inspection_defect_commission_defect_id'))
