@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Mängel{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h3 mb-0">
+    Mängel aus Verkehrssicherungsprüfungen
+  </h1>
+
+  <div class="btn-group btn-group-sm">
+    <a
+      class="btn {% if view_mode == 'active' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.defects', view='active') }}"
+    >
+      Offen
+    </a>
+    <a
+      class="btn {% if view_mode == 'resolved' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.defects', view='resolved') }}"
+    >
+      Behoben
+    </a>
+    <a
+      class="btn {% if view_mode == 'dismissed' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.defects', view='dismissed') }}"
+    >
+      Verworfen
+    </a>
+    <a
+      class="btn {% if view_mode == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.defects', view='all') }}"
+    >
+      Alle
+    </a>
+  </div>
+</div>
+
+{% include "admin/_safety_inspection_nav.html" %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <table class="table table-sm table-striped datatable">
+      <thead>
+        <tr>
+          <th>Erfasst</th>
+          <th>Dringlichkeit</th>
+          <th>Status</th>
+          <th>Prüfgruppe</th>
+          <th>Prüfpunkt</th>
+          <th>Feststellung</th>
+          <th>Objekt</th>
+          <th>Instandhaltungsauftrag</th>
+          <th data-filter="false">Aktionen</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for item in items %}
+        <tr class="{% if item.severity == 'defect_urgent' and item.status not in ['resolved', 'dismissed'] %}table-danger{% elif item.status == 'review_required' %}table-warning{% endif %}">
+          <td data-order="{{ item.created_at.isoformat() }}">
+            {{ item.created_at.strftime('%d.%m.%Y %H:%M') }}
+          </td>
+
+          <td>
+            <span class="badge {% if item.severity == 'defect_urgent' %}text-bg-danger{% else %}text-bg-warning{% endif %}">
+              {{ severity_labels.get(
+                item.severity,
+                item.severity
+              ) }}
+            </span>
+          </td>
+
+          <td>
+            {{ status_labels.get(item.status, item.status) }}
+          </td>
+
+          <td>{{ item.job.group.name }}</td>
+          <td>{{ item.result.item_title }}</td>
+
+          <td>
+            <div>{{ item.description }}</div>
+
+            {% if item.immediate_action %}
+            <div class="small text-muted">
+              Sofortmaßnahme:
+              {{ item.immediate_action }}
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            {{ item.job.object_address or '–' }}
+
+            {% if item.job.object_location %}
+            <div class="small text-muted">
+              {{ item.job.object_location }}
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            {% for link in item.commission_links %}
+            <div>
+              {% if current_user.is_admin or current_user.is_foreman %}
+              <a href="{{ url_for(
+                'admin.commission_detail',
+                commission_id=link.commission.id
+              ) }}">
+                {{ link.commission.erp_idnum or
+                   'Lokal #' ~ link.commission.id }}
+              </a>
+              {% else %}
+              {{ link.commission.erp_idnum or
+                 'Lokal #' ~ link.commission.id }}
+              {% endif %}
+
+              ·
+              {{ commission_status_labels.get(
+                link.commission.local_status,
+                link.commission.local_status
+              ) }}
+            </div>
+            {% else %}
+            <span class="text-muted">Keiner</span>
+            {% endfor %}
+          </td>
+
+          <td class="text-end">
+            <a
+              class="btn btn-sm btn-outline-primary"
+              href="{{ url_for(
+                'safety_inspection_jobs_admin.job_detail',
+                job_id=item.job_id
+              ) }}"
+            >
+              Prüfauftrag öffnen
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not items %}
+    <div class="text-center text-muted py-4">
+      Keine Mängel in dieser Ansicht.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

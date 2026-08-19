@@ -1,0 +1,836 @@
+{% extends "base.html" %}
+{% block title %}Prüfgruppe{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">
+      {% if item.id %}
+      Prüfgruppe bearbeiten
+      {% else %}
+      Prüfgruppe anlegen
+      {% endif %}
+    </h1>
+
+    {% if item.id %}
+    <div class="text-muted">
+      {{ item.name }}
+    </div>
+    {% endif %}
+  </div>
+
+  {% if item.id %}
+  <form
+    method="post"
+    action="{{ url_for(
+      'safety_inspection_admin.group_generate',
+      group_id=item.id
+    ) }}"
+  >
+    <input
+      type="hidden"
+      name="csrf_token"
+      value="{{ csrf_token() }}"
+    >
+    <button
+      class="btn btn-outline-primary"
+      type="submit"
+    >
+      Fällige Prüfungen jetzt erzeugen
+    </button>
+  </form>
+  {% endif %}
+</div>
+
+{% include "admin/_safety_inspection_nav.html" %}
+
+<form
+  id="groupForm"
+  method="post"
+  class="card shadow-sm"
+>
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+  <input
+    id="targetsJson"
+    type="hidden"
+    name="targets_json"
+  >
+
+  <div class="card-header">
+    Grunddaten
+  </div>
+
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">
+          Bezeichnung
+        </label>
+        <input
+          class="form-control"
+          name="name"
+          value="{{ item.name or '' }}"
+          required
+        >
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">
+          Prüfdetailplan
+        </label>
+        <select
+          class="form-select"
+          name="template_id"
+          required
+        >
+          <option value="">
+            Bitte auswählen
+          </option>
+          {% for option in templates %}
+          <option
+            value="{{ option.id }}"
+            {% if item.template_id == option.id %}
+            selected
+            {% endif %}
+          >
+            {{ option.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">
+          Prüfzeitplan
+        </label>
+        <select
+          class="form-select"
+          name="schedule_id"
+          required
+        >
+          <option value="">
+            Bitte auswählen
+          </option>
+          {% for option in schedules %}
+          <option
+            value="{{ option.id }}"
+            {% if item.schedule_id == option.id %}
+            selected
+            {% endif %}
+          >
+            {{ option.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">
+          Beschreibung
+        </label>
+        <textarea
+          class="form-control"
+          name="description"
+          rows="3"
+        >{{ item.description or '' }}</textarea>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">
+          Prüfebene
+        </label>
+        <select
+          class="form-select"
+          name="object_level"
+          required
+        >
+          <option value="">
+            Bitte auswählen
+          </option>
+          {% for value, label
+            in object_level_labels.items()
+          %}
+          <option
+            value="{{ value }}"
+            {% if item.object_level == value %}
+            selected
+            {% endif %}
+          >
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">
+          Zuständige Abteilung
+        </label>
+        <select
+          class="form-select"
+          name="department_id"
+          required
+        >
+          <option value="">
+            Bitte auswählen
+          </option>
+          {% for option in departments %}
+          <option
+            value="{{ option.id }}"
+            {% if item.department_id == option.id %}
+            selected
+            {% endif %}
+          >
+            {{ option.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">
+          Ersatz-Handwerker
+        </label>
+        <select
+          class="form-select"
+          name="fallback_user_id"
+        >
+          <option value="">
+            Keine Ersatzzuständigkeit
+          </option>
+          {% for option in fallback_users %}
+          <option
+            value="{{ option.id }}"
+            {% if item.fallback_user_id == option.id %}
+            selected
+            {% endif %}
+          >
+            {{ option.display_name }}
+          </option>
+          {% endfor %}
+        </select>
+        <div class="form-text">
+          Wird nur verwendet, wenn die
+          Wowiport-Zuständigkeit nicht
+          eindeutig aufgelöst werden kann.
+        </div>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">
+          Erste Prüfperiode beginnt
+        </label>
+        <input
+          class="form-control"
+          type="date"
+          name="first_period_start"
+          value="{{ item.first_period_start.isoformat() if item.first_period_start else '' }}"
+          required
+        >
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">
+          Enddatum
+        </label>
+        <input
+          class="form-control"
+          type="date"
+          name="ends_on"
+          value="{{ item.ends_on.isoformat() if item.ends_on else '' }}"
+        >
+      </div>
+
+      <div class="col-md-9 d-flex flex-wrap align-items-end gap-4">
+        <div class="form-check mb-2">
+          <input
+            class="form-check-input"
+            id="includeVacancies"
+            type="checkbox"
+            name="include_vacancies"
+            {% if item.include_vacancies %}
+            checked
+            {% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="includeVacancies"
+          >
+            Leerstände einbeziehen
+          </label>
+        </div>
+
+        <div class="form-check mb-2">
+          <input
+            class="form-check-input"
+            id="automaticArchive"
+            type="checkbox"
+            name="automatic_archive"
+            {% if item.automatic_archive %}
+            checked
+            {% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="automaticArchive"
+          >
+            Protokoll automatisch archivieren
+          </label>
+        </div>
+
+        <div class="form-check mb-2">
+          <input
+            class="form-check-input"
+            id="archiveOriginalPhotos"
+            type="checkbox"
+            name="archive_original_photos"
+            {% if item.archive_original_photos %}
+            checked
+            {% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="archiveOriginalPhotos"
+          >
+            Originalfotos zusätzlich archivieren
+          </label>
+        </div>
+
+        <div class="form-check mb-2">
+          <input
+            class="form-check-input"
+            id="groupActive"
+            type="checkbox"
+            name="active"
+            {% if item.active %}
+            checked
+            {% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="groupActive"
+          >
+            Aktiv
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card-header border-top">
+    Vorgabe für Mangelaufträge
+  </div>
+
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">
+          Auftragsart
+        </label>
+        <select
+          class="form-select"
+          name="corrective_commission_type_erp_id"
+          required
+        >
+          <option value="">
+            Bitte auswählen
+          </option>
+          {% for option in commission_types %}
+          <option
+            value="{{ option.erp_id }}"
+            {% if item.corrective_commission_type_erp_id == option.erp_id %}
+            selected
+            {% endif %}
+          >
+            {{ option.code or option.erp_id }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">
+          Gewerk
+        </label>
+        <select
+          id="craftActivity"
+          class="form-select"
+          name="corrective_craft_activity_id"
+          required
+        >
+          <option value="">
+            Bitte auswählen
+          </option>
+          {% for option in craft_activities %}
+          <option
+            value="{{ option.id }}"
+            {% if item.corrective_craft_activity_id == option.id %}
+            selected
+            {% endif %}
+          >
+            {{ option.name }}
+            {% if option.code %}
+            · {{ option.code }}
+            {% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">
+          Standard-Leistungsposition
+        </label>
+        <select
+          id="taskTemplate"
+          class="form-select"
+          name="corrective_task_template_id"
+          required
+        >
+          <option value="">
+            Bitte zuerst Gewerk auswählen
+          </option>
+          {% for option in task_templates %}
+          <option
+            value="{{ option.id }}"
+            data-craft-id="{{ option.craft_activity_id }}"
+            {% if item.corrective_task_template_id == option.id %}
+            selected
+            {% endif %}
+          >
+            {{ option.title }}
+            {% if option.code %}
+            · {{ option.code }}
+            {% endif %}
+          </option>
+          {% endfor %}
+        </select>
+
+        <div class="form-text">
+          Hier sollte die Leistungsposition
+          „Arbeit nach Vorgabe“ des
+          ausgewählten Gewerks verwendet
+          werden.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card-header border-top">
+    Einbezogene und ausgeschlossene Objekte
+  </div>
+
+  <div class="card-body">
+    <div class="row g-3 mb-3">
+      <div class="col-md-8">
+        <label class="form-label">
+          Objekt suchen
+        </label>
+        <input
+          id="objectSearch"
+          class="form-control"
+          type="search"
+          placeholder="Nummer, Bezeichnung oder Adresse"
+        >
+      </div>
+
+      <div class="col-md-4 d-flex align-items-end">
+        <button
+          id="objectSearchButton"
+          class="btn btn-outline-primary w-100"
+          type="button"
+        >
+          Suchen
+        </button>
+      </div>
+    </div>
+
+    <div
+      id="objectSearchState"
+      class="small text-muted mb-2"
+    ></div>
+
+    <div
+      id="objectSearchResults"
+      class="list-group mb-4"
+    ></div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Objekt</th>
+            <th style="width: 220px">
+              Verwendung
+            </th>
+            <th
+              style="width: 120px"
+              data-filter="false"
+            >
+              Aktion
+            </th>
+          </tr>
+        </thead>
+        <tbody id="targetTableBody"></tbody>
+      </table>
+    </div>
+
+    <div
+      id="emptyTargets"
+      class="text-center text-muted py-4 d-none"
+    >
+      Noch keine Objekte ausgewählt.
+    </div>
+
+    <div class="form-text">
+      Eine Wirtschaftseinheit kann
+      eingeschlossen und einzelne Gebäude
+      oder Nutzungseinheiten darunter können
+      anschließend ausgeschlossen werden.
+    </div>
+  </div>
+
+  <div class="card-footer d-flex justify-content-between">
+    <a
+      class="btn btn-outline-secondary"
+      href="{{ url_for(
+        'safety_inspection_admin.groups'
+      ) }}"
+    >
+      Zurück
+    </a>
+
+    <button
+      class="btn btn-primary"
+      type="submit"
+    >
+      Prüfgruppe speichern
+    </button>
+  </div>
+</form>
+
+<script>
+const targetRows = {{ target_rows|tojson }};
+const groupForm =
+  document.getElementById("groupForm");
+const targetsJson =
+  document.getElementById("targetsJson");
+const targetTableBody =
+  document.getElementById(
+    "targetTableBody"
+  );
+const emptyTargets =
+  document.getElementById("emptyTargets");
+const objectSearch =
+  document.getElementById("objectSearch");
+const objectSearchButton =
+  document.getElementById(
+    "objectSearchButton"
+  );
+const objectSearchResults =
+  document.getElementById(
+    "objectSearchResults"
+  );
+const objectSearchState =
+  document.getElementById(
+    "objectSearchState"
+  );
+const craftActivity =
+  document.getElementById(
+    "craftActivity"
+  );
+const taskTemplate =
+  document.getElementById(
+    "taskTemplate"
+  );
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function renderTargets() {
+  targetTableBody.innerHTML = "";
+
+  emptyTargets.classList.toggle(
+    "d-none",
+    targetRows.length > 0
+  );
+
+  targetRows.forEach((row, index) => {
+    const tableRow =
+      document.createElement("tr");
+
+    tableRow.dataset.index =
+      String(index);
+
+    tableRow.innerHTML = `
+      <td>
+        <div class="fw-semibold">
+          ${escapeHtml(row.object_label)}
+        </div>
+        <div class="small text-muted">
+          ERP-ID
+          ${escapeHtml(row.object_erp_id)}
+        </div>
+      </td>
+      <td>
+        <select
+          class="form-select form-select-sm target-included"
+        >
+          <option
+            value="1"
+            ${row.included ? "selected" : ""}
+          >
+            Einschließen
+          </option>
+          <option
+            value="0"
+            ${row.included ? "" : "selected"}
+          >
+            Ausschließen
+          </option>
+        </select>
+      </td>
+      <td class="text-end">
+        <button
+          class="btn btn-sm btn-outline-danger target-remove"
+          type="button"
+        >
+          Entfernen
+        </button>
+      </td>
+    `;
+
+    targetTableBody.appendChild(
+      tableRow
+    );
+  });
+}
+
+function synchronizeTargets() {
+  targetTableBody
+    .querySelectorAll("tr")
+    .forEach((tableRow) => {
+      const index =
+        Number(tableRow.dataset.index);
+
+      targetRows[index].included =
+        tableRow
+          .querySelector(
+            ".target-included"
+          )
+          .value === "1";
+    });
+}
+
+function addTarget(result) {
+  synchronizeTargets();
+
+  const existing = targetRows.find(
+    (row) => (
+      row.object_type
+        === result.object_type
+      && Number(row.object_erp_id)
+        === Number(result.object_erp_id)
+    )
+  );
+
+  if (existing) {
+    existing.included = true;
+  } else {
+    targetRows.push({
+      object_type: result.object_type,
+      object_erp_id:
+        result.object_erp_id,
+      object_label:
+        result.display_label,
+      included: true
+    });
+  }
+
+  renderTargets();
+}
+
+async function searchObjects() {
+  const query =
+    objectSearch.value.trim();
+
+  if (query.length < 2) {
+    objectSearchState.textContent =
+      "Bitte mindestens zwei Zeichen eingeben.";
+    objectSearchResults.innerHTML = "";
+    return;
+  }
+
+  objectSearchButton.disabled = true;
+  objectSearchState.textContent =
+    "Suche läuft …";
+  objectSearchResults.innerHTML = "";
+
+  try {
+    const response = await fetch(
+      `{{ url_for(
+        'safety_inspection_admin.object_search'
+      ) }}?q=${encodeURIComponent(query)}`,
+      {
+        headers: {
+          "Accept": "application/json"
+        }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        "Die Objektsuche ist fehlgeschlagen."
+      );
+    }
+
+    const payload =
+      await response.json();
+    const items =
+      payload.items || [];
+
+    objectSearchState.textContent =
+      items.length
+        ? `${items.length} Treffer`
+        : "Keine Treffer";
+
+    items.forEach((result) => {
+      const button =
+        document.createElement("button");
+
+      button.className =
+        "list-group-item "
+        + "list-group-item-action";
+      button.type = "button";
+      button.innerHTML = `
+        <div class="fw-semibold">
+          ${escapeHtml(
+            result.display_label
+          )}
+        </div>
+        <div class="small text-muted">
+          ERP-ID
+          ${escapeHtml(
+            result.object_erp_id
+          )}
+        </div>
+      `;
+
+      button.addEventListener(
+        "click",
+        () => addTarget(result)
+      );
+
+      objectSearchResults.appendChild(
+        button
+      );
+    });
+  } catch (error) {
+    objectSearchState.textContent =
+      error.message;
+  } finally {
+    objectSearchButton.disabled = false;
+  }
+}
+
+function filterTaskTemplates() {
+  const craftId =
+    craftActivity.value;
+  let selectedVisible = false;
+
+  Array.from(
+    taskTemplate.options
+  ).forEach((option, index) => {
+    if (index === 0) {
+      return;
+    }
+
+    const visible =
+      Boolean(craftId)
+      && option.dataset.craftId
+        === craftId;
+
+    option.hidden = !visible;
+    option.disabled = !visible;
+
+    if (
+      option.selected
+      && visible
+    ) {
+      selectedVisible = true;
+    }
+  });
+
+  if (!selectedVisible) {
+    taskTemplate.value = "";
+  }
+}
+
+objectSearchButton.addEventListener(
+  "click",
+  searchObjects
+);
+
+objectSearch.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchObjects();
+    }
+  }
+);
+
+targetTableBody.addEventListener(
+  "click",
+  (event) => {
+    const button =
+      event.target.closest(
+        ".target-remove"
+      );
+    const tableRow =
+      event.target.closest("tr");
+
+    if (!button || !tableRow) {
+      return;
+    }
+
+    synchronizeTargets();
+
+    targetRows.splice(
+      Number(tableRow.dataset.index),
+      1
+    );
+
+    renderTargets();
+  }
+);
+
+craftActivity.addEventListener(
+  "change",
+  filterTaskTemplates
+);
+
+groupForm.addEventListener(
+  "submit",
+  () => {
+    synchronizeTargets();
+
+    targetsJson.value =
+      JSON.stringify(targetRows);
+  }
+);
+
+renderTargets();
+filterTaskTemplates();
+</script>
+{% endblock %}

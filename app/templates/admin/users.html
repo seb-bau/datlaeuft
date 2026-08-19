@@ -39,24 +39,58 @@
               <span class="text-muted">Alle Gewerke</span>
             {% endif %}
           </td>
-          <td>
+                    <td>
             {% if item.is_admin %}
-            <span class="badge text-bg-danger">Admin</span>
+            <span class="badge text-bg-danger">
+              Admin
+            </span>
             {% endif %}
+
             {% if item.is_foreman %}
-            <span class="badge text-bg-warning">Vorarbeiter</span>
+            <span class="badge text-bg-warning">
+              Vorarbeiter
+            </span>
             {% endif %}
-                        {% if item.can_manage_invoices %}
+
+            {% if item.can_manage_invoices %}
             <span class="badge text-bg-primary">
               Rechnungen
             </span>
             {% endif %}
+
+            {% if item.can_manage_offers %}
+            <span class="badge text-bg-info">
+              Angebote
+            </span>
+            {% endif %}
+
+            {% if
+              item.can_manage_safety_inspections
+            %}
+            <span class="badge text-bg-success">
+              Verkehrssicherung
+            </span>
+            {% elif
+              item.can_review_safety_inspections
+            %}
+            <span class="badge text-bg-secondary">
+              Prüfungen kontrollieren
+            </span>
+            {% endif %}
+
             {% if
               not item.is_admin
               and not item.is_foreman
               and not item.can_manage_invoices
+              and not item.can_manage_offers
+              and not
+                item.can_manage_safety_inspections
+              and not
+                item.can_review_safety_inspections
             %}
-            <span class="text-muted">Handwerker</span>
+            <span class="text-muted">
+              Handwerker
+            </span>
             {% endif %}
           </td>
           <td>{{ "Ja" if item.is_active_flag else "Nein" }}</td>

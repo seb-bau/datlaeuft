@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <title>Prüfprotokoll {{ job.public_id }}</title>
+
+    <style>
+        @page {
+            size: A4;
+            margin: 14mm 14mm 17mm;
+
+            @bottom-left {
+                color: #6b7280;
+                content:
+                    "Prüfprotokoll {{ job.public_id }} · Version {{ protocol_version }}";
+                font-family: Arial, sans-serif;
+                font-size: 8pt;
+            }
+
+            @bottom-right {
+                color: #6b7280;
+                content:
+                    "Seite " counter(page)
+                    " von " counter(pages);
+                font-family: Arial, sans-serif;
+                font-size: 8pt;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            color: #111827;
+            font-family: Arial, sans-serif;
+            font-size: 9.5pt;
+            line-height: 1.35;
+            margin: 0;
+        }
+
+        h1 {
+            font-size: 20pt;
+            margin: 0 0 2mm;
+        }
+
+        h2 {
+            font-size: 12pt;
+            margin: 8mm 0 3mm;
+        }
+
+        p {
+            margin: 0 0 2mm;
+        }
+
+        .subtitle {
+            color: #4b5563;
+            font-size: 10.5pt;
+            margin-bottom: 6mm;
+        }
+
+        .meta-grid {
+            display: grid;
+            gap: 2mm 5mm;
+            grid-template-columns:
+                38mm 1fr 38mm 1fr;
+            margin-bottom: 5mm;
+        }
+
+        .meta-label {
+            color: #6b7280;
+            font-size: 8pt;
+            text-transform: uppercase;
+        }
+
+        .meta-value {
+            font-weight: 600;
+            overflow-wrap: anywhere;
+        }
+
+        .summary {
+            display: grid;
+            gap: 3mm;
+            grid-template-columns:
+                repeat(5, 1fr);
+            margin: 5mm 0 6mm;
+        }
+
+        .summary-item {
+            border: 0.25mm solid #d1d5db;
+            border-radius: 2mm;
+            padding: 2.5mm;
+            text-align: center;
+        }
+
+        .summary-number {
+            display: block;
+            font-size: 14pt;
+            font-weight: 700;
+        }
+
+        .summary-label {
+            color: #6b7280;
+            font-size: 7.5pt;
+        }
+
+        .correction {
+            background: #fff7ed;
+            border-left:
+                1.2mm solid #f97316;
+            margin: 4mm 0;
+            padding: 3mm;
+        }
+
+        .result {
+            border-top:
+                0.35mm solid #d1d5db;
+            padding: 3mm 0;
+        }
+
+        .result-heading {
+            align-items: flex-start;
+            break-inside: avoid;
+            display: grid;
+            gap: 3mm;
+            grid-template-columns:
+                8mm 1fr auto;
+        }
+
+        .result-number {
+            color: #6b7280;
+            font-weight: 700;
+        }
+
+        .result-title {
+            font-size: 10.5pt;
+            font-weight: 700;
+        }
+
+        .result-description {
+            color: #4b5563;
+            font-size: 8.5pt;
+            margin-top: 1mm;
+        }
+
+        .state {
+            border-radius: 99mm;
+            font-size: 8pt;
+            font-weight: 700;
+            padding: 1.1mm 2.5mm;
+            white-space: nowrap;
+        }
+
+        .state.no-defect {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .state.not-present,
+        .state.not-checked {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .state.defect-info {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .state.defect-urgent {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .result-details {
+            break-inside: avoid;
+            display: grid;
+            gap: 2mm 5mm;
+            grid-template-columns:
+                1fr 1fr;
+            margin: 2.5mm 0 0 11mm;
+        }
+
+        .detail {
+            border-left:
+                0.7mm solid #e5e7eb;
+            padding-left: 2mm;
+        }
+
+        .detail-label {
+            color: #6b7280;
+            display: block;
+            font-size: 7.5pt;
+            margin-bottom: 0.5mm;
+            text-transform: uppercase;
+        }
+
+        .photos {
+            display: grid;
+            gap: 3mm;
+            grid-template-columns:
+                1fr 1fr;
+            margin: 3mm 0 0 11mm;
+        }
+
+        .photo {
+            border: 0.25mm solid #d1d5db;
+            break-inside: avoid;
+            padding: 2mm;
+        }
+
+        .photo img {
+            display: block;
+            height: 58mm;
+            object-fit: contain;
+            width: 100%;
+        }
+
+        .photo figcaption {
+            color: #4b5563;
+            font-size: 7.5pt;
+            margin-top: 1.5mm;
+        }
+
+        .overall-note {
+            background: #f9fafb;
+            border: 0.25mm solid #d1d5db;
+            break-inside: avoid;
+            margin-top: 5mm;
+            padding: 3mm;
+        }
+
+        .signature {
+            break-inside: avoid;
+            display: grid;
+            gap: 10mm;
+            grid-template-columns:
+                1fr 1fr;
+            margin-top: 12mm;
+        }
+
+        .signature-line {
+            border-top:
+                0.25mm solid #374151;
+            color: #6b7280;
+            font-size: 8pt;
+            padding-top: 1.5mm;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Prüfprotokoll</h1>
+
+    <div class="subtitle">
+        {{ template_name }} · {{ group_name }}
+    </div>
+
+    <div class="meta-grid">
+        <div class="meta-label">
+            Protokoll
+        </div>
+        <div class="meta-value">
+            {{ job.public_id }} /
+            Version {{ protocol_version }}
+        </div>
+
+        <div class="meta-label">
+            Planversion
+        </div>
+        <div class="meta-value">
+            {{ template_version }}
+        </div>
+
+        <div class="meta-label">
+            Objektebene
+        </div>
+        <div class="meta-value">
+            {{ object_level_label }}
+        </div>
+
+        <div class="meta-label">
+            Prüfzeitraum
+        </div>
+        <div class="meta-value">
+            {{ period_text }}
+        </div>
+
+        <div class="meta-label">
+            Wirtschaftseinheit
+        </div>
+        <div class="meta-value">
+            {{ job.economic_unit_idnum or "-" }}
+            ·
+            {{ job.economic_unit_name or "-" }}
+        </div>
+
+        <div class="meta-label">
+            Fällig
+        </div>
+        <div class="meta-value">
+            {{ due_text }}
+        </div>
+
+        <div class="meta-label">
+            Gebäude
+        </div>
+        <div class="meta-value">
+            {{ job.building_idnum or "-" }}
+        </div>
+
+        <div class="meta-label">
+            Abgeschlossen
+        </div>
+        <div class="meta-value">
+            {{ completed_at or "-" }}
+        </div>
+
+        <div class="meta-label">
+            Nutzungseinheit
+        </div>
+        <div class="meta-value">
+            {{ job.use_unit_idnum or "-" }}
+        </div>
+
+        <div class="meta-label">
+            Prüfer
+        </div>
+        <div class="meta-value">
+            {{
+                completed_by
+                or assigned_user
+                or "-"
+            }}
+        </div>
+
+        <div class="meta-label">
+            Objektanschrift
+        </div>
+        <div class="meta-value">
+            {{ job.object_address or "-" }}
+            {% if job.object_location %}
+                , {{ job.object_location }}
+            {% endif %}
+        </div>
+
+        <div class="meta-label">
+            Abteilung
+        </div>
+        <div class="meta-value">
+            {{ department_name or "-" }}
+        </div>
+    </div>
+
+    {% if legal_reference %}
+        <p>
+            <strong>Grundlage:</strong>
+            {{ legal_reference }}
+        </p>
+    {% endif %}
+
+    {% if correction_reason %}
+        <div class="correction">
+            <strong>Korrekturgrund:</strong>
+            {{ correction_reason }}
+        </div>
+    {% endif %}
+
+    <div class="summary">
+        <div class="summary-item">
+            <span class="summary-number">
+                {{ summary.total }}
+            </span>
+            <span class="summary-label">
+                Prüfpunkte
+            </span>
+        </div>
+
+        <div class="summary-item">
+            <span class="summary-number">
+                {{ summary.no_defect }}
+            </span>
+            <span class="summary-label">
+                Ohne Mangel
+            </span>
+        </div>
+
+        <div class="summary-item">
+            <span class="summary-number">
+                {{ summary.not_present }}
+            </span>
+            <span class="summary-label">
+                Nicht vorhanden
+            </span>
+        </div>
+
+        <div class="summary-item">
+            <span class="summary-number">
+                {{ summary.defects }}
+            </span>
+            <span class="summary-label">
+                Mängel
+            </span>
+        </div>
+
+        <div class="summary-item">
+            <span class="summary-number">
+                {{ summary.urgent }}
+            </span>
+            <span class="summary-label">
+                Dringend
+            </span>
+        </div>
+    </div>
+
+    <h2>Prüfergebnisse</h2>
+
+    {% for row in rows %}
+        <section class="result">
+            <div class="result-heading">
+                <div class="result-number">
+                    {{ row.number }}
+                </div>
+
+                <div>
+                    <div class="result-title">
+                        {{ row.title }}
+                    </div>
+
+                    {% if row.description %}
+                        <div
+                            class="result-description"
+                        >
+                            {{ row.description }}
+                        </div>
+                    {% endif %}
+                </div>
+
+                <div
+                    class="state {{ row.state_class }}"
+                >
+                    {{ row.state_label }}
+                </div>
+            </div>
+
+            {% if
+                row.note
+                or row.immediate_action
+                or row.checked_by
+                or row.checked_at
+            %}
+                <div class="result-details">
+                    {% if row.note %}
+                        <div class="detail">
+                            <span
+                                class="detail-label"
+                            >
+                                Feststellung
+                            </span>
+                            {{ row.note }}
+                        </div>
+                    {% endif %}
+
+                    {% if row.immediate_action %}
+                        <div class="detail">
+                            <span
+                                class="detail-label"
+                            >
+                                Sofortmaßnahme
+                            </span>
+                            {{
+                                row.immediate_action
+                            }}
+                        </div>
+                    {% endif %}
+
+                    {% if
+                        row.checked_by
+                        or row.checked_at
+                    %}
+                        <div class="detail">
+                            <span
+                                class="detail-label"
+                            >
+                                Geprüft durch
+                            </span>
+                            {{
+                                row.checked_by
+                                or "-"
+                            }}
+                            {% if row.checked_at %}
+                                · {{ row.checked_at }}
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
+
+            {% if row.photos %}
+                <div class="photos">
+                    {% for photo in row.photos %}
+                        <figure class="photo">
+                            <img
+                                src="{{ photo.uri }}"
+                                alt="Foto zu {{ row.title }}"
+                            >
+
+                            <figcaption>
+                                {% if photo.caption %}
+                                    {{ photo.caption }}
+                                {% endif %}
+
+                                {% if
+                                    photo.caption
+                                    and photo.captured_at
+                                %}
+                                    ·
+                                {% endif %}
+
+                                {% if photo.captured_at %}
+                                    {{
+                                        photo.captured_at
+                                    }}
+                                {% endif %}
+                            </figcaption>
+                        </figure>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </section>
+    {% endfor %}
+
+    {% if job.overall_note %}
+        <div class="overall-note">
+            <strong>Gesamtbemerkung</strong>
+            <br>
+            {{ job.overall_note }}
+        </div>
+    {% endif %}
+
+    <div class="signature">
+        <div class="signature-line">
+            Prüfer / Datum
+        </div>
+        <div class="signature-line">
+            Sachbearbeitung / Kenntnisnahme
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Prüfaufträge{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h3 mb-0">Prüfaufträge</h1>
+
+  <div class="btn-group btn-group-sm">
+    <a
+      class="btn {% if view_mode == 'active' and not overdue_only %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='active') }}"
+    >
+      Offen
+    </a>
+    <a
+      class="btn {% if overdue_only %}btn-danger{% else %}btn-outline-danger{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='active', overdue=1) }}"
+    >
+      Überfällig
+    </a>
+    <a
+      class="btn {% if view_mode == 'completed' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='completed') }}"
+    >
+      Abgeschlossen
+    </a>
+    <a
+      class="btn {% if view_mode == 'missed' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='missed') }}"
+    >
+      Abgelaufen
+    </a>
+    <a
+      class="btn {% if view_mode == 'canceled' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='canceled') }}"
+    >
+      Abgebrochen
+    </a>
+    <a
+      class="btn {% if view_mode == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='all') }}"
+    >
+      Alle
+    </a>
+  </div>
+</div>
+
+{% include "admin/_safety_inspection_nav.html" %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <table class="table table-sm table-striped datatable">
+      <thead>
+        <tr>
+          <th>Fällig bis</th>
+          <th>Status</th>
+          <th>Prüfgruppe</th>
+          <th>Objekt</th>
+          <th>Wirtschaftseinheit</th>
+          <th>Zeitraum</th>
+          <th>Handwerker</th>
+          <th>Mängel</th>
+          <th data-filter="false">Aktionen</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for item in items %}
+        <tr class="{% if item.is_overdue %}table-danger{% elif item.is_due %}table-warning{% elif item.status == 'missed' %}table-secondary{% endif %}">
+          <td data-order="{{ item.due_to.isoformat() }}">
+            <div class="fw-semibold">
+              {{ item.due_to.strftime('%d.%m.%Y') }}
+            </div>
+            <div class="small text-muted">
+              ab {{ item.due_from.strftime('%d.%m.%Y') }}
+            </div>
+          </td>
+
+          <td>
+            <span class="badge {% if item.is_overdue %}text-bg-danger{% elif item.status in ['completed', 'completed_with_defects'] %}text-bg-success{% elif item.status == 'in_progress' %}text-bg-primary{% elif item.status in ['missed', 'canceled'] %}text-bg-secondary{% else %}text-bg-warning{% endif %}">
+              {{ status_labels.get(item.status, item.status) }}
+            </span>
+          </td>
+
+          <td>{{ item.group.name }}</td>
+
+          <td>
+            <div>
+              {{ object_level_labels.get(
+                item.object_level,
+                item.object_level
+              ) }}
+            </div>
+            <div class="fw-semibold">
+              {{ item.object_address or '–' }}
+            </div>
+
+            {% if item.object_location %}
+            <div class="small text-muted">
+              {{ item.object_location }}
+            </div>
+            {% endif %}
+
+            {% if item.building_idnum %}
+            <div class="small text-muted">
+              Gebäude {{ item.building_idnum }}
+            </div>
+            {% endif %}
+
+            {% if item.use_unit_idnum %}
+            <div class="small text-muted">
+              Nutzungseinheit {{ item.use_unit_idnum }}
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            {{ item.economic_unit_idnum or '–' }}
+
+            {% if item.economic_unit_name %}
+            <div class="small text-muted">
+              {{ item.economic_unit_name }}
+            </div>
+            {% endif %}
+          </td>
+
+          <td data-order="{{ item.period_start.isoformat() }}">
+            {{ item.period_start.strftime('%d.%m.%Y') }}–{{ item.period_end.strftime('%d.%m.%Y') }}
+          </td>
+
+          <td>
+            {% if item.assigned_user %}
+            {{ item.assigned_user.display_name }}
+            {% else %}
+            <span class="text-danger">Nicht zugeordnet</span>
+
+            {% if item.assignment_error %}
+            <div class="small text-danger">
+              {{ item.assignment_error }}
+            </div>
+            {% endif %}
+            {% endif %}
+          </td>
+
+          <td>{{ item.defects|length }}</td>
+
+          <td class="text-end">
+            <a
+              class="btn btn-sm btn-outline-primary"
+              href="{{ url_for(
+                'safety_inspection_jobs_admin.job_detail',
+                job_id=item.id
+              ) }}"
+            >
+              Öffnen
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not items %}
+    <div class="text-center text-muted py-4">
+      Keine Prüfaufträge in dieser Ansicht.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

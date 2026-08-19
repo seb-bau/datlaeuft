@@ -181,6 +181,84 @@ class SettingKeys:
         "Weitere Eigenschaften für Angebote",
         "d.velop",
     )
+    DMS_SAFETY_ARCHIVE_ENABLED = (
+        SettingDefinition[bool](
+            "dms.safety_archive_enabled",
+            SettingValueType.BOOL,
+            False,
+            (
+                "Prüfprotokolle automatisch "
+                "archivieren"
+            ),
+            "d.velop",
+        )
+    )
+    DMS_SAFETY_ECONOMIC_UNIT_CATEGORY_ID = (
+        SettingDefinition[str](
+            (
+                "dms.safety_economic_unit_"
+                "category_id"
+            ),
+            SettingValueType.STRING,
+            "",
+            (
+                "Kategorie-ID für Prüfprotokolle "
+                "an Wirtschaftseinheiten"
+            ),
+            "d.velop",
+        )
+    )
+    DMS_SAFETY_BUILDING_CATEGORY_ID = (
+        SettingDefinition[str](
+            "dms.safety_building_category_id",
+            SettingValueType.STRING,
+            "",
+            (
+                "Kategorie-ID für Prüfprotokolle "
+                "an Gebäuden"
+            ),
+            "d.velop",
+        )
+    )
+    DMS_SAFETY_USE_UNIT_CATEGORY_ID = (
+        SettingDefinition[str](
+            "dms.safety_use_unit_category_id",
+            SettingValueType.STRING,
+            "",
+            (
+                "Kategorie-ID für Prüfprotokolle "
+                "an Nutzungseinheiten"
+            ),
+            "d.velop",
+        )
+    )
+    DMS_SAFETY_PROTOCOL_ID_PROPERTY_ID = (
+        SettingDefinition[str](
+            (
+                "dms.safety_protocol_id_"
+                "property_id"
+            ),
+            SettingValueType.STRING,
+            "",
+            (
+                "Eigenschafts-ID für den "
+                "eindeutigen Protokollschlüssel"
+            ),
+            "d.velop",
+        )
+    )
+    DMS_SAFETY_PROPERTY_MAP = (
+        SettingDefinition[dict](
+            "dms.safety_property_map",
+            SettingValueType.JSON,
+            {},
+            (
+                "Weitere Eigenschaften für "
+                "Prüfprotokolle"
+            ),
+            "d.velop",
+        )
+    )
     SMTP_HOST = SettingDefinition[str](
         "smtp.host",
         SettingValueType.STRING,

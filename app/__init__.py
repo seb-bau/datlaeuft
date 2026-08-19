@@ -13,6 +13,18 @@ from .logging_service import configure_logging
 from .settings import SettingKeys, settings
 from .webhooks import webhooks_bp
 from .appointments import appointments_bp
+from .safety_inspection_admin import (
+    safety_inspection_admin_bp,
+)
+from .safety_inspection_jobs_admin import (
+    safety_inspection_jobs_admin_bp,
+)
+from .safety_inspection_api import (
+    safety_inspection_api_bp,
+)
+from .safety_inspection_protocol_admin import (
+    safety_inspection_protocol_admin_bp,
+)
 
 
 # Worker starten: flask datlaeuft-worker --poll-seconds 10
@@ -50,10 +62,25 @@ def create_app() -> Flask:
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(
+        safety_inspection_admin_bp
+    )
+    app.register_blueprint(
+        safety_inspection_jobs_admin_bp
+    )
     app.register_blueprint(api_bp)
+    app.register_blueprint(
+        safety_inspection_api_bp
+    )
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(appointments_bp)
+    app.register_blueprint(
+        safety_inspection_protocol_admin_bp
+    )
     csrf.exempt(api_bp)
+    csrf.exempt(
+        safety_inspection_api_bp
+    )
     csrf.exempt(webhooks_bp)
     register_cli(app)
     return app

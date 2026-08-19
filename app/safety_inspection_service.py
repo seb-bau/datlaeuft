@@ -40,6 +40,7 @@ from .models import (
     WowiEconomicUnit,
     WowiUseUnit,
     utc_now,
+    PushEventType,
 )
 from .object_directory import (
     resolve_department_assignment,
@@ -47,6 +48,10 @@ from .object_directory import (
 from .photo_service import (
     commission_photo_path,
     store_commission_photo_bytes,
+)
+from .push_service import (
+    enqueue_safety_inspection_push,
+    enqueue_urgent_safety_defect_push,
 )
 
 
@@ -345,6 +350,26 @@ def validate_safety_inspection_group(
     validate_safety_inspection_schedule(
         group.schedule
     )
+    if not group.schedule.active:
+        raise ValueError(
+            "Der Prüfzeitplan ist deaktiviert."
+        )
+
+    if not group.template.active:
+        raise ValueError(
+            "Der Prüfdetailplan ist deaktiviert."
+        )
+
+    if (
+        latest_published_version(
+            group.template
+        )
+        is None
+    ):
+        raise ValueError(
+            "Der Prüfdetailplan besitzt keine "
+            "veröffentlichte Version."
+        )
 
     levels = {
         item.value
@@ -378,6 +403,15 @@ def validate_safety_inspection_group(
     craft_activity = (
         group.corrective_craft_activity
     )
+    if (
+        not craft_activity.active
+        or not craft_activity.app_enabled
+    ):
+        raise ValueError(
+            "Das ausgewählte Gewerk ist "
+            "global deaktiviert."
+        )
+
 
     if (
         not task_template.active
@@ -798,6 +832,15 @@ def create_safety_inspection_job(
 
     db.session.add(job)
     db.session.flush()
+    if job.assigned_user is not None:
+        enqueue_safety_inspection_push(
+            job,
+            (
+                PushEventType
+                .NEW_SAFETY_INSPECTION
+            ),
+        )
+
     return job, True
 
 
@@ -932,6 +975,27 @@ def complete_safety_inspection_job(
         )
     )
     db.session.flush()
+    from .safety_inspection_document import (
+        create_safety_inspection_protocol,
+    )
+
+    create_safety_inspection_protocol(
+        job,
+        user,
+    )
+
+    if any(
+            result.state
+            == (
+                    SafetyInspectionResultState
+                            .DEFECT_URGENT.value
+            )
+            for result in job.results
+    ):
+        enqueue_urgent_safety_defect_push(
+            job
+        )
+
     return defects
 
 

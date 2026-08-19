@@ -1,0 +1,61 @@
+<div class="d-flex flex-wrap gap-2 mb-4">
+  <a
+    class="btn btn-sm {% if request.endpoint == 'safety_inspection_admin.dashboard' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+    href="{{ url_for(
+      'safety_inspection_admin.dashboard'
+    ) }}"
+  >
+    Übersicht
+  </a>
+
+<a
+  class="btn btn-sm {% if request.endpoint in [
+    'safety_inspection_jobs_admin.jobs',
+    'safety_inspection_jobs_admin.job_detail'
+  ] %}btn-primary{% else %}btn-outline-primary{% endif %}"
+  href="{{ url_for('safety_inspection_jobs_admin.jobs') }}"
+>
+  Prüfaufträge
+</a>
+
+<a
+  class="btn btn-sm {% if request.endpoint ==
+    'safety_inspection_jobs_admin.defects'
+  %}btn-primary{% else %}btn-outline-primary{% endif %}"
+  href="{{ url_for('safety_inspection_jobs_admin.defects') }}"
+>
+  Mängel
+</a>
+
+  {% if
+    current_user.is_admin
+    or current_user.can_manage_safety_inspections
+  %}
+  <a
+    class="btn btn-sm {% if request.endpoint in ['safety_inspection_admin.templates', 'safety_inspection_admin.template_new', 'safety_inspection_admin.template_edit'] %}btn-primary{% else %}btn-outline-primary{% endif %}"
+    href="{{ url_for(
+      'safety_inspection_admin.templates'
+    ) }}"
+  >
+    Prüfdetailpläne
+  </a>
+
+  <a
+    class="btn btn-sm {% if request.endpoint in ['safety_inspection_admin.schedules', 'safety_inspection_admin.schedule_update'] %}btn-primary{% else %}btn-outline-primary{% endif %}"
+    href="{{ url_for(
+      'safety_inspection_admin.schedules'
+    ) }}"
+  >
+    Prüfzeitpläne
+  </a>
+
+  <a
+    class="btn btn-sm {% if request.endpoint in ['safety_inspection_admin.groups', 'safety_inspection_admin.group_new', 'safety_inspection_admin.group_edit'] %}btn-primary{% else %}btn-outline-primary{% endif %}"
+    href="{{ url_for(
+      'safety_inspection_admin.groups'
+    ) }}"
+  >
+    Prüfgruppen
+  </a>
+  {% endif %}
+</div>

@@ -97,6 +97,64 @@ def offer_required(view: F) -> F:
     return wrapped
 
 
+def safety_inspection_manage_required(
+    view: F,
+) -> F:
+    @wraps(view)
+    def wrapped(
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if not current_user.is_authenticated:
+            return redirect(
+                url_for(
+                    "auth.login",
+                    next=request.full_path,
+                )
+            )
+
+        if not (
+            current_user.is_admin
+            or current_user
+            .can_manage_safety_inspections
+        ):
+            abort(403)
+
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def safety_inspection_review_required(
+    view: F,
+) -> F:
+    @wraps(view)
+    def wrapped(
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if not current_user.is_authenticated:
+            return redirect(
+                url_for(
+                    "auth.login",
+                    next=request.full_path,
+                )
+            )
+
+        if not (
+            current_user.is_admin
+            or current_user
+            .can_manage_safety_inspections
+            or current_user
+            .can_review_safety_inspections
+        ):
+            abort(403)
+
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login() -> Any:
     if current_user.is_authenticated:

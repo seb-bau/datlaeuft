@@ -1,0 +1,618 @@
+{% extends "base.html" %}
+{% block title %}Prüfzeitpläne{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">
+    Prüfzeitpläne
+  </h1>
+</div>
+
+{% include "admin/_safety_inspection_nav.html" %}
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header">
+    Prüfzeitplan anlegen
+  </div>
+
+  <form method="post" data-generation-form>
+    <input
+      type="hidden"
+      name="csrf_token"
+      value="{{ csrf_token() }}"
+    >
+
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">
+            Bezeichnung
+          </label>
+          <input
+            class="form-control"
+            name="name"
+            value="{{ request.form.get(
+              'name',
+              ''
+            ) }}"
+            required
+          >
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">
+            Turnus
+          </label>
+          <select
+            class="form-select"
+            name="frequency"
+            required
+          >
+            {% for value, label
+              in frequency_labels.items()
+            %}
+            <option
+              value="{{ value }}"
+              {% if request.form.get(
+                'frequency',
+                'monthly'
+              ) == value %}
+              selected
+              {% endif %}
+            >
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">
+            Alle
+          </label>
+          <div class="input-group">
+            <input
+              class="form-control"
+              type="number"
+              min="1"
+              name="interval_value"
+              value="{{ request.form.get(
+                'interval_value',
+                '1'
+              ) }}"
+              required
+            >
+            <span class="input-group-text">
+              Turnus
+            </span>
+          </div>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">
+            Erzeugung
+          </label>
+          <select
+            class="form-select generation-mode"
+            name="generation_mode"
+            required
+          >
+            {% for value, label
+              in generation_mode_labels.items()
+            %}
+            <option
+              value="{{ value }}"
+              {% if request.form.get(
+                'generation_mode',
+                'previous_month_day'
+              ) == value %}
+              selected
+              {% endif %}
+            >
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-2 generation-lead-field">
+          <label class="form-label">
+            Vorlauf in Tagen
+          </label>
+          <input
+            class="form-control"
+            type="number"
+            min="0"
+            name="generation_lead_days"
+            value="{{ request.form.get(
+              'generation_lead_days',
+              '7'
+            ) }}"
+          >
+        </div>
+
+        <div class="col-md-2 generation-day-field">
+          <label class="form-label">
+            Tag des Vormonats
+          </label>
+          <input
+            class="form-control"
+            type="number"
+            min="1"
+            max="31"
+            name="generation_day_of_month"
+            value="{{ request.form.get(
+              'generation_day_of_month',
+              '24'
+            ) }}"
+          >
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">
+            Prüfbeginn-Versatz
+          </label>
+          <input
+            class="form-control"
+            type="number"
+            name="due_start_offset_days"
+            value="{{ request.form.get(
+              'due_start_offset_days',
+              '0'
+            ) }}"
+          >
+          <div class="form-text">
+            Tage ab Periodenbeginn
+          </div>
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">
+            Prüfende-Versatz
+          </label>
+          <input
+            class="form-control"
+            type="number"
+            name="due_end_offset_days"
+            value="{{ request.form.get(
+              'due_end_offset_days',
+              '0'
+            ) }}"
+          >
+          <div class="form-text">
+            Tage ab Periodenende
+          </div>
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">
+            Vorwarnung
+          </label>
+          <div class="input-group">
+            <input
+              class="form-control"
+              type="number"
+              min="0"
+              name="warning_days"
+              value="{{ request.form.get(
+                'warning_days',
+                '7'
+              ) }}"
+            >
+            <span class="input-group-text">
+              Tage
+            </span>
+          </div>
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">
+            Nachfrist
+          </label>
+          <div class="input-group">
+            <input
+              class="form-control"
+              type="number"
+              min="0"
+              name="grace_days"
+              value="{{ request.form.get(
+                'grace_days',
+                '0'
+              ) }}"
+            >
+            <span class="input-group-text">
+              Tage
+            </span>
+          </div>
+        </div>
+
+        <div class="col-md-2 d-flex align-items-end">
+          <div class="form-check mb-2">
+            <input
+              class="form-check-input"
+              id="newScheduleActive"
+              type="checkbox"
+              name="active"
+              checked
+            >
+            <label
+              class="form-check-label"
+              for="newScheduleActive"
+            >
+              Aktiv
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card-footer text-end">
+      <button
+        class="btn btn-primary"
+        type="submit"
+      >
+        Prüfzeitplan anlegen
+      </button>
+    </div>
+  </form>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header">
+    Vorhandene Prüfzeitpläne
+  </div>
+
+  <div class="card-body">
+    <table class="table table-sm table-striped datatable">
+      <thead>
+        <tr>
+          <th>Bezeichnung</th>
+          <th>Turnus</th>
+          <th>Erzeugung</th>
+          <th>Prüfzeitraum</th>
+          <th>Nachfrist</th>
+          <th>Aktiv</th>
+          <th data-filter="false">Aktionen</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.name }}</td>
+          <td>
+            Alle {{ item.interval_value }}
+            ·
+            {{ frequency_labels.get(
+              item.frequency,
+              item.frequency
+            ) }}
+          </td>
+          <td>
+            {% if
+              item.generation_mode
+              == 'previous_month_day'
+            %}
+            Am
+            {{ item.generation_day_of_month }}.
+            des Vormonats
+            {% else %}
+            {{ item.generation_lead_days }}
+            Tage vorher
+            {% endif %}
+          </td>
+          <td>
+            {{ item.due_start_offset_days }}
+            Tage ab Beginn bis
+            {{ item.due_end_offset_days }}
+            Tage ab Ende
+          </td>
+          <td>
+            {{ item.grace_days }} Tage
+          </td>
+          <td>
+            {{ "Ja" if item.active else "Nein" }}
+          </td>
+          <td class="text-end">
+            <button
+              class="btn btn-sm btn-outline-primary"
+              type="button"
+              data-bs-toggle="modal"
+              data-bs-target="#scheduleModal{{ item.id }}"
+            >
+              Bearbeiten
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not items %}
+    <div class="text-center text-muted py-4">
+      Noch keine Prüfzeitpläne vorhanden.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% for item in items %}
+<div
+  class="modal fade"
+  id="scheduleModal{{ item.id }}"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <form
+        method="post"
+        action="{{ url_for(
+          'safety_inspection_admin.schedule_update',
+          schedule_id=item.id
+        ) }}"
+        data-generation-form
+      >
+        <input
+          type="hidden"
+          name="csrf_token"
+          value="{{ csrf_token() }}"
+        >
+
+        <div class="modal-header">
+          <h2 class="modal-title fs-5">
+            {{ item.name }}
+          </h2>
+          <button
+            class="btn-close"
+            type="button"
+            data-bs-dismiss="modal"
+            aria-label="Schließen"
+          ></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">
+                Bezeichnung
+              </label>
+              <input
+                class="form-control"
+                name="name"
+                value="{{ item.name }}"
+                required
+              >
+            </div>
+
+            <div class="col-md-2">
+              <label class="form-label">
+                Turnus
+              </label>
+              <select
+                class="form-select"
+                name="frequency"
+                required
+              >
+                {% for value, label
+                  in frequency_labels.items()
+                %}
+                <option
+                  value="{{ value }}"
+                  {% if item.frequency == value %}
+                  selected
+                  {% endif %}
+                >
+                  {{ label }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-2">
+              <label class="form-label">
+                Intervall
+              </label>
+              <input
+                class="form-control"
+                type="number"
+                min="1"
+                name="interval_value"
+                value="{{ item.interval_value }}"
+                required
+              >
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label">
+                Erzeugung
+              </label>
+              <select
+                class="form-select generation-mode"
+                name="generation_mode"
+                required
+              >
+                {% for value, label
+                  in generation_mode_labels.items()
+                %}
+                <option
+                  value="{{ value }}"
+                  {% if
+                    item.generation_mode
+                    == value
+                  %}
+                  selected
+                  {% endif %}
+                >
+                  {{ label }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-2 generation-lead-field">
+              <label class="form-label">
+                Vorlauf in Tagen
+              </label>
+              <input
+                class="form-control"
+                type="number"
+                min="0"
+                name="generation_lead_days"
+                value="{{ item.generation_lead_days }}"
+              >
+            </div>
+
+            <div class="col-md-2 generation-day-field">
+              <label class="form-label">
+                Tag des Vormonats
+              </label>
+              <input
+                class="form-control"
+                type="number"
+                min="1"
+                max="31"
+                name="generation_day_of_month"
+                value="{{ item.generation_day_of_month or '' }}"
+              >
+            </div>
+
+            <div class="col-md-2">
+              <label class="form-label">
+                Prüfbeginn-Versatz
+              </label>
+              <input
+                class="form-control"
+                type="number"
+                name="due_start_offset_days"
+                value="{{ item.due_start_offset_days }}"
+              >
+            </div>
+
+            <div class="col-md-2">
+              <label class="form-label">
+                Prüfende-Versatz
+              </label>
+              <input
+                class="form-control"
+                type="number"
+                name="due_end_offset_days"
+                value="{{ item.due_end_offset_days }}"
+              >
+            </div>
+
+            <div class="col-md-2">
+              <label class="form-label">
+                Vorwarnung
+              </label>
+              <input
+                class="form-control"
+                type="number"
+                min="0"
+                name="warning_days"
+                value="{{ item.warning_days }}"
+              >
+            </div>
+
+            <div class="col-md-2">
+              <label class="form-label">
+                Nachfrist
+              </label>
+              <input
+                class="form-control"
+                type="number"
+                min="0"
+                name="grace_days"
+                value="{{ item.grace_days }}"
+              >
+            </div>
+
+            <div class="col-md-2 d-flex align-items-end">
+              <div class="form-check mb-2">
+                <input
+                  class="form-check-input"
+                  id="scheduleActive{{ item.id }}"
+                  type="checkbox"
+                  name="active"
+                  {% if item.active %}checked{% endif %}
+                >
+                <label
+                  class="form-check-label"
+                  for="scheduleActive{{ item.id }}"
+                >
+                  Aktiv
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button
+            class="btn btn-outline-secondary"
+            type="button"
+            data-bs-dismiss="modal"
+          >
+            Abbrechen
+          </button>
+          <button
+            class="btn btn-primary"
+            type="submit"
+          >
+            Speichern
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<script>
+function updateGenerationFields(form) {
+  const mode =
+    form
+      .querySelector(".generation-mode")
+      .value;
+
+  form
+    .querySelectorAll(
+      ".generation-lead-field"
+    )
+    .forEach((field) => {
+      field.classList.toggle(
+        "d-none",
+        mode !== "lead_days"
+      );
+    });
+
+  form
+    .querySelectorAll(
+      ".generation-day-field"
+    )
+    .forEach((field) => {
+      field.classList.toggle(
+        "d-none",
+        mode !== "previous_month_day"
+      );
+    });
+}
+
+document
+  .querySelectorAll(
+    "[data-generation-form]"
+  )
+  .forEach((form) => {
+    const select =
+      form.querySelector(
+        ".generation-mode"
+      );
+
+    select.addEventListener(
+      "change",
+      () => updateGenerationFields(form)
+    );
+
+    updateGenerationFields(form);
+  });
+</script>
+{% endblock %}

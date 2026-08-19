@@ -308,13 +308,11 @@ class SafetyInspectionPhotoSource(
     WEB = "web"
 
 
-class SafetyInspectionAssignmentSource(
-    str,
-    Enum,
-):
+class SafetyInspectionAssignmentSource(str, Enum):
     JURISDICTION = "jurisdiction"
     FALLBACK = "fallback"
     UNASSIGNED = "unassigned"
+    MANUAL = "manual"
 
 
 def utc_now() -> datetime:

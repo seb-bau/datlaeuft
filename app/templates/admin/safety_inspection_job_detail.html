@@ -1,0 +1,805 @@
+{% extends "base.html" %}
+{% block title %}Prüfauftrag{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">
+      Prüfauftrag {{ item.group.name }}
+    </h1>
+    <div class="text-muted">
+      {{ item.object_address or 'Ohne Adresse' }}
+      {% if item.object_location %}
+      · {{ item.object_location }}
+      {% endif %}
+    </div>
+  </div>
+
+  <span class="badge fs-6 {% if item.is_overdue %}text-bg-danger{% elif item.status in ['completed', 'completed_with_defects'] %}text-bg-success{% elif item.status == 'in_progress' %}text-bg-primary{% elif item.status in ['missed', 'canceled'] %}text-bg-secondary{% else %}text-bg-warning{% endif %}">
+    {{ status_labels.get(item.status, item.status) }}
+  </span>
+</div>
+
+{% include "admin/_safety_inspection_nav.html" %}
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-8">
+    <div class="card shadow-sm h-100">
+      <div class="card-header">Prüfung</div>
+
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Prüfgruppe</dt>
+          <dd class="col-sm-8">{{ item.group.name }}</dd>
+
+          <dt class="col-sm-4">Prüfdetailplan</dt>
+          <dd class="col-sm-8">
+            {{ item.template_version.template.name }}
+            · Version
+            {{ item.template_version.version_number }}
+          </dd>
+
+          <dt class="col-sm-4">Prüfperiode</dt>
+          <dd class="col-sm-8">
+            {{ item.period_start.strftime('%d.%m.%Y') }}
+            bis
+            {{ item.period_end.strftime('%d.%m.%Y') }}
+          </dd>
+
+          <dt class="col-sm-4">Auszuführen</dt>
+          <dd class="col-sm-8">
+            {{ item.due_from.strftime('%d.%m.%Y') }}
+            bis
+            {{ item.due_to.strftime('%d.%m.%Y') }}
+          </dd>
+
+          <dt class="col-sm-4">Ablaufdatum</dt>
+          <dd class="col-sm-8">
+            {{ item.missed_on.strftime('%d.%m.%Y') }}
+          </dd>
+
+          <dt class="col-sm-4">Abteilung</dt>
+          <dd class="col-sm-8">
+            {{ item.department.name }}
+          </dd>
+
+          <dt class="col-sm-4">Handwerker</dt>
+          <dd class="col-sm-8">
+            {% if item.assigned_user %}
+            {{ item.assigned_user.display_name }}
+            {% else %}
+            <span class="text-danger">
+              Nicht zugeordnet
+            </span>
+            {% endif %}
+
+            <div class="small text-muted">
+              {{ assignment_source_labels.get(
+                item.assignment_source,
+                item.assignment_source
+              ) }}
+            </div>
+
+            {% if item.assignment_error %}
+            <div class="small text-danger">
+              {{ item.assignment_error }}
+            </div>
+            {% endif %}
+          </dd>
+
+          {% if item.started_at %}
+          <dt class="col-sm-4">Begonnen</dt>
+          <dd class="col-sm-8">
+            {{ item.started_at.strftime('%d.%m.%Y %H:%M') }}
+          </dd>
+          {% endif %}
+
+          {% if item.completed_at %}
+          <dt class="col-sm-4">Abgeschlossen</dt>
+          <dd class="col-sm-8">
+            {{ item.completed_at.strftime('%d.%m.%Y %H:%M') }}
+            {% if item.completed_by %}
+            durch {{ item.completed_by.display_name }}
+            {% endif %}
+          </dd>
+          {% endif %}
+
+          {% if item.overall_note %}
+          <dt class="col-sm-4">Gesamthinweis</dt>
+          <dd
+            class="col-sm-8"
+            style="white-space: pre-wrap"
+          >
+            {{ item.overall_note }}
+          </dd>
+          {% endif %}
+
+          {% if item.cancellation_reason %}
+          <dt class="col-sm-4">Abbruchgrund</dt>
+          <dd class="col-sm-8 text-danger">
+            {{ item.cancellation_reason }}
+          </dd>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header">Objekt</div>
+
+      <div class="card-body">
+        <dl class="mb-0">
+          <dt>Ebene</dt>
+          <dd>
+            {{ object_level_labels.get(
+              item.object_level,
+              item.object_level
+            ) }}
+          </dd>
+
+          <dt>Adresse</dt>
+          <dd>
+            {{ item.object_address or '–' }}
+            {% if item.object_location %}
+            <br>{{ item.object_location }}
+            {% endif %}
+          </dd>
+
+          <dt>Wirtschaftseinheit</dt>
+          <dd>
+            {{ item.economic_unit_idnum or '–' }}
+            {% if item.economic_unit_name %}
+            · {{ item.economic_unit_name }}
+            {% endif %}
+          </dd>
+
+          <dt>Gebäude</dt>
+          <dd>{{ item.building_idnum or '–' }}</dd>
+
+          <dt>Nutzungseinheit</dt>
+          <dd>{{ item.use_unit_idnum or '–' }}</dd>
+
+          <dt>Buchwerk</dt>
+          <dd>{{ item.company_code_code or '–' }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if not item.is_terminal %}
+<div class="row g-3 mb-4">
+  {% if current_user.is_admin or
+        current_user.can_manage_safety_inspections %}
+  <div class="col-lg-6">
+    <form
+      method="post"
+      action="{{ url_for(
+        'safety_inspection_jobs_admin.job_assign',
+        job_id=item.id
+      ) }}"
+      class="card shadow-sm h-100"
+    >
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+
+      <div class="card-header">
+        Zuständigkeit korrigieren
+      </div>
+
+      <div class="card-body">
+        <label class="form-label">Handwerker</label>
+        <select
+          class="form-select"
+          name="user_id"
+          required
+        >
+          <option value="">Bitte auswählen</option>
+
+          {% for user in craftsmen %}
+          <option
+            value="{{ user.id }}"
+            {% if item.assigned_user_id == user.id %}selected{% endif %}
+          >
+            {{ user.display_name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="card-footer text-end">
+        <button class="btn btn-primary" type="submit">
+          Neu zuweisen
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="col-lg-6">
+    <form
+      method="post"
+      action="{{ url_for(
+        'safety_inspection_jobs_admin.job_cancel',
+        job_id=item.id
+      ) }}"
+      class="card border-danger shadow-sm h-100"
+    >
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+
+      <div class="card-header text-danger">
+        Prüfauftrag abbrechen
+      </div>
+
+      <div class="card-body">
+        <label class="form-label">Begründung</label>
+        <textarea
+          class="form-control"
+          name="reason"
+          rows="3"
+          required
+        ></textarea>
+      </div>
+
+      <div class="card-footer text-end">
+        <button
+          class="btn btn-outline-danger"
+          type="submit"
+        >
+          Prüfauftrag abbrechen
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Prüfergebnisse</span>
+    <span class="badge text-bg-secondary">
+      {{ item.results|length }} Prüfpunkte
+    </span>
+  </div>
+
+  <div class="card-body">
+    <table class="table table-sm align-middle datatable">
+      <thead>
+        <tr>
+          <th>Nr.</th>
+          <th>Prüfpunkt</th>
+          <th>Ergebnis</th>
+          <th>Feststellung</th>
+          <th>Sofortmaßnahme</th>
+          <th>Fotos</th>
+          <th>Bearbeitet</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for result in item.results %}
+        <tr class="{% if result.state == 'defect_urgent' %}table-danger{% elif result.state == 'defect_info' %}table-warning{% endif %}">
+          <td data-order="{{ result.position_index }}">
+            {{ result.position_index + 1 }}
+          </td>
+
+          <td>
+            <div class="fw-semibold">
+              {{ result.item_title }}
+            </div>
+
+            {% if result.item_description %}
+            <div class="small text-muted">
+              {{ result.item_description }}
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            <span class="badge {% if result.state == 'no_defect' %}text-bg-success{% elif result.state == 'defect_urgent' %}text-bg-danger{% elif result.state == 'defect_info' %}text-bg-warning{% elif result.state == 'not_present' %}text-bg-secondary{% else %}text-bg-light text-dark{% endif %}">
+              {{ result_state_labels.get(
+                result.state,
+                result.state
+              ) }}
+            </span>
+          </td>
+
+          <td style="white-space: pre-wrap">
+            {{ result.note or '–' }}
+          </td>
+
+          <td style="white-space: pre-wrap">
+            {{ result.immediate_action or '–' }}
+          </td>
+
+          <td>
+            {{ result.photos
+               |selectattr('active', 'equalto', true)
+               |list
+               |length }}
+          </td>
+
+          <td data-order="{{ result.checked_at.isoformat() if result.checked_at else '' }}">
+            {% if result.checked_at %}
+            {{ result.checked_at.strftime('%d.%m.%Y %H:%M') }}
+
+            {% if result.checked_by %}
+            <div class="small text-muted">
+              {{ result.checked_by.display_name }}
+            </div>
+            {% endif %}
+            {% else %}
+            –
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Mängel</span>
+    <span class="badge text-bg-secondary">
+      {{ item.defects|length }}
+    </span>
+  </div>
+
+  <div class="card-body">
+    {% for defect in item.defects %}
+    <div class="border rounded p-3 mb-3 {% if defect.severity == 'defect_urgent' and defect.status not in ['resolved', 'dismissed'] %}border-danger bg-danger-subtle{% elif defect.status == 'review_required' %}border-warning bg-warning-subtle{% endif %}">
+      <div class="d-flex flex-wrap justify-content-between gap-2 mb-2">
+        <div>
+          <span class="badge {% if defect.severity == 'defect_urgent' %}text-bg-danger{% else %}text-bg-warning{% endif %}">
+            {{ result_state_labels.get(
+              defect.severity,
+              defect.severity
+            ) }}
+          </span>
+
+          <span class="badge text-bg-secondary">
+            {{ defect_status_labels.get(
+              defect.status,
+              defect.status
+            ) }}
+          </span>
+        </div>
+
+        <div class="small text-muted">
+          {{ defect.created_at.strftime('%d.%m.%Y %H:%M') }}
+        </div>
+      </div>
+
+      <h3 class="h6">
+        {{ defect.result.item_title }}
+      </h3>
+
+      <div style="white-space: pre-wrap">
+        {{ defect.description }}
+      </div>
+
+      {% if defect.immediate_action %}
+      <div class="mt-2">
+        <strong>Sofortmaßnahme:</strong>
+        {{ defect.immediate_action }}
+      </div>
+      {% endif %}
+
+      {% if defect.review_note %}
+      <div class="mt-2">
+        <strong>Prüfvermerk:</strong>
+        {{ defect.review_note }}
+      </div>
+      {% endif %}
+
+      {% if defect.commission_links %}
+      <div class="mt-3">
+        <strong>Instandhaltungsauftrag:</strong>
+
+        {% for link in defect.commission_links %}
+        <span class="ms-2">
+          {% if current_user.is_admin or
+                current_user.is_foreman %}
+          <a href="{{ url_for(
+            'admin.commission_detail',
+            commission_id=link.commission.id
+          ) }}">
+            {{ link.commission.erp_idnum or
+               'Lokal #' ~ link.commission.id }}
+          </a>
+          {% else %}
+          {{ link.commission.erp_idnum or
+             'Lokal #' ~ link.commission.id }}
+          {% endif %}
+
+          ·
+          {{ commission_status_labels.get(
+            link.commission.local_status,
+            link.commission.local_status
+          ) }}
+        </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        {% if not defect.commission_links and
+              defect.status not in ['resolved', 'dismissed'] %}
+        <form
+          method="post"
+          action="{{ url_for(
+            'safety_inspection_jobs_admin.defect_commission',
+            defect_id=defect.id
+          ) }}"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <button
+            class="btn btn-sm btn-primary"
+            type="submit"
+          >
+            Instandhaltungsauftrag erstellen
+          </button>
+        </form>
+        {% endif %}
+
+        {% if defect.status not in ['resolved', 'dismissed'] %}
+        <button
+          class="btn btn-sm btn-outline-danger"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#dismissDefect{{ defect.id }}"
+        >
+          Mangel verwerfen
+        </button>
+        {% elif defect.status == 'dismissed' %}
+        <form
+          method="post"
+          action="{{ url_for(
+            'safety_inspection_jobs_admin.defect_reopen',
+            defect_id=defect.id
+          ) }}"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <button
+            class="btn btn-sm btn-outline-primary"
+            type="submit"
+          >
+            Wieder öffnen
+          </button>
+        </form>
+        {% endif %}
+      </div>
+
+      {% if defect.status not in ['resolved', 'dismissed'] %}
+      <div
+        id="dismissDefect{{ defect.id }}"
+        class="collapse mt-3"
+      >
+        <form
+          method="post"
+          action="{{ url_for(
+            'safety_inspection_jobs_admin.defect_dismiss',
+            defect_id=defect.id
+          ) }}"
+          class="row g-2 align-items-end"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <div class="col-md-9">
+            <label class="form-label">Begründung</label>
+            <input
+              class="form-control"
+              name="reason"
+              required
+            >
+          </div>
+
+          <div class="col-md-3 text-md-end">
+            <button
+              class="btn btn-danger"
+              type="submit"
+            >
+              Verwerfen bestätigen
+            </button>
+          </div>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-4">
+      Für diese Prüfung wurden keine Mängel erfasst.
+    </div>
+    {% endfor %}
+  </div>
+</div>
+<div class="card mt-4">
+    <div
+        class="
+            card-header
+            d-flex
+            justify-content-between
+            align-items-center
+        "
+    >
+        <strong>Prüfprotokolle</strong>
+
+        {% if job.status in [
+            "completed",
+            "completed_with_defects"
+        ] %}
+            <span class="badge text-bg-secondary">
+                {{ job.protocols|length }}
+                Version(en)
+            </span>
+        {% endif %}
+    </div>
+
+    <div class="card-body">
+        {% if job.protocols %}
+            <div class="table-responsive">
+                <table
+                    class="
+                        table
+                        table-sm
+                        align-middle
+                    "
+                >
+                    <thead>
+                        <tr>
+                            <th>Version</th>
+                            <th>Erstellt</th>
+                            <th>Korrekturgrund</th>
+                            <th>d.velop</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {% for protocol in
+                            job.protocols|reverse
+                        %}
+                            <tr>
+                                <td>
+                                    {{ protocol.version_number }}
+                                </td>
+
+                                <td>
+                                    {{
+                                        protocol.created_at
+                                        .strftime(
+                                            "%d.%m.%Y %H:%M"
+                                        )
+                                    }}
+                                    {% if protocol.created_by %}
+                                        <br>
+                                        <small
+                                            class="text-muted"
+                                        >
+                                            {{
+                                                protocol
+                                                .created_by
+                                                .display_name
+                                            }}
+                                        </small>
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    {{
+                                        protocol
+                                        .correction_reason
+                                        or "-"
+                                    }}
+                                </td>
+
+                                <td>
+                                    {% if
+                                        protocol
+                                        .dms_archive_status
+                                        == "archived"
+                                    %}
+                                        <span
+                                            class="
+                                                badge
+                                                text-bg-success
+                                            "
+                                        >
+                                            Archiviert
+                                        </span>
+
+                                    {% elif
+                                        protocol
+                                        .dms_archive_status
+                                        == "failed"
+                                    %}
+                                        <span
+                                            class="
+                                                badge
+                                                text-bg-danger
+                                            "
+                                        >
+                                            Fehler
+                                        </span>
+
+                                    {% else %}
+                                        <span
+                                            class="
+                                                badge
+                                                text-bg-secondary
+                                            "
+                                        >
+                                            Ausstehend
+                                        </span>
+                                    {% endif %}
+
+                                    {% if
+                                        protocol.dms_archive_error
+                                    %}
+                                        <div
+                                            class="
+                                                small
+                                                text-danger
+                                                mt-1
+                                            "
+                                        >
+                                            {{
+                                                protocol
+                                                .dms_archive_error
+                                            }}
+                                        </div>
+                                    {% endif %}
+                                </td>
+
+                                <td class="text-end">
+                                    <a
+                                        class="
+                                            btn
+                                            btn-sm
+                                            btn-outline-primary
+                                        "
+                                        href="{{
+                                            url_for(
+                                                'safety_inspection_protocol_admin.protocol_document',
+                                                job_id=job.id,
+                                                protocol_id=protocol.id
+                                            )
+                                        }}"
+                                        target="_blank"
+                                    >
+                                        PDF
+                                    </a>
+
+                                    {% if
+                                        protocol
+                                        .dms_archive_status
+                                        != "archived"
+                                    %}
+                                        <form
+                                            method="post"
+                                            action="{{
+                                                url_for(
+                                                    'safety_inspection_protocol_admin.protocol_archive',
+                                                    job_id=job.id,
+                                                    protocol_id=protocol.id
+                                                )
+                                            }}"
+                                            class="d-inline"
+                                        >
+                                            <input
+                                                type="hidden"
+                                                name="csrf_token"
+                                                value="{{
+                                                    csrf_token()
+                                                }}"
+                                            >
+
+                                            <button
+                                                type="submit"
+                                                class="
+                                                    btn
+                                                    btn-sm
+                                                    btn-outline-secondary
+                                                "
+                                            >
+                                                Archivieren
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="text-muted mb-3">
+                Für diese Prüfung wurde noch kein
+                Protokoll erstellt.
+            </p>
+        {% endif %}
+
+        {% if job.status in [
+            "completed",
+            "completed_with_defects"
+        ] %}
+            <form
+                method="post"
+                action="{{
+                    url_for(
+                        'safety_inspection_protocol_admin.protocol_create',
+                        job_id=job.id
+                    )
+                }}"
+                class="row g-2 align-items-end"
+            >
+                <input
+                    type="hidden"
+                    name="csrf_token"
+                    value="{{ csrf_token() }}"
+                >
+
+                {% if job.protocols %}
+                    <div class="col-md-8">
+                        <label
+                            for="correction_reason"
+                            class="form-label"
+                        >
+                            Korrekturgrund
+                        </label>
+
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="correction_reason"
+                            name="correction_reason"
+                            required
+                        >
+                    </div>
+                {% endif %}
+
+                <div class="col-auto">
+                    <button
+                        type="submit"
+                        class="
+                            btn
+                            btn-outline-primary
+                        "
+                    >
+                        {% if job.protocols %}
+                            Neue Protokollversion
+                        {% else %}
+                            Protokoll erstellen
+                        {% endif %}
+                    </button>
+                </div>
+            </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

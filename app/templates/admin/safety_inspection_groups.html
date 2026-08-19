@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Prüfgruppen{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">
+    Prüfgruppen
+  </h1>
+
+  <a
+    class="btn btn-primary"
+    href="{{ url_for(
+      'safety_inspection_admin.group_new'
+    ) }}"
+  >
+    Prüfgruppe anlegen
+  </a>
+</div>
+
+{% include "admin/_safety_inspection_nav.html" %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <table class="table table-sm table-striped datatable">
+      <thead>
+        <tr>
+          <th>Bezeichnung</th>
+          <th>Prüfdetailplan</th>
+          <th>Prüfzeitplan</th>
+          <th>Ebene</th>
+          <th>Abteilung</th>
+          <th>Objekte</th>
+          <th>Letzte Erzeugung</th>
+          <th>Aktiv</th>
+          <th data-filter="false">Aktionen</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for item in items %}
+        {% set included_targets =
+          item.targets
+          | selectattr(
+            'included',
+            'equalto',
+            true
+          )
+          | list
+        %}
+        {% set excluded_targets =
+          item.targets
+          | selectattr(
+            'included',
+            'equalto',
+            false
+          )
+          | list
+        %}
+
+        <tr
+          class="{% if item.last_generation_error %}table-warning{% endif %}"
+        >
+          <td>
+            <div class="fw-semibold">
+              {{ item.name }}
+            </div>
+
+            {% if item.description %}
+            <div class="small text-muted">
+              {{ item.description }}
+            </div>
+            {% endif %}
+
+            {% if item.last_generation_error %}
+            <div class="small text-danger">
+              {{ item.last_generation_error }}
+            </div>
+            {% endif %}
+          </td>
+
+          <td>{{ item.template.name }}</td>
+          <td>{{ item.schedule.name }}</td>
+
+          <td>
+            {{ object_level_labels.get(
+              item.object_level,
+              item.object_level
+            ) }}
+          </td>
+
+          <td>
+            {{ item.department.name }}
+          </td>
+
+          <td>
+            {{ included_targets|length }}
+            eingeschlossen
+            {% if excluded_targets %}
+            · {{ excluded_targets|length }}
+            ausgeschlossen
+            {% endif %}
+          </td>
+
+          <td
+            data-order="{{ item.last_generation_at.isoformat() if item.last_generation_at else '' }}"
+          >
+            {{ item.last_generation_at.strftime(
+              '%d.%m.%Y %H:%M'
+            ) if item.last_generation_at else '–' }}
+          </td>
+
+          <td>
+            {{ "Ja" if item.active else "Nein" }}
+          </td>
+
+          <td class="text-end">
+            <a
+              class="btn btn-sm btn-outline-primary"
+              href="{{ url_for(
+                'safety_inspection_admin.group_edit',
+                group_id=item.id
+              ) }}"
+            >
+              Bearbeiten
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not items %}
+    <div class="text-center text-muted py-4">
+      Noch keine Prüfgruppen vorhanden.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -5646,6 +5646,14 @@ def save_user_form(item: User) -> None:
         "can_manage_offers"
         in request.form
     )
+    item.can_manage_safety_inspections = (
+        "can_manage_safety_inspections"
+        in request.form
+    )
+    item.can_review_safety_inspections = (
+        "can_review_safety_inspections"
+        in request.form
+    )
     item.is_active_flag = "is_active_flag" in request.form
     item.exclude_from_wowiport_sync = (
         "exclude_from_wowiport_sync"
