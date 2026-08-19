@@ -65,6 +65,15 @@ class ErpOutboxState(str, Enum):
 class PushEventType(str, Enum):
     NEW_COMMISSION = "new_commission"
     CHANGED_COMMISSION = "changed_commission"
+    NEW_SAFETY_INSPECTION = (
+        "new_safety_inspection"
+    )
+    CHANGED_SAFETY_INSPECTION = (
+        "changed_safety_inspection"
+    )
+    URGENT_SAFETY_DEFECT = (
+        "urgent_safety_defect"
+    )
     PING = "ping"
 
 
@@ -208,6 +217,106 @@ user_craft_activity = db.Table(
 )
 
 
+class SafetyInspectionTemplateVersionStatus(
+    str,
+    Enum,
+):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+
+class SafetyInspectionScheduleFrequency(
+    str,
+    Enum,
+):
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    YEARLY = "yearly"
+
+
+class SafetyInspectionGenerationMode(
+    str,
+    Enum,
+):
+    LEAD_DAYS = "lead_days"
+    PREVIOUS_MONTH_DAY = "previous_month_day"
+
+
+class SafetyInspectionObjectLevel(
+    str,
+    Enum,
+):
+    ECONOMIC_UNIT = "economic_unit"
+    BUILDING = "building"
+    USE_UNIT = "use_unit"
+
+
+class SafetyInspectionJobStatus(
+    str,
+    Enum,
+):
+    PLANNED = "planned"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    COMPLETED_WITH_DEFECTS = (
+        "completed_with_defects"
+    )
+    MISSED = "missed"
+    CANCELED = "canceled"
+
+
+class SafetyInspectionResultState(
+    str,
+    Enum,
+):
+    NOT_CHECKED = "not_checked"
+    NO_DEFECT = "no_defect"
+    NOT_PRESENT = "not_present"
+    DEFECT_INFO = "defect_info"
+    DEFECT_URGENT = "defect_urgent"
+
+
+class SafetyInspectionDefectStatus(
+    str,
+    Enum,
+):
+    OPEN = "open"
+    COMMISSION_CREATED = "commission_created"
+    IN_PROGRESS = "in_progress"
+    RESOLVED = "resolved"
+    REVIEW_REQUIRED = "review_required"
+    DISMISSED = "dismissed"
+
+
+class SafetyInspectionArchiveStatus(
+    str,
+    Enum,
+):
+    NOT_ARCHIVED = "not_archived"
+    FAILED = "failed"
+    ARCHIVED = "archived"
+
+
+class SafetyInspectionPhotoSource(
+    str,
+    Enum,
+):
+    CAMERA = "camera"
+    GALLERY = "gallery"
+    WEB = "web"
+
+
+class SafetyInspectionAssignmentSource(
+    str,
+    Enum,
+):
+    JURISDICTION = "jurisdiction"
+    FALLBACK = "fallback"
+    UNASSIGNED = "unassigned"
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -295,6 +404,30 @@ class User(UserMixin, db.Model):
         db.Boolean,
         default=False,
         server_default=false(),
+        nullable=False,
+    )
+    can_manage_safety_inspections: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    can_review_safety_inspections: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    push_safety_inspection_enabled: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
         nullable=False,
     )
     is_active_flag: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
@@ -664,6 +797,14 @@ class PushDelivery(db.Model):
         db.ForeignKey("commission.id"),
         index=True,
     )
+    safety_inspection_job_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_job.id"
+        ),
+        index=True,
+    )
     device_token: Mapped[str] = mapped_column(
         db.String(512),
         nullable=False,
@@ -718,6 +859,11 @@ class PushDelivery(db.Model):
         foreign_keys=[user_id],
     )
     commission: Mapped[Commission | None] = relationship(
+        back_populates="push_deliveries",
+    )
+    safety_inspection_job: Mapped[
+        "SafetyInspectionJob | None"
+    ] = relationship(
         back_populates="push_deliveries",
     )
 
@@ -2972,6 +3118,1708 @@ class OfferCraftFallback(db.Model):
     )
     updated_by: Mapped[User | None] = (
         relationship()
+    )
+
+
+class SafetyInspectionTemplate(db.Model):
+    __tablename__ = "safety_inspection_template"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+        index=True,
+    )
+    description: Mapped[str | None] = (
+        mapped_column(db.Text)
+    )
+    legal_reference: Mapped[str | None] = (
+        mapped_column(db.Text)
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+        )
+    )
+    updated_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            onupdate=utc_now,
+            nullable=False,
+        )
+    )
+
+    created_by: Mapped[User] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+    versions: Mapped[
+        list["SafetyInspectionTemplateVersion"]
+    ] = relationship(
+        back_populates="template",
+        order_by=(
+            "SafetyInspectionTemplateVersion."
+            "version_number"
+        ),
+    )
+    groups: Mapped[
+        list["SafetyInspectionGroup"]
+    ] = relationship(
+        back_populates="template"
+    )
+
+
+class SafetyInspectionTemplateVersion(db.Model):
+    __tablename__ = (
+        "safety_inspection_template_version"
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "template_id",
+            "version_number",
+            name=(
+                "uq_safety_inspection_template_"
+                "version"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    template_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_template.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    version_number: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+        )
+    )
+    status: Mapped[str] = mapped_column(
+        db.String(30),
+        default=(
+            SafetyInspectionTemplateVersionStatus
+            .DRAFT.value
+        ),
+        server_default=(
+            SafetyInspectionTemplateVersionStatus
+            .DRAFT.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    change_note: Mapped[str | None] = (
+        mapped_column(db.Text)
+    )
+    created_by_user_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    published_by_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+        )
+    )
+    published_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    template: Mapped[
+        SafetyInspectionTemplate
+    ] = relationship(
+        back_populates="versions"
+    )
+    created_by: Mapped[User] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+    published_by: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[published_by_user_id]
+    )
+    items: Mapped[
+        list["SafetyInspectionTemplateItem"]
+    ] = relationship(
+        back_populates="template_version",
+        cascade="all, delete-orphan",
+        order_by=(
+            "SafetyInspectionTemplateItem."
+            "position_index"
+        ),
+    )
+    jobs: Mapped[
+        list["SafetyInspectionJob"]
+    ] = relationship(
+        back_populates="template_version"
+    )
+
+
+class SafetyInspectionTemplateItem(db.Model):
+    __tablename__ = (
+        "safety_inspection_template_item"
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "template_version_id",
+            "position_index",
+            name=(
+                "uq_safety_inspection_template_"
+                "item_position"
+            ),
+        ),
+        UniqueConstraint(
+            "template_version_id",
+            "stable_key",
+            name=(
+                "uq_safety_inspection_template_"
+                "item_key"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    template_version_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_template_version.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    stable_key: Mapped[str] = mapped_column(
+        db.String(36),
+        default=lambda: str(uuid4()),
+        nullable=False,
+    )
+    position_index: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+        )
+    )
+    title: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+    )
+    description: Mapped[str | None] = (
+        mapped_column(db.Text)
+    )
+    help_text: Mapped[str | None] = (
+        mapped_column(db.Text)
+    )
+    required: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    allow_not_present: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    photo_required_no_defect: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    photo_required_not_present: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    photo_required_defect_info: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    photo_required_defect_urgent: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+
+    template_version: Mapped[
+        SafetyInspectionTemplateVersion
+    ] = relationship(
+        back_populates="items"
+    )
+
+
+class SafetyInspectionSchedule(db.Model):
+    __tablename__ = "safety_inspection_schedule"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    frequency: Mapped[str] = mapped_column(
+        db.String(30),
+        default=(
+            SafetyInspectionScheduleFrequency
+            .MONTHLY.value
+        ),
+        server_default=(
+            SafetyInspectionScheduleFrequency
+            .MONTHLY.value
+        ),
+        nullable=False,
+    )
+    interval_value: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            default=1,
+            server_default="1",
+            nullable=False,
+        )
+    )
+    generation_mode: Mapped[
+        str
+    ] = mapped_column(
+        db.String(40),
+        default=(
+            SafetyInspectionGenerationMode
+            .PREVIOUS_MONTH_DAY.value
+        ),
+        server_default=(
+            SafetyInspectionGenerationMode
+            .PREVIOUS_MONTH_DAY.value
+        ),
+        nullable=False,
+    )
+    generation_lead_days: Mapped[
+        int
+    ] = mapped_column(
+        db.Integer,
+        default=7,
+        server_default="7",
+        nullable=False,
+    )
+    generation_day_of_month: Mapped[
+        int | None
+    ] = mapped_column(db.Integer)
+    due_start_offset_days: Mapped[
+        int
+    ] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    due_end_offset_days: Mapped[
+        int
+    ] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    warning_days: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            default=7,
+            server_default="7",
+            nullable=False,
+        )
+    )
+    grace_days: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            default=0,
+            server_default="0",
+            nullable=False,
+        )
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+        )
+    )
+    updated_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            onupdate=utc_now,
+            nullable=False,
+        )
+    )
+
+    created_by: Mapped[User] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+    groups: Mapped[
+        list["SafetyInspectionGroup"]
+    ] = relationship(
+        back_populates="schedule"
+    )
+
+
+class SafetyInspectionGroup(db.Model):
+    __tablename__ = "safety_inspection_group"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    description: Mapped[str | None] = (
+        mapped_column(db.Text)
+    )
+    template_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_template.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    schedule_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_schedule.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    object_level: Mapped[str] = (
+        mapped_column(
+            db.String(30),
+            nullable=False,
+            index=True,
+        )
+    )
+    department_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey("wowi_department.id"),
+            nullable=False,
+            index=True,
+        )
+    )
+    fallback_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    corrective_commission_type_erp_id: Mapped[
+        int
+    ] = mapped_column(
+        db.Integer,
+        nullable=False,
+        index=True,
+    )
+    corrective_craft_activity_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey("craft_activity.id"),
+        nullable=False,
+        index=True,
+    )
+    corrective_task_template_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey(
+            "time_task_template.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    first_period_start: Mapped[
+        date
+    ] = mapped_column(
+        db.Date,
+        nullable=False,
+        index=True,
+    )
+    ends_on: Mapped[
+        date | None
+    ] = mapped_column(
+        db.Date,
+        index=True,
+    )
+    include_vacancies: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    automatic_archive: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    archive_original_photos: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    last_generation_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    last_generation_error: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    created_by_user_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+        )
+    )
+    updated_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            onupdate=utc_now,
+            nullable=False,
+        )
+    )
+
+    template: Mapped[
+        SafetyInspectionTemplate
+    ] = relationship(
+        back_populates="groups"
+    )
+    schedule: Mapped[
+        SafetyInspectionSchedule
+    ] = relationship(
+        back_populates="groups"
+    )
+    department: Mapped[
+        WowiDepartment
+    ] = relationship()
+    fallback_user: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[fallback_user_id]
+    )
+    corrective_craft_activity: Mapped[
+        CraftActivity
+    ] = relationship()
+    corrective_task_template: Mapped[
+        TimeTaskTemplate
+    ] = relationship()
+    created_by: Mapped[User] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+    targets: Mapped[
+        list["SafetyInspectionGroupTarget"]
+    ] = relationship(
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    jobs: Mapped[
+        list["SafetyInspectionJob"]
+    ] = relationship(
+        back_populates="group"
+    )
+
+
+class SafetyInspectionGroupTarget(db.Model):
+    __tablename__ = (
+        "safety_inspection_group_target"
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id",
+            "object_type",
+            "object_erp_id",
+            name=(
+                "uq_safety_inspection_group_"
+                "target"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    group_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_group.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    object_type: Mapped[str] = (
+        mapped_column(
+            db.String(30),
+            nullable=False,
+            index=True,
+        )
+    )
+    object_erp_id: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+            index=True,
+        )
+    )
+    object_label: Mapped[
+        str | None
+    ] = mapped_column(db.String(500))
+    included: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+
+    group: Mapped[
+        SafetyInspectionGroup
+    ] = relationship(
+        back_populates="targets"
+    )
+
+
+class SafetyInspectionJob(db.Model):
+    __tablename__ = "safety_inspection_job"
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id",
+            "object_level",
+            "object_erp_id",
+            "period_start",
+            name=(
+                "uq_safety_inspection_job_period"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    public_id: Mapped[str] = mapped_column(
+        db.String(36),
+        default=lambda: str(uuid4()),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    group_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_group.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    template_version_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_template_version.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        db.String(40),
+        default=(
+            SafetyInspectionJobStatus
+            .PLANNED.value
+        ),
+        server_default=(
+            SafetyInspectionJobStatus
+            .PLANNED.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    period_key: Mapped[str] = (
+        mapped_column(
+            db.String(80),
+            nullable=False,
+            index=True,
+        )
+    )
+    period_start: Mapped[date] = (
+        mapped_column(
+            db.Date,
+            nullable=False,
+            index=True,
+        )
+    )
+    period_end: Mapped[date] = (
+        mapped_column(
+            db.Date,
+            nullable=False,
+            index=True,
+        )
+    )
+    due_from: Mapped[date] = mapped_column(
+        db.Date,
+        nullable=False,
+        index=True,
+    )
+    due_to: Mapped[date] = mapped_column(
+        db.Date,
+        nullable=False,
+        index=True,
+    )
+    warning_on: Mapped[date] = (
+        mapped_column(
+            db.Date,
+            nullable=False,
+            index=True,
+        )
+    )
+    missed_on: Mapped[date] = (
+        mapped_column(
+            db.Date,
+            nullable=False,
+            index=True,
+        )
+    )
+    object_level: Mapped[str] = (
+        mapped_column(
+            db.String(30),
+            nullable=False,
+            index=True,
+        )
+    )
+    object_erp_id: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+            index=True,
+        )
+    )
+    company_code_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    company_code_code: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(40),
+        index=True,
+    )
+    economic_unit_erp_id: Mapped[
+        int
+    ] = mapped_column(
+        db.Integer,
+        nullable=False,
+        index=True,
+    )
+    economic_unit_idnum: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(100),
+        index=True,
+    )
+    economic_unit_name: Mapped[
+        str | None
+    ] = mapped_column(db.String(255))
+    building_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    building_idnum: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(100),
+        index=True,
+    )
+    use_unit_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    use_unit_idnum: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(100),
+        index=True,
+    )
+    object_address: Mapped[
+        str | None
+    ] = mapped_column(db.String(500))
+    object_location: Mapped[
+        str | None
+    ] = mapped_column(db.String(255))
+    latitude: Mapped[
+        float | None
+    ] = mapped_column(db.Float)
+    longitude: Mapped[
+        float | None
+    ] = mapped_column(db.Float)
+    department_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey("wowi_department.id"),
+            nullable=False,
+            index=True,
+        )
+    )
+    jurisdiction_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey(
+            "wowi_economic_unit_jurisdiction.id"
+        ),
+        index=True,
+    )
+    assigned_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    responsible_official_erp_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    assignment_source: Mapped[
+        str
+    ] = mapped_column(
+        db.String(30),
+        default=(
+            SafetyInspectionAssignmentSource
+            .UNASSIGNED.value
+        ),
+        server_default=(
+            SafetyInspectionAssignmentSource
+            .UNASSIGNED.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    assignment_error: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    overall_note: Mapped[str | None] = (
+        mapped_column(db.Text)
+    )
+    started_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    completed_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    completed_by_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    missed_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    canceled_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    canceled_by_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    cancellation_reason: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+            index=True,
+        )
+    )
+    updated_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            onupdate=utc_now,
+            nullable=False,
+        )
+    )
+
+    group: Mapped[
+        SafetyInspectionGroup
+    ] = relationship(
+        back_populates="jobs"
+    )
+    template_version: Mapped[
+        SafetyInspectionTemplateVersion
+    ] = relationship(
+        back_populates="jobs"
+    )
+    department: Mapped[
+        WowiDepartment
+    ] = relationship()
+    jurisdiction: Mapped[
+        WowiEconomicUnitJurisdiction | None
+    ] = relationship()
+    assigned_user: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[assigned_user_id]
+    )
+    completed_by: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[completed_by_user_id]
+    )
+    canceled_by: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[canceled_by_user_id]
+    )
+    results: Mapped[
+        list["SafetyInspectionResult"]
+    ] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by=(
+            "SafetyInspectionResult."
+            "position_index"
+        ),
+    )
+    defects: Mapped[
+        list["SafetyInspectionDefect"]
+    ] = relationship(
+        back_populates="job"
+    )
+    protocols: Mapped[
+        list["SafetyInspectionProtocol"]
+    ] = relationship(
+        back_populates="job",
+        order_by=(
+            "SafetyInspectionProtocol."
+            "version_number"
+        ),
+    )
+    push_deliveries: Mapped[
+        list["PushDelivery"]
+    ] = relationship(
+        back_populates="safety_inspection_job",
+    )
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            SafetyInspectionJobStatus
+            .COMPLETED.value,
+            SafetyInspectionJobStatus
+            .COMPLETED_WITH_DEFECTS.value,
+            SafetyInspectionJobStatus
+            .MISSED.value,
+            SafetyInspectionJobStatus
+            .CANCELED.value,
+        }
+
+    @property
+    def is_overdue(self) -> bool:
+        return (
+            not self.is_terminal
+            and self.due_to < date.today()
+        )
+
+    @property
+    def is_due(self) -> bool:
+        return (
+            not self.is_terminal
+            and self.due_from <= date.today()
+            <= self.due_to
+        )
+
+
+class SafetyInspectionResult(db.Model):
+    __tablename__ = "safety_inspection_result"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "template_item_id",
+            name=(
+                "uq_safety_inspection_result_item"
+            ),
+        ),
+        UniqueConstraint(
+            "job_id",
+            "position_index",
+            name=(
+                "uq_safety_inspection_result_position"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    public_id: Mapped[str] = mapped_column(
+        db.String(36),
+        default=lambda: str(uuid4()),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    job_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_job.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    template_item_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey(
+                "safety_inspection_template_item.id"
+            ),
+            nullable=False,
+            index=True,
+        )
+    )
+    item_key: Mapped[str] = mapped_column(
+        db.String(36),
+        nullable=False,
+    )
+    position_index: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+        )
+    )
+    item_title: Mapped[str] = (
+        mapped_column(
+            db.String(255),
+            nullable=False,
+        )
+    )
+    item_description: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    item_help_text: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    required: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    allow_not_present: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    photo_required_no_defect: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    photo_required_not_present: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    photo_required_defect_info: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    photo_required_defect_urgent: Mapped[
+        bool
+    ] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        db.String(40),
+        default=(
+            SafetyInspectionResultState
+            .NOT_CHECKED.value
+        ),
+        server_default=(
+            SafetyInspectionResultState
+            .NOT_CHECKED.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    note: Mapped[str | None] = (
+        mapped_column(db.Text)
+    )
+    immediate_action: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    checked_by_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    checked_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    version: Mapped[int] = mapped_column(
+        db.Integer,
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            onupdate=utc_now,
+            nullable=False,
+        )
+    )
+
+    job: Mapped[
+        SafetyInspectionJob
+    ] = relationship(
+        back_populates="results"
+    )
+    template_item: Mapped[
+        SafetyInspectionTemplateItem
+    ] = relationship()
+    checked_by: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[checked_by_user_id]
+    )
+    photos: Mapped[
+        list["SafetyInspectionPhoto"]
+    ] = relationship(
+        back_populates="result",
+        cascade="all, delete-orphan",
+    )
+    defect: Mapped[
+        "SafetyInspectionDefect | None"
+    ] = relationship(
+        back_populates="result",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class SafetyInspectionPhoto(db.Model):
+    __tablename__ = "safety_inspection_photo"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    public_id: Mapped[str] = mapped_column(
+        db.String(36),
+        default=lambda: str(uuid4()),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    result_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_result.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    uploaded_by_user_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(
+        db.String(30),
+        default=(
+            SafetyInspectionPhotoSource
+            .CAMERA.value
+        ),
+        server_default=(
+            SafetyInspectionPhotoSource
+            .CAMERA.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    original_filename: Mapped[str] = (
+        mapped_column(
+            db.String(255),
+            nullable=False,
+        )
+    )
+    storage_name: Mapped[str] = (
+        mapped_column(
+            db.String(500),
+            nullable=False,
+            unique=True,
+        )
+    )
+    thumbnail_storage_name: Mapped[
+        str
+    ] = mapped_column(
+        db.String(500),
+        nullable=False,
+        unique=True,
+    )
+    mime_type: Mapped[str] = (
+        mapped_column(
+            db.String(100),
+            default="image/jpeg",
+            server_default="image/jpeg",
+            nullable=False,
+        )
+    )
+    size_bytes: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+        )
+    )
+    content_sha256: Mapped[str] = (
+        mapped_column(
+            db.String(64),
+            nullable=False,
+            index=True,
+        )
+    )
+    caption: Mapped[str | None] = (
+        mapped_column(db.String(500))
+    )
+    captured_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    dms_archive_status: Mapped[
+        str
+    ] = mapped_column(
+        db.String(30),
+        default=(
+            SafetyInspectionArchiveStatus
+            .NOT_ARCHIVED.value
+        ),
+        server_default=(
+            SafetyInspectionArchiveStatus
+            .NOT_ARCHIVED.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    dms_document_id: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(255),
+        unique=True,
+    )
+    dms_archive_attempted_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    dms_archived_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    dms_archive_error: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+            index=True,
+        )
+    )
+    updated_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            onupdate=utc_now,
+            nullable=False,
+        )
+    )
+    deleted_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    result: Mapped[
+        SafetyInspectionResult
+    ] = relationship(
+        back_populates="photos"
+    )
+    uploaded_by: Mapped[User] = relationship(
+        foreign_keys=[uploaded_by_user_id]
+    )
+
+
+class SafetyInspectionDefect(db.Model):
+    __tablename__ = "safety_inspection_defect"
+    __table_args__ = (
+        UniqueConstraint(
+            "result_id",
+            name=(
+                "uq_safety_inspection_defect_result"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    public_id: Mapped[str] = mapped_column(
+        db.String(36),
+        default=lambda: str(uuid4()),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    job_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_job.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    result_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_result.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    severity: Mapped[str] = (
+        mapped_column(
+            db.String(40),
+            nullable=False,
+            index=True,
+        )
+    )
+    status: Mapped[str] = mapped_column(
+        db.String(40),
+        default=(
+            SafetyInspectionDefectStatus
+            .OPEN.value
+        ),
+        server_default=(
+            SafetyInspectionDefectStatus
+            .OPEN.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    description: Mapped[str] = (
+        mapped_column(
+            db.Text,
+            nullable=False,
+        )
+    )
+    immediate_action: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    review_note: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    reviewer_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+            index=True,
+        )
+    )
+    resolved_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    resolved_by_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    dismissed_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    dismissed_by_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+
+    job: Mapped[
+        SafetyInspectionJob
+    ] = relationship(
+        back_populates="defects"
+    )
+    result: Mapped[
+        SafetyInspectionResult
+    ] = relationship(
+        back_populates="defect"
+    )
+    reviewer: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[reviewer_user_id]
+    )
+    resolved_by: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[resolved_by_user_id]
+    )
+    dismissed_by: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[dismissed_by_user_id]
+    )
+    commission_links: Mapped[
+        list[
+            "SafetyInspectionDefectCommission"
+        ]
+    ] = relationship(
+        back_populates="defect",
+        cascade="all, delete-orphan",
+    )
+
+
+class SafetyInspectionDefectCommission(
+    db.Model
+):
+    __tablename__ = (
+        "safety_inspection_defect_commission"
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "defect_id",
+            "commission_id",
+            name=(
+                "uq_safety_inspection_defect_"
+                "commission"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    defect_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_defect.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    commission_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey("commission.id"),
+            nullable=False,
+            index=True,
+        )
+    )
+    primary_link: Mapped[bool] = (
+        mapped_column(
+            db.Boolean,
+            default=True,
+            server_default=true(),
+            nullable=False,
+        )
+    )
+    created_by_user_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+        )
+    )
+
+    defect: Mapped[
+        SafetyInspectionDefect
+    ] = relationship(
+        back_populates="commission_links"
+    )
+    commission: Mapped[
+        Commission
+    ] = relationship()
+    created_by: Mapped[User] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+
+
+class SafetyInspectionProtocol(db.Model):
+    __tablename__ = "safety_inspection_protocol"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "version_number",
+            name=(
+                "uq_safety_inspection_protocol_"
+                "version"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    job_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "safety_inspection_job.id"
+        ),
+        nullable=False,
+        index=True,
+    )
+    version_number: Mapped[int] = (
+        mapped_column(
+            db.Integer,
+            nullable=False,
+        )
+    )
+    correction_reason: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    document_filename: Mapped[str] = (
+        mapped_column(
+            db.String(255),
+            nullable=False,
+        )
+    )
+    document_sha256: Mapped[str] = (
+        mapped_column(
+            db.String(64),
+            nullable=False,
+        )
+    )
+    dms_archive_status: Mapped[
+        str
+    ] = mapped_column(
+        db.String(30),
+        default=(
+            SafetyInspectionArchiveStatus
+            .NOT_ARCHIVED.value
+        ),
+        server_default=(
+            SafetyInspectionArchiveStatus
+            .NOT_ARCHIVED.value
+        ),
+        nullable=False,
+        index=True,
+    )
+    dms_archive_key: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(180),
+        unique=True,
+    )
+    dms_document_id: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(255),
+        unique=True,
+    )
+    dms_archive_pdf_sha256: Mapped[
+        str | None
+    ] = mapped_column(db.String(64))
+    dms_archive_attempted_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    dms_archived_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    dms_archived_by_user_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    dms_archive_error: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    created_by_user_id: Mapped[
+        int
+    ] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            db.DateTime(timezone=True),
+            default=utc_now,
+            nullable=False,
+            index=True,
+        )
+    )
+
+    job: Mapped[
+        SafetyInspectionJob
+    ] = relationship(
+        back_populates="protocols"
+    )
+    created_by: Mapped[User] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+    dms_archived_by: Mapped[
+        User | None
+    ] = relationship(
+        foreign_keys=[
+            dms_archived_by_user_id
+        ]
     )
 
 

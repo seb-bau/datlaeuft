@@ -35,11 +35,23 @@ class CommissionObjectContext:
 
 
 @dataclass(frozen=True)
+class DepartmentAssignment:
+    user: User
+    department: WowiDepartment
+    jurisdiction: (
+        WowiEconomicUnitJurisdiction | None
+    )
+    responsible_official_erp_id: int
+
+
+@dataclass(frozen=True)
 class CommissionAssignment:
     user: User
     craft_activity: CraftActivity
     department: WowiDepartment
-    jurisdiction: WowiEconomicUnitJurisdiction
+    jurisdiction: (
+        WowiEconomicUnitJurisdiction | None
+    )
     responsible_official_erp_id: int
 
 
@@ -1209,6 +1221,104 @@ def resolve_commission_object(
     )
 
 
+def resolve_department_assignment(
+    economic_unit: WowiEconomicUnit,
+    department: WowiDepartment,
+) -> DepartmentAssignment:
+    if not department.active:
+        raise ValueError(
+            "Die ausgewählte Abteilung ist "
+            "nicht aktiv."
+        )
+
+    jurisdiction = None
+
+    if economic_unit.universal_responsibility:
+        responsible_official_erp_id = (
+            economic_unit
+            .universal_responsible_official_erp_id
+        )
+        responsible_person_erp_id = (
+            economic_unit
+            .universal_responsible_person_erp_id
+        )
+    else:
+        jurisdictions = (
+            WowiEconomicUnitJurisdiction.query
+            .filter_by(
+                economic_unit_id=(
+                    economic_unit.id
+                ),
+                department_erp_id=(
+                    department.erp_id
+                ),
+                active=True,
+            )
+            .all()
+        )
+        main_jurisdictions = [
+            item
+            for item in jurisdictions
+            if item.main_jurisdiction
+        ]
+        candidates = (
+            main_jurisdictions
+            or jurisdictions
+        )
+
+        if len(candidates) != 1:
+            raise ValueError(
+                "Für Wirtschaftseinheit und "
+                "Abteilung ist keine eindeutige "
+                "Zuständigkeit hinterlegt."
+            )
+
+        jurisdiction = candidates[0]
+        responsible_official_erp_id = (
+            jurisdiction
+            .responsible_official_erp_id
+        )
+        responsible_person_erp_id = (
+            jurisdiction
+            .responsible_person_erp_id
+        )
+
+    if (
+        responsible_official_erp_id is None
+        or responsible_person_erp_id is None
+    ):
+        raise ValueError(
+            "In der Zuständigkeit fehlt "
+            "die verantwortliche Person."
+        )
+
+    users = User.query.filter_by(
+        person_erp_id=responsible_person_erp_id,
+        is_active_flag=True,
+    ).all()
+    users = [
+        user
+        for user in users
+        if user.craftsman_erp_id is not None
+    ]
+
+    if len(users) != 1:
+        raise ValueError(
+            "Die zuständige Wowiport-Person ist "
+            "keinem eindeutigen aktiven "
+            "Handwerker zugeordnet."
+        )
+
+    return DepartmentAssignment(
+        user=users[0],
+        department=department,
+        jurisdiction=jurisdiction,
+        responsible_official_erp_id=(
+            responsible_official_erp_id
+        ),
+    )
+
+
 def resolve_commission_assignment(
     service_positions: Iterable[
         TimeTaskTemplate
@@ -1254,8 +1364,8 @@ def resolve_commission_assignment(
     )
 
     if (
-            mapping is None
-            or not mapping.department.active
+        mapping is None
+        or not mapping.department.active
     ):
         craft_activity = db.session.get(
             CraftActivity,
@@ -1272,94 +1382,19 @@ def resolve_commission_assignment(
             "ist keine aktive Abteilung hinterlegt."
         )
 
-    jurisdictions = (
-        WowiEconomicUnitJurisdiction.query
-        .filter_by(
-            economic_unit_id=(
-                object_context.economic_unit.id
-            ),
-            department_erp_id=(
-                mapping.department.erp_id
-            ),
-            active=True,
-        )
-        .all()
+    assignment = resolve_department_assignment(
+        object_context.economic_unit,
+        mapping.department,
     )
-
-    main_jurisdictions = [
-        jurisdiction
-        for jurisdiction in jurisdictions
-        if jurisdiction.main_jurisdiction
-    ]
-    candidates = (
-            main_jurisdictions
-            or jurisdictions
-    )
-
-    if len(candidates) != 1:
-        raise ValueError(
-            "Für Wirtschaftseinheit und Gewerk "
-            "ist keine eindeutige Zuständigkeit "
-            "hinterlegt."
-        )
-
-    jurisdiction = candidates[0]
-
-    if (
-        object_context.economic_unit
-        .universal_responsibility
-    ):
-        responsible_official_erp_id = (
-            object_context.economic_unit
-            .universal_responsible_official_erp_id
-        )
-        responsible_person_erp_id = (
-            object_context.economic_unit
-            .universal_responsible_person_erp_id
-        )
-    else:
-        responsible_official_erp_id = (
-            jurisdiction
-            .responsible_official_erp_id
-        )
-        responsible_person_erp_id = (
-            jurisdiction
-            .responsible_person_erp_id
-        )
-
-    if (
-        responsible_official_erp_id is None
-        or responsible_person_erp_id is None
-    ):
-        raise ValueError(
-            "In der Zuständigkeit fehlt "
-            "die verantwortliche Person."
-        )
-
-    users = User.query.filter_by(
-        person_erp_id=responsible_person_erp_id,
-        is_active_flag=True,
-    ).all()
-    users = [
-        user
-        for user in users
-        if user.craftsman_erp_id is not None
-    ]
-
-    if len(users) != 1:
-        raise ValueError(
-            "Die zuständige Wowiport-Person ist "
-            "keinem eindeutigen aktiven "
-            "Handwerker zugeordnet."
-        )
 
     return CommissionAssignment(
-        user=users[0],
+        user=assignment.user,
         craft_activity=mapping.craft_activity,
-        department=mapping.department,
-        jurisdiction=jurisdiction,
+        department=assignment.department,
+        jurisdiction=assignment.jurisdiction,
         responsible_official_erp_id=(
-            responsible_official_erp_id
+            assignment
+            .responsible_official_erp_id
         ),
     )
 
