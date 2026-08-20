@@ -287,16 +287,16 @@ def job_assign(job_id: int) -> Any:
         )
 
         if (
-            user is None
-            or not user.is_active
-            or user.craftsman_erp_id is None
+                user is None
+                or not user.is_active
+                or user.craftsman_erp_id is None
         ):
             flash(
                 "Der ausgewählte Handwerker "
                 "ist nicht verfügbar.",
                 "danger",
             )
-            else:
+        else:
             previous_user_id = (
                 item.assigned_user_id
             )
