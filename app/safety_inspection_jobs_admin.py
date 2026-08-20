@@ -25,6 +25,7 @@ from .auth import (
 from .extensions import db
 from .models import (
     CommissionLocalStatus,
+    PushEventType,
     SafetyInspectionAssignmentSource,
     SafetyInspectionDefect,
     SafetyInspectionDefectStatus,
@@ -33,7 +34,11 @@ from .models import (
     SafetyInspectionObjectLevel,
     SafetyInspectionResultState,
     User,
+    WowiBuilding,
     utc_now,
+)
+from .push_service import (
+    enqueue_safety_inspection_push,
 )
 from .safety_inspection_service import (
     create_commission_from_safety_defect,
@@ -144,10 +149,31 @@ def job_detail(job_id: int) -> Any:
         .all()
     )
 
+    buildings = []
+
+    if item.object_level == (
+        SafetyInspectionObjectLevel
+        .ECONOMIC_UNIT.value
+    ):
+        buildings = (
+            WowiBuilding.query.filter(
+                WowiBuilding.active.is_(True),
+                WowiBuilding.economic_unit_erp_id
+                == item.economic_unit_erp_id,
+            )
+            .order_by(
+                WowiBuilding.address.asc(),
+                WowiBuilding.id_num.asc(),
+            )
+            .all()
+        )
+
     return render_template(
         "admin/safety_inspection_job_detail.html",
         item=item,
+        job=item,
         craftsmen=craftsmen,
+        buildings=buildings,
         status_labels=_job_status_labels(),
         result_state_labels=_result_state_labels(),
         defect_status_labels=_defect_status_labels(),
@@ -270,10 +296,15 @@ def job_assign(job_id: int) -> Any:
                 "ist nicht verfügbar.",
                 "danger",
             )
-        else:
+            else:
+            previous_user_id = (
+                item.assigned_user_id
+            )
+
             item.assigned_user = user
             item.assignment_source = (
-                SafetyInspectionAssignmentSource.MANUAL.value
+                SafetyInspectionAssignmentSource
+                .MANUAL.value
             )
             item.assignment_error = None
 
@@ -281,8 +312,20 @@ def job_assign(job_id: int) -> Any:
                 "safety_inspection.job_assigned",
                 "safety_inspection_job",
                 item.id,
-                {"user_id": user.id},
+                {
+                    "user_id": user.id,
+                    "previous_user_id": (
+                        previous_user_id
+                    ),
+                },
             )
+
+            if previous_user_id != user.id:
+                enqueue_safety_inspection_push(
+                    item,
+                    PushEventType
+                    .CHANGED_SAFETY_INSPECTION,
+                )
 
             db.session.commit()
 
@@ -395,16 +438,35 @@ def defect_commission(defect_id: int) -> Any:
         )
 
     try:
+        raw_building_id = request.form.get(
+            "building_id",
+            "",
+        ).strip()
+        building_id = None
+
+        if raw_building_id:
+            if not raw_building_id.isdigit():
+                raise ValueError(
+                    "Bitte ein gültiges Gebäude "
+                    "auswählen."
+                )
+
+            building_id = int(raw_building_id)
+
         commission = create_commission_from_safety_defect(
             defect,
             current_user,
+            building_id=building_id,
         )
 
         audit(
             "safety_inspection.defect_commission_created",
             "safety_inspection_defect",
             defect.id,
-            {"commission_id": commission.id},
+            {
+                "commission_id": commission.id,
+                "building_id": building_id,
+            },
         )
 
         db.session.commit()

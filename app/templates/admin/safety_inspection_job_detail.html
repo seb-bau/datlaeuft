@@ -443,6 +443,43 @@
             defect_id=defect.id
           ) }}"
         >
+                    {% if item.object_level == 'economic_unit' %}
+          <div class="mb-2">
+            <label
+              class="form-label"
+              for="buildingForDefect{{ defect.id }}"
+            >
+              Gebäude
+            </label>
+
+            <select
+              id="buildingForDefect{{ defect.id }}"
+              class="form-select form-select-sm"
+              name="building_id"
+              required
+            >
+              <option value="">
+                Bitte auswählen
+              </option>
+
+              {% for building in buildings %}
+              <option value="{{ building.id }}">
+                {{ building.id_num or 'Ohne Gebäudenummer' }}
+                {% if building.address %}
+                · {{ building.address }}
+                {% endif %}
+              </option>
+              {% endfor %}
+            </select>
+
+            {% if not buildings %}
+            <div class="form-text text-danger">
+              Für diese Wirtschaftseinheit sind keine
+              aktiven Gebäude vorhanden.
+            </div>
+            {% endif %}
+          </div>
+          {% endif %}
           <input
             type="hidden"
             name="csrf_token"

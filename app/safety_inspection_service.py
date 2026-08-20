@@ -1102,6 +1102,7 @@ def validate_safety_inspection_results(
 def create_commission_from_safety_defect(
     defect: SafetyInspectionDefect,
     user: User,
+    building_id: int | None = None,
 ) -> Commission:
     if defect.status in {
         SafetyInspectionDefectStatus
@@ -1143,11 +1144,32 @@ def create_commission_from_safety_defect(
             object_type = "building"
             object_id = building.id
 
+    elif building_id is not None:
+        building = db.session.get(
+            WowiBuilding,
+            building_id,
+        )
+
+        if (
+            building is None
+            or not building.active
+            or building.economic_unit is None
+            or building.economic_unit.erp_id
+            != job.economic_unit_erp_id
+        ):
+            raise ValueError(
+                "Das ausgewählte Gebäude gehört "
+                "nicht zur Wirtschaftseinheit "
+                "des Prüfauftrags."
+            )
+
+        object_type = "building"
+        object_id = building.id
+
     if object_type is None or object_id is None:
         raise ValueError(
-            "Für einen Mangel auf Ebene der "
-            "Wirtschaftseinheit muss zunächst "
-            "ein Gebäude ausgewählt werden."
+            "Bitte für den Mangel ein Gebäude "
+            "auswählen."
         )
 
     task_template = (

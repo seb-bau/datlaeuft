@@ -39,6 +39,9 @@ from .safety_inspection_service import (
     update_safety_inspection_result,
 )
 from .utils import iso_datetime
+from .safety_inspection_document import (
+    SafetyInspectionDocumentError,
+)
 
 
 safety_inspection_api_bp = Blueprint(
@@ -314,6 +317,18 @@ def complete_safety_inspection(
         return jsonify(
             {"message": str(exc)}
         ), 409
+    except SafetyInspectionDocumentError as exc:
+        db.session.rollback()
+
+        current_app.logger.exception(
+            "safety_inspection_protocol_"
+            "creation_failed job_id=%s",
+            job.id,
+        )
+
+        return jsonify(
+            {"message": str(exc)}
+        ), 500
 
     return jsonify(
         {

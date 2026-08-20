@@ -10,6 +10,7 @@ from flask import (
     redirect,
     request,
     send_file,
+    url_for,
 )
 from flask_login import (
     current_user,
@@ -60,13 +61,15 @@ def require_safety_inspection_access(
 
 def job_redirect(job_id: int):
     return redirect(
-        "/admin/safety-inspection-jobs/"
-        f"{job_id}"
+        url_for(
+            "safety_inspection_jobs_admin.job_detail",
+            job_id=job_id,
+        )
     )
 
 
 @safety_inspection_protocol_admin_bp.get(
-    "/admin/safety-inspection-jobs/"
+    "/admin/safety-inspections/jobs/"
     "<int:job_id>/protocols/"
     "<int:protocol_id>"
 )
@@ -116,7 +119,7 @@ def protocol_document(
 
 
 @safety_inspection_protocol_admin_bp.post(
-    "/admin/safety-inspection-jobs/"
+    "/admin/safety-inspections/jobs/"
     "<int:job_id>/protocols"
 )
 @login_required
@@ -204,7 +207,7 @@ def store_archive_failure(
 
 
 @safety_inspection_protocol_admin_bp.post(
-    "/admin/safety-inspection-jobs/"
+    "/admin/safety-inspections/jobs/"
     "<int:job_id>/protocols/"
     "<int:protocol_id>/archive"
 )

@@ -41,6 +41,9 @@ from .safety_inspection_service import (
     generate_safety_inspection_jobs,
     reconcile_safety_inspection_defects,
 )
+from .safety_inspection_archive import (
+    process_pending_safety_inspection_archives,
+)
 
 
 from datetime import datetime
@@ -341,67 +344,6 @@ def register_cli(app: Flask) -> None:
         )
 
     @app.cli.command(
-        "datlaeuft-process-safety-inspections"
-    )
-    @click.option(
-        "--run-date",
-        type=click.DateTime(
-            formats=["%Y-%m-%d"]
-        ),
-        default=None,
-    )
-    @click.option(
-        "--group-id",
-        type=int,
-        default=None,
-    )
-    def process_safety_inspections(
-        run_date: datetime | None,
-        group_id: int | None,
-    ) -> None:
-        try:
-            generation_result = (
-                generate_safety_inspection_jobs(
-                    run_date=(
-                        run_date.date()
-                        if run_date is not None
-                        else None
-                    ),
-                    group_id=group_id,
-                )
-            )
-            defect_result = (
-                reconcile_safety_inspection_defects()
-            )
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            raise
-
-        click.echo(
-            f"Prüfgruppen="
-            f"{generation_result['groups']} "
-            f"Erstellt="
-            f"{generation_result['created']} "
-            f"Vorhanden="
-            f"{generation_result['existing']} "
-            f"Nicht_zugeordnet="
-            f"{generation_result['unassigned']} "
-            f"Abgelaufen="
-            f"{generation_result['missed']} "
-            f"Fehler="
-            f"{generation_result['errors']}"
-        )
-        click.echo(
-            f"Mängel_geprüft="
-            f"{defect_result['seen']} "
-            f"Mängel_geändert="
-            f"{defect_result['changed']} "
-            f"Mängel_unverändert="
-            f"{defect_result['unchanged']}"
-        )
-
-    @app.cli.command(
         "datlaeuft-sync-object-photos"
     )
     def sync_object_photos() -> None:
@@ -463,7 +405,6 @@ def register_cli(app: Flask) -> None:
             f"{result['contractors']}"
         )
 
-
     @app.cli.command(
         "datlaeuft-run-safety-inspections"
     )
@@ -496,13 +437,20 @@ def register_cli(app: Flask) -> None:
             else None
         )
 
-        generation_result = (
-            generate_safety_inspection_jobs(
-                run_date=effective_date,
-                group_id=group_id,
+        try:
+            generation_result = (
+                generate_safety_inspection_jobs(
+                    run_date=effective_date,
+                    group_id=group_id,
+                )
             )
-        )
-        db.session.commit()
+            defect_result = (
+                reconcile_safety_inspection_defects()
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
 
         archive_result = (
             process_pending_safety_inspection_archives(
@@ -529,6 +477,15 @@ def register_cli(app: Flask) -> None:
         )
 
         click.echo(
+            "Mängel_geprüft="
+            f"{defect_result['seen']} "
+            "Mängel_geändert="
+            f"{defect_result['changed']} "
+            "Mängel_unverändert="
+            f"{defect_result['unchanged']}"
+        )
+
+        click.echo(
             "Protokolle_geprüft="
             f"{archive_result['seen']} "
             "Archiviert="
@@ -537,6 +494,14 @@ def register_cli(app: Flask) -> None:
             f"{archive_result['existing']} "
             "Archivfehler="
             f"{archive_result['failed']} "
+            "Fotos_geprüft="
+            f"{archive_result['photo_seen']} "
+            "Fotos_archiviert="
+            f"{archive_result['photo_archived']} "
+            "Fotos_vorhanden="
+            f"{archive_result['photo_existing']} "
+            "Fotofehler="
+            f"{archive_result['photo_failed']} "
             "Archivierung_deaktiviert="
             f"{archive_result['disabled']}"
         )
