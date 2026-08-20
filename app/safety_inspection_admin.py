@@ -49,6 +49,7 @@ from .models import (
     WowiEconomicUnit,
     WowiUseUnit,
     PushEventType,
+    SafetyInspectionSelectionMode,
 )
 from .safety_inspection_service import (
     create_safety_inspection_revision,
@@ -596,6 +597,9 @@ def groups() -> Any:
         object_level_labels=(
             _object_level_labels()
         ),
+        selection_mode_labels=(
+            _selection_mode_labels()
+        ),
     )
 
 
@@ -609,6 +613,10 @@ def group_new() -> Any:
     item = SafetyInspectionGroup(
         created_by=current_user,
         first_period_start=date.today(),
+        selection_mode=(
+            SafetyInspectionSelectionMode
+            .WHITELIST.value
+        ),
         include_vacancies=True,
         automatic_archive=True,
         archive_original_photos=False,
@@ -1164,6 +1172,27 @@ def _save_group(
         "object_level",
         "",
     )
+    selection_mode = request.form.get(
+        "selection_mode",
+        "",
+    ).strip()
+
+    valid_selection_modes = {
+        mode.value
+        for mode in (
+            SafetyInspectionSelectionMode
+        )
+    }
+
+    if (
+        selection_mode
+        not in valid_selection_modes
+    ):
+        raise ValueError(
+            "Der Auswahlmodus ist ungültig."
+        )
+
+    item.selection_mode = selection_mode
 
     fallback_user_id = _form_optional_int(
         "fallback_user_id"
@@ -1469,6 +1498,9 @@ def _render_group_form(
         object_level_labels=(
             _object_level_labels()
         ),
+        selection_mode_labels=(
+            _selection_mode_labels()
+        ),
     )
 
 
@@ -1688,4 +1720,13 @@ def _object_level_labels() -> dict[str, str]:
         .USE_UNIT.value: (
             "Nutzungseinheit"
         ),
+    }
+
+
+def _selection_mode_labels() -> dict[str, str]:
+    return {
+        SafetyInspectionSelectionMode
+        .WHITELIST.value: "Whitelist",
+        SafetyInspectionSelectionMode
+        .BLACKLIST.value: "Blacklist",
     }

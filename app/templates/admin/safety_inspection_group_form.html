@@ -137,6 +137,35 @@
           rows="3"
         >{{ item.description or '' }}</textarea>
       </div>
+            <div class="col-md-3">
+        <label class="form-label">
+          Auswahlmodus
+        </label>
+        <select
+          id="selectionMode"
+          class="form-select"
+          name="selection_mode"
+          required
+        >
+          {% for value, label
+            in selection_mode_labels.items()
+          %}
+          <option
+            value="{{ value }}"
+            {% if item.selection_mode == value %}
+            selected
+            {% endif %}
+          >
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+
+        <div
+          id="selectionModeHelp"
+          class="form-text"
+        ></div>
+      </div>
 
       <div class="col-md-3">
         <label class="form-label">
@@ -419,8 +448,8 @@
     </div>
   </div>
 
-  <div class="card-header border-top">
-    Einbezogene und ausgeschlossene Objekte
+    <div class="card-header border-top">
+    Objektauswahl
   </div>
 
   <div class="card-body">
@@ -485,11 +514,10 @@
       Noch keine Objekte ausgewählt.
     </div>
 
-    <div class="form-text">
-      Eine Wirtschaftseinheit kann
-      eingeschlossen und einzelne Gebäude
-      oder Nutzungseinheiten darunter können
-      anschließend ausgeschlossen werden.
+        <div class="form-text">
+      Übergeordnete Objekte können weiterhin
+      durch untergeordnete Einträge verfeinert
+      werden.
     </div>
   </div>
 
@@ -524,6 +552,14 @@ const targetTableBody =
   );
 const emptyTargets =
   document.getElementById("emptyTargets");
+const selectionMode =
+  document.getElementById(
+    "selectionMode"
+  );
+const selectionModeHelp =
+  document.getElementById(
+    "selectionModeHelp"
+  );
 const objectSearch =
   document.getElementById("objectSearch");
 const objectSearchButton =
@@ -634,6 +670,8 @@ function synchronizeTargets() {
 function addTarget(result) {
   synchronizeTargets();
 
+  const includedByDefault =
+    selectionMode.value === "whitelist";
   const existing = targetRows.find(
     (row) => (
       row.object_type
@@ -644,7 +682,8 @@ function addTarget(result) {
   );
 
   if (existing) {
-    existing.included = true;
+    existing.included =
+      includedByDefault;
   } else {
     targetRows.push({
       object_type: result.object_type,
@@ -652,7 +691,7 @@ function addTarget(result) {
         result.object_erp_id,
       object_label:
         result.display_label,
-      included: true
+      included: includedByDefault
     });
   }
 
@@ -742,6 +781,26 @@ async function searchObjects() {
   }
 }
 
+function updateSelectionModeUi() {
+  const blacklist =
+    selectionMode.value === "blacklist";
+
+  selectionModeHelp.textContent =
+    blacklist
+      ? "Alle aktiven Objekte der Prüfebene "
+        + "werden berücksichtigt. Neu "
+        + "hinzugefügte Objekte werden "
+        + "standardmäßig ausgeschlossen."
+      : "Nur eingetragene und eingeschlossene "
+        + "Objekte werden berücksichtigt.";
+
+  emptyTargets.textContent =
+    blacklist
+      ? "Keine Ausnahmen eingetragen. "
+        + "Alle aktiven Objekte werden geprüft."
+      : "Noch keine Objekte ausgewählt.";
+}
+
 function filterTaskTemplates() {
   const craftId =
     craftActivity.value;
@@ -774,6 +833,11 @@ function filterTaskTemplates() {
     taskTemplate.value = "";
   }
 }
+
+selectionMode.addEventListener(
+  "change",
+  updateSelectionModeUi
+);
 
 objectSearchButton.addEventListener(
   "click",
@@ -831,6 +895,7 @@ groupForm.addEventListener(
 );
 
 renderTargets();
+updateSelectionModeUi();
 filterTaskTemplates();
 </script>
 {% endblock %}

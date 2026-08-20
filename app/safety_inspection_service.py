@@ -41,6 +41,7 @@ from .models import (
     WowiUseUnit,
     utc_now,
     PushEventType,
+    SafetyInspectionSelectionMode,
 )
 from .object_directory import (
     resolve_department_assignment,
@@ -454,13 +455,38 @@ def validate_safety_inspection_group(
             "zugeordnet."
         )
 
-    if not any(
-        target.included
-        for target in group.targets
+    selection_modes = {
+        mode.value
+        for mode in (
+            SafetyInspectionSelectionMode
+        )
+    }
+
+    if (
+        group.selection_mode
+        not in selection_modes
     ):
         raise ValueError(
-            "Die Prüfgruppe benötigt "
-            "mindestens ein Objekt."
+            "Der Auswahlmodus der Prüfgruppe "
+            "ist ungültig."
+        )
+
+    if (
+        group.selection_mode
+        == (
+            SafetyInspectionSelectionMode
+            .WHITELIST.value
+        )
+        and not any(
+            target.included
+            for target in group.targets
+        )
+    ):
+        raise ValueError(
+            "Eine Prüfgruppe im "
+            "Whitelist-Modus benötigt "
+            "mindestens ein eingeschlossenes "
+            "Objekt."
         )
 
 
@@ -1699,10 +1725,12 @@ def resolve_group_object_contexts(
         SafetyInspectionObjectContext,
     ] = {}
 
-    for target in included_targets:
-        for context in expand_group_target(
-            group,
-            target,
+    if group.selection_mode == (
+        SafetyInspectionSelectionMode
+        .BLACKLIST.value
+    ):
+        for context in (
+            all_group_object_contexts(group)
         ):
             contexts[
                 (
@@ -1711,15 +1739,49 @@ def resolve_group_object_contexts(
                 )
             ] = context
 
-    for target in excluded_targets:
-        for key, context in list(
-            contexts.items()
-        ):
-            if target_matches_context(
-                target,
-                context,
+        for target in excluded_targets:
+            for key, context in list(
+                contexts.items()
             ):
-                contexts.pop(key, None)
+                if target_matches_context(
+                    target,
+                    context,
+                ):
+                    contexts.pop(key, None)
+
+        for target in included_targets:
+            for context in expand_group_target(
+                group,
+                target,
+            ):
+                contexts[
+                    (
+                        context.object_level,
+                        context.object_erp_id,
+                    )
+                ] = context
+    else:
+        for target in included_targets:
+            for context in expand_group_target(
+                group,
+                target,
+            ):
+                contexts[
+                    (
+                        context.object_level,
+                        context.object_erp_id,
+                    )
+                ] = context
+
+        for target in excluded_targets:
+            for key, context in list(
+                contexts.items()
+            ):
+                if target_matches_context(
+                    target,
+                    context,
+                ):
+                    contexts.pop(key, None)
 
     return sorted(
         contexts.values(),
@@ -1729,6 +1791,83 @@ def resolve_group_object_contexts(
             item.object_erp_id,
         ),
     )
+
+
+def all_group_object_contexts(
+    group: SafetyInspectionGroup,
+) -> list[SafetyInspectionObjectContext]:
+    if group.object_level == (
+        SafetyInspectionObjectLevel
+        .ECONOMIC_UNIT.value
+    ):
+        economic_units = (
+            WowiEconomicUnit.query.filter(
+                WowiEconomicUnit.active.is_(
+                    True
+                )
+            )
+            .order_by(
+                WowiEconomicUnit.erp_id.asc()
+            )
+            .all()
+        )
+
+        return [
+            context_from_economic_unit(
+                economic_unit
+            )
+            for economic_unit in economic_units
+        ]
+
+    if group.object_level == (
+        SafetyInspectionObjectLevel
+        .BUILDING.value
+    ):
+        buildings = (
+            WowiBuilding.query.filter(
+                WowiBuilding.active.is_(True)
+            )
+            .order_by(
+                WowiBuilding.erp_id.asc()
+            )
+            .all()
+        )
+
+        return [
+            context_from_building(building)
+            for building in buildings
+            if (
+                building.economic_unit
+                is not None
+                and building
+                .economic_unit.active
+            )
+        ]
+
+    use_units = (
+        WowiUseUnit.query.filter(
+            WowiUseUnit.active.is_(True)
+        )
+        .order_by(
+            WowiUseUnit.erp_id.asc()
+        )
+        .all()
+    )
+
+    return [
+        context_from_use_unit(use_unit)
+        for use_unit in use_units
+        if (
+            use_unit.economic_unit is not None
+            and use_unit.economic_unit.active
+            and (
+                group.include_vacancies
+                or use_unit_is_occupied(
+                    use_unit
+                )
+            )
+        )
+    ]
 
 
 def expand_group_target(

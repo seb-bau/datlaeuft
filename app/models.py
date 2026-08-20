@@ -253,6 +253,14 @@ class SafetyInspectionObjectLevel(
     USE_UNIT = "use_unit"
 
 
+class SafetyInspectionSelectionMode(
+    str,
+    Enum,
+):
+    WHITELIST = "whitelist"
+    BLACKLIST = "blacklist"
+
+
 class SafetyInspectionJobStatus(
     str,
     Enum,
@@ -3561,6 +3569,20 @@ class SafetyInspectionGroup(db.Model):
             db.String(30),
             nullable=False,
             index=True,
+        )
+    )
+    selection_mode: Mapped[str] = (
+        mapped_column(
+            db.String(30),
+            default=(
+                SafetyInspectionSelectionMode
+                .WHITELIST.value
+            ),
+            server_default=(
+                SafetyInspectionSelectionMode
+                .WHITELIST.value
+            ),
+            nullable=False,
         )
     )
     department_id: Mapped[int] = (
