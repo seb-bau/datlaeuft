@@ -21,6 +21,7 @@ from .models import (
     WowiLicenseAgreement,
     WowiUseUnit,
     utc_now,
+    UserJurisdictionPersonMapping,
 )
 from .wowiport import WowiportService
 
@@ -1292,25 +1293,55 @@ def resolve_department_assignment(
             "die verantwortliche Person."
         )
 
-    users = User.query.filter_by(
-        person_erp_id=responsible_person_erp_id,
-        is_active_flag=True,
-    ).all()
-    users = [
-        user
-        for user in users
-        if user.craftsman_erp_id is not None
-    ]
-
-    if len(users) != 1:
-        raise ValueError(
-            "Die zuständige Wowiport-Person ist "
-            "keinem eindeutigen aktiven "
-            "Handwerker zugeordnet."
+    manual_mapping = (
+        UserJurisdictionPersonMapping.query
+        .filter_by(
+            jurisdiction_person_erp_id=(
+                responsible_person_erp_id
+            ),
+            active=True,
         )
+        .one_or_none()
+    )
+
+    if manual_mapping is not None:
+        assigned_user = manual_mapping.user
+
+        if (
+                assigned_user is None
+                or not assigned_user.is_active_flag
+                or assigned_user.craftsman_erp_id
+                is None
+        ):
+            raise ValueError(
+                "Die manuell zugeordnete "
+                "Wowiport-Person verweist nicht "
+                "auf einen aktiven Handwerker."
+            )
+    else:
+        users = User.query.filter_by(
+            person_erp_id=(
+                responsible_person_erp_id
+            ),
+            is_active_flag=True,
+        ).all()
+        users = [
+            user
+            for user in users
+            if user.craftsman_erp_id is not None
+        ]
+
+        if len(users) != 1:
+            raise ValueError(
+                "Die zuständige Wowiport-Person "
+                "ist keinem eindeutigen aktiven "
+                "Handwerker zugeordnet."
+            )
+
+        assigned_user = users[0]
 
     return DepartmentAssignment(
-        user=users[0],
+        user=assigned_user,
         department=department,
         jurisdiction=jurisdiction,
         responsible_official_erp_id=(

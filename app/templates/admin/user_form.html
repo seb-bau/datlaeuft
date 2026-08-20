@@ -234,6 +234,101 @@
         Gewerke“.
       </div>
     </div>
+
+        <div class="col-12">
+      <hr>
+    </div>
+
+    <div class="col-12">
+      <h2 class="h5">
+        Wowiport-Zuständigkeitspersonen
+      </h2>
+
+      <p class="text-muted mb-3">
+        Diese Zuordnung wird nur benötigt, wenn die
+        Personennummer aus der Wowiport-Zuständigkeit
+        von der Personennummer des Handwerkers
+        abweicht.
+      </p>
+
+      {% if not item.id %}
+      <div class="alert alert-info mb-0">
+        Speichere den Benutzer zuerst. Danach können
+        Zuständigkeitspersonen zugeordnet werden.
+      </div>
+      {% elif not item.craftsman_erp_id %}
+      <div class="alert alert-warning mb-0">
+        Die Zuordnung ist erst möglich, wenn eine
+        ERP-Handwerker-ID hinterlegt ist.
+      </div>
+      {% elif not jurisdiction_candidates %}
+      <div class="alert alert-info mb-0">
+        Im lokalen Objektverzeichnis wurden keine
+        Wowiport-Zuständigkeitspersonen gefunden.
+      </div>
+      {% else %}
+      <input
+        id="jurisdictionPersonSearch"
+        class="form-control mb-2"
+        type="search"
+        placeholder="Name oder Personen-ID suchen"
+      >
+
+      <div
+        class="border rounded p-2"
+        style="max-height: 360px; overflow-y: auto;"
+      >
+        {% for candidate in jurisdiction_candidates %}
+        {% set mapped_elsewhere =
+          candidate.mapped_user_id
+          and candidate.mapped_user_id != item.id
+        %}
+        <label
+          class="jurisdiction-person-option d-flex align-items-start gap-2 py-2 px-2 rounded"
+          data-search="{{ candidate.name|lower }} {{ candidate.erp_id }} {{ candidate.mapped_user_name|lower if candidate.mapped_user_name else '' }}"
+        >
+          <input
+            class="form-check-input mt-1"
+            type="checkbox"
+            name="jurisdiction_person_erp_ids"
+            value="{{ candidate.erp_id }}"
+            {% if candidate.erp_id in selected_jurisdiction_person_ids %}
+            checked
+            {% endif %}
+            {% if mapped_elsewhere %}
+            disabled
+            {% endif %}
+          >
+
+          <span>
+            <span class="d-block fw-semibold">
+              {{ candidate.name }}
+            </span>
+            <span class="d-block small text-muted">
+              Personen-ID {{ candidate.erp_id }}
+              · {{ candidate.usage_count }}
+              Zuständigkeiten
+            </span>
+
+            {% if mapped_elsewhere %}
+            <span class="d-block small text-danger">
+              Bereits {{ candidate.mapped_user_name }}
+              zugeordnet
+            </span>
+            {% endif %}
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+
+      <div class="form-text">
+        Eine Wowiport-Person kann nur einem
+        Handwerker zugeordnet werden. Ein Handwerker
+        kann mehrere abweichende Personennummern
+        besitzen.
+      </div>
+      {% endif %}
+    </div>
   </div>
 
   <div class="card-footer d-flex justify-content-between">
@@ -247,6 +342,16 @@
   const craftActivityOptions = Array.from(document.querySelectorAll(".craft-activity-option"));
   const craftActivityCheckboxes = Array.from(document.querySelectorAll(".craft-activity-checkbox"));
   const selectedCraftActivities = document.getElementById("selectedCraftActivities");
+    const jurisdictionPersonSearch =
+    document.getElementById(
+      "jurisdictionPersonSearch"
+    );
+  const jurisdictionPersonOptions =
+    Array.from(
+      document.querySelectorAll(
+        ".jurisdiction-person-option"
+      )
+    );
 
   function updateCraftActivityVisibility() {
     const query = craftActivitySearch.value.trim().toLowerCase();
@@ -295,5 +400,29 @@
   craftActivityCheckboxes.forEach((checkbox) => {
     checkbox.addEventListener("change", updateSelectedCraftActivities);
   });
+    if (jurisdictionPersonSearch) {
+    jurisdictionPersonSearch.addEventListener(
+      "input",
+      () => {
+        const query =
+          jurisdictionPersonSearch.value
+            .trim()
+            .toLowerCase();
+
+        jurisdictionPersonOptions.forEach(
+          (option) => {
+            const searchText =
+              option.dataset.search || "";
+
+            option.classList.toggle(
+              "d-none",
+              query.length > 0
+                && !searchText.includes(query)
+            );
+          }
+        );
+      }
+    );
+  }
 </script>
 {% endblock %}

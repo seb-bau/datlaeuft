@@ -21,6 +21,9 @@ from flask import (
     send_from_directory,
     url_for,
 )
+from .safety_inspection_service import (
+    reconcile_safety_inspection_assignments,
+)
 from flask_login import current_user, login_required
 
 from .audit import audit
@@ -98,6 +101,9 @@ from .models import (
     OfferPositionSource,
     OfferStatus,
     OfferArchiveStatus,
+    UserJurisdictionPersonMapping,
+    WowiEconomicUnit,
+    WowiEconomicUnitJurisdiction,
 )
 from .offer_archive import (
     OfferArchiveError,
@@ -1883,7 +1889,12 @@ def user_create() -> Any:
         audit("user.create", "user", item.id)
         db.session.commit()
         flash("Benutzer gespeichert.", "success")
-        return redirect(url_for("admin.users"))
+        return redirect(
+            url_for(
+                "admin.user_edit",
+                user_id=item.id,
+            )
+        )
 
     return render_template(
         "admin/user_form.html",
@@ -1893,7 +1904,10 @@ def user_create() -> Any:
     )
 
 
-@admin_bp.route("/admin/users/<int:user_id>", methods=["GET", "POST"])
+@admin_bp.route(
+    "/admin/users/<int:user_id>",
+    methods=["GET", "POST"],
+)
 @admin_required
 def user_edit(user_id: int) -> Any:
     item = db.get_or_404(User, user_id)
@@ -1910,12 +1924,63 @@ def user_edit(user_id: int) -> Any:
     )
 
     if request.method == "POST":
-        save_user_form(item)
-        save_user_craft_activities(item)
-        audit("user.update", "user", item.id)
-        db.session.commit()
-        flash("Benutzer gespeichert.", "success")
-        return redirect(url_for("admin.users"))
+        try:
+            save_user_form(item)
+            save_user_craft_activities(item)
+            mapping_ids = (
+                save_user_jurisdiction_person_mappings(
+                    item
+                )
+            )
+            db.session.flush()
+
+            assignment_result = (
+                reconcile_safety_inspection_assignments()
+            )
+
+            audit(
+                "user.update",
+                "user",
+                item.id,
+                metadata={
+                    (
+                        "jurisdiction_person_"
+                        "erp_ids"
+                    ): mapping_ids,
+                    (
+                        "safety_inspection_"
+                        "assignments"
+                    ): assignment_result,
+                },
+            )
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+        except IntegrityError:
+            db.session.rollback()
+            flash(
+                "Die Wowiport-Person ist bereits "
+                "einem anderen Benutzer "
+                "zugeordnet.",
+                "danger",
+            )
+        else:
+            flash(
+                "Benutzer gespeichert. "
+                f"{assignment_result['assigned']} "
+                "offene Prüfaufträge wurden "
+                "neu zugeordnet.",
+                "success",
+            )
+            return redirect(
+                url_for(
+                    "admin.user_edit",
+                    user_id=item.id,
+                )
+            )
+
+        item = db.get_or_404(User, user_id)
 
     selected_craft_activities = [
         activity
@@ -1925,6 +1990,20 @@ def user_edit(user_id: int) -> Any:
             and activity.app_enabled
         )
     ]
+    jurisdiction_candidates = (
+        jurisdiction_person_candidates()
+    )
+    selected_jurisdiction_person_ids = {
+        mapping.jurisdiction_person_erp_id
+        for mapping in (
+            UserJurisdictionPersonMapping.query
+            .filter_by(
+                user_id=item.id,
+                active=True,
+            )
+            .all()
+        )
+    }
 
     return render_template(
         "admin/user_form.html",
@@ -1932,6 +2011,12 @@ def user_edit(user_id: int) -> Any:
         craft_activities=craft_activities,
         selected_craft_activities=(
             selected_craft_activities
+        ),
+        jurisdiction_candidates=(
+            jurisdiction_candidates
+        ),
+        selected_jurisdiction_person_ids=(
+            selected_jurisdiction_person_ids
         ),
     )
 
@@ -5743,6 +5828,243 @@ def save_user_craft_activities(
             activity.id,
         ),
     )
+
+
+def jurisdiction_person_candidates(
+) -> list[dict[str, Any]]:
+    candidates: dict[
+        int,
+        dict[str, Any],
+    ] = {}
+
+    def add_candidate(
+        erp_id: int,
+        name: str | None,
+    ) -> None:
+        candidate = candidates.setdefault(
+            erp_id,
+            {
+                "erp_id": erp_id,
+                "name": None,
+                "usage_count": 0,
+                "mapped_user_id": None,
+                "mapped_user_name": None,
+            },
+        )
+
+        normalized_name = (
+            name.strip()
+            if name and name.strip()
+            else None
+        )
+
+        if (
+            candidate["name"] is None
+            and normalized_name is not None
+        ):
+            candidate["name"] = normalized_name
+
+        candidate["usage_count"] += 1
+
+    jurisdictions = (
+        WowiEconomicUnitJurisdiction.query
+        .filter(
+            WowiEconomicUnitJurisdiction.active
+            .is_(True),
+            WowiEconomicUnitJurisdiction
+            .responsible_person_erp_id
+            .isnot(None),
+        )
+        .all()
+    )
+
+    for jurisdiction in jurisdictions:
+        add_candidate(
+            jurisdiction
+            .responsible_person_erp_id,
+            jurisdiction.responsible_name,
+        )
+
+    economic_units = (
+        WowiEconomicUnit.query
+        .filter(
+            WowiEconomicUnit.active.is_(True),
+            WowiEconomicUnit
+            .universal_responsibility
+            .is_(True),
+            WowiEconomicUnit
+            .universal_responsible_person_erp_id
+            .isnot(None),
+        )
+        .all()
+    )
+
+    for economic_unit in economic_units:
+        add_candidate(
+            economic_unit
+            .universal_responsible_person_erp_id,
+            None,
+        )
+
+    mappings = (
+        UserJurisdictionPersonMapping.query
+        .filter_by(active=True)
+        .all()
+    )
+
+    for mapping in mappings:
+        candidate = candidates.setdefault(
+            mapping.jurisdiction_person_erp_id,
+            {
+                "erp_id": (
+                    mapping
+                    .jurisdiction_person_erp_id
+                ),
+                "name": (
+                    mapping.person_name_snapshot
+                ),
+                "usage_count": 0,
+                "mapped_user_id": None,
+                "mapped_user_name": None,
+            },
+        )
+        candidate["mapped_user_id"] = (
+            mapping.user_id
+        )
+        candidate["mapped_user_name"] = (
+            mapping.user.display_name
+            if mapping.user is not None
+            else None
+        )
+
+        if (
+            not candidate["name"]
+            and mapping.person_name_snapshot
+        ):
+            candidate["name"] = (
+                mapping.person_name_snapshot
+            )
+
+    result = list(candidates.values())
+
+    for candidate in result:
+        if not candidate["name"]:
+            candidate["name"] = (
+                "Wowiport-Person "
+                f"{candidate['erp_id']}"
+            )
+
+    return sorted(
+        result,
+        key=lambda candidate: (
+            candidate["name"].lower(),
+            candidate["erp_id"],
+        ),
+    )
+
+
+def save_user_jurisdiction_person_mappings(
+    item: User,
+) -> list[int]:
+    selected_ids = set()
+
+    for value in request.form.getlist(
+        "jurisdiction_person_erp_ids"
+    ):
+        try:
+            erp_id = int(value)
+        except ValueError as exc:
+            raise ValueError(
+                "Eine Wowiport-Personen-ID "
+                "ist ungültig."
+            ) from exc
+
+        if erp_id <= 0:
+            raise ValueError(
+                "Eine Wowiport-Personen-ID "
+                "ist ungültig."
+            )
+
+        selected_ids.add(erp_id)
+
+    if item.craftsman_erp_id is None:
+        selected_ids.clear()
+
+    candidates = jurisdiction_person_candidates()
+    candidate_names = {
+        candidate["erp_id"]: candidate["name"]
+        for candidate in candidates
+    }
+    allowed_ids = set(candidate_names)
+
+    unknown_ids = selected_ids - allowed_ids
+
+    if unknown_ids:
+        raise ValueError(
+            "Mindestens eine ausgewählte "
+            "Wowiport-Person ist nicht mehr "
+            "in den Zuständigkeiten vorhanden."
+        )
+
+    current_mappings = (
+        UserJurisdictionPersonMapping.query
+        .filter_by(
+            user_id=item.id,
+            active=True,
+        )
+        .all()
+    )
+
+    for mapping in current_mappings:
+        if (
+            mapping.jurisdiction_person_erp_id
+            not in selected_ids
+        ):
+            mapping.active = False
+
+    for erp_id in selected_ids:
+        mapping = (
+            UserJurisdictionPersonMapping.query
+            .filter_by(
+                jurisdiction_person_erp_id=erp_id
+            )
+            .one_or_none()
+        )
+
+        if (
+            mapping is not None
+            and mapping.active
+            and mapping.user_id != item.id
+        ):
+            other_user_name = (
+                mapping.user.display_name
+                if mapping.user is not None
+                else "einem anderen Benutzer"
+            )
+            raise ValueError(
+                f"Die Wowiport-Person {erp_id} "
+                f"ist bereits {other_user_name} "
+                "zugeordnet."
+            )
+
+        if mapping is None:
+            mapping = (
+                UserJurisdictionPersonMapping(
+                    user_id=item.id,
+                    jurisdiction_person_erp_id=(
+                        erp_id
+                    ),
+                )
+            )
+            db.session.add(mapping)
+
+        mapping.user_id = item.id
+        mapping.person_name_snapshot = (
+            candidate_names.get(erp_id)
+        )
+        mapping.active = True
+
+    return sorted(selected_ids)
 
 
 def save_inventory_location_form(

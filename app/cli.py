@@ -44,6 +44,11 @@ from .safety_inspection_service import (
 from .safety_inspection_archive import (
     process_pending_safety_inspection_archives,
 )
+from .safety_inspection_service import (
+    generate_safety_inspection_jobs,
+    reconcile_safety_inspection_assignments,
+    reconcile_safety_inspection_defects,
+)
 
 
 from datetime import datetime
@@ -444,6 +449,9 @@ def register_cli(app: Flask) -> None:
                     group_id=group_id,
                 )
             )
+            assignment_result = (
+                reconcile_safety_inspection_assignments()
+            )
             defect_result = (
                 reconcile_safety_inspection_defects()
             )
@@ -474,6 +482,15 @@ def register_cli(app: Flask) -> None:
             f"{generation_result['missed']} "
             "Fehler="
             f"{generation_result['errors']}"
+        )
+
+        click.echo(
+            "Zuordnungen_geprüft="
+            f"{assignment_result['seen']} "
+            "Neu_zugeordnet="
+            f"{assignment_result['assigned']} "
+            "Weiterhin_unzugeordnet="
+            f"{assignment_result['unresolved']}"
         )
 
         click.echo(

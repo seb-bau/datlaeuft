@@ -870,6 +870,121 @@ def create_safety_inspection_job(
     return job, True
 
 
+def reconcile_safety_inspection_assignments(
+) -> dict[str, int]:
+    result = {
+        "seen": 0,
+        "assigned": 0,
+        "unresolved": 0,
+    }
+
+    jobs = (
+        SafetyInspectionJob.query
+        .filter(
+            SafetyInspectionJob.status
+            == (
+                SafetyInspectionJobStatus
+                .PLANNED.value
+            ),
+            SafetyInspectionJob.assigned_user_id
+            .is_(None),
+        )
+        .order_by(
+            SafetyInspectionJob.id.asc()
+        )
+        .all()
+    )
+
+    for job in jobs:
+        result["seen"] += 1
+
+        economic_unit = (
+            WowiEconomicUnit.query
+            .filter_by(
+                erp_id=(
+                    job.economic_unit_erp_id
+                ),
+                active=True,
+            )
+            .one_or_none()
+        )
+
+        if economic_unit is None:
+            job.assignment_source = (
+                SafetyInspectionAssignmentSource
+                .UNASSIGNED.value
+            )
+            job.assignment_error = (
+                "Die Wirtschaftseinheit wurde "
+                "im Objektverzeichnis nicht "
+                "gefunden."
+            )
+            result["unresolved"] += 1
+            continue
+
+        try:
+            assignment = (
+                resolve_department_assignment(
+                    economic_unit,
+                    job.department,
+                )
+            )
+        except ValueError as exc:
+            fallback_user = (
+                job.group.fallback_user
+            )
+
+            if (
+                fallback_user is None
+                or not fallback_user.is_active
+                or fallback_user
+                .craftsman_erp_id is None
+            ):
+                job.assignment_source = (
+                    SafetyInspectionAssignmentSource
+                    .UNASSIGNED.value
+                )
+                job.assignment_error = str(exc)
+                result["unresolved"] += 1
+                continue
+
+            job.assigned_user = fallback_user
+            job.jurisdiction = None
+            job.responsible_official_erp_id = (
+                None
+            )
+            job.assignment_source = (
+                SafetyInspectionAssignmentSource
+                .FALLBACK.value
+            )
+        else:
+            job.assigned_user = assignment.user
+            job.jurisdiction = (
+                assignment.jurisdiction
+            )
+            job.responsible_official_erp_id = (
+                assignment
+                .responsible_official_erp_id
+            )
+            job.assignment_source = (
+                SafetyInspectionAssignmentSource
+                .JURISDICTION.value
+            )
+
+        job.assignment_error = None
+        result["assigned"] += 1
+
+        enqueue_safety_inspection_push(
+            job,
+            (
+                PushEventType
+                .CHANGED_SAFETY_INSPECTION
+            ),
+        )
+
+    return result
+
+
 def update_safety_inspection_result(
     result: SafetyInspectionResult,
     state: str,

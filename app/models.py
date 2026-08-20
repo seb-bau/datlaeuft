@@ -472,6 +472,12 @@ class User(UserMixin, db.Model):
         back_populates="user",
         foreign_keys="PushDelivery.user_id",
     )
+    jurisdiction_person_mappings: Mapped[
+        list["UserJurisdictionPersonMapping"]
+    ] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def is_active(self) -> bool:
@@ -484,6 +490,65 @@ class User(UserMixin, db.Model):
         if not self.password_hash:
             return False
         return check_password_hash(self.password_hash, password)
+
+
+class UserJurisdictionPersonMapping(db.Model):
+    __tablename__ = (
+        "user_jurisdiction_person_mapping"
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "jurisdiction_person_erp_id",
+            name=(
+                "uq_user_jurisdiction_person_"
+                "mapping_person"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    jurisdiction_person_erp_id: Mapped[
+        int
+    ] = mapped_column(
+        db.Integer,
+        nullable=False,
+    )
+    person_name_snapshot: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(255)
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship(
+        back_populates=(
+            "jurisdiction_person_mappings"
+        )
+    )
 
 
 class Commission(db.Model):
