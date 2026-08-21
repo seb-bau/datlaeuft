@@ -73,10 +73,10 @@ class SafetyInspectionObjectContext:
 
 
 def create_safety_inspection_template(
-    name: str,
-    description: str | None,
-    legal_reference: str | None,
-    user: User,
+        name: str,
+        description: str | None,
+        legal_reference: str | None,
+        user: User,
 ) -> tuple[
     SafetyInspectionTemplate,
     SafetyInspectionTemplateVersion,
@@ -115,18 +115,18 @@ def create_safety_inspection_template(
 
 
 def create_safety_inspection_revision(
-    template: SafetyInspectionTemplate,
-    user: User,
+        template: SafetyInspectionTemplate,
+        user: User,
 ) -> SafetyInspectionTemplateVersion:
     existing_draft = next(
         (
             version
             for version in template.versions
             if version.status
-            == (
-                SafetyInspectionTemplateVersionStatus
-                .DRAFT.value
-            )
+               == (
+                   SafetyInspectionTemplateVersionStatus
+                   .DRAFT.value
+               )
         ),
         None,
     )
@@ -198,13 +198,13 @@ def create_safety_inspection_revision(
 
 
 def publish_safety_inspection_version(
-    version: SafetyInspectionTemplateVersion,
-    user: User,
-    change_note: str | None = None,
+        version: SafetyInspectionTemplateVersion,
+        user: User,
+        change_note: str | None = None,
 ) -> SafetyInspectionTemplateVersion:
     if version.status != (
-        SafetyInspectionTemplateVersionStatus
-        .DRAFT.value
+            SafetyInspectionTemplateVersionStatus
+                    .DRAFT.value
     ):
         raise ValueError(
             "Nur ein Entwurf kann "
@@ -229,8 +229,8 @@ def publish_safety_inspection_version(
         )
 
     if any(
-        not item.title.strip()
-        for item in version.items
+            not item.title.strip()
+            for item in version.items
     ):
         raise ValueError(
             "Jeder Prüfpunkt benötigt "
@@ -238,15 +238,15 @@ def publish_safety_inspection_version(
         )
 
     for previous_version in (
-        version.template.versions
+            version.template.versions
     ):
         if (
-            previous_version.id != version.id
-            and previous_version.status
-            == (
+                previous_version.id != version.id
+                and previous_version.status
+                == (
                 SafetyInspectionTemplateVersionStatus
-                .PUBLISHED.value
-            )
+                        .PUBLISHED.value
+        )
         ):
             previous_version.status = (
                 SafetyInspectionTemplateVersionStatus
@@ -266,7 +266,7 @@ def publish_safety_inspection_version(
 
 
 def validate_safety_inspection_schedule(
-    schedule: SafetyInspectionSchedule,
+        schedule: SafetyInspectionSchedule,
 ) -> None:
     frequencies = {
         item.value
@@ -293,8 +293,8 @@ def validate_safety_inspection_schedule(
         )
 
     if (
-        schedule.generation_mode
-        not in generation_modes
+            schedule.generation_mode
+            not in generation_modes
     ):
         raise ValueError(
             "Der Erzeugungsmodus ist ungültig."
@@ -319,15 +319,15 @@ def validate_safety_inspection_schedule(
         )
 
     if (
-        schedule.generation_mode
-        == (
+            schedule.generation_mode
+            == (
             SafetyInspectionGenerationMode
-            .PREVIOUS_MONTH_DAY.value
-        )
+                    .PREVIOUS_MONTH_DAY.value
+    )
     ):
         if schedule.frequency != (
-            SafetyInspectionScheduleFrequency
-            .MONTHLY.value
+                SafetyInspectionScheduleFrequency
+                        .MONTHLY.value
         ):
             raise ValueError(
                 "Die Erzeugung an einem Tag "
@@ -336,11 +336,11 @@ def validate_safety_inspection_schedule(
             )
 
         if (
-            schedule.generation_day_of_month
-            is None
-            or not 1
-            <= schedule.generation_day_of_month
-            <= 31
+                schedule.generation_day_of_month
+                is None
+                or not 1
+                       <= schedule.generation_day_of_month
+                       <= 31
         ):
             raise ValueError(
                 "Der Erzeugungstag muss "
@@ -349,7 +349,7 @@ def validate_safety_inspection_schedule(
 
 
 def validate_safety_inspection_group(
-    group: SafetyInspectionGroup,
+        group: SafetyInspectionGroup,
 ) -> None:
     validate_safety_inspection_schedule(
         group.schedule
@@ -365,10 +365,10 @@ def validate_safety_inspection_group(
         )
 
     if (
-        latest_published_version(
-            group.template
-        )
-        is None
+            latest_published_version(
+                group.template
+            )
+            is None
     ):
         raise ValueError(
             "Der Prüfdetailplan besitzt keine "
@@ -386,9 +386,9 @@ def validate_safety_inspection_group(
         )
 
     if (
-        group.ends_on is not None
-        and group.ends_on
-        < group.first_period_start
+            group.ends_on is not None
+            and group.ends_on
+            < group.first_period_start
     ):
         raise ValueError(
             "Das Enddatum darf nicht vor "
@@ -408,19 +408,18 @@ def validate_safety_inspection_group(
         group.corrective_craft_activity
     )
     if (
-        not craft_activity.active
-        or not craft_activity.app_enabled
+            not craft_activity.active
+            or not craft_activity.app_enabled
     ):
         raise ValueError(
             "Das ausgewählte Gewerk ist "
             "global deaktiviert."
         )
 
-
     if (
-        not task_template.active
-        or task_template
-        .erp_service_catalogue_id is None
+            not task_template.active
+            or task_template
+            .erp_service_catalogue_id is None
     ):
         raise ValueError(
             "Die Standard-Leistungsposition "
@@ -428,8 +427,8 @@ def validate_safety_inspection_group(
         )
 
     if (
-        task_template.craft_activity_id
-        != craft_activity.id
+            task_template.craft_activity_id
+            != craft_activity.id
     ):
         raise ValueError(
             "Leistungsposition und Gewerk "
@@ -447,9 +446,9 @@ def validate_safety_inspection_group(
     )
 
     if (
-        mapping is None
-        or mapping.department_id
-        != group.department_id
+            mapping is None
+            or mapping.department_id
+            != group.department_id
     ):
         raise ValueError(
             "Das Gewerk der "
@@ -466,30 +465,12 @@ def validate_safety_inspection_group(
     }
 
     if (
-        group.selection_mode
-        not in selection_modes
+            group.selection_mode
+            not in selection_modes
     ):
         raise ValueError(
             "Der Auswahlmodus der Prüfgruppe "
             "ist ungültig."
-        )
-
-    if (
-        group.selection_mode
-        == (
-            SafetyInspectionSelectionMode
-            .WHITELIST.value
-        )
-        and not any(
-            target.included
-            for target in group.targets
-        )
-    ):
-        raise ValueError(
-            "Eine Prüfgruppe im "
-            "Whitelist-Modus benötigt "
-            "mindestens ein eingeschlossenes "
-            "Objekt."
         )
 
     regex_pattern = clean_text(
@@ -514,8 +495,8 @@ def validate_safety_inspection_group(
             )
 
         if (
-            group.id_num_regex_action
-            not in regex_actions
+                group.id_num_regex_action
+                not in regex_actions
         ):
             raise ValueError(
                 "Die RegEx-Aktion ist ungültig."
@@ -532,10 +513,39 @@ def validate_safety_inspection_group(
                 f"ungültig: {exc}."
             ) from exc
 
+    has_regex_include = (
+            regex_pattern is not None
+            and group.id_num_regex_action
+            == (
+                SafetyInspectionRegexAction
+                .INCLUDE.value
+            )
+    )
+
+    if (
+            group.selection_mode
+            == (
+            SafetyInspectionSelectionMode
+                    .WHITELIST.value
+            )
+            and not has_regex_include
+            and not any(
+                target.included
+                for target in group.targets
+            )
+    ):
+        raise ValueError(
+            "Eine Prüfgruppe im "
+            "Whitelist-Modus benötigt "
+            "mindestens ein eingeschlossenes "
+            "Objekt oder eine einschließende "
+            "RegEx."
+        )
+
 
 def generate_safety_inspection_jobs(
-    run_date: date | None = None,
-    group_id: int | None = None,
+        run_date: date | None = None,
+        group_id: int | None = None,
 ) -> dict[str, int]:
     current_date = run_date or date.today()
     result = {
@@ -562,7 +572,7 @@ def generate_safety_inspection_jobs(
         )
 
     for group in query.order_by(
-        SafetyInspectionGroup.id.asc()
+            SafetyInspectionGroup.id.asc()
     ).all():
         result["groups"] += 1
 
@@ -596,9 +606,9 @@ def generate_safety_inspection_jobs(
                 iteration_count += 1
 
                 if (
-                    group.ends_on is not None
-                    and period_start
-                    > group.ends_on
+                        group.ends_on is not None
+                        and period_start
+                        > group.ends_on
                 ):
                     break
 
@@ -617,32 +627,32 @@ def generate_safety_inspection_jobs(
                     break
 
                 due_from = (
-                    period_start
-                    + timedelta(
-                        days=(
-                            group.schedule
-                            .due_start_offset_days
-                        )
+                        period_start
+                        + timedelta(
+                    days=(
+                        group.schedule
+                        .due_start_offset_days
                     )
+                )
                 )
                 due_to = (
-                    period_end
-                    + timedelta(
-                        days=(
-                            group.schedule
-                            .due_end_offset_days
-                        )
+                        period_end
+                        + timedelta(
+                    days=(
+                        group.schedule
+                        .due_end_offset_days
                     )
                 )
+                )
                 missed_on = (
-                    due_to
-                    + timedelta(
-                        days=(
+                        due_to
+                        + timedelta(
+                    days=(
                             group.schedule
                             .grace_days
                             + 1
-                        )
                     )
+                )
                 )
 
                 if missed_on >= current_date:
@@ -668,8 +678,8 @@ def generate_safety_inspection_jobs(
                             result["created"] += 1
 
                             if (
-                                job.assigned_user_id
-                                is None
+                                    job.assigned_user_id
+                                    is None
                             ):
                                 result[
                                     "unassigned"
@@ -707,16 +717,16 @@ def generate_safety_inspection_jobs(
 
 
 def create_safety_inspection_job(
-    group: SafetyInspectionGroup,
-    template_version: (
-        SafetyInspectionTemplateVersion
-    ),
-    context: SafetyInspectionObjectContext,
-    period_start: date,
-    period_end: date,
-    due_from: date,
-    due_to: date,
-    missed_on: date,
+        group: SafetyInspectionGroup,
+        template_version: (
+                SafetyInspectionTemplateVersion
+        ),
+        context: SafetyInspectionObjectContext,
+        period_start: date,
+        period_end: date,
+        due_from: date,
+        due_to: date,
+        missed_on: date,
 ) -> tuple[SafetyInspectionJob, bool]:
     existing = (
         SafetyInspectionJob.query.filter_by(
@@ -766,10 +776,10 @@ def create_safety_inspection_job(
         fallback_user = group.fallback_user
 
         if (
-            fallback_user is not None
-            and fallback_user.is_active
-            and fallback_user
-            .craftsman_erp_id is not None
+                fallback_user is not None
+                and fallback_user.is_active
+                and fallback_user
+                .craftsman_erp_id is not None
         ):
             assigned_user = fallback_user
             assignment_source = (
@@ -797,13 +807,13 @@ def create_safety_inspection_job(
         due_from=due_from,
         due_to=due_to,
         warning_on=(
-            due_to
-            - timedelta(
-                days=(
-                    group.schedule
-                    .warning_days
-                )
+                due_to
+                - timedelta(
+            days=(
+                group.schedule
+                .warning_days
             )
+        )
         ),
         missed_on=missed_on,
         object_level=context.object_level,
@@ -978,10 +988,10 @@ def reconcile_safety_inspection_assignments(
             )
 
             if (
-                fallback_user is None
-                or not fallback_user.is_active
-                or fallback_user
-                .craftsman_erp_id is None
+                    fallback_user is None
+                    or not fallback_user.is_active
+                    or fallback_user
+                    .craftsman_erp_id is None
             ):
                 job.assignment_source = (
                     SafetyInspectionAssignmentSource
@@ -1029,12 +1039,12 @@ def reconcile_safety_inspection_assignments(
 
 
 def update_safety_inspection_result(
-    result: SafetyInspectionResult,
-    state: str,
-    note: str | None,
-    immediate_action: str | None,
-    user: User,
-    expected_version: int | None = None,
+        result: SafetyInspectionResult,
+        state: str,
+        note: str | None,
+        immediate_action: str | None,
+        user: User,
+        expected_version: int | None = None,
 ) -> SafetyInspectionResult:
     ensure_job_editable(result.job, user)
 
@@ -1049,12 +1059,12 @@ def update_safety_inspection_result(
         )
 
     if (
-        state
-        == (
+            state
+            == (
             SafetyInspectionResultState
-            .NOT_PRESENT.value
-        )
-        and not result.allow_not_present
+                    .NOT_PRESENT.value
+    )
+            and not result.allow_not_present
     ):
         raise ValueError(
             "Für diesen Prüfpunkt ist "
@@ -1062,9 +1072,9 @@ def update_safety_inspection_result(
         )
 
     if (
-        expected_version is not None
-        and result.version
-        != expected_version
+            expected_version is not None
+            and result.version
+            != expected_version
     ):
         raise ValueError(
             "Der Prüfpunkt wurde "
@@ -1079,8 +1089,8 @@ def update_safety_inspection_result(
     result.version += 1
 
     if state == (
-        SafetyInspectionResultState
-        .NOT_CHECKED.value
+            SafetyInspectionResultState
+                    .NOT_CHECKED.value
     ):
         result.checked_by = None
         result.checked_at = None
@@ -1089,8 +1099,8 @@ def update_safety_inspection_result(
         result.checked_at = utc_now()
 
     if result.job.status == (
-        SafetyInspectionJobStatus
-        .PLANNED.value
+            SafetyInspectionJobStatus
+                    .PLANNED.value
     ):
         result.job.status = (
             SafetyInspectionJobStatus
@@ -1102,9 +1112,9 @@ def update_safety_inspection_result(
 
 
 def complete_safety_inspection_job(
-    job: SafetyInspectionJob,
-    user: User,
-    overall_note: str | None = None,
+        job: SafetyInspectionJob,
+        user: User,
+        overall_note: str | None = None,
 ) -> list[SafetyInspectionDefect]:
     ensure_job_editable(job, user)
     validate_safety_inspection_results(
@@ -1116,9 +1126,9 @@ def complete_safety_inspection_job(
     for result in job.results:
         if result.state not in {
             SafetyInspectionResultState
-            .DEFECT_INFO.value,
+                    .DEFECT_INFO.value,
             SafetyInspectionResultState
-            .DEFECT_URGENT.value,
+                    .DEFECT_URGENT.value,
         }:
             continue
 
@@ -1134,7 +1144,7 @@ def complete_safety_inspection_job(
                     .OPEN.value
                 ),
                 description=(
-                    result.note or result.item_title
+                        result.note or result.item_title
                 ),
                 immediate_action=(
                     result.immediate_action
@@ -1184,18 +1194,18 @@ def complete_safety_inspection_job(
 
 
 def validate_safety_inspection_results(
-    results: Iterable[
-        SafetyInspectionResult
-    ],
+        results: Iterable[
+            SafetyInspectionResult
+        ],
 ) -> None:
     for result in results:
         if (
-            result.required
-            and result.state
-            == (
+                result.required
+                and result.state
+                == (
                 SafetyInspectionResultState
-                .NOT_CHECKED.value
-            )
+                        .NOT_CHECKED.value
+        )
         ):
             raise ValueError(
                 f"Der Prüfpunkt "
@@ -1204,12 +1214,12 @@ def validate_safety_inspection_results(
             )
 
         if (
-            result.state
-            == (
+                result.state
+                == (
                 SafetyInspectionResultState
-                .NOT_PRESENT.value
-            )
-            and not result.note
+                        .NOT_PRESENT.value
+        )
+                and not result.note
         ):
             raise ValueError(
                 f"Für „{result.item_title}“ "
@@ -1218,14 +1228,14 @@ def validate_safety_inspection_results(
             )
 
         if (
-            result.state
-            in {
-                SafetyInspectionResultState
-                .DEFECT_INFO.value,
-                SafetyInspectionResultState
-                .DEFECT_URGENT.value,
-            }
-            and not result.note
+                result.state
+                in {
+            SafetyInspectionResultState
+                    .DEFECT_INFO.value,
+            SafetyInspectionResultState
+                    .DEFECT_URGENT.value,
+        }
+                and not result.note
         ):
             raise ValueError(
                 f"Der Mangel bei "
@@ -1241,34 +1251,34 @@ def validate_safety_inspection_results(
         photo_required = (
             result.photo_required_no_defect
             if result.state
-            == (
-                SafetyInspectionResultState
-                .NO_DEFECT.value
-            )
+               == (
+                   SafetyInspectionResultState
+                   .NO_DEFECT.value
+               )
             else (
                 result
                 .photo_required_not_present
                 if result.state
-                == (
-                    SafetyInspectionResultState
-                    .NOT_PRESENT.value
-                )
+                   == (
+                       SafetyInspectionResultState
+                       .NOT_PRESENT.value
+                   )
                 else (
                     result
                     .photo_required_defect_info
                     if result.state
-                    == (
-                        SafetyInspectionResultState
-                        .DEFECT_INFO.value
-                    )
+                       == (
+                           SafetyInspectionResultState
+                           .DEFECT_INFO.value
+                       )
                     else (
                         result
                         .photo_required_defect_urgent
                         if result.state
-                        == (
-                            SafetyInspectionResultState
-                            .DEFECT_URGENT.value
-                        )
+                           == (
+                               SafetyInspectionResultState
+                               .DEFECT_URGENT.value
+                           )
                         else False
                     )
                 )
@@ -1284,15 +1294,15 @@ def validate_safety_inspection_results(
 
 
 def create_commission_from_safety_defect(
-    defect: SafetyInspectionDefect,
-    user: User,
-    building_id: int | None = None,
+        defect: SafetyInspectionDefect,
+        user: User,
+        building_id: int | None = None,
 ) -> Commission:
     if defect.status in {
         SafetyInspectionDefectStatus
-        .RESOLVED.value,
+                .RESOLVED.value,
         SafetyInspectionDefectStatus
-        .DISMISSED.value,
+                .DISMISSED.value,
     }:
         raise ValueError(
             "Für diesen Mangel kann kein Auftrag "
@@ -1335,11 +1345,11 @@ def create_commission_from_safety_defect(
         )
 
         if (
-            building is None
-            or not building.active
-            or building.economic_unit is None
-            or building.economic_unit.erp_id
-            != job.economic_unit_erp_id
+                building is None
+                or not building.active
+                or building.economic_unit is None
+                or building.economic_unit.erp_id
+                != job.economic_unit_erp_id
         ):
             raise ValueError(
                 "Das ausgewählte Gebäude gehört "
@@ -1363,10 +1373,10 @@ def create_commission_from_safety_defect(
     urgency_text = (
         "Dringender Mangel"
         if defect.severity
-        == (
-            SafetyInspectionResultState
-            .DEFECT_URGENT.value
-        )
+           == (
+               SafetyInspectionResultState
+               .DEFECT_URGENT.value
+           )
         else "Mangel"
     )
     description_parts = [
@@ -1448,9 +1458,9 @@ def create_commission_from_safety_defect(
 
 
 def copy_defect_photos_to_commission(
-    defect: SafetyInspectionDefect,
-    commission: Commission,
-    user: User,
+        defect: SafetyInspectionDefect,
+        commission: Commission,
+        user: User,
 ) -> int:
     created_count = 0
 
@@ -1518,8 +1528,8 @@ def copy_defect_photos_to_commission(
                 stored_photo.content_sha256
             ),
             caption=(
-                photo.caption
-                or defect.result.item_title
+                    photo.caption
+                    or defect.result.item_title
             ),
             active=True,
             erp_sync_state=(
@@ -1569,11 +1579,11 @@ def reconcile_safety_inspection_defects(
         previous_status = defect.status
 
         if any(
-            commission.local_status
-            == CommissionLocalStatus.DONE.value
-            and commission.completion_successful
-            is not False
-            for commission in commissions
+                commission.local_status
+                == CommissionLocalStatus.DONE.value
+                and commission.completion_successful
+                is not False
+                for commission in commissions
         ):
             defect.status = (
                 SafetyInspectionDefectStatus
@@ -1582,14 +1592,14 @@ def reconcile_safety_inspection_defects(
             defect.resolved_at = utc_now()
 
         elif all(
-            commission.local_status
-            in {
-                CommissionLocalStatus
-                .DONE.value,
-                CommissionLocalStatus
-                .DELETED.value,
-            }
-            for commission in commissions
+                commission.local_status
+                in {
+                    CommissionLocalStatus
+                            .DONE.value,
+                    CommissionLocalStatus
+                            .DELETED.value,
+                }
+                for commission in commissions
         ):
             defect.status = (
                 SafetyInspectionDefectStatus
@@ -1597,12 +1607,12 @@ def reconcile_safety_inspection_defects(
             )
 
         elif any(
-            commission.local_status
-            == (
-                CommissionLocalStatus
-                .IN_PROGRESS.value
-            )
-            for commission in commissions
+                commission.local_status
+                == (
+                        CommissionLocalStatus
+                                .IN_PROGRESS.value
+                )
+                for commission in commissions
         ):
             defect.status = (
                 SafetyInspectionDefectStatus
@@ -1624,7 +1634,7 @@ def reconcile_safety_inspection_defects(
 
 
 def mark_missed_inspections(
-    current_date: date | None = None,
+        current_date: date | None = None,
 ) -> int:
     run_date = current_date or date.today()
     jobs = (
@@ -1653,8 +1663,8 @@ def mark_missed_inspections(
 
 
 def ensure_job_editable(
-    job: SafetyInspectionJob,
-    user: User,
+        job: SafetyInspectionJob,
+        user: User,
 ) -> None:
     if job.is_terminal:
         raise ValueError(
@@ -1663,16 +1673,16 @@ def ensure_job_editable(
         )
 
     if (
-        job.assigned_user_id != user.id
-        and not user.is_admin
-        and not (
+            job.assigned_user_id != user.id
+            and not user.is_admin
+            and not (
             user
-            .can_manage_safety_inspections
-        )
-        and not (
+                    .can_manage_safety_inspections
+    )
+            and not (
             user
-            .can_review_safety_inspections
-        )
+                    .can_review_safety_inspections
+    )
     ):
         raise ValueError(
             "Die Prüfung ist einem anderen "
@@ -1681,16 +1691,16 @@ def ensure_job_editable(
 
 
 def latest_published_version(
-    template: SafetyInspectionTemplate,
+        template: SafetyInspectionTemplate,
 ) -> SafetyInspectionTemplateVersion:
     versions = [
         version
         for version in template.versions
         if version.status
-        == (
-            SafetyInspectionTemplateVersionStatus
-            .PUBLISHED.value
-        )
+           == (
+               SafetyInspectionTemplateVersionStatus
+               .PUBLISHED.value
+           )
     ]
 
     if not versions:
@@ -1707,36 +1717,36 @@ def latest_published_version(
 
 
 def next_period_start(
-    period_start: date,
-    schedule: SafetyInspectionSchedule,
+        period_start: date,
+        schedule: SafetyInspectionSchedule,
 ) -> date:
     interval_value = (
         schedule.interval_value
     )
 
     if schedule.frequency == (
-        SafetyInspectionScheduleFrequency
-        .DAILY.value
+            SafetyInspectionScheduleFrequency
+                    .DAILY.value
     ):
         return (
-            period_start
-            + timedelta(days=interval_value)
+                period_start
+                + timedelta(days=interval_value)
         )
 
     if schedule.frequency == (
-        SafetyInspectionScheduleFrequency
-        .WEEKLY.value
+            SafetyInspectionScheduleFrequency
+                    .WEEKLY.value
     ):
         return (
-            period_start
-            + timedelta(
-                days=7 * interval_value
-            )
+                period_start
+                + timedelta(
+            days=7 * interval_value
+        )
         )
 
     if schedule.frequency == (
-        SafetyInspectionScheduleFrequency
-        .MONTHLY.value
+            SafetyInspectionScheduleFrequency
+                    .MONTHLY.value
     ):
         return add_months(
             period_start,
@@ -1744,8 +1754,8 @@ def next_period_start(
         )
 
     if schedule.frequency == (
-        SafetyInspectionScheduleFrequency
-        .YEARLY.value
+            SafetyInspectionScheduleFrequency
+                    .YEARLY.value
     ):
         return add_years(
             period_start,
@@ -1758,12 +1768,12 @@ def next_period_start(
 
 
 def inspection_generation_date(
-    period_start: date,
-    schedule: SafetyInspectionSchedule,
+        period_start: date,
+        schedule: SafetyInspectionSchedule,
 ) -> date:
     if schedule.generation_mode == (
-        SafetyInspectionGenerationMode
-        .PREVIOUS_MONTH_DAY.value
+            SafetyInspectionGenerationMode
+                    .PREVIOUS_MONTH_DAY.value
     ):
         previous_month = add_months(
             period_start.replace(day=1),
@@ -1771,9 +1781,9 @@ def inspection_generation_date(
         )
         day_of_month = min(
             (
-                schedule
-                .generation_day_of_month
-                or 1
+                    schedule
+                    .generation_day_of_month
+                    or 1
             ),
             calendar.monthrange(
                 previous_month.year,
@@ -1785,31 +1795,31 @@ def inspection_generation_date(
         )
 
     return (
-        period_start
-        - timedelta(
-            days=(
-                schedule
-                .generation_lead_days
-            )
+            period_start
+            - timedelta(
+        days=(
+            schedule
+            .generation_lead_days
         )
+    )
     )
 
 
 def inspection_period_key(
-    period_start: date,
-    schedule: SafetyInspectionSchedule,
+        period_start: date,
+        schedule: SafetyInspectionSchedule,
 ) -> str:
     if schedule.frequency == (
-        SafetyInspectionScheduleFrequency
-        .MONTHLY.value
+            SafetyInspectionScheduleFrequency
+                    .MONTHLY.value
     ):
         return period_start.strftime(
             "%Y-%m"
         )
 
     if schedule.frequency == (
-        SafetyInspectionScheduleFrequency
-        .YEARLY.value
+            SafetyInspectionScheduleFrequency
+                    .YEARLY.value
     ):
         return period_start.strftime(
             "%Y"
@@ -1819,14 +1829,14 @@ def inspection_period_key(
 
 
 def add_months(
-    value: date,
-    month_count: int,
+        value: date,
+        month_count: int,
 ) -> date:
     month_index = (
-        value.year * 12
-        + value.month
-        - 1
-        + month_count
+            value.year * 12
+            + value.month
+            - 1
+            + month_count
     )
     year, month_offset = divmod(
         month_index,
@@ -1848,8 +1858,8 @@ def add_months(
 
 
 def add_years(
-    value: date,
-    year_count: int,
+        value: date,
+        year_count: int,
 ) -> date:
     year = value.year + year_count
     day = min(
@@ -1866,7 +1876,7 @@ def add_years(
 
 
 def resolve_group_object_contexts(
-    group: SafetyInspectionGroup,
+        group: SafetyInspectionGroup,
 ) -> list[SafetyInspectionObjectContext]:
     included_targets = [
         target
@@ -1889,8 +1899,8 @@ def resolve_group_object_contexts(
     }
 
     if group.selection_mode == (
-        SafetyInspectionSelectionMode
-        .BLACKLIST.value
+            SafetyInspectionSelectionMode
+                    .BLACKLIST.value
     ):
         contexts = dict(available_contexts)
     else:
@@ -1911,8 +1921,8 @@ def resolve_group_object_contexts(
         }
 
         if group.id_num_regex_action == (
-            SafetyInspectionRegexAction
-            .INCLUDE.value
+                SafetyInspectionRegexAction
+                        .INCLUDE.value
         ):
             contexts.update(
                 matching_contexts
@@ -1922,8 +1932,8 @@ def resolve_group_object_contexts(
                 contexts.pop(key, None)
 
     if group.selection_mode == (
-        SafetyInspectionSelectionMode
-        .BLACKLIST.value
+            SafetyInspectionSelectionMode
+                    .BLACKLIST.value
     ):
         remove_group_targets(
             contexts,
@@ -1956,7 +1966,7 @@ def resolve_group_object_contexts(
 
 
 def compile_group_id_num_regex(
-    group: SafetyInspectionGroup,
+        group: SafetyInspectionGroup,
 ) -> re.Pattern[str] | None:
     regex_pattern = clean_text(
         group.id_num_regex
@@ -1972,19 +1982,19 @@ def compile_group_id_num_regex(
 
 
 def add_group_targets(
-    contexts: dict[
-        tuple[str, int],
-        SafetyInspectionObjectContext,
-    ],
-    group: SafetyInspectionGroup,
-    targets: Iterable[
-        SafetyInspectionGroupTarget
-    ],
+        contexts: dict[
+            tuple[str, int],
+            SafetyInspectionObjectContext,
+        ],
+        group: SafetyInspectionGroup,
+        targets: Iterable[
+            SafetyInspectionGroupTarget
+        ],
 ) -> None:
     for target in targets:
         for context in expand_group_target(
-            group,
-            target,
+                group,
+                target,
         ):
             contexts[
                 (
@@ -1995,59 +2005,59 @@ def add_group_targets(
 
 
 def remove_group_targets(
-    contexts: dict[
-        tuple[str, int],
-        SafetyInspectionObjectContext,
-    ],
-    targets: Iterable[
-        SafetyInspectionGroupTarget
-    ],
+        contexts: dict[
+            tuple[str, int],
+            SafetyInspectionObjectContext,
+        ],
+        targets: Iterable[
+            SafetyInspectionGroupTarget
+        ],
 ) -> None:
     for target in targets:
         for key, context in list(
-            contexts.items()
+                contexts.items()
         ):
             if target_matches_context(
-                target,
-                context,
+                    target,
+                    context,
             ):
                 contexts.pop(key, None)
 
 
 def building_is_available(
-    building: WowiBuilding,
+        building: WowiBuilding,
 ) -> bool:
     return (
-        building.active
-        and building.economic_unit is not None
-        and building.economic_unit.active
-        and any(
-            use_unit.active
-            for use_unit in building.use_units
-        )
+            building.active
+            and building.economic_unit is not None
+            and building.economic_unit.active
+            and any(
+        use_unit.active
+        for use_unit in building.use_units
+    )
     )
 
 
 def use_unit_is_available(
-    use_unit: WowiUseUnit,
+        use_unit: WowiUseUnit,
 ) -> bool:
     return (
-        use_unit.active
-        and use_unit.economic_unit is not None
-        and use_unit.economic_unit.active
-        and use_unit.building is not None
-        and building_is_available(
-            use_unit.building
-        )
+            use_unit.active
+            and use_unit.economic_unit is not None
+            and use_unit.economic_unit.active
+            and use_unit.building is not None
+            and building_is_available(
+        use_unit.building
+    )
     )
 
 
 def all_group_object_contexts(
-    group: SafetyInspectionGroup,
+        group: SafetyInspectionGroup,
 ) -> list[SafetyInspectionObjectContext]:
     if group.object_level == (
-        SafetyInspectionObjectLevel
-        .ECONOMIC_UNIT.value
+            SafetyInspectionObjectLevel
+                    .ECONOMIC_UNIT.value
     ):
         economic_units = (
             WowiEconomicUnit.query.filter(
@@ -2069,8 +2079,8 @@ def all_group_object_contexts(
         ]
 
     if group.object_level == (
-        SafetyInspectionObjectLevel
-        .BUILDING.value
+            SafetyInspectionObjectLevel
+                    .BUILDING.value
     ):
         buildings = (
             WowiBuilding.query.filter(
@@ -2116,8 +2126,8 @@ def all_group_object_contexts(
 
 
 def expand_group_target(
-    group: SafetyInspectionGroup,
-    target: SafetyInspectionGroupTarget,
+        group: SafetyInspectionGroup,
+        target: SafetyInspectionGroupTarget,
 ) -> list[SafetyInspectionObjectContext]:
     economic_units: list[
         WowiEconomicUnit
@@ -2126,8 +2136,8 @@ def expand_group_target(
     use_units: list[WowiUseUnit] = []
 
     if target.object_type == (
-        SafetyInspectionObjectLevel
-        .ECONOMIC_UNIT.value
+            SafetyInspectionObjectLevel
+                    .ECONOMIC_UNIT.value
     ):
         economic_unit = (
             WowiEconomicUnit.query.filter_by(
@@ -2152,8 +2162,8 @@ def expand_group_target(
         ]
 
     elif target.object_type == (
-        SafetyInspectionObjectLevel
-        .BUILDING.value
+            SafetyInspectionObjectLevel
+                    .BUILDING.value
     ):
         building = (
             WowiBuilding.query.filter_by(
@@ -2162,14 +2172,19 @@ def expand_group_target(
             ).one_or_none()
         )
 
-        if building is None:
+        if (
+            building is None
+            or not building_is_available(
+                building
+            )
+        ):
             return []
 
         buildings = [building]
         use_units = [
             item
             for item in building.use_units
-            if item.active
+            if use_unit_is_available(item)
         ]
 
         if building.economic_unit is not None:
@@ -2178,8 +2193,8 @@ def expand_group_target(
             ]
 
     elif target.object_type == (
-        SafetyInspectionObjectLevel
-        .USE_UNIT.value
+            SafetyInspectionObjectLevel
+                    .USE_UNIT.value
     ):
         use_unit = (
             WowiUseUnit.query.filter_by(
@@ -2188,7 +2203,12 @@ def expand_group_target(
             ).one_or_none()
         )
 
-        if use_unit is None:
+        if (
+                use_unit is None
+                or not use_unit_is_available(
+            use_unit
+        )
+        ):
             return []
 
         use_units = [use_unit]
@@ -2205,8 +2225,8 @@ def expand_group_target(
         return []
 
     if group.object_level == (
-        SafetyInspectionObjectLevel
-        .ECONOMIC_UNIT.value
+            SafetyInspectionObjectLevel
+                    .ECONOMIC_UNIT.value
     ):
         return [
             context_from_economic_unit(item)
@@ -2221,18 +2241,14 @@ def expand_group_target(
         return [
             context_from_building(item)
             for item in buildings
-            if (
-                item.active
-                and item.economic_unit is not None
-            )
+            if building_is_available(item)
         ]
 
     return [
         context_from_use_unit(item)
         for item in use_units
         if (
-            item.active
-            and item.economic_unit is not None
+            use_unit_is_available(item)
             and (
                 group.include_vacancies
                 or use_unit_is_occupied(item)
@@ -2242,7 +2258,7 @@ def expand_group_target(
 
 
 def context_from_economic_unit(
-    economic_unit: WowiEconomicUnit,
+        economic_unit: WowiEconomicUnit,
 ) -> SafetyInspectionObjectContext:
     return SafetyInspectionObjectContext(
         object_level=(
@@ -2262,7 +2278,7 @@ def context_from_economic_unit(
 
 
 def context_from_building(
-    building: WowiBuilding,
+        building: WowiBuilding,
 ) -> SafetyInspectionObjectContext:
     if building.economic_unit is None:
         raise ValueError(
@@ -2288,7 +2304,7 @@ def context_from_building(
 
 
 def context_from_use_unit(
-    use_unit: WowiUseUnit,
+        use_unit: WowiUseUnit,
 ) -> SafetyInspectionObjectContext:
     if use_unit.economic_unit is None:
         raise ValueError(
@@ -2314,12 +2330,12 @@ def context_from_use_unit(
         use_unit=use_unit,
         address=use_unit.address,
         location=(
-            " · ".join(
-                item
-                for item in location_parts
-                if item
-            )
-            or None
+                " · ".join(
+                    item
+                    for item in location_parts
+                    if item
+                )
+                or None
         ),
         latitude=(
             building.latitude
@@ -2336,43 +2352,43 @@ def context_from_use_unit(
 
 
 def target_matches_context(
-    target: SafetyInspectionGroupTarget,
-    context: SafetyInspectionObjectContext,
+        target: SafetyInspectionGroupTarget,
+        context: SafetyInspectionObjectContext,
 ) -> bool:
     if target.object_type == (
-        SafetyInspectionObjectLevel
-        .ECONOMIC_UNIT.value
+            SafetyInspectionObjectLevel
+                    .ECONOMIC_UNIT.value
     ):
         return (
-            context.economic_unit.erp_id
-            == target.object_erp_id
+                context.economic_unit.erp_id
+                == target.object_erp_id
         )
 
     if target.object_type == (
-        SafetyInspectionObjectLevel
-        .BUILDING.value
+            SafetyInspectionObjectLevel
+                    .BUILDING.value
     ):
         return (
-            context.building is not None
-            and context.building.erp_id
-            == target.object_erp_id
+                context.building is not None
+                and context.building.erp_id
+                == target.object_erp_id
         )
 
     if target.object_type == (
-        SafetyInspectionObjectLevel
-        .USE_UNIT.value
+            SafetyInspectionObjectLevel
+                    .USE_UNIT.value
     ):
         return (
-            context.use_unit is not None
-            and context.use_unit.erp_id
-            == target.object_erp_id
+                context.use_unit is not None
+                and context.use_unit.erp_id
+                == target.object_erp_id
         )
 
     return False
 
 
 def use_unit_is_occupied(
-    use_unit: WowiUseUnit,
+        use_unit: WowiUseUnit,
 ) -> bool:
     return any(
         agreement.active
@@ -2384,7 +2400,7 @@ def use_unit_is_occupied(
 
 
 def clean_text(
-    value: str | None,
+        value: str | None,
 ) -> str | None:
     if value is None:
         return None

@@ -297,7 +297,7 @@ def sync_object_directory() -> dict[str, int]:
     eligible_building_rows = []
     eligible_building_ids = set()
 
-    for row in eligible_building_rows:
+    for row in building_rows:
         erp_id = _as_int(
             _value(row, "Id", "id")
         )
@@ -361,7 +361,7 @@ def sync_object_directory() -> dict[str, int]:
 
     seen_building_ids = set()
 
-    for row in building_rows:
+    for row in eligible_building_rows:
         erp_id = _as_int(
             _value(row, "Id", "id")
         )
@@ -1670,6 +1670,9 @@ def search_commission_objects(
         WowiUseUnit.query
         .filter(
             WowiUseUnit.active.is_(True),
+            WowiUseUnit.building.has(
+                WowiBuilding.active.is_(True)
+            ),
             or_(
                 WowiUseUnit.id_num.ilike(
                     pattern
@@ -1680,9 +1683,6 @@ def search_commission_objects(
                 WowiUseUnit
                 .description_of_position
                 .ilike(pattern),
-                WowiUseUnit.building.has(
-                    WowiBuilding.active.is_(True)
-                ),
             ),
         )
         .order_by(
@@ -1727,15 +1727,15 @@ def search_commission_objects(
         WowiBuilding.query
         .filter(
             WowiBuilding.active.is_(True),
+            WowiBuilding.use_units.any(
+                WowiUseUnit.active.is_(True)
+            ),
             or_(
                 WowiBuilding.id_num.ilike(
                     pattern
                 ),
                 WowiBuilding.address.ilike(
                     pattern
-                ),
-                WowiBuilding.use_units.any(
-                    WowiUseUnit.active.is_(True)
                 ),
             ),
         )

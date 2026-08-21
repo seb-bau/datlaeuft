@@ -69,6 +69,19 @@ def sync_wowi_buildings() -> dict[str, int]:
             result["skipped"] += 1
             continue
 
+        item = WowiBuilding.query.filter_by(
+            erp_id=erp_id
+        ).one_or_none()
+
+        if item is None:
+            item = WowiBuilding(
+                erp_id=erp_id
+            )
+            db.session.add(item)
+            result["created"] += 1
+        else:
+            result["updated"] += 1
+
         seen_building_ids.add(erp_id)
 
         estate_address = getattr(building, "estate_address", None)
@@ -139,8 +152,17 @@ def sync_wowi_use_unit(use_unit_id: int) -> WowiUseUnit | None:
     return upsert_wowi_use_unit(use_unit)
 
 
-def upsert_wowi_use_unit(use_unit: Any) -> WowiUseUnit | None:
-    erp_id = _as_int(getattr(use_unit, "id_", None))
+def upsert_wowi_use_unit(
+    use_unit: Any,
+) -> WowiUseUnit | None:
+    erp_id = _as_int(
+        getattr(use_unit, "id_", None)
+    )
+
+    if erp_id is None:
+        return None
+
+    synced_at = utc_now()
     exit_date = parse_datetime(
         getattr(
             use_unit,
@@ -148,31 +170,26 @@ def upsert_wowi_use_unit(use_unit: Any) -> WowiUseUnit | None:
             None,
         )
     )
+    item = WowiUseUnit.query.filter_by(
+        erp_id=erp_id
+    ).one_or_none()
 
     if exit_date is not None:
-        existing = (
-            WowiUseUnit.query.filter_by(
-                erp_id=erp_id
-            ).one_or_none()
-        )
-
-        if existing is not None:
-            existing.exit_date = exit_date
-            existing.active = False
-            existing.synced_at = utc_now()
+        if item is not None:
+            item.exit_date = exit_date
+            item.active = False
+            item.synced_at = synced_at
 
         return None
-    if erp_id is None:
-        return None
 
-    item = WowiUseUnit.query.filter_by(erp_id=erp_id).one_or_none()
-
-    if item is None:
-        item = WowiUseUnit(erp_id=erp_id)
-        db.session.add(item)
-
-    building = getattr(use_unit, "building_land", None)
-    building_erp_id = _as_int(getattr(building, "id_", None))
+    building = getattr(
+        use_unit,
+        "building_land",
+        None,
+    )
+    building_erp_id = _as_int(
+        getattr(building, "id_", None)
+    )
     building_item = (
         WowiBuilding.query.filter_by(
             erp_id=building_erp_id,
@@ -183,25 +200,50 @@ def upsert_wowi_use_unit(use_unit: Any) -> WowiUseUnit | None:
     )
 
     if building_item is None:
-        if item.id is not None:
+        if item is not None:
             item.active = False
-            item.synced_at = utc_now()
+            item.synced_at = synced_at
 
         return None
 
+    if item is None:
+        item = WowiUseUnit(
+            erp_id=erp_id
+        )
+        db.session.add(item)
 
-    item.id_num = getattr(use_unit, "id_num", None)
+    item.id_num = getattr(
+        use_unit,
+        "id_num",
+        None,
+    )
     item.building_erp_id = building_erp_id
-    item.floor_name = getattr(getattr(use_unit, "floor", None), "name", None)
-    item.position_name = getattr(getattr(use_unit, "position", None), "name", None)
-    item.description_of_position = getattr(use_unit, "description_of_position", None)
-    item.address = _format_address(getattr(use_unit, "estate_address", None))
-    item.synced_at = utc_now()
-
-    if building_erp_id is not None:
-        item.building = building_item
-        item.exit_date = None
-        item.active = True
+    item.building = building_item
+    item.floor_name = getattr(
+        getattr(use_unit, "floor", None),
+        "name",
+        None,
+    )
+    item.position_name = getattr(
+        getattr(use_unit, "position", None),
+        "name",
+        None,
+    )
+    item.description_of_position = getattr(
+        use_unit,
+        "description_of_position",
+        None,
+    )
+    item.address = _format_address(
+        getattr(
+            use_unit,
+            "estate_address",
+            None,
+        )
+    )
+    item.exit_date = None
+    item.active = True
+    item.synced_at = synced_at
 
     return item
 
