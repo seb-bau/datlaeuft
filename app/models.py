@@ -261,6 +261,14 @@ class SafetyInspectionSelectionMode(
     BLACKLIST = "blacklist"
 
 
+class SafetyInspectionRegexAction(
+    str,
+    Enum,
+):
+    INCLUDE = "include"
+    EXCLUDE = "exclude"
+
+
 class SafetyInspectionJobStatus(
     str,
     Enum,
@@ -3650,6 +3658,14 @@ class SafetyInspectionGroup(db.Model):
             nullable=False,
         )
     )
+    id_num_regex: Mapped[
+        str | None
+    ] = mapped_column(db.Text)
+    id_num_regex_action: Mapped[
+        str | None
+    ] = mapped_column(
+        db.String(20)
+    )
     department_id: Mapped[int] = (
         mapped_column(
             db.ForeignKey("wowi_department.id"),
@@ -5349,6 +5365,11 @@ class WowiUseUnit(db.Model):
     position_name: Mapped[str | None] = mapped_column(db.String(255))
     description_of_position: Mapped[str | None] = mapped_column(db.String(255))
     address: Mapped[str | None] = mapped_column(db.String(500))
+    exit_date: Mapped[
+        datetime | None
+    ] = mapped_column(
+        db.DateTime(timezone=True)
+    )
     active: Mapped[bool] = mapped_column(
         db.Boolean,
         default=True,

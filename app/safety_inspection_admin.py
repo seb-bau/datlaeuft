@@ -50,6 +50,7 @@ from .models import (
     WowiUseUnit,
     PushEventType,
     SafetyInspectionSelectionMode,
+    SafetyInspectionRegexAction,
 )
 from .safety_inspection_service import (
     create_safety_inspection_revision,
@@ -838,6 +839,9 @@ def object_search() -> Any:
                     pattern
                 ),
             ),
+            WowiBuilding.use_units.any(
+                WowiUseUnit.active.is_(True)
+            ),
         )
         .order_by(
             WowiBuilding.id_num.asc()
@@ -877,6 +881,9 @@ def object_search() -> Any:
                 WowiUseUnit
                 .description_of_position
                 .ilike(pattern),
+            ),
+            WowiUseUnit.building.has(
+                WowiBuilding.active.is_(True)
             ),
         )
         .order_by(
@@ -1194,6 +1201,22 @@ def _save_group(
 
     item.selection_mode = selection_mode
 
+    item.id_num_regex = _clean_text(
+        request.form.get(
+            "id_num_regex"
+        )
+    )
+
+    if item.id_num_regex is None:
+        item.id_num_regex_action = None
+    else:
+        item.id_num_regex_action = (
+            request.form.get(
+                "id_num_regex_action",
+                "",
+            ).strip()
+        )
+
     fallback_user_id = _form_optional_int(
         "fallback_user_id"
     )
@@ -1501,6 +1524,9 @@ def _render_group_form(
         selection_mode_labels=(
             _selection_mode_labels()
         ),
+        regex_action_labels=(
+            _regex_action_labels()
+        ),
     )
 
 
@@ -1729,4 +1755,17 @@ def _selection_mode_labels() -> dict[str, str]:
         .WHITELIST.value: "Whitelist",
         SafetyInspectionSelectionMode
         .BLACKLIST.value: "Blacklist",
+    }
+
+
+def _regex_action_labels() -> dict[str, str]:
+    return {
+        SafetyInspectionRegexAction
+        .INCLUDE.value: (
+            "Passende IdNums einschließen"
+        ),
+        SafetyInspectionRegexAction
+        .EXCLUDE.value: (
+            "Passende IdNums ausschließen"
+        ),
     }

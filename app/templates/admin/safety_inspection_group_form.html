@@ -247,6 +247,50 @@
           eindeutig aufgelöst werden kann.
         </div>
       </div>
+            <div class="col-md-4">
+        <label class="form-label">
+          RegEx-Aktion
+        </label>
+        <select
+          class="form-select"
+          name="id_num_regex_action"
+        >
+          <option value="">
+            Kein RegEx-Filter
+          </option>
+          {% for value, label
+            in regex_action_labels.items()
+          %}
+          <option
+            value="{{ value }}"
+            {% if item.id_num_regex_action == value %}
+            selected
+            {% endif %}
+          >
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-8">
+        <label class="form-label">
+          IdNum-RegEx
+        </label>
+        <input
+          class="form-control font-monospace"
+          name="id_num_regex"
+          value="{{ item.id_num_regex or '' }}"
+          maxlength="500"
+          placeholder="Beispiel: ^(10|20)\."
+        >
+        <div class="form-text">
+          Der Ausdruck wird auf die IdNum der
+          ausgewählten Prüfebene angewendet.
+          Manuelle Objekteinträge dienen danach
+          als Ausnahmen.
+        </div>
+      </div>
 
       <div class="col-md-3">
         <label class="form-label">
@@ -787,12 +831,13 @@ function updateSelectionModeUi() {
 
   selectionModeHelp.textContent =
     blacklist
-      ? "Alle aktiven Objekte der Prüfebene "
-        + "werden berücksichtigt. Neu "
-        + "hinzugefügte Objekte werden "
-        + "standardmäßig ausgeschlossen."
-      : "Nur eingetragene und eingeschlossene "
-        + "Objekte werden berücksichtigt.";
+      ? "Alle verfügbaren Objekte der "
+        + "Prüfebene werden berücksichtigt. "
+        + "RegEx und manuelle Ausnahmen "
+        + "können Objekte ausschließen."
+      : "Die Grundmenge ist leer. RegEx oder "
+        + "manuelle Einträge können Objekte "
+        + "einschließen.";
 
   emptyTargets.textContent =
     blacklist

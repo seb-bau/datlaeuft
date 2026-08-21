@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Iterable
 from uuid import uuid4
+import re
 
 from .commission_service import (
     create_pending_commission,
@@ -42,6 +43,7 @@ from .models import (
     utc_now,
     PushEventType,
     SafetyInspectionSelectionMode,
+    SafetyInspectionRegexAction,
 )
 from .object_directory import (
     resolve_department_assignment,
@@ -67,6 +69,7 @@ class SafetyInspectionObjectContext:
     location: str | None
     latitude: float | None
     longitude: float | None
+    object_id_num: str | None
 
 
 def create_safety_inspection_template(
@@ -488,6 +491,46 @@ def validate_safety_inspection_group(
             "mindestens ein eingeschlossenes "
             "Objekt."
         )
+
+    regex_pattern = clean_text(
+        group.id_num_regex
+    )
+    regex_actions = {
+        action.value
+        for action in SafetyInspectionRegexAction
+    }
+
+    if regex_pattern is None:
+        if group.id_num_regex_action is not None:
+            raise ValueError(
+                "Für die RegEx-Aktion fehlt "
+                "ein regulärer Ausdruck."
+            )
+    else:
+        if len(regex_pattern) > 500:
+            raise ValueError(
+                "Der reguläre Ausdruck darf "
+                "höchstens 500 Zeichen lang sein."
+            )
+
+        if (
+            group.id_num_regex_action
+            not in regex_actions
+        ):
+            raise ValueError(
+                "Die RegEx-Aktion ist ungültig."
+            )
+
+        try:
+            re.compile(
+                regex_pattern,
+                re.IGNORECASE,
+            )
+        except re.error as exc:
+            raise ValueError(
+                "Der reguläre Ausdruck ist "
+                f"ungültig: {exc}."
+            ) from exc
 
 
 def generate_safety_inspection_jobs(
@@ -1835,68 +1878,72 @@ def resolve_group_object_contexts(
         for target in group.targets
         if not target.included
     ]
-    contexts: dict[
-        tuple[str, int],
-        SafetyInspectionObjectContext,
-    ] = {}
+    available_contexts = {
+        (
+            context.object_level,
+            context.object_erp_id,
+        ): context
+        for context in (
+            all_group_object_contexts(group)
+        )
+    }
 
     if group.selection_mode == (
         SafetyInspectionSelectionMode
         .BLACKLIST.value
     ):
-        for context in (
-            all_group_object_contexts(group)
-        ):
-            contexts[
-                (
-                    context.object_level,
-                    context.object_erp_id,
-                )
-            ] = context
-
-        for target in excluded_targets:
-            for key, context in list(
-                contexts.items()
-            ):
-                if target_matches_context(
-                    target,
-                    context,
-                ):
-                    contexts.pop(key, None)
-
-        for target in included_targets:
-            for context in expand_group_target(
-                group,
-                target,
-            ):
-                contexts[
-                    (
-                        context.object_level,
-                        context.object_erp_id,
-                    )
-                ] = context
+        contexts = dict(available_contexts)
     else:
-        for target in included_targets:
-            for context in expand_group_target(
-                group,
-                target,
-            ):
-                contexts[
-                    (
-                        context.object_level,
-                        context.object_erp_id,
-                    )
-                ] = context
+        contexts = {}
 
-        for target in excluded_targets:
-            for key, context in list(
-                contexts.items()
-            ):
-                if target_matches_context(
-                    target,
-                    context,
-                ):
-                    contexts.pop(key, None)
+    regex_pattern = (
+        compile_group_id_num_regex(group)
+    )
+
+    if regex_pattern is not None:
+        matching_contexts = {
+            key: context
+            for key, context
+            in available_contexts.items()
+            if regex_pattern.search(
+                context.object_id_num or ""
+            )
+        }
+
+        if group.id_num_regex_action == (
+            SafetyInspectionRegexAction
+            .INCLUDE.value
+        ):
+            contexts.update(
+                matching_contexts
+            )
+        else:
+            for key in matching_contexts:
+                contexts.pop(key, None)
+
+    if group.selection_mode == (
+        SafetyInspectionSelectionMode
+        .BLACKLIST.value
+    ):
+        remove_group_targets(
+            contexts,
+            excluded_targets,
+        )
+        add_group_targets(
+            contexts,
+            group,
+            included_targets,
+        )
+    else:
+        add_group_targets(
+            contexts,
+            group,
+            included_targets,
+        )
+        remove_group_targets(
+            contexts,
+            excluded_targets,
+        )
 
     return sorted(
         contexts.values(),
@@ -1905,6 +1952,93 @@ def resolve_group_object_contexts(
             item.location or "",
             item.object_erp_id,
         ),
+    )
+
+
+def compile_group_id_num_regex(
+    group: SafetyInspectionGroup,
+) -> re.Pattern[str] | None:
+    regex_pattern = clean_text(
+        group.id_num_regex
+    )
+
+    if regex_pattern is None:
+        return None
+
+    return re.compile(
+        regex_pattern,
+        re.IGNORECASE,
+    )
+
+
+def add_group_targets(
+    contexts: dict[
+        tuple[str, int],
+        SafetyInspectionObjectContext,
+    ],
+    group: SafetyInspectionGroup,
+    targets: Iterable[
+        SafetyInspectionGroupTarget
+    ],
+) -> None:
+    for target in targets:
+        for context in expand_group_target(
+            group,
+            target,
+        ):
+            contexts[
+                (
+                    context.object_level,
+                    context.object_erp_id,
+                )
+            ] = context
+
+
+def remove_group_targets(
+    contexts: dict[
+        tuple[str, int],
+        SafetyInspectionObjectContext,
+    ],
+    targets: Iterable[
+        SafetyInspectionGroupTarget
+    ],
+) -> None:
+    for target in targets:
+        for key, context in list(
+            contexts.items()
+        ):
+            if target_matches_context(
+                target,
+                context,
+            ):
+                contexts.pop(key, None)
+
+
+def building_is_available(
+    building: WowiBuilding,
+) -> bool:
+    return (
+        building.active
+        and building.economic_unit is not None
+        and building.economic_unit.active
+        and any(
+            use_unit.active
+            for use_unit in building.use_units
+        )
+    )
+
+
+def use_unit_is_available(
+    use_unit: WowiUseUnit,
+) -> bool:
+    return (
+        use_unit.active
+        and use_unit.economic_unit is not None
+        and use_unit.economic_unit.active
+        and use_unit.building is not None
+        and building_is_available(
+            use_unit.building
+        )
     )
 
 
@@ -1951,11 +2085,8 @@ def all_group_object_contexts(
         return [
             context_from_building(building)
             for building in buildings
-            if (
-                building.economic_unit
-                is not None
-                and building
-                .economic_unit.active
+            if building_is_available(
+                building
             )
         ]
 
@@ -1973,14 +2104,13 @@ def all_group_object_contexts(
         context_from_use_unit(use_unit)
         for use_unit in use_units
         if (
-            use_unit.economic_unit is not None
-            and use_unit.economic_unit.active
-            and (
-                group.include_vacancies
-                or use_unit_is_occupied(
+                use_unit_is_available(use_unit)
+                and (
+                        group.include_vacancies
+                        or use_unit_is_occupied(
                     use_unit
                 )
-            )
+                )
         )
     ]
 
@@ -2013,12 +2143,12 @@ def expand_group_target(
         buildings = [
             item
             for item in economic_unit.buildings
-            if item.active
+            if building_is_available(item)
         ]
         use_units = [
             item
             for item in economic_unit.use_units
-            if item.active
+            if use_unit_is_available(item)
         ]
 
     elif target.object_type == (
@@ -2127,6 +2257,7 @@ def context_from_economic_unit(
         location=economic_unit.name,
         latitude=None,
         longitude=None,
+        object_id_num=economic_unit.id_num,
     )
 
 
@@ -2152,6 +2283,7 @@ def context_from_building(
         location=None,
         latitude=building.latitude,
         longitude=building.longitude,
+        object_id_num=building.id_num,
     )
 
 
@@ -2199,6 +2331,7 @@ def context_from_use_unit(
             if building is not None
             else None
         ),
+        object_id_num=use_unit.id_num,
     )
 
 

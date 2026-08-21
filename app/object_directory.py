@@ -68,6 +68,8 @@ def sync_object_directory() -> dict[str, int]:
         "use_units": 0,
         "license_agreements": 0,
         "contractors": 0,
+        "buildings_excluded": 0,
+        "use_units_excluded": 0,
     }
 
     economic_rows = service.read_all_rows(
@@ -233,12 +235,128 @@ def sync_object_directory() -> dict[str, int]:
     building_rows = service.read_all_rows(
         "CommercialInventory/BuildingLands",
         {
+            "buildingLandType": "Building",
             "showNullValues": "true",
         },
     )
     _require_rows(
         building_rows,
         "Gebäude",
+    )
+
+    use_unit_rows = service.read_all_rows(
+        "CommercialInventory/UseUnits",
+        {
+            "showNullValues": "true",
+        },
+    )
+    _require_rows(
+        use_unit_rows,
+        "Nutzungseinheiten",
+    )
+
+    eligible_use_unit_rows = []
+    use_unit_building_ids = set()
+
+    for row in use_unit_rows:
+        erp_id = _as_int(
+            _value(row, "Id", "id")
+        )
+
+        if erp_id is None:
+            continue
+
+        if _row_has_exit_date(row):
+            existing = (
+                WowiUseUnit.query.filter_by(
+                    erp_id=erp_id
+                ).one_or_none()
+            )
+
+            if existing is not None:
+                existing.exit_date = (
+                    _row_exit_date(row)
+                )
+                existing.active = False
+                existing.synced_at = synced_at
+
+            continue
+
+        building_erp_id = (
+            _use_unit_building_erp_id(row)
+        )
+
+        if building_erp_id is None:
+            continue
+
+        eligible_use_unit_rows.append(row)
+        use_unit_building_ids.add(
+            building_erp_id
+        )
+
+    eligible_building_rows = []
+    eligible_building_ids = set()
+
+    for row in eligible_building_rows:
+        erp_id = _as_int(
+            _value(row, "Id", "id")
+        )
+        building_type = _text(
+            _value(
+                row,
+                "BuildingLandType",
+                "buildingLandType",
+            )
+        )
+
+        if erp_id is None:
+            continue
+
+        if _row_has_exit_date(row):
+            existing = (
+                WowiBuilding.query.filter_by(
+                    erp_id=erp_id
+                ).one_or_none()
+            )
+
+            if existing is not None:
+                existing.exit_date = (
+                    _row_exit_date(row)
+                )
+                existing.active = False
+                existing.synced_at = synced_at
+
+            continue
+
+        if (
+                building_type is not None
+                and building_type.lower()
+                != "building"
+        ):
+            continue
+
+        if erp_id not in use_unit_building_ids:
+            continue
+
+        eligible_building_rows.append(row)
+        eligible_building_ids.add(erp_id)
+
+    eligible_use_unit_rows = [
+        row
+        for row in eligible_use_unit_rows
+        if (
+                _use_unit_building_erp_id(row)
+                in eligible_building_ids
+        )
+    ]
+
+    result["buildings_excluded"] = (
+            len(building_rows)
+            - len(eligible_building_rows)
+    )
+    result["use_units_excluded"] = (
+            len(use_unit_rows)
+            - len(eligible_use_unit_rows)
     )
 
     seen_building_ids = set()
@@ -337,17 +455,8 @@ def sync_object_directory() -> dict[str, int]:
             _join(zip_code, town),
             separator=", ",
         )
-        item.exit_date = _as_datetime(
-            _value(
-                row,
-                "ExitDate",
-                "exitDate",
-            )
-        )
-        item.active = (
-            item.exit_date is None
-            or item.exit_date.date() >= date.today()
-        )
+        item.exit_date = None
+        item.active = True
         item.synced_at = synced_at
 
         seen_building_ids.add(erp_id)
@@ -360,20 +469,9 @@ def sync_object_directory() -> dict[str, int]:
     )
     db.session.flush()
 
-    use_unit_rows = service.read_all_rows(
-        "CommercialInventory/UseUnits",
-        {
-            "showNullValues": "true",
-        },
-    )
-    _require_rows(
-        use_unit_rows,
-        "Nutzungseinheiten",
-    )
-
     seen_use_unit_ids = set()
 
-    for row in use_unit_rows:
+    for row in eligible_use_unit_rows:
         erp_id = _as_int(
             _value(row, "Id", "id")
         )
@@ -489,17 +587,8 @@ def sync_object_directory() -> dict[str, int]:
         )
         item.address = address
 
-        exit_date = _as_datetime(
-            _value(
-                row,
-                "ExitDate",
-                "exitDate",
-            )
-        )
-        item.active = (
-            exit_date is None
-            or exit_date.date() >= date.today()
-        )
+        item.exit_date = None
+        item.active = True
         item.synced_at = synced_at
 
         seen_use_unit_ids.add(erp_id)
@@ -554,6 +643,13 @@ def sync_object_directory() -> dict[str, int]:
             if use_unit_erp_id is not None
             else None
         )
+        if (
+            use_unit is None
+            or not use_unit.active
+            or use_unit.building is None
+            or not use_unit.building.active
+        ):
+            continue
         restriction = _object(
             row,
             "RestrictionOfUse",
@@ -664,6 +760,11 @@ def sync_object_directory() -> dict[str, int]:
             )
             .one_or_none()
         )
+        if (
+            agreement is None
+            or not agreement.active
+        ):
+            continue
         person = _object(
             row,
             "Person",
@@ -1057,6 +1158,15 @@ def resolve_commission_object(
                 )
 
             use_unit = agreement.use_unit
+            if (
+                use_unit is None
+                or not use_unit.active
+            ):
+                raise ValueError(
+                    "Die Nutzungseinheit des "
+                    "Mietvertrags ist nicht mehr "
+                    "verfügbar."
+                )
 
         elif object_type == "use_unit":
             use_unit = db.session.get(
@@ -1150,6 +1260,15 @@ def resolve_commission_object(
             )
 
         building = use_unit.building
+
+        if (
+                building is None
+                or not building.active
+        ):
+            raise ValueError(
+                "Das zugehörige Gebäude ist "
+                "nicht mehr verfügbar."
+            )
 
     economic_unit = (
         use_unit.economic_unit
@@ -1561,6 +1680,9 @@ def search_commission_objects(
                 WowiUseUnit
                 .description_of_position
                 .ilike(pattern),
+                WowiUseUnit.building.has(
+                    WowiBuilding.active.is_(True)
+                ),
             ),
         )
         .order_by(
@@ -1611,6 +1733,9 @@ def search_commission_objects(
                 ),
                 WowiBuilding.address.ilike(
                     pattern
+                ),
+                WowiBuilding.use_units.any(
+                    WowiUseUnit.active.is_(True)
                 ),
             ),
         )
@@ -1681,6 +1806,15 @@ def _serialize_choice(
             )
 
         use_unit = agreement.use_unit
+        if (
+            use_unit is None
+            or not use_unit.active
+        ):
+            raise ValueError(
+                "Die Nutzungseinheit des "
+                "Mietvertrags ist nicht "
+                "verfügbar."
+            )
         building = (
             use_unit.building
             if use_unit
@@ -1746,6 +1880,23 @@ def _serialize_choice(
     else:
         raise ValueError(
             "Die Objektart ist ungültig."
+        )
+
+    if use_unit is not None:
+        if not use_unit.active:
+            raise ValueError(
+                "Die Nutzungseinheit ist "
+                "nicht verfügbar."
+            )
+
+        building = use_unit.building
+
+    if (
+        building is None
+        or not building.active
+    ):
+        raise ValueError(
+            "Das Gebäude ist nicht verfügbar."
         )
 
     economic_unit = (
@@ -1862,6 +2013,49 @@ def _single_by_idnum(
         )
 
     return items[0]
+
+
+def _row_has_exit_date(
+    row: dict[str, Any],
+) -> bool:
+    value = _value(
+        row,
+        "ExitDate",
+        "exitDate",
+    )
+    return value not in (None, "")
+
+
+def _row_exit_date(
+    row: dict[str, Any],
+) -> datetime | None:
+    return _as_datetime(
+        _value(
+            row,
+            "ExitDate",
+            "exitDate",
+        )
+    )
+
+
+def _use_unit_building_erp_id(
+    row: dict[str, Any],
+) -> int | None:
+    building = _object(
+        row,
+        "BuildingLand",
+        "buildingLand",
+        "Building",
+        "building",
+    )
+    return _as_int(
+        _value(building, "Id", "id")
+        or _value(
+            row,
+            "BuildingLandId",
+            "buildingLandId",
+        )
+    )
 
 
 def _economic_unit(

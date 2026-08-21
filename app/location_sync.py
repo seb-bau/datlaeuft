@@ -14,6 +14,12 @@ from .wowiport import WowiportService
 def sync_wowi_buildings() -> dict[str, int]:
     service = WowiportService()
 
+    synced_at = utc_now()
+    eligible_building_ids = (
+        _eligible_building_ids(service)
+    )
+    seen_building_ids = set()
+
     result = {
         "seen": 0,
         "created": 0,
@@ -24,26 +30,46 @@ def sync_wowi_buildings() -> dict[str, int]:
         "skipped": 0,
     }
 
-    for building in service.client.get_building_lands(fetch_all=True):
+    for building in service.client.get_building_lands(
+        fetch_all=True
+    ):
         result["seen"] += 1
+        erp_id = _as_int(
+            getattr(building, "id_", None)
+        )
 
-        if _skip_building(building):
-            result["skipped"] += 1
-            continue
-
-        erp_id = _as_int(getattr(building, "id_", None))
         if erp_id is None:
             result["skipped"] += 1
             continue
 
-        item = WowiBuilding.query.filter_by(erp_id=erp_id).one_or_none()
+        if (
+            _skip_building(building)
+            or erp_id
+            not in eligible_building_ids
+        ):
+            existing = (
+                WowiBuilding.query.filter_by(
+                    erp_id=erp_id
+                ).one_or_none()
+            )
 
-        if item is None:
-            item = WowiBuilding(erp_id=erp_id)
-            db.session.add(item)
-            result["created"] += 1
-        else:
-            result["updated"] += 1
+            if existing is not None:
+                existing.active = False
+                existing.exit_date = (
+                    parse_datetime(
+                        getattr(
+                            building,
+                            "exit_date",
+                            None,
+                        )
+                    )
+                )
+                existing.synced_at = synced_at
+
+            result["skipped"] += 1
+            continue
+
+        seen_building_ids.add(erp_id)
 
         estate_address = getattr(building, "estate_address", None)
         address = _format_address(estate_address)
@@ -84,6 +110,21 @@ def sync_wowi_buildings() -> dict[str, int]:
         else:
             result["without_coordinates"] += 1
 
+    query = WowiBuilding.query.filter(
+        WowiBuilding.active.is_(True)
+    )
+
+    if seen_building_ids:
+        query = query.filter(
+            WowiBuilding.erp_id.notin_(
+                seen_building_ids
+            )
+        )
+
+    for item in query.all():
+        item.active = False
+        item.synced_at = synced_at
+
     db.session.commit()
     return result
 
@@ -100,6 +141,27 @@ def sync_wowi_use_unit(use_unit_id: int) -> WowiUseUnit | None:
 
 def upsert_wowi_use_unit(use_unit: Any) -> WowiUseUnit | None:
     erp_id = _as_int(getattr(use_unit, "id_", None))
+    exit_date = parse_datetime(
+        getattr(
+            use_unit,
+            "exit_date",
+            None,
+        )
+    )
+
+    if exit_date is not None:
+        existing = (
+            WowiUseUnit.query.filter_by(
+                erp_id=erp_id
+            ).one_or_none()
+        )
+
+        if existing is not None:
+            existing.exit_date = exit_date
+            existing.active = False
+            existing.synced_at = utc_now()
+
+        return None
     if erp_id is None:
         return None
 
@@ -111,6 +173,22 @@ def upsert_wowi_use_unit(use_unit: Any) -> WowiUseUnit | None:
 
     building = getattr(use_unit, "building_land", None)
     building_erp_id = _as_int(getattr(building, "id_", None))
+    building_item = (
+        WowiBuilding.query.filter_by(
+            erp_id=building_erp_id,
+            active=True,
+        ).one_or_none()
+        if building_erp_id is not None
+        else None
+    )
+
+    if building_item is None:
+        if item.id is not None:
+            item.active = False
+            item.synced_at = utc_now()
+
+        return None
+
 
     item.id_num = getattr(use_unit, "id_num", None)
     item.building_erp_id = building_erp_id
@@ -121,7 +199,9 @@ def upsert_wowi_use_unit(use_unit: Any) -> WowiUseUnit | None:
     item.synced_at = utc_now()
 
     if building_erp_id is not None:
-        item.building = WowiBuilding.query.filter_by(erp_id=building_erp_id).one_or_none()
+        item.building = building_item
+        item.exit_date = None
+        item.active = True
 
     return item
 
@@ -163,3 +243,97 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _eligible_building_ids(
+    service: WowiportService,
+) -> set[int]:
+    rows = service.read_all_rows(
+        "CommercialInventory/UseUnits",
+        {
+            "showNullValues": "true",
+        },
+    )
+
+    if not rows:
+        raise RuntimeError(
+            "OpenWowi hat keine "
+            "Nutzungseinheiten geliefert."
+        )
+
+    building_ids = set()
+
+    for row in rows:
+        exit_date = _dict_value(
+            row,
+            "ExitDate",
+            "exitDate",
+        )
+
+        if exit_date not in (None, ""):
+            continue
+
+        building = _dict_object(
+            row,
+            "BuildingLand",
+            "buildingLand",
+            "Building",
+            "building",
+        )
+        building_erp_id = _as_int(
+            _dict_value(
+                building,
+                "Id",
+                "id",
+            )
+            or _dict_value(
+                row,
+                "BuildingLandId",
+                "buildingLandId",
+            )
+        )
+
+        if building_erp_id is not None:
+            building_ids.add(
+                building_erp_id
+            )
+
+    return building_ids
+
+
+def _dict_value(
+    source: Any,
+    *names: str,
+) -> Any:
+    if not isinstance(source, dict):
+        return None
+
+    for name in names:
+        if name in source:
+            return source[name]
+
+    lowered = {
+        str(key).lower(): value
+        for key, value in source.items()
+    }
+
+    for name in names:
+        if name.lower() in lowered:
+            return lowered[name.lower()]
+
+    return None
+
+
+def _dict_object(
+    source: Any,
+    *names: str,
+) -> dict[str, Any]:
+    value = _dict_value(
+        source,
+        *names,
+    )
+    return (
+        value
+        if isinstance(value, dict)
+        else {}
+    )
