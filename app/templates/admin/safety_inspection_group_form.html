@@ -565,7 +565,64 @@
     </div>
   </div>
 
-  <div class="card-footer d-flex justify-content-between">
+    <div
+    id="objectPreview"
+    class="border-top d-none"
+  >
+    <div class="card-body">
+      <div
+        class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3"
+      >
+        <div>
+          <h2 class="h5 mb-1">
+            Betroffene Objekte
+          </h2>
+          <div
+            id="previewSummary"
+            class="text-muted"
+          ></div>
+        </div>
+
+        <input
+          id="previewFilter"
+          class="form-control"
+          type="search"
+          placeholder="Vorschau durchsuchen"
+          style="max-width: 320px"
+        >
+      </div>
+
+      <div
+        id="previewState"
+        class="alert alert-info py-2 mb-3 d-none"
+      ></div>
+
+      <div
+        class="table-responsive border rounded"
+        style="max-height: 480px"
+      >
+        <table
+          class="table table-sm table-striped align-middle mb-0"
+        >
+          <thead class="table-light sticky-top">
+            <tr>
+              <th>Ebene</th>
+              <th>IdNum</th>
+              <th>ERP-ID</th>
+              <th>Wirtschaftseinheit</th>
+              <th>Gebäude</th>
+              <th>Adresse/Lage</th>
+            </tr>
+          </thead>
+          <tbody id="previewTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div
+    class="card-footer d-flex justify-content-between align-items-center flex-wrap gap-2"
+  >
     <a
       class="btn btn-outline-secondary"
       href="{{ url_for(
@@ -575,12 +632,22 @@
       Zurück
     </a>
 
-    <button
-      class="btn btn-primary"
-      type="submit"
-    >
-      Prüfgruppe speichern
-    </button>
+    <div class="d-flex flex-wrap gap-2">
+      <button
+        id="previewButton"
+        class="btn btn-outline-primary"
+        type="button"
+      >
+        Betroffene Objekte anzeigen
+      </button>
+
+      <button
+        class="btn btn-primary"
+        type="submit"
+      >
+        Prüfgruppe speichern
+      </button>
+    </div>
   </div>
 </form>
 
@@ -627,6 +694,32 @@ const taskTemplate =
     "taskTemplate"
   );
 
+const previewButton =
+  document.getElementById(
+    "previewButton"
+  );
+const objectPreview =
+  document.getElementById(
+    "objectPreview"
+  );
+const previewSummary =
+  document.getElementById(
+    "previewSummary"
+  );
+const previewState =
+  document.getElementById(
+    "previewState"
+  );
+const previewFilter =
+  document.getElementById(
+    "previewFilter"
+  );
+const previewTableBody =
+  document.getElementById(
+    "previewTableBody"
+  );
+let previewRows = [];
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -634,6 +727,148 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function invalidateObjectPreview() {
+  objectPreview.classList.add("d-none");
+  previewRows = [];
+}
+
+function renderPreviewRows() {
+  const filterValue =
+    previewFilter.value
+      .trim()
+      .toLocaleLowerCase("de");
+
+  const visibleRows = filterValue
+    ? previewRows.filter((row) => (
+        Object.values(row).some(
+          (value) => (
+            String(value ?? "")
+              .toLocaleLowerCase("de")
+              .includes(filterValue)
+          )
+        )
+      ))
+    : previewRows;
+
+  if (!visibleRows.length) {
+    previewTableBody.innerHTML = `
+      <tr>
+        <td
+          colspan="6"
+          class="text-center text-muted py-4"
+        >
+          Keine passenden Objekte.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  previewTableBody.innerHTML =
+    visibleRows.map((row) => `
+      <tr>
+        <td>
+          ${escapeHtml(row.object_type)}
+        </td>
+        <td>
+          ${escapeHtml(row.id_num || "–")}
+        </td>
+        <td>
+          ${escapeHtml(row.object_erp_id)}
+        </td>
+        <td>
+          ${escapeHtml(
+            row.economic_unit || "–"
+          )}
+        </td>
+        <td>
+          ${escapeHtml(row.building || "–")}
+        </td>
+        <td>
+          <div>
+            ${escapeHtml(
+              row.address || "–"
+            )}
+          </div>
+          ${
+            row.location
+              ? `
+                <div class="small text-muted">
+                  ${escapeHtml(row.location)}
+                </div>
+              `
+              : ""
+          }
+        </td>
+      </tr>
+    `).join("");
+}
+
+async function loadObjectPreview() {
+  synchronizeTargets();
+
+  targetsJson.value =
+    JSON.stringify(targetRows);
+
+  previewRows = [];
+  previewFilter.value = "";
+  previewSummary.textContent = "";
+  previewTableBody.innerHTML = "";
+  objectPreview.classList.remove("d-none");
+
+  previewState.className =
+    "alert alert-info py-2 mb-3";
+  previewState.textContent =
+    "Die Vorschau wird berechnet …";
+  previewButton.disabled = true;
+
+  try {
+    const response = await fetch(
+      `{{ url_for(
+        'safety_inspection_admin.group_preview'
+      ) }}`,
+      {
+        method: "POST",
+        headers: {
+          "Accept": "application/json"
+        },
+        body: new FormData(groupForm)
+      }
+    );
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        payload.error
+        || "Die Vorschau konnte nicht erstellt werden."
+      );
+    }
+
+    previewRows = payload.items || [];
+    previewSummary.textContent =
+      `${payload.count} Objekte betroffen`;
+
+    if (payload.count === 0) {
+      previewState.className =
+        "alert alert-warning py-2 mb-3";
+      previewState.textContent =
+        "Der aktuelle Filter erfasst kein Objekt.";
+    } else {
+      previewState.classList.add("d-none");
+    }
+
+    renderPreviewRows();
+  } catch (error) {
+    previewState.className =
+      "alert alert-danger py-2 mb-3";
+    previewState.textContent =
+      error.message;
+  } finally {
+    previewButton.disabled = false;
+  }
 }
 
 function renderTargets() {
@@ -740,6 +975,7 @@ function addTarget(result) {
   }
 
   renderTargets();
+  invalidateObjectPreview();
 }
 
 async function searchObjects() {
@@ -928,6 +1164,46 @@ craftActivity.addEventListener(
   "change",
   filterTaskTemplates
 );
+previewButton.addEventListener(
+  "click",
+  loadObjectPreview
+);
+
+previewFilter.addEventListener(
+  "input",
+  renderPreviewRows
+);
+
+groupForm.addEventListener(
+  "input",
+  (event) => {
+    if (
+      [
+        "object_level",
+        "selection_mode",
+        "id_num_regex",
+        "id_num_regex_action",
+        "include_vacancies"
+      ].includes(event.target.name)
+    ) {
+      invalidateObjectPreview();
+    }
+  }
+);
+
+groupForm.addEventListener(
+  "change",
+  (event) => {
+    if (
+      event.target.classList.contains(
+        "target-included"
+      )
+    ) {
+      invalidateObjectPreview();
+    }
+  }
+);
+
 
 groupForm.addEventListener(
   "submit",

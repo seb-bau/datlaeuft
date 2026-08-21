@@ -4,6 +4,8 @@ import json
 from datetime import date
 from typing import Any
 from uuid import uuid4
+import json
+import re
 
 from flask import (
     Blueprint,
@@ -57,6 +59,7 @@ from .safety_inspection_service import (
     create_safety_inspection_template,
     generate_safety_inspection_jobs,
     publish_safety_inspection_version,
+    resolve_group_object_contexts,
     validate_safety_inspection_group,
     validate_safety_inspection_schedule,
 )
@@ -711,6 +714,81 @@ def group_edit(
 
 
 @safety_inspection_admin_bp.post(
+    "/admin/safety-inspections/groups/preview"
+)
+@login_required
+@safety_inspection_manage_required
+def group_preview() -> Any:
+    try:
+        preview_group = (
+            _group_preview_from_request()
+        )
+        contexts = (
+            resolve_group_object_contexts(
+                preview_group
+            )
+        )
+    except ValueError as exc:
+        return jsonify(
+            {"error": str(exc)}
+        ), 400
+
+    object_level_labels = (
+        _object_level_labels()
+    )
+    items = []
+
+    for context in contexts:
+        economic_unit_label = " · ".join(
+            value
+            for value in (
+                context.economic_unit.id_num,
+                context.economic_unit.name,
+            )
+            if value
+        )
+        building_label = (
+            context.building.id_num
+            if context.building is not None
+            else ""
+        )
+
+        items.append(
+            {
+                "object_type": (
+                    object_level_labels.get(
+                        context.object_level,
+                        context.object_level,
+                    )
+                ),
+                "object_erp_id": (
+                    context.object_erp_id
+                ),
+                "id_num": (
+                    context.object_id_num or ""
+                ),
+                "economic_unit": (
+                    economic_unit_label
+                ),
+                "building": building_label,
+                "address": (
+                    context.address or ""
+                ),
+                "location": (
+                    context.location or ""
+                ),
+            }
+        )
+
+    return jsonify(
+        {
+            "count": len(items),
+            "items": items,
+        }
+    )
+
+
+@safety_inspection_admin_bp.post(
     "/admin/safety-inspections/groups/"
     "<int:group_id>/generate"
 )
@@ -1268,9 +1346,116 @@ def _save_group(
     _replace_group_targets(item)
 
 
+def _group_preview_from_request(
+) -> SafetyInspectionGroup:
+    object_level = request.form.get(
+        "object_level",
+        "",
+    ).strip()
+    valid_object_levels = {
+        level.value
+        for level in SafetyInspectionObjectLevel
+    }
+
+    if object_level not in valid_object_levels:
+        raise ValueError(
+            "Die Prüfebene ist ungültig."
+        )
+
+    selection_mode = request.form.get(
+        "selection_mode",
+        "",
+    ).strip()
+    valid_selection_modes = {
+        mode.value
+        for mode in (
+            SafetyInspectionSelectionMode
+        )
+    }
+
+    if (
+        selection_mode
+        not in valid_selection_modes
+    ):
+        raise ValueError(
+            "Der Auswahlmodus ist ungültig."
+        )
+
+    regex_pattern = _clean_text(
+        request.form.get("id_num_regex")
+    )
+    regex_action = request.form.get(
+        "id_num_regex_action",
+        "",
+    ).strip()
+
+    if regex_pattern is None:
+        regex_action = None
+    else:
+        valid_regex_actions = {
+            action.value
+            for action in (
+                SafetyInspectionRegexAction
+            )
+        }
+
+        if (
+            regex_action
+            not in valid_regex_actions
+        ):
+            raise ValueError(
+                "Die RegEx-Aktion ist ungültig."
+            )
+
+        if len(regex_pattern) > 500:
+            raise ValueError(
+                "Der reguläre Ausdruck darf "
+                "höchstens 500 Zeichen lang sein."
+            )
+
+        try:
+            re.compile(
+                regex_pattern,
+                re.IGNORECASE,
+            )
+        except re.error as exc:
+            raise ValueError(
+                "Der reguläre Ausdruck ist "
+                f"ungültig: {exc}."
+            ) from exc
+
+    preview_group = SafetyInspectionGroup(
+        object_level=object_level,
+        selection_mode=selection_mode,
+        id_num_regex=regex_pattern,
+        id_num_regex_action=regex_action,
+        include_vacancies=(
+            "include_vacancies"
+            in request.form
+        ),
+    )
+    preview_group.targets.extend(
+        _parse_group_targets()
+    )
+
+    return preview_group
+
+
 def _replace_group_targets(
     group: SafetyInspectionGroup,
 ) -> None:
+    targets = _parse_group_targets()
+
+    group.targets.clear()
+
+    if group.id is not None:
+        db.session.flush()
+
+    group.targets.extend(targets)
+
+
+def _parse_group_targets(
+) -> list[SafetyInspectionGroupTarget]:
     try:
         payload = json.loads(
             request.form.get(
@@ -1289,11 +1474,7 @@ def _replace_group_targets(
             "Die Objektauswahl ist ungültig."
         )
 
-    group.targets.clear()
-
-    if group.id is not None:
-        db.session.flush()
-
+    targets = []
     seen = set()
 
     for row in payload:
@@ -1324,7 +1505,7 @@ def _replace_group_targets(
         )
         seen.add(key)
 
-        group.targets.append(
+        targets.append(
             SafetyInspectionGroupTarget(
                 object_type=object_type,
                 object_erp_id=object_erp_id,
@@ -1334,6 +1515,8 @@ def _replace_group_targets(
                 ),
             )
         )
+
+    return targets
 
 
 def _validate_target_object(

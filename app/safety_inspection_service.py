@@ -544,8 +544,8 @@ def validate_safety_inspection_group(
 
 
 def generate_safety_inspection_jobs(
-        run_date: date | None = None,
-        group_id: int | None = None,
+    run_date: date | None = None,
+    group_id: int | None = None,
 ) -> dict[str, int]:
     current_date = run_date or date.today()
     result = {
@@ -571,138 +571,160 @@ def generate_safety_inspection_jobs(
             == group_id
         )
 
-    for group in query.order_by(
-            SafetyInspectionGroup.id.asc()
-    ).all():
+    groups = query.order_by(
+        SafetyInspectionGroup.id.asc()
+    ).all()
+
+    for group in groups:
         result["groups"] += 1
+        group_result = {
+            "created": 0,
+            "existing": 0,
+            "unassigned": 0,
+        }
 
         try:
-            validate_safety_inspection_group(
-                group
-            )
-            template_version = (
-                latest_published_version(
-                    group.template
-                )
-            )
-            contexts = (
-                resolve_group_object_contexts(
+            with db.session.begin_nested():
+                validate_safety_inspection_group(
                     group
                 )
-            )
-
-            if not contexts:
-                raise ValueError(
-                    "Für die Prüfgruppe wurden "
-                    "keine aktiven Objekte gefunden."
+                template_version = (
+                    latest_published_version(
+                        group.template
+                    )
+                )
+                contexts = (
+                    resolve_group_object_contexts(
+                        group
+                    )
                 )
 
-            period_start = (
-                group.first_period_start
-            )
-            iteration_count = 0
+                if not contexts:
+                    raise ValueError(
+                        "Für die Prüfgruppe wurden "
+                        "keine aktiven Objekte gefunden."
+                    )
 
-            while iteration_count < 10000:
-                iteration_count += 1
+                period_start = (
+                    group.first_period_start
+                )
+                iteration_count = 0
 
-                if (
+                while iteration_count < 10000:
+                    iteration_count += 1
+
+                    if (
                         group.ends_on is not None
                         and period_start
                         > group.ends_on
-                ):
-                    break
+                    ):
+                        break
 
-                period_end = next_period_start(
-                    period_start,
-                    group.schedule,
-                ) - timedelta(days=1)
-                generation_date = (
-                    inspection_generation_date(
-                        period_start,
-                        group.schedule,
+                    period_end = (
+                        next_period_start(
+                            period_start,
+                            group.schedule,
+                        )
+                        - timedelta(days=1)
                     )
-                )
+                    generation_date = (
+                        inspection_generation_date(
+                            period_start,
+                            group.schedule,
+                        )
+                    )
 
-                if generation_date > current_date:
-                    break
+                    if (
+                        generation_date
+                        > current_date
+                    ):
+                        break
 
-                due_from = (
+                    due_from = (
                         period_start
                         + timedelta(
-                    days=(
-                        group.schedule
-                        .due_start_offset_days
-                    )
-                )
-                )
-                due_to = (
-                        period_end
-                        + timedelta(
-                    days=(
-                        group.schedule
-                        .due_end_offset_days
-                    )
-                )
-                )
-                missed_on = (
-                        due_to
-                        + timedelta(
-                    days=(
-                            group.schedule
-                            .grace_days
-                            + 1
-                    )
-                )
-                )
-
-                if missed_on >= current_date:
-                    for context in contexts:
-                        job, created = (
-                            create_safety_inspection_job(
-                                group=group,
-                                template_version=(
-                                    template_version
-                                ),
-                                context=context,
-                                period_start=(
-                                    period_start
-                                ),
-                                period_end=period_end,
-                                due_from=due_from,
-                                due_to=due_to,
-                                missed_on=missed_on,
+                            days=(
+                                group.schedule
+                                .due_start_offset_days
                             )
                         )
+                    )
+                    due_to = (
+                        period_end
+                        + timedelta(
+                            days=(
+                                group.schedule
+                                .due_end_offset_days
+                            )
+                        )
+                    )
+                    missed_on = (
+                        due_to
+                        + timedelta(
+                            days=(
+                                group.schedule
+                                .grace_days
+                                + 1
+                            )
+                        )
+                    )
 
-                        if created:
-                            result["created"] += 1
+                    if missed_on >= current_date:
+                        for context in contexts:
+                            job, created = (
+                                create_safety_inspection_job(
+                                    group=group,
+                                    template_version=(
+                                        template_version
+                                    ),
+                                    context=context,
+                                    period_start=(
+                                        period_start
+                                    ),
+                                    period_end=(
+                                        period_end
+                                    ),
+                                    due_from=due_from,
+                                    due_to=due_to,
+                                    missed_on=missed_on,
+                                )
+                            )
 
-                            if (
+                            if created:
+                                group_result[
+                                    "created"
+                                ] += 1
+
+                                if (
                                     job.assigned_user_id
                                     is None
-                            ):
-                                result[
-                                    "unassigned"
+                                ):
+                                    group_result[
+                                        "unassigned"
+                                    ] += 1
+                            else:
+                                group_result[
+                                    "existing"
                                 ] += 1
-                        else:
-                            result["existing"] += 1
 
-                period_start = next_period_start(
-                    period_start,
-                    group.schedule,
+                    period_start = (
+                        next_period_start(
+                            period_start,
+                            group.schedule,
+                        )
+                    )
+
+                if iteration_count >= 10000:
+                    raise ValueError(
+                        "Der Zeitplan erzeugt zu "
+                        "viele Prüfperioden."
+                    )
+
+                group.last_generation_at = (
+                    utc_now()
                 )
-
-            if iteration_count >= 10000:
-                raise ValueError(
-                    "Der Zeitplan erzeugt zu viele "
-                    "Prüfperioden."
-                )
-
-            group.last_generation_at = (
-                utc_now()
-            )
-            group.last_generation_error = None
-            db.session.flush()
+                group.last_generation_error = None
+                db.session.flush()
 
         except Exception as exc:
             group.last_generation_at = (
@@ -712,6 +734,18 @@ def generate_safety_inspection_jobs(
                 str(exc)
             )
             result["errors"] += 1
+            db.session.flush()
+
+        else:
+            result["created"] += (
+                group_result["created"]
+            )
+            result["existing"] += (
+                group_result["existing"]
+            )
+            result["unassigned"] += (
+                group_result["unassigned"]
+            )
 
     return result
 
@@ -743,6 +777,28 @@ def create_safety_inspection_job(
 
     if existing is not None:
         return existing, False
+
+    template_items = (
+        SafetyInspectionTemplateItem.query
+        .filter(
+            SafetyInspectionTemplateItem
+            .template_version_id
+            == template_version.id
+        )
+        .order_by(
+            SafetyInspectionTemplateItem
+            .position_index.asc(),
+            SafetyInspectionTemplateItem.id.asc(),
+        )
+        .all()
+    )
+
+    if not template_items:
+        raise ValueError(
+            "Der veröffentlichte "
+            "Prüfdetailplan enthält "
+            "keine Prüfpunkte."
+        )
 
     assigned_user = None
     jurisdiction = None
@@ -871,7 +927,9 @@ def create_safety_inspection_job(
         assignment_error=assignment_error,
     )
 
-    for item in template_version.items:
+    db.session.add(job)
+
+    for item in template_items:
         job.results.append(
             SafetyInspectionResult(
                 template_item=item,
@@ -891,12 +949,10 @@ def create_safety_inspection_job(
                     item.allow_not_present
                 ),
                 photo_required_no_defect=(
-                    item
-                    .photo_required_no_defect
+                    item.photo_required_no_defect
                 ),
                 photo_required_not_present=(
-                    item
-                    .photo_required_not_present
+                    item.photo_required_not_present
                 ),
                 photo_required_defect_info=(
                     item
@@ -909,7 +965,6 @@ def create_safety_inspection_job(
             )
         )
 
-    db.session.add(job)
     db.session.flush()
     if job.assigned_user is not None:
         enqueue_safety_inspection_push(
