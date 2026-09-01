@@ -128,8 +128,8 @@ def upgrade():
         sa.text(
             """
             UPDATE commission_photo
-            SET external_document_id =
-                'commission-photo-' || id
+                SET external_document_id =
+                    CONCAT('commission-photo-', id)
             WHERE external_document_id IS NULL
             """
         )
