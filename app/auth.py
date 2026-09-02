@@ -13,7 +13,10 @@ from jwt import PyJWKClient
 
 from .audit import audit
 from .extensions import db, login_manager
-from .entra import is_entra_user_in_allowed_group
+from .entra import (
+    get_entra_user_profile,
+    is_entra_user_in_allowed_group,
+)
 from .models import User, utc_now
 from .settings import SettingKeys, settings
 
@@ -434,55 +437,134 @@ def resolve_microsoft_user(
     claims: dict[str, Any],
     create: bool,
 ) -> User | None:
-    oid = str(claims.get("oid") or "").strip()
-    email = str(
+    oid = str(
+        claims.get("oid") or ""
+    ).strip()
+    login_name = str(
         claims.get("preferred_username")
         or claims.get("email")
         or claims.get("upn")
         or ""
     ).strip().lower()
-    name = str(
+    display_name = str(
         claims.get("name")
-        or email
+        or login_name
     ).strip()
 
-    if not email:
+    if not oid:
+        current_app.logger.warning(
+            "microsoft_login_without_oid"
+        )
         return None
-
+    # noinspection PyBroadException
     try:
         if not is_entra_user_in_allowed_group(oid):
             return None
-    except Exception as e:
+    except Exception:
         current_app.logger.exception(
-            f"microsoft_group_membership_check_failed:{str(e)}"
+            "microsoft_group_membership_check_failed"
         )
         return None
 
-    if oid:
-        user = User.query.filter(
-            (User.entra_oid == oid)
-            | (User.email == email)
-        ).one_or_none()
-    else:
-        user = User.query.filter_by(
-            email=email,
-        ).one_or_none()
+    user = User.query.filter_by(
+        entra_oid=oid,
+    ).one_or_none()
 
-    if user is None and create:
-        user = User(
-            email=email,
-            display_name=name,
-            entra_oid=oid or None,
-            is_active_flag=True,
+    if user is None:
+        # noinspection PyBroadException
+        try:
+            profile = get_entra_user_profile(oid)
+        except Exception:
+            current_app.logger.exception(
+                "microsoft_user_profile_failed"
+            )
+            return None
+
+        user_principal_name = str(
+            profile.get("userPrincipalName")
+            or ""
+        ).strip().lower()
+        primary_email = str(
+            profile.get("mail")
+            or user_principal_name
+            or login_name
+        ).strip().lower()
+
+        if not primary_email:
+            return None
+
+        if not bool(
+            profile.get("accountEnabled", True)
+        ):
+            return None
+
+        candidate_emails = {
+            value
+            for value in (
+                primary_email,
+                user_principal_name,
+                login_name,
+            )
+            if value
+        }
+        candidates = (
+            User.query
+            .filter(User.email.in_(candidate_emails))
+            .order_by(User.id.asc())
+            .all()
         )
-        db.session.add(user)
 
-    if user is None or not user.is_active:
+        if len(candidates) > 1:
+            current_app.logger.warning(
+                "microsoft_user_link_conflict "
+                "oid=%s user_ids=%s",
+                oid,
+                [item.id for item in candidates],
+            )
+            return None
+
+        user = candidates[0] if candidates else None
+        # noinspection PyUnresolvedReferences
+        if (
+            user is not None
+            and user.entra_oid not in (None, oid)
+        ):
+            current_app.logger.warning(
+                "microsoft_oid_conflict "
+                "oid=%s user_id=%s",
+                oid,
+                user.id,
+            )
+            return None
+
+        if user is None and create:
+            user = User(
+                email=primary_email,
+                display_name=(
+                    str(
+                        profile.get("displayName")
+                        or display_name
+                        or primary_email
+                    ).strip()
+                ),
+                entra_oid=oid,
+                is_active_flag=True,
+            )
+            db.session.add(user)
+
+        if user is None:
+            return None
+
+        user.entra_oid = oid
+        user.email = primary_email
+
+    if not user.is_active:
         return None
 
-    user.entra_oid = oid or user.entra_oid
-    user.email = email
-    user.display_name = name or user.display_name
+    user.display_name = (
+        display_name
+        or user.display_name
+    )
     return user
 
 

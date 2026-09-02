@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from urllib.parse import quote
+from typing import Any
 
 import msal
 import requests
@@ -64,29 +65,54 @@ def import_entra_users() -> EntraImportResult:
         data = response.json()
 
         for entry in data.get("value", []):
-            email = (
+            entra_id = str(
+                entry.get("id") or ""
+            ).strip()
+            email = str(
                 entry.get("mail")
                 or entry.get("userPrincipalName")
                 or ""
             ).strip().lower()
 
-            if not email:
+            if not entra_id or not email:
                 result.skipped += 1
                 continue
 
-            user = User.query.filter(
-                (User.entra_oid == entry.get("id"))
-                | (User.email == email)
+            user_by_oid = User.query.filter_by(
+                entra_oid=entra_id,
+            ).one_or_none()
+            user_by_email = User.query.filter_by(
+                email=email,
             ).one_or_none()
 
-            if user is None:
+            if (
+                    user_by_oid is not None
+                    and user_by_email is not None
+                    and user_by_oid.id != user_by_email.id
+            ):
+                result.skipped += 1
+                continue
+
+            if (
+                    user_by_oid is None
+                    and user_by_email is not None
+                    and user_by_email.entra_oid
+                    not in (None, entra_id)
+            ):
+                result.skipped += 1
+                continue
+
+            user = user_by_oid or user_by_email
+            created = user is None
+
+            if created:
                 user = User(
                     email=email,
                     display_name=(
-                        entry.get("displayName")
-                        or email
+                            entry.get("displayName")
+                            or email
                     ),
-                    entra_oid=entry.get("id"),
+                    entra_oid=entra_id,
                     is_active_flag=bool(
                         entry.get(
                             "accountEnabled",
@@ -95,23 +121,24 @@ def import_entra_users() -> EntraImportResult:
                     ),
                 )
                 db.session.add(user)
-                result.created += 1
             else:
                 user.email = email
+                # noinspection PyUnresolvedReferences
                 user.display_name = (
-                    entry.get("displayName")
-                    or user.display_name
+                        entry.get("displayName")
+                        or user.display_name
                 )
-                user.entra_oid = (
-                    entry.get("id")
-                    or user.entra_oid
-                )
+                user.entra_oid = entra_id
                 user.is_active_flag = bool(
                     entry.get(
                         "accountEnabled",
                         True,
                     )
                 )
+
+            if created:
+                result.created += 1
+            else:
                 result.updated += 1
 
         url = data.get("@odata.nextLink")
@@ -160,6 +187,45 @@ def is_entra_user_in_allowed_group(
         for value in response.json().get("value", [])
     }
     return allowed_group_id.lower() in group_ids
+
+
+def get_entra_user_profile(
+    user_id: str,
+) -> dict[str, Any]:
+    normalized_user_id = str(user_id or "").strip()
+
+    if not normalized_user_id:
+        raise ValueError(
+            "Die Entra-Benutzer-ID fehlt."
+        )
+
+    access_token = _acquire_graph_access_token()
+    encoded_user_id = quote(
+        normalized_user_id,
+        safe="",
+    )
+    response = requests.get(
+        (
+            f"{GRAPH_BASE_URL}/users/"
+            f"{encoded_user_id}"
+        ),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+        },
+        params={
+            "$select": GRAPH_USER_FIELDS,
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    profile = response.json()
+
+    if not isinstance(profile, dict):
+        raise RuntimeError(
+            "Das Entra-Benutzerprofil ist ungültig."
+        )
+
+    return profile
 
 
 def _configured_allowed_group_id() -> str:
