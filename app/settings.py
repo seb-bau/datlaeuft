@@ -23,20 +23,51 @@ class SettingDefinition(Generic[T]):
 
 
 class SettingKeys:
-    APP_SECRET_KEY = SettingDefinition[str]("security.secret_key", SettingValueType.SECRET, "change-me", "Flask Secret Key", "Sicherheit", True)
-    JWT_SECRET_KEY = SettingDefinition[str]("security.jwt_secret_key", SettingValueType.SECRET, "change-me", "JWT Secret Key", "Sicherheit", True)
-    PASSWORD_LOGIN_ENABLED = SettingDefinition[bool]("auth.password_login_enabled", SettingValueType.BOOL, True, "Login mit Kennwort erlauben", "Anmeldung")
-    MICROSOFT_LOGIN_ENABLED = SettingDefinition[bool]("auth.microsoft_login_enabled", SettingValueType.BOOL, False, "Microsoft-Login erlauben", "Anmeldung")
-    MICROSOFT_AUTO_CREATE_USERS = SettingDefinition[bool]("auth.microsoft_auto_create_users", SettingValueType.BOOL, False, "Microsoft-Benutzer automatisch anlegen", "Anmeldung")
-    MICROSOFT_ALLOWED_CLIENT_IDS = SettingDefinition[str]("auth.microsoft_allowed_client_ids", SettingValueType.STRING, "", "Erlaubte Microsoft Client-IDs fuer App-Login", "Anmeldung")
-    ENTRA_TENANT_ID = SettingDefinition[str]("entra.tenant_id", SettingValueType.STRING, "", "Entra Tenant-ID", "Entra ID")
-    ENTRA_CLIENT_ID = SettingDefinition[str]("entra.client_id", SettingValueType.STRING, "", "Entra Client-ID", "Entra ID")
-    ENTRA_CLIENT_SECRET = SettingDefinition[str]("entra.client_secret", SettingValueType.SECRET, "", "Entra Client Secret", "Entra ID", True)
-    WOWI_HOSTNAME = SettingDefinition[str]("wowi.hostname", SettingValueType.STRING, "", "Wowiport Hostname", "Wowiport")
-    WOWI_USERNAME = SettingDefinition[str]("wowi.username", SettingValueType.STRING, "", "Wowiport Benutzer", "Wowiport")
-    WOWI_PASSWORD = SettingDefinition[str]("wowi.password", SettingValueType.SECRET, "", "Wowiport Kennwort", "Wowiport", True)
-    WOWI_API_KEY = SettingDefinition[str]("wowi.api_key", SettingValueType.SECRET, "", "OPENWOWI API-Key", "Wowiport", True)
-    WOWI_API_VERSION = SettingDefinition[str]("wowi.api_version", SettingValueType.STRING, "v1.2", "OPENWOWI Version", "Wowiport")
+    APP_SECRET_KEY = SettingDefinition[str](
+        "security.secret_key", SettingValueType.SECRET, "change-me", "Flask Secret Key", "Sicherheit", True)
+    JWT_SECRET_KEY = SettingDefinition[str](
+        "security.jwt_secret_key", SettingValueType.SECRET, "change-me", "JWT Secret Key", "Sicherheit", True)
+    PASSWORD_LOGIN_ENABLED = SettingDefinition[bool](
+        "auth.password_login_enabled", SettingValueType.BOOL, True, "Login mit Kennwort erlauben", "Anmeldung")
+    MICROSOFT_LOGIN_ENABLED = SettingDefinition[bool](
+        "auth.microsoft_login_enabled", SettingValueType.BOOL, False, "Microsoft-Login erlauben", "Anmeldung")
+    MICROSOFT_AUTO_CREATE_USERS = SettingDefinition[bool](
+        "auth.microsoft_auto_create_users",
+        SettingValueType.BOOL,
+        False,
+        "Microsoft-Benutzer automatisch anlegen",
+        "Anmeldung"
+    )
+    MICROSOFT_ALLOWED_CLIENT_IDS = SettingDefinition[str](
+        "auth.microsoft_allowed_client_ids",
+        SettingValueType.STRING,
+        "",
+        "Erlaubte Microsoft Client-IDs fuer App-Login",
+        "Anmeldung"
+    )
+    ENTRA_TENANT_ID = SettingDefinition[str](
+        "entra.tenant_id", SettingValueType.STRING, "", "Entra Tenant-ID", "Entra ID")
+    ENTRA_CLIENT_ID = SettingDefinition[str](
+        "entra.client_id", SettingValueType.STRING, "", "Entra Client-ID", "Entra ID")
+    ENTRA_CLIENT_SECRET = SettingDefinition[str](
+        "entra.client_secret", SettingValueType.SECRET, "", "Entra Client Secret", "Entra ID", True)
+    ENTRA_ALLOWED_GROUP_ID = SettingDefinition[str](
+        "entra.allowed_group_id",
+        SettingValueType.STRING,
+        "",
+        "Zugelassene Entra-Gruppen-Objekt-ID (optional)",
+        "Entra ID",
+    )
+    WOWI_HOSTNAME = SettingDefinition[str](
+        "wowi.hostname", SettingValueType.STRING, "", "Wowiport Hostname", "Wowiport")
+    WOWI_USERNAME = SettingDefinition[str](
+        "wowi.username", SettingValueType.STRING, "", "Wowiport Benutzer", "Wowiport")
+    WOWI_PASSWORD = SettingDefinition[str](
+        "wowi.password", SettingValueType.SECRET, "", "Wowiport Kennwort", "Wowiport", True)
+    WOWI_API_KEY = SettingDefinition[str](
+        "wowi.api_key", SettingValueType.SECRET, "", "OPENWOWI API-Key", "Wowiport", True)
+    WOWI_API_VERSION = SettingDefinition[str](
+        "wowi.api_version", SettingValueType.STRING, "v1.2", "OPENWOWI Version", "Wowiport")
     WOWI_DOCUMENT_FILE_TYPE_ID = SettingDefinition[int](
         "wowi.document_file_type_id",
         SettingValueType.INT,
@@ -68,8 +99,10 @@ class SettingKeys:
         "Abgleichintervall für Gebäude- und Wohnungsfotos in Minuten",
         "Synchronisierung",
     )
-    WOWI_APPROVED_STATUS_ID = SettingDefinition[int]("wowi.approved_status_id", SettingValueType.INT, 6, "Status-ID Freigegeben", "Wowiport")
-    WOWI_WEBHOOK_TOKEN = SettingDefinition[str]("wowi.webhook_bearer_token", SettingValueType.SECRET, "change-me", "Webhook Bearer Token", "Wowiport", True)
+    WOWI_APPROVED_STATUS_ID = SettingDefinition[int](
+        "wowi.approved_status_id", SettingValueType.INT, 6, "Status-ID Freigegeben", "Wowiport")
+    WOWI_WEBHOOK_TOKEN = SettingDefinition[str](
+        "wowi.webhook_bearer_token", SettingValueType.SECRET, "change-me", "Webhook Bearer Token", "Wowiport", True)
     WOWI_DEFAULT_CRAFTS_PROCESS_TYPE_CODE = SettingDefinition[str](
         "wowi.default_crafts_process_type_code",
         SettingValueType.STRING,
@@ -303,8 +336,10 @@ class SettingKeys:
         "Zeitzone",
         "Terminvereinbarung",
     )
-    TIME_DEVIATION_PERCENT = SettingDefinition[float]("time.deviation_percent", SettingValueType.FLOAT, 20.0, "Abweichung in Prozent", "Zeiterfassung")
-    TIME_DEVIATION_MINUTES = SettingDefinition[int]("time.deviation_minutes", SettingValueType.INT, 15, "Abweichung in Minuten", "Zeiterfassung")
+    TIME_DEVIATION_PERCENT = SettingDefinition[float](
+        "time.deviation_percent", SettingValueType.FLOAT, 20.0, "Abweichung in Prozent", "Zeiterfassung")
+    TIME_DEVIATION_MINUTES = SettingDefinition[int](
+        "time.deviation_minutes", SettingValueType.INT, 15, "Abweichung in Minuten", "Zeiterfassung")
     INVOICE_DEFAULT_HOURLY_RATE_NET = SettingDefinition[float](
         "invoice.default_hourly_rate_net",
         SettingValueType.FLOAT,
@@ -347,17 +382,38 @@ class SettingKeys:
         "Auftragsart für angenommene Angebote",
         "Angebote",
     )
-    LOG_LEVEL = SettingDefinition[str]("logging.level", SettingValueType.STRING, "INFO", "Log-Level", "Logging")
-    LOG_HANDLER = SettingDefinition[str]("logging.handler", SettingValueType.STRING, "file", "Logging-Ziel", "Logging")
-    LOG_FILE_PATH = SettingDefinition[str]("logging.file_path", SettingValueType.STRING, "logs/datlaeuft.log", "Logdatei", "Logging")
-    GRAYLOG_HOST = SettingDefinition[str]("logging.graylog_host", SettingValueType.STRING, "", "Graylog Host", "Logging")
-    GRAYLOG_PORT = SettingDefinition[int]("logging.graylog_port", SettingValueType.INT, 12201, "Graylog Port", "Logging")
-    CORS_ORIGINS = SettingDefinition[str]("api.cors_origins", SettingValueType.STRING, "*", "CORS Origins", "API")
-    MOBILE_TOKEN_NEVER_EXPIRES = SettingDefinition[bool]("mobile.token_never_expires", SettingValueType.BOOL, True, "App-Login dauerhaft gültig", "Mobile App")
-    MOBILE_ALLOW_COLLEAGUE_COMMISSIONS = SettingDefinition[bool]("mobile.allow_colleague_commissions", SettingValueType.BOOL, False, "Kollegen-Aufträge in der App anzeigen", "Mobile App")
-    MOBILE_MICROSOFT_CLIENT_ID = SettingDefinition[str]("mobile.microsoft_client_id", SettingValueType.STRING, "", "Microsoft Client-ID der iOS-App", "Mobile App")
-    MOBILE_MICROSOFT_REDIRECT_URI = SettingDefinition[str]("mobile.microsoft_redirect_uri", SettingValueType.STRING, "", "Microsoft Redirect-URI der iOS-App", "Mobile App")
-    MOBILE_MICROSOFT_SCOPES = SettingDefinition[str]("mobile.microsoft_scopes", SettingValueType.STRING, "User.Read", "Microsoft Scopes der iOS-App", "Mobile App")
+    LOG_LEVEL = SettingDefinition[str](
+        "logging.level", SettingValueType.STRING, "INFO", "Log-Level", "Logging")
+    LOG_HANDLER = SettingDefinition[str](
+        "logging.handler", SettingValueType.STRING, "file", "Logging-Ziel", "Logging")
+    LOG_FILE_PATH = SettingDefinition[str](
+        "logging.file_path", SettingValueType.STRING, "logs/datlaeuft.log", "Logdatei", "Logging")
+    GRAYLOG_HOST = SettingDefinition[str](
+        "logging.graylog_host", SettingValueType.STRING, "", "Graylog Host", "Logging")
+    GRAYLOG_PORT = SettingDefinition[int](
+        "logging.graylog_port", SettingValueType.INT, 12201, "Graylog Port", "Logging")
+    CORS_ORIGINS = SettingDefinition[str](
+        "api.cors_origins", SettingValueType.STRING, "*", "CORS Origins", "API")
+    MOBILE_TOKEN_NEVER_EXPIRES = SettingDefinition[bool](
+        "mobile.token_never_expires", SettingValueType.BOOL, True, "App-Login dauerhaft gültig", "Mobile App")
+    MOBILE_ALLOW_COLLEAGUE_COMMISSIONS = SettingDefinition[bool](
+        "mobile.allow_colleague_commissions",
+        SettingValueType.BOOL,
+        False,
+        "Kollegen-Aufträge in der App anzeigen",
+        "Mobile App"
+    )
+    MOBILE_MICROSOFT_CLIENT_ID = SettingDefinition[str](
+        "mobile.microsoft_client_id", SettingValueType.STRING, "", "Microsoft Client-ID der iOS-App", "Mobile App")
+    MOBILE_MICROSOFT_REDIRECT_URI = SettingDefinition[str](
+        "mobile.microsoft_redirect_uri",
+        SettingValueType.STRING,
+        "",
+        "Microsoft Redirect-URI der iOS-App",
+        "Mobile App"
+    )
+    MOBILE_MICROSOFT_SCOPES = SettingDefinition[str](
+        "mobile.microsoft_scopes", SettingValueType.STRING, "User.Read", "Microsoft Scopes der iOS-App", "Mobile App")
     PUSH_RELAY_URL = SettingDefinition[str](
         "push.relay_url",
         SettingValueType.STRING,
@@ -507,7 +563,8 @@ class SettingsService:
     def set(self, definition: SettingDefinition[T], value: T) -> None:
         row = AppSetting.query.filter_by(key=definition.key).one_or_none()
         if row is None:
-            row = AppSetting(key=definition.key, value_type=definition.value_type.value, label=definition.label, group=definition.group, is_secret=definition.secret)
+            row = AppSetting(key=definition.key, value_type=definition.value_type.value, label=definition.label,
+                             group=definition.group, is_secret=definition.secret)
             db.session.add(row)
         row.value_text = self._serialize(value, definition.value_type)
         row.value_type = definition.value_type.value
@@ -529,6 +586,8 @@ class SettingsService:
         db.session.commit()
 
     def _serialize(self, value: Any, value_type: SettingValueType) -> str:
+        if self.__dict__:
+            pass
         if value_type == SettingValueType.JSON:
             return json.dumps(value)
         if value_type == SettingValueType.BOOL:
@@ -536,6 +595,8 @@ class SettingsService:
         return str(value)
 
     def _deserialize(self, value: str, value_type: SettingValueType) -> Any:
+        if self.__dict__:
+            pass
         if value_type == SettingValueType.INT:
             return int(value or 0)
         if value_type == SettingValueType.FLOAT:

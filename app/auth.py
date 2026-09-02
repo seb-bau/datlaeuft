@@ -13,6 +13,7 @@ from jwt import PyJWKClient
 
 from .audit import audit
 from .extensions import db, login_manager
+from .entra import is_entra_user_in_allowed_group
 from .models import User, utc_now
 from .settings import SettingKeys, settings
 
@@ -206,7 +207,8 @@ def logout() -> Any:
 def microsoft_login() -> Any:
     if not settings.get(SettingKeys.MICROSOFT_LOGIN_ENABLED):
         abort(404)
-    flow = _build_msal_app().initiate_auth_code_flow(scopes=["User.Read"], redirect_uri=url_for("auth.microsoft_callback", _external=True))
+    flow = _build_msal_app().initiate_auth_code_flow(
+        scopes=["User.Read"], redirect_uri=url_for("auth.microsoft_callback", _external=True))
     session["msal_flow"] = flow
     return redirect(flow["auth_uri"])
 
@@ -254,9 +256,9 @@ def generic_oidc_login() -> Any:
             _external=True,
         )
         return client.authorize_redirect(redirect_uri)
-    except Exception:
+    except Exception as e:
         current_app.logger.exception(
-            "generic_oidc_login_initialization_failed"
+            f"generic_oidc_login_initialization_failed: {str(e)}"
         )
         flash(
             "Der Single-Sign-on-Anbieter konnte nicht aufgerufen werden.",
@@ -292,9 +294,9 @@ def generic_oidc_callback() -> Any:
             "danger",
         )
         return redirect(url_for("auth.login"))
-    except Exception:
+    except Exception as e:
         current_app.logger.exception(
-            "generic_oidc_login_failed"
+            f"generic_oidc_login_failed:{str(e)}"
         )
         flash(
             "Die Single-Sign-on-Anmeldung ist fehlgeschlagen.",
@@ -359,7 +361,8 @@ def _build_generic_oidc_client() -> Any:
         raise RuntimeError(
             "Die OIDC-Konfiguration ist unvollständig"
         )
-
+    # noinspection PyUnresolvedReferences
+    # noinspection PyProtectedMember
     oauth = OAuth(current_app._get_current_object())
     oauth.register(
         name="generic_oidc",
@@ -427,18 +430,56 @@ def _build_msal_app() -> msal.ConfidentialClientApplication:
     return msal.ConfidentialClientApplication(client_id=client_id, client_credential=client_secret, authority=authority)
 
 
-def resolve_microsoft_user(claims: dict[str, Any], create: bool) -> User | None:
-    oid = claims.get("oid")
-    email = (claims.get("preferred_username") or claims.get("email") or claims.get("upn") or "").strip().lower()
-    name = claims.get("name") or email
+def resolve_microsoft_user(
+    claims: dict[str, Any],
+    create: bool,
+) -> User | None:
+    oid = str(claims.get("oid") or "").strip()
+    email = str(
+        claims.get("preferred_username")
+        or claims.get("email")
+        or claims.get("upn")
+        or ""
+    ).strip().lower()
+    name = str(
+        claims.get("name")
+        or email
+    ).strip()
+
     if not email:
         return None
-    user = User.query.filter((User.entra_oid == oid) | (User.email == email)).one_or_none()
-    if user is None and create:
-        user = User(email=email, display_name=name, entra_oid=oid, is_active_flag=True)
-        db.session.add(user)
-    if user is None:
+
+    try:
+        if not is_entra_user_in_allowed_group(oid):
+            return None
+    except Exception as e:
+        current_app.logger.exception(
+            f"microsoft_group_membership_check_failed:{str(e)}"
+        )
         return None
+
+    if oid:
+        user = User.query.filter(
+            (User.entra_oid == oid)
+            | (User.email == email)
+        ).one_or_none()
+    else:
+        user = User.query.filter_by(
+            email=email,
+        ).one_or_none()
+
+    if user is None and create:
+        user = User(
+            email=email,
+            display_name=name,
+            entra_oid=oid or None,
+            is_active_flag=True,
+        )
+        db.session.add(user)
+
+    if user is None or not user.is_active:
+        return None
+
     user.entra_oid = oid or user.entra_oid
     user.email = email
     user.display_name = name or user.display_name
@@ -458,4 +499,10 @@ def validate_microsoft_id_token(id_token: str) -> dict[str, Any]:
         client_ids.append(mobile_client_id)
     jwks_url = f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
     signing_key = PyJWKClient(jwks_url).get_signing_key_from_jwt(id_token)
-    return pyjwt.decode(id_token, signing_key.key, algorithms=["RS256"], audience=client_ids, issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0")
+    return pyjwt.decode(
+        id_token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=client_ids,
+        issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0"
+    )
