@@ -69,7 +69,6 @@ from .settings import SettingKeys, settings
 from .utils import iso_datetime
 from .wowiport import (
     WowiportService,
-    configured_commission_type_ids,
 )
 from .catalog import get_user_visible_time_task, service_position_query_for_user
 from .erp_sync import enqueue_erp_operation
@@ -77,7 +76,6 @@ from .models import CommissionSyncState, ErpOperationType
 
 from .commission_service import (
     create_pending_commission,
-    normalize_public_id,
     integer_set
 )
 from .object_directory import (
@@ -91,10 +89,12 @@ from .push_service import (
     register_push_device,
     unregister_push_device,
 )
+from datetime import date
 
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 CANCELLATION_NOTE_PREFIX = "Storno zu Buchung #"
+
 
 @api_bp.get("/mobile/config")
 def mobile_config() -> Any:
@@ -642,7 +642,8 @@ def commission_contacts(commission_id: int) -> Any:
     try:
         contact_items = WowiportService().get_commission_contact_items(commission.erp_id)
     except Exception as exc:
-        current_app.logger.exception("commission_contacts_failed commission_id=%s erp_id=%s", commission.id, commission.erp_id)
+        current_app.logger.exception(
+            "commission_contacts_failed commission_id=%s erp_id=%s", commission.id, commission.erp_id)
         return jsonify({"contact_items": [], "message": str(exc)}), 502
 
     return jsonify({"contact_items": contact_items})
@@ -2282,6 +2283,7 @@ def cancel_commission_material(
         "inventory_item": serialize_inventory_item(item),
     }), 201
 
+
 @api_bp.get("/time-tasks")
 @jwt_required()
 def time_tasks() -> Any:
@@ -2448,7 +2450,12 @@ def update_time_entry(commission_id: int, entry_id: int) -> Any:
 def delete_time_entry(commission_id: int, entry_id: int) -> Any:
     user = current_api_user()
     commission, entry = editable_time_entry(commission_id, entry_id, user)
-    audit("time.delete", "time_entry", entry.id, {"commission_id": commission.id, "minutes": entry.minutes, "task_template_id": entry.task_template_id})
+    audit(
+        "time.delete",
+        "time_entry",
+        entry.id,
+        {"commission_id": commission.id, "minutes": entry.minutes, "task_template_id": entry.task_template_id}
+    )
     db.session.delete(entry)
     db.session.commit()
     return jsonify({})
@@ -2494,7 +2501,10 @@ def commission_material_review(commission_id: int) -> Any:
 def review_time_entries() -> Any:
     user = current_api_user()
     require_review_permission(user)
-    query = TimeEntry.query.join(Commission, TimeEntry.commission_id == Commission.id).join(User, TimeEntry.user_id == User.id).outerjoin(TimeTaskTemplate, TimeEntry.task_template_id == TimeTaskTemplate.id)
+    query = TimeEntry.query.join(
+        Commission, TimeEntry.commission_id == Commission.id).join(
+        User, TimeEntry.user_id == User.id).outerjoin(
+        TimeTaskTemplate, TimeEntry.task_template_id == TimeTaskTemplate.id)
     status = request.args.get("status", TimeReviewStatus.NEEDS_REVIEW.value).strip()
     review_level = request.args.get("review_level", request.args.get("risk", "")).strip()
     user_id = request.args.get("user_id", "").strip()
@@ -2534,7 +2544,14 @@ def review_time_entries() -> Any:
 def review_materials() -> Any:
     user = current_api_user()
     require_review_permission(user)
-    query = InventoryMovement.query.join(InventoryItem, InventoryMovement.item_id == InventoryItem.id).outerjoin(Commission, InventoryMovement.commission_id == Commission.id).outerjoin(User, InventoryMovement.user_id == User.id).outerjoin(TimeTaskTemplate, InventoryMovement.task_template_id == TimeTaskTemplate.id)
+    query = InventoryMovement.query.join(
+        InventoryItem,
+        InventoryMovement.item_id == InventoryItem.id).outerjoin(
+        Commission,
+        InventoryMovement.commission_id == Commission.id).outerjoin(
+        User, InventoryMovement.user_id == User.id).outerjoin(
+        TimeTaskTemplate, InventoryMovement.task_template_id == TimeTaskTemplate.id
+    )
     status = request.args.get("status", TimeReviewStatus.NEEDS_REVIEW.value).strip()
     review_level = request.args.get("review_level", request.args.get("risk", "")).strip()
     user_id = request.args.get("user_id", "").strip()
@@ -2759,10 +2776,22 @@ def time_entry_values_from_payload(data: dict[str, Any], user: User) -> dict[str
     travel_minutes = int_payload(data, "travel_minutes")
     documentation_minutes = int_payload(data, "documentation_minutes")
     extra_minutes = int_payload(data, "extra_minutes")
-    for value in [work_minutes, waiting_minutes, material_minutes, travel_minutes, documentation_minutes, extra_minutes]:
+    for value in [work_minutes,
+                  waiting_minutes,
+                  material_minutes,
+                  travel_minutes,
+                  documentation_minutes,
+                  extra_minutes
+                  ]:
         if value < 0:
             abort(400)
-    component_sum = work_minutes + waiting_minutes + material_minutes + travel_minutes + documentation_minutes + extra_minutes
+    component_sum = (work_minutes +
+                     waiting_minutes +
+                     material_minutes +
+                     travel_minutes +
+                     documentation_minutes +
+                     extra_minutes
+                     )
     minutes = component_sum if component_sum > 0 else int_payload(data, "minutes")
     if minutes <= 0:
         abort(400)
@@ -2801,7 +2830,8 @@ def apply_time_review(entry: TimeEntry) -> None:
     percent = difference / task.suggested_minutes * 100
     entry.deviation_minutes = difference
     entry.deviation_percent = percent
-    if difference > settings.get(SettingKeys.TIME_DEVIATION_MINUTES) or percent > settings.get(SettingKeys.TIME_DEVIATION_PERCENT):
+    if (difference > settings.get(SettingKeys.TIME_DEVIATION_MINUTES) or
+            percent > settings.get(SettingKeys.TIME_DEVIATION_PERCENT)):
         entry.review_status = TimeReviewStatus.NEEDS_REVIEW.value
         entry.review_level = ReviewLevel.YELLOW.value if entry.deviation_reason or entry.note else ReviewLevel.RED.value
     else:
@@ -3085,10 +3115,21 @@ def history_detail(
 
 
 def serialize_user(user: User) -> dict[str, Any]:
-    return {"id": user.id, "email": user.email, "display_name": user.display_name, "craftsman_erp_id": user.craftsman_erp_id, "is_admin": user.is_admin, "is_foreman": user.is_foreman}
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "craftsman_erp_id": user.craftsman_erp_id,
+        "is_admin": user.is_admin,
+        "is_foreman": user.is_foreman
+    }
 
 
-def serialize_commission(commission: Commission, include_details: bool = False, viewer: User | None = None) -> dict[str, Any]:
+def serialize_commission(
+        commission: Commission,
+        include_details: bool = False,
+        viewer: User | None = None
+) -> dict[str, Any]:
     item = {
         "id": commission.id,
         "erp_id": commission.erp_id,
@@ -3382,25 +3423,6 @@ def serialize_commission_photo(
         "id": photo.id,
         "commission_id": effective_commission_id,
         "source": photo.source,
-        "context": photo.context,
-        "external_entity_name": (
-            photo.external_entity_name
-        ),
-        "external_entity_id": (
-            photo.external_entity_id
-        ),
-        "picture_type_id": (
-            photo.picture_type_erp_id
-        ),
-        "picture_type_name": (
-            photo.picture_type_name
-        ),
-        "erp_sync_state": (
-            photo.erp_sync_state
-        ),
-        "erp_sync_message": (
-            photo.erp_sync_message
-        ),
         "external_id": photo.external_id,
         "context": photo.context,
         "external_document_id": (
