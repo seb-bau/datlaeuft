@@ -324,7 +324,11 @@ def commissions() -> Any:
             local_status=status
         )
 
-    query = query.order_by(Commission.execution_from.asc().nulls_last(), Commission.id.asc())
+    query = query.order_by(
+        Commission.execution_from.is_(None).asc(),
+        Commission.execution_from.asc(),
+        Commission.id.asc(),
+    )
     return jsonify({"items": [serialize_commission(item, viewer=user) for item in query.all()]})
 
 
@@ -577,9 +581,8 @@ def commission_create_tasks() -> Any:
     items = (
         query
         .order_by(
-            CraftActivity.name
-            .asc()
-            .nulls_last(),
+            CraftActivity.name.is_(None).asc(),
+            CraftActivity.name.asc(),
             TimeTaskTemplate.title.asc(),
         )
         .limit(limit)
@@ -2292,7 +2295,8 @@ def time_tasks() -> Any:
         CraftActivity,
         TimeTaskTemplate.craft_activity_id == CraftActivity.id,
     ).order_by(
-        CraftActivity.name.asc().nulls_last(),
+        CraftActivity.name.is_(None).asc(),
+        CraftActivity.name.asc(),
         TimeTaskTemplate.title.asc(),
     ).all()
     return jsonify({"items": [serialize_time_task(item) for item in tasks]})
@@ -2330,7 +2334,8 @@ def time_tasks_search() -> Any:
         ))
 
     items = query.order_by(
-        CraftActivity.name.asc().nulls_last(),
+        CraftActivity.name.is_(None).asc(),
+        CraftActivity.name.asc(),
         TimeTaskTemplate.title.asc(),
         TimeTaskTemplate.code.asc(),
     ).limit(limit).all()
