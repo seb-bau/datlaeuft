@@ -2384,17 +2384,13 @@ def consume_commission_push_origin(
         .with_for_update()
         .all()
     )
-    status = _read_first(payload, "commission_status", "CommissionStatus")
-    current_status = (
-        _as_int(_read_first(status, "id_", "id", "Id")),
-        _read_first(status, "code", "Code"),
-    )
+    current_status_id = _commission_status_id(payload)
     matching_operation = next(
         (
             operation
             for operation in operations
-            if ERP_OPERATION_STATUS[operation.operation_type]
-            == current_status
+            if ERP_OPERATION_STATUS[operation.operation_type][0]
+               == current_status_id
         ),
         None,
     )
