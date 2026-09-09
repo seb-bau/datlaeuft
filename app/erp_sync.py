@@ -21,6 +21,7 @@ from app.models import (
     CommissionPhoto
 )
 from .wowiport import (
+    ERP_OPERATION_STATUS,
     WowiportService,
     mark_commission_deleted,
     sync_commission_from_erp,
@@ -37,6 +38,8 @@ def enqueue_erp_operation(
     operation_type: ErpOperationType,
     idempotency_key: str,
     payload: dict[str, Any] | None = None,
+    *,
+    actor_user_id: int | None = None,
 ) -> ErpOutboxOperation:
     existing = ErpOutboxOperation.query.filter_by(
         idempotency_key=idempotency_key,
@@ -45,11 +48,35 @@ def enqueue_erp_operation(
     if existing is not None:
         return existing
 
+    operation_payload = dict(payload or {})
+
+    if (
+        actor_user_id is not None
+        and operation_type.value in ERP_OPERATION_STATUS
+    ):
+        raw_payload = dict(commission.raw_payload or {})
+        baseline_status = raw_payload.get("push_sync_status")
+
+        if baseline_status is None:
+            baseline_status = [
+                commission.status_id,
+                commission.status_code,
+            ]
+            raw_payload["push_sync_status"] = baseline_status
+            commission.raw_payload = raw_payload
+
+        operation_payload["push_origin"] = {
+            "actor_user_id": actor_user_id,
+            "baseline_signature": raw_payload.get("sync_signature"),
+            "baseline_status": list(baseline_status),
+            "consumed": False,
+        }
+
     operation = ErpOutboxOperation(
         commission=commission,
         operation_type=operation_type.value,
         idempotency_key=idempotency_key,
-        payload=payload or {},
+        payload=operation_payload,
         state=ErpOutboxState.PENDING.value,
         available_at=utc_now(),
     )

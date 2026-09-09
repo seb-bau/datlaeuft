@@ -675,6 +675,7 @@ def start_commission(commission_id: int) -> Any:
         commission,
         ErpOperationType.ACCEPT_COMMISSION,
         f"commission:accepted:{commission.id}",
+        actor_user_id=user.id,
     )
 
     audit("commission.start", "commission", commission.id)
@@ -784,6 +785,7 @@ def complete_commission(
             commission,
             ErpOperationType.CANCEL_COMMISSION,
             f"commission:canceled:{commission.id}",
+            actor_user_id=user.id,
         )
     elif tenant_charge:
         commission.local_status = (
@@ -795,6 +797,7 @@ def complete_commission(
             commission,
             ErpOperationType.AWAIT_INVOICE,
             f"commission:await-invoice:{commission.id}",
+            actor_user_id=user.id,
         )
     else:
         commission.local_status = (
@@ -806,6 +809,7 @@ def complete_commission(
             commission,
             ErpOperationType.COMPLETE_COMMISSION,
             f"commission:done:{commission.id}",
+            actor_user_id=user.id,
         )
 
     audit(

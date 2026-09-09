@@ -26,6 +26,8 @@ from .models import (
     WowiCompanyCode,
     CommissionPhoto,
     PushEventType,
+    ErpOperationType,
+    ErpOutboxOperation,
 )
 from .settings import SettingKeys, settings
 from .utils import (
@@ -42,6 +44,14 @@ ERP_LOCAL_STATUS = {
     9: CommissionLocalStatus.DONE.value,
     10: CommissionLocalStatus.COMPLETION_REVIEW.value,
     11: CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
+}
+
+ERP_OPERATION_STATUS = {
+    ErpOperationType.ACCEPT_COMMISSION.value: (7, "Accepted"),
+    ErpOperationType.REFUSE_COMMISSION.value: (10, "Canceled"),
+    ErpOperationType.CANCEL_COMMISSION.value: (10, "Canceled"),
+    ErpOperationType.COMPLETE_COMMISSION.value: (9, "Done"),
+    ErpOperationType.AWAIT_INVOICE.value: (11, "AwaitInvoice"),
 }
 
 
@@ -2359,25 +2369,114 @@ def sync_commission_documents_safely(
         )
 
 
+def consume_commission_push_origin(
+    commission: Commission,
+    payload: Any,
+) -> int | None:
+    operations = (
+        ErpOutboxOperation.query
+        .filter(
+            ErpOutboxOperation.commission_id == commission.id,
+            ErpOutboxOperation.operation_type.in_(ERP_OPERATION_STATUS),
+            ErpOutboxOperation.attempt_count > 0,
+        )
+        .order_by(ErpOutboxOperation.id.desc())
+        .with_for_update()
+        .all()
+    )
+    status = _read_first(payload, "commission_status", "CommissionStatus")
+    current_status = (
+        _as_int(_read_first(status, "id_", "id", "Id")),
+        _read_first(status, "code", "Code"),
+    )
+    matching_operation = next(
+        (
+            operation
+            for operation in operations
+            if ERP_OPERATION_STATUS[operation.operation_type]
+            == current_status
+        ),
+        None,
+    )
+
+    if matching_operation is None:
+        return None
+
+    origin = (matching_operation.payload or {}).get("push_origin")
+
+    if not isinstance(origin, dict) or origin.get("consumed"):
+        return None
+
+    for operation in operations:
+        operation_payload = dict(operation.payload or {})
+        operation_origin = operation_payload.get("push_origin")
+
+        if (
+            operation.id <= matching_operation.id
+            and isinstance(operation_origin, dict)
+            and not operation_origin.get("consumed")
+        ):
+            operation_payload["push_origin"] = {
+                **operation_origin,
+                "consumed": True,
+            }
+            operation.payload = operation_payload
+
+    raw_payload = commission.raw_payload or {}
+    snapshots = (
+        (origin.get("baseline_status"), origin.get("baseline_signature")),
+        (raw_payload.get("push_sync_status"), raw_payload.get("sync_signature")),
+    )
+
+    for baseline_status, baseline_signature in snapshots:
+        if (
+            not baseline_signature
+            or not isinstance(baseline_status, list)
+            or len(baseline_status) != 2
+            or baseline_status[0] is None
+            or baseline_status[1] is None
+        ):
+            return None
+
+        normalized_signature = _commission_sync_signature(
+            payload,
+            status_override=tuple(baseline_status),
+        )
+
+        if normalized_signature != baseline_signature:
+            return None
+
+    actor_user_id = origin.get("actor_user_id")
+    return actor_user_id if type(actor_user_id) is int else None
+
+
 def enqueue_synced_commission_push(
-        commission: Commission,
-        existed_before_sync: bool,
-        previous_user_id: int | None,
-        was_deleted_before_sync: bool,
-        had_sync_signature_before_sync: bool,
+    commission: Commission,
+    existed_before_sync: bool,
+    previous_user_id: int | None,
+    was_deleted_before_sync: bool,
+    previous_sync_signature: str | None,
+    actor_user_id: int | None = None,
 ) -> None:
     if commission.user is None:
         return
 
     current_user_id = commission.user.id
+    current_sync_signature = (commission.raw_payload or {}).get(
+        "sync_signature"
+    )
 
     if (
-            not existed_before_sync
-            or was_deleted_before_sync
-            or previous_user_id != current_user_id
+        not existed_before_sync
+        or was_deleted_before_sync
+        or previous_user_id != current_user_id
     ):
         event_type = PushEventType.NEW_COMMISSION
-    elif not had_sync_signature_before_sync:
+    elif (
+        not previous_sync_signature
+        or previous_sync_signature == current_sync_signature
+        or actor_user_id == current_user_id
+    ):
         return
     else:
         event_type = PushEventType.CHANGED_COMMISSION
@@ -2410,10 +2509,11 @@ def sync_commission_from_erp(
                 or existing.deleted_at is not None
         )
     )
-    had_sync_signature_before_sync = bool(
-        existing is not None
-        and isinstance(existing.raw_payload, dict)
-        and existing.raw_payload.get("sync_signature")
+    previous_sync_signature = (
+        existing.raw_payload.get("sync_signature")
+        if existing is not None
+           and isinstance(existing.raw_payload, dict)
+        else None
     )
     allowed_type_ids = configured_commission_type_ids()
     visible_status_ids = configured_commission_status_ids()
@@ -2470,6 +2570,11 @@ def sync_commission_from_erp(
 
         return existing
 
+    actor_user_id = (
+        consume_commission_push_origin(existing, payload)
+        if existing is not None
+        else None
+    )
     commission = upsert_commission(
         payload,
         sync_signature=sync_signature,
@@ -2492,7 +2597,8 @@ def sync_commission_from_erp(
         existed_before_sync=existed_before_sync,
         previous_user_id=previous_user_id,
         was_deleted_before_sync=was_deleted_before_sync,
-        had_sync_signature_before_sync=had_sync_signature_before_sync,
+        previous_sync_signature=previous_sync_signature,
+        actor_user_id=actor_user_id,
     )
 
     return commission
@@ -2763,10 +2869,11 @@ def sync_commission_payload_from_erp(
                 or existing.deleted_at is not None
         )
     )
-    had_sync_signature_before_sync = bool(
-        existing is not None
-        and isinstance(existing.raw_payload, dict)
-        and existing.raw_payload.get("sync_signature")
+    previous_sync_signature = (
+        existing.raw_payload.get("sync_signature")
+        if existing is not None
+           and isinstance(existing.raw_payload, dict)
+        else None
     )
     status_id = _commission_status_id(payload)
     commission_type_id = _commission_type_id(
@@ -2836,6 +2943,11 @@ def sync_commission_payload_from_erp(
     ):
         return "unchanged"
 
+    actor_user_id = (
+        consume_commission_push_origin(existing, payload)
+        if existing is not None
+        else None
+    )
     commission = upsert_commission(
         payload,
         sync_signature=sync_signature,
@@ -2858,7 +2970,8 @@ def sync_commission_payload_from_erp(
         existed_before_sync=existed_before_sync,
         previous_user_id=previous_user_id,
         was_deleted_before_sync=was_deleted_before_sync,
-        had_sync_signature_before_sync=had_sync_signature_before_sync,
+        previous_sync_signature=previous_sync_signature,
+        actor_user_id=actor_user_id,
     )
 
     return "synced"
@@ -3126,9 +3239,11 @@ def upsert_commission(
             )
             else {}
         )
-        raw_payload["sync_signature"] = (
-            sync_signature
-        )
+        raw_payload["sync_signature"] = sync_signature
+        raw_payload["push_sync_status"] = [
+            commission.status_id,
+            commission.status_code,
+        ]
         commission.raw_payload = raw_payload
 
     if commission.id is not None:
@@ -3529,6 +3644,8 @@ def _commission_is_unchanged(
 
 def _commission_sync_signature(
         payload: Any,
+        *,
+        status_override: tuple[int, str] | None = None,
 ) -> str:
     commission_status = _read_first(
         payload,
@@ -3660,6 +3777,11 @@ def _commission_sync_signature(
             in enumerate(commission_items)
         ],
     }
+
+    if status_override is not None:
+        signature_data["status_id"], signature_data["status_code"] = (
+            status_override
+        )
 
     serialized_data = json.dumps(
         signature_data,
