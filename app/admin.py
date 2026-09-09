@@ -432,14 +432,28 @@ def sync_health() -> Any:
 @admin_required
 def settings_page() -> Any:
     if request.method == "POST":
-        for definition in all_definitions():
-            settings.set_from_form(definition, request.form.get(definition.key))
-        audit("settings.update")
-        db.session.commit()
+        try:
+            for definition in all_definitions():
+                settings.set_from_form(
+                    definition,
+                    request.form.get(definition.key),
+                )
+            audit("settings.update")
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return redirect(url_for("admin.settings_page"))
+
         configure_logging(current_app._get_current_object())
         flash("Einstellungen gespeichert.", "success")
         return redirect(url_for("admin.settings_page"))
-    return render_template("admin/settings.html", groups=grouped_definitions(), settings=settings)
+
+    return render_template(
+        "admin/settings.html",
+        groups=grouped_definitions(),
+        settings=settings,
+    )
 
 
 @admin_bp.get(

@@ -6,8 +6,8 @@ from email.utils import parseaddr
 from hashlib import sha256
 from html import escape
 import secrets
-import smtplib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from .mail_service import send_email
 
 from .models import (
     AppointmentRequestStatus,
@@ -410,22 +410,11 @@ def send_appointment_request_email(
         subtype="html",
     )
 
-    try:
-        with smtplib.SMTP(
-            smtp_host,
-            smtp_port,
-            timeout=20,
-        ) as smtp:
-            smtp.send_message(
-                message
-            )
-    except (
-        OSError,
-        smtplib.SMTPException,
-    ) as exc:
-        raise RuntimeError(
-            f"Die Termin-E-Mail konnte nicht versendet werden: {exc}"
-        ) from exc
+    send_email(
+        message,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+    )
 
     appointment_request.sent_at = (
         utc_now()
@@ -547,19 +536,8 @@ def send_appointment_response_email(
         "\n".join(detail_lines)
     )
 
-    try:
-        with smtplib.SMTP(
-            smtp_host,
-            smtp_port,
-            timeout=20,
-        ) as smtp:
-            smtp.send_message(
-                message
-            )
-    except (
-        OSError,
-        smtplib.SMTPException,
-    ) as exc:
-        raise RuntimeError(
-            f"Die Benachrichtigung konnte nicht versendet werden: {exc}"
-        ) from exc
+    send_email(
+        message,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+    )

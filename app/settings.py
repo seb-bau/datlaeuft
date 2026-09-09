@@ -8,6 +8,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .extensions import db
 from .models import AppSetting, SettingValueType
+from email.errors import HeaderParseError
+from email.headerregistry import Address
 
 T = TypeVar("T")
 
@@ -313,6 +315,13 @@ class SettingKeys:
         "Absenderadresse",
         "E-Mail",
     )
+    SMTP_DEBUG_RECIPIENT = SettingDefinition[str](
+        "smtp.debug_recipient",
+        SettingValueType.STRING,
+        "",
+        "Debug-E-Mail-Adresse (leer = normaler Versand)",
+        "E-Mail",
+    )
     PUBLIC_BASE_URL = SettingDefinition[str](
         "application.public_base_url",
         SettingValueType.STRING,
@@ -549,6 +558,41 @@ def grouped_definitions() -> dict[str, list[SettingDefinition[Any]]]:
     return groups
 
 
+def validate_debug_email_address(value: str) -> str:
+    error_message = (
+        "Bitte genau eine gültige Debug-E-Mail-Adresse ohne "
+        "Anzeigenamen eingeben oder das Feld leer lassen."
+    )
+
+    if not isinstance(value, str) or any(
+        ord(character) < 32 or ord(character) == 127
+        for character in value
+    ):
+        raise ValueError(error_message)
+
+    value = value.strip()
+
+    if not value:
+        return ""
+
+    try:
+        address = Address(addr_spec=value)
+    except (ValueError, HeaderParseError) as exc:
+        raise ValueError(error_message) from exc
+
+    if (
+        not value.isascii()
+        or len(value) > 254
+        or not address.username
+        or not address.domain
+        or "." not in address.domain
+        or address.addr_spec != value
+    ):
+        raise ValueError(error_message)
+
+    return address.addr_spec
+
+
 class SettingsService:
     def get(self, definition: SettingDefinition[T]) -> T:
         try:
@@ -561,6 +605,8 @@ class SettingsService:
         return cast(T, self._deserialize(row.value_text, definition.value_type))
 
     def set(self, definition: SettingDefinition[T], value: T) -> None:
+        if definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key:
+            value = cast(T, validate_debug_email_address(cast(str, value)))
         row = AppSetting.query.filter_by(key=definition.key).one_or_none()
         if row is None:
             row = AppSetting(key=definition.key, value_type=definition.value_type.value, label=definition.label,
@@ -573,6 +619,11 @@ class SettingsService:
         row.is_secret = definition.secret
 
     def set_from_form(self, definition: SettingDefinition[Any], raw_value: str | None) -> None:
+        if (
+            definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key
+            and raw_value is None
+        ):
+            return
         if definition.secret and not raw_value:
             return
         value = self._deserialize(raw_value or "", definition.value_type)
