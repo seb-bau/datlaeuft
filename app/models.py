@@ -75,6 +75,7 @@ class PushEventType(str, Enum):
         "urgent_safety_defect"
     )
     PING = "ping"
+    COMMISSION_PRIORITY_RAISED = "commission_priority_raised"
 
 
 class PushDeliveryState(str, Enum):
@@ -562,6 +563,13 @@ class UserJurisdictionPersonMapping(db.Model):
 class Commission(db.Model):
     __tablename__ = "commission"
 
+    is_high_priority: Mapped[bool] = mapped_column(
+        db.Boolean, default=False, server_default=false(), nullable=False,
+    )
+    priority_is_manual: Mapped[bool] = mapped_column(
+        db.Boolean, default=False, server_default=false(), nullable=False,
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True)
     public_id: Mapped[str] = mapped_column(
         db.String(36),
@@ -781,6 +789,18 @@ class Commission(db.Model):
         if self.positions:
             return self.positions[0].display_text
         return "Ausstehender Auftrag"
+
+
+class CommissionTicketLink(db.Model):
+    __tablename__ = "commission_ticket_link"
+
+    commission_id: Mapped[int] = mapped_column(
+        db.ForeignKey("commission.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    ticket_erp_id: Mapped[int] = mapped_column(
+        db.Integer, primary_key=True, index=True,
+    )
 
 
 class PushDevice(db.Model):

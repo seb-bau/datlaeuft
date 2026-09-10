@@ -37,6 +37,7 @@ from .utils import (
 from .document_sync import sync_commission_documents
 from .push_service import enqueue_commission_push
 from .photo_service import commission_photo_path
+from .commission_priority import sync_commission_priority
 
 ERP_LOCAL_STATUS = {
     12: CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
@@ -615,6 +616,47 @@ class WowiportService:
             offset += limit
 
         return rows
+
+    def get_priority_ticket_rows(
+        self,
+        *,
+        commission_erp_id: int | None = None,
+        ticket_erp_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if (commission_erp_id is None) == (ticket_erp_id is None):
+            raise ValueError("Genau eine Auftrags- oder Ticket-ID ist erforderlich.")
+
+        params = {
+            "includeAssignmentEntity": "true",
+            "includeComments": "false",
+            "showNullValues": "true",
+            "limit": 100,
+            "offset": 0,
+        }
+        if commission_erp_id is not None:
+            params.update({
+                "ticketAssignmentEntityId": 7,
+                "ticketAssignmentEntityValueEntityId": commission_erp_id,
+            })
+        else:
+            params["ticketId"] = ticket_erp_id
+
+        rows: list[dict[str, Any]] = []
+        while True:
+            result = self.client._rest_adapter.get(
+                endpoint="CommunicationRead/Ticket",
+                ep_params=dict(params),
+                force_refresh=True,
+            )
+            page = getattr(result, "data", result)
+            if not isinstance(page, list) or any(
+                not isinstance(row, dict) for row in page
+            ):
+                raise RuntimeError("OPENWOWI hat keine gültige Ticketliste geliefert.")
+            rows.extend(page)
+            if len(page) < params["limit"]:
+                return rows
+            params["offset"] += params["limit"]
 
     def mark_commission_done(self, erp_id: int) -> None:
         self.client.set_commissioning_commission_to_done(commission_id=erp_id)
@@ -2453,6 +2495,7 @@ def enqueue_synced_commission_push(
     was_deleted_before_sync: bool,
     previous_sync_signature: str | None,
     actor_user_id: int | None = None,
+    priority_raised: bool = False,
 ) -> None:
     if commission.user is None:
         return
@@ -2468,6 +2511,8 @@ def enqueue_synced_commission_push(
         or previous_user_id != current_user_id
     ):
         event_type = PushEventType.NEW_COMMISSION
+    elif priority_raised:
+        event_type = PushEventType.COMMISSION_PRIORITY_RAISED
     elif (
         not previous_sync_signature
         or previous_sync_signature == current_sync_signature
@@ -2563,6 +2608,7 @@ def sync_commission_from_erp(
                 commission=existing,
                 service=service,
             )
+            sync_commission_priority(existing, service)
 
         return existing
 
@@ -2588,6 +2634,9 @@ def sync_commission_from_erp(
         service=service,
         force=True,
     )
+    priority_raised = sync_commission_priority(
+        commission, service, notify=False,
+    )
     enqueue_synced_commission_push(
         commission=commission,
         existed_before_sync=existed_before_sync,
@@ -2595,6 +2644,7 @@ def sync_commission_from_erp(
         was_deleted_before_sync=was_deleted_before_sync,
         previous_sync_signature=previous_sync_signature,
         actor_user_id=actor_user_id,
+        priority_raised=priority_raised,
     )
 
     return commission
@@ -2937,6 +2987,8 @@ def sync_commission_payload_from_erp(
             existing,
             sync_signature,
     ):
+        if existing is not None:
+            sync_commission_priority(existing, service)
         return "unchanged"
 
     actor_user_id = (
@@ -2961,6 +3013,9 @@ def sync_commission_payload_from_erp(
         service=service,
         force=True,
     )
+    priority_raised = sync_commission_priority(
+        commission, service, notify=False,
+    )
     enqueue_synced_commission_push(
         commission=commission,
         existed_before_sync=existed_before_sync,
@@ -2968,6 +3023,7 @@ def sync_commission_payload_from_erp(
         was_deleted_before_sync=was_deleted_before_sync,
         previous_sync_signature=previous_sync_signature,
         actor_user_id=actor_user_id,
+        priority_raised=priority_raised,
     )
 
     return "synced"

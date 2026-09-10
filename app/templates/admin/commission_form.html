@@ -65,8 +65,15 @@
           {% endfor %}
         </select>
       </div>
+            <div class="col-md-4">
+        <label class="form-label" for="commissionPriority">Priorität</label>
+        <select class="form-select" id="commissionPriority" name="priority" required>
+          <option value="normal" {% if form_values.get('priority', 'normal') == 'normal' %}selected{% endif %}>Normal</option>
+          <option value="high" {% if form_values.get('priority') == 'high' %}selected{% endif %}>Hoch</option>
+        </select>
+      </div>
 
-      <div class="col-md-8 d-flex align-items-end">
+            <div class="col-md-4 d-flex align-items-end">
         <div class="alert alert-info mb-0 w-100 py-2">
           Handwerker und Buchwerk werden aus Objekt,
           Gewerk und Wowiport-Zuständigkeit ermittelt.

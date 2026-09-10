@@ -77,6 +77,32 @@
   </div>
 </div>
 
+<form method="post"
+      action="{{ url_for('admin.commission_priority', commission_id=item.id) }}"
+      class="card card-body shadow-sm mb-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row g-2 align-items-end">
+    <div class="col-sm-4">
+      <label class="form-label" for="commissionPriority">Priorität</label>
+      <select class="form-select" id="commissionPriority" name="priority" required>
+        <option value="normal" {% if not item.is_high_priority %}selected{% endif %}>Normal</option>
+        <option value="high" {% if item.is_high_priority %}selected{% endif %}>Hoch</option>
+      </select>
+    </div>
+    <div class="col-sm-auto">
+      <button class="btn btn-primary" type="submit">Priorität speichern</button>
+    </div>
+  </div>
+  <div class="form-text mt-2">
+    {% if item.priority_is_manual %}
+      Manuell festgelegt. Prioritätsänderungen aus Wowiport werden ignoriert.
+    {% else %}
+      Die Priorität wird aus verknüpften Wowiport-Tickets übernommen.
+      Eine Änderung hier legt die Priorität dauerhaft manuell fest.
+    {% endif %}
+  </div>
+</form>
+
 {% if item.local_status == "completion_review" %}
 <div class="alert alert-danger">
   <strong>Auftrag nicht abgeschlossen.</strong>

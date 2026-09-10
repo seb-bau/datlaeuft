@@ -174,6 +174,8 @@ from .offer_service import (
 from datetime import date, time
 from uuid import uuid4
 
+from .commission_priority import set_manual_commission_priority
+
 admin_bp = Blueprint("admin", __name__)
 INVOICE_TIME_TYPES = (
     {
@@ -4615,6 +4617,29 @@ def commissions() -> Any:
     )
 
 
+@admin_bp.post("/admin/commissions/<int:commission_id>/priority")
+@foreman_required
+def commission_priority(commission_id: int) -> Any:
+    item = db.get_or_404(Commission, commission_id)
+    try:
+        changed = set_manual_commission_priority(
+            item, request.form.get("priority", ""),
+        )
+        db.session.commit()
+        flash(
+            "Priorität gespeichert. Wowiport ändert diese Priorität künftig nicht mehr."
+            if changed else "Die Priorität ist unverändert.",
+            "success" if changed else "info",
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+
+    return redirect(
+        url_for("admin.commission_detail", commission_id=item.id)
+    )
+
+
 @admin_bp.get(
     "/admin/commissions/<int:commission_id>"
 )
@@ -4702,6 +4727,8 @@ def commission_detail(
         "erp.outbox.failed": "Wowiport-Synchronisierung fehlgeschlagen",
         "webhook.wowiport": "Änderung aus Wowiport übernommen",
         "commission.photo.upload": "Foto hinzugefügt",
+        "commission.priority.web": "Priorität im Web geändert",
+        "commission.priority.wowiport": "Ticketpriorität aus Wowiport übernommen",
     }
 
     return render_template(
@@ -7304,6 +7331,7 @@ def read_commission_form() -> dict[str, Any]:
         "company_code_code": request.form.get(
             "company_code_code"
         ),
+        "priority": request.form.get("priority", "normal"),
     }
 
 

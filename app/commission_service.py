@@ -22,6 +22,7 @@ from .object_directory import (
 )
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
+from .commission_priority import parse_commission_priority
 
 
 def create_pending_commission(
@@ -29,6 +30,9 @@ def create_pending_commission(
     created_by_user: User,
     source: CommissionSource,
 ) -> Commission:
+    is_high_priority = parse_commission_priority(
+        data.get("priority", "normal")
+    )
     commission_type_id = required_int(
         data,
         "commission_type_id",
@@ -138,6 +142,8 @@ def create_pending_commission(
         sales_tax_code=sales_tax_code,
         public_id=public_id,
         source=source.value,
+        is_high_priority=is_high_priority,
+        priority_is_manual="priority" in data,
         erp_sync_state=(
             CommissionSyncState.PENDING.value
         ),

@@ -31,6 +31,7 @@ from .push_service import (
     process_push_batch,
     requeue_stale_push_deliveries,
 )
+from .commission_priority import sync_ticket_commission_priorities
 
 
 def enqueue_erp_operation(
@@ -601,6 +602,22 @@ def process_webhook_event(event_id: int) -> None:
 
     if event is None:
         raise RuntimeError("Webhook-Ereignis wurde nicht gefunden.")
+
+    if (event.entity_type or "").casefold() == "ticket":
+        if event.entity_id is None:
+            raise RuntimeError("Webhook enthält keine Ticket-ID.")
+
+        count = sync_ticket_commission_priorities(
+            event.entity_id,
+            WowiportService(),
+            deleted=(event.action or "").casefold() == "deleted",
+        )
+        event.message = f"Ticketpriorität für {count} Aufträge geprüft"
+        audit(
+            "webhook.wowiport", "ticket", event.entity_id,
+            {"action": event.action, "event_id": event.id},
+        )
+        return
 
     if (event.entity_type or "").casefold() != "commission":
         event.message = "Ignorierte Entität"

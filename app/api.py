@@ -3151,6 +3151,7 @@ def serialize_commission(
         "status_id": commission.status_id,
         "status_code": commission.status_code,
         "local_status": commission.local_status,
+        "is_high_priority": bool(commission.is_high_priority),
         "craftsman_erp_id": commission.craftsman_erp_id,
         "use_unit_id": commission.use_unit_id,
         "license_agreement_id": commission.license_agreement_id,

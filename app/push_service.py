@@ -176,6 +176,7 @@ def enqueue_commission_push(
         "event_type": event_type.value,
         "commission_id": commission.id,
         "commission_public_id": commission.public_id,
+        "is_high_priority": bool(commission.is_high_priority),
     }
     collapse_id = f"{event_type.value}-{commission.public_id}"
 
@@ -456,13 +457,12 @@ def _event_enabled(
             user.push_new_commission_enabled
         )
 
-    if (
-        event_type
-        == PushEventType.CHANGED_COMMISSION
-    ):
+    if event_type in {
+        PushEventType.CHANGED_COMMISSION,
+        PushEventType.COMMISSION_PRIORITY_RAISED,
+    }:
         return bool(
-            user
-            .push_changed_commission_enabled
+            user.push_changed_commission_enabled
         )
 
     if event_type in {
@@ -493,7 +493,15 @@ def _commission_message(
     display_title = commission.display_title
 
     if event_type == PushEventType.NEW_COMMISSION:
-        return "Neuer Auftrag", f"{reference}: {display_title}"
+        title = (
+            "Neuer Auftrag – hohe Priorität"
+            if commission.is_high_priority
+            else "Neuer Auftrag"
+        )
+        return title, f"{reference}: {display_title}"
+
+    if event_type == PushEventType.COMMISSION_PRIORITY_RAISED:
+        return "Auftrag jetzt mit hoher Priorität", f"{reference}: {display_title}"
 
     return "Auftrag geändert", f"{reference}: {display_title}"
 
