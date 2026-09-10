@@ -15,6 +15,7 @@ from flask import (
 from .appointment_service import (
     appointment_timezone,
     send_appointment_response_email,
+    send_appointment_confirmation_email,
 )
 from .audit import audit
 from .extensions import db
@@ -76,6 +77,31 @@ def notify_assigned_user(
             appointment_request.id,
             appointment_request.commission_id,
         )
+
+
+def notify_tenant(
+    appointment_request: CommissionAppointmentRequest,
+    accepted_proposal: CommissionAppointmentProposal,
+    appointment_from: datetime,
+    appointment_to: datetime,
+) -> bool:
+    try:
+        send_appointment_confirmation_email(
+            appointment_request,
+            accepted_proposal,
+            appointment_from,
+            appointment_to,
+        )
+    except (RuntimeError, ValueError):
+        current_app.logger.exception(
+            "appointment_confirmation_notification_failed "
+            "appointment_request_id=%s commission_id=%s",
+            appointment_request.id,
+            appointment_request.commission_id,
+        )
+        return False
+
+    return True
 
 
 @appointments_bp.route(
@@ -297,6 +323,13 @@ def appointment_response(
 
         db.session.commit()
 
+        confirmation_email_sent = notify_tenant(
+            appointment_request,
+            proposal,
+            appointment_from,
+            appointment_to,
+        )
+
         notify_assigned_user(
             appointment_request,
             proposal,
@@ -307,6 +340,7 @@ def appointment_response(
             state=AppointmentRequestStatus.ACCEPTED.value,
             appointment_request=appointment_request,
             accepted_proposal=proposal,
+            confirmation_email_sent=confirmation_email_sent,
         )
 
     if action == "reject":

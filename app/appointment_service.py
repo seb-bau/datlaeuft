@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import parseaddr
 from hashlib import sha256
@@ -8,6 +8,8 @@ from html import escape
 import secrets
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .mail_service import send_email
+from uuid import NAMESPACE_URL, uuid5
+from icalendar import Calendar, Event
 
 from .models import (
     AppointmentRequestStatus,
@@ -266,6 +268,27 @@ def format_proposal(
     )
 
 
+def appointment_email_details(
+    appointment_request: CommissionAppointmentRequest,
+) -> list[str]:
+    commission = appointment_request.commission
+    craftsman = commission.user or appointment_request.created_by
+    craftsman_name = " ".join(
+        (craftsman.display_name if craftsman else "Ihr Handwerker").split()
+    ) or "Ihr Handwerker"
+
+    details = [f"Handwerker: {craftsman_name}"]
+
+    if settings.get(SettingKeys.APPOINTMENT_EMAIL_INCLUDE_TOPIC):
+        topic = " ".join(
+            (commission.title or commission.display_title).split()
+        )
+        if topic:
+            details.append(f"Thema: {topic}")
+
+    return details
+
+
 def send_appointment_request_email(
     appointment_request: CommissionAppointmentRequest,
     public_token: str,
@@ -339,6 +362,10 @@ def send_appointment_request_email(
         for value in proposal_lines
     )
 
+    details = appointment_email_details(appointment_request)
+    plain_details = "\n".join(details)
+    html_details = "<br>".join(escape(value) for value in details)
+
     optional_message = ""
 
     if appointment_request.message:
@@ -351,6 +378,7 @@ def send_appointment_request_email(
         f"{salutation}\n\n"
         f"zu Ihrem Auftrag {safe_order_number} "
         "stehen folgende Terminvorschläge zur Auswahl:\n\n"
+        f"{plain_details}\n\n"
         f"{plain_proposals}"
         f"{optional_message}\n\n"
         "Bitte öffnen Sie den folgenden Link, "
@@ -380,6 +408,7 @@ def send_appointment_request_email(
         f"<p>{escape(salutation)}</p>"
         f"<p>Zu Ihrem Auftrag <strong>{escape(safe_order_number)}</strong> "
         "stehen folgende Terminvorschläge zur Auswahl:</p>"
+        f"<p>{html_details}</p>"
         f"<ul>{html_proposals}</ul>"
         f"{html_message}"
         "<p>"
@@ -419,6 +448,123 @@ def send_appointment_request_email(
     appointment_request.sent_at = (
         utc_now()
     )
+
+
+def send_appointment_confirmation_email(
+    appointment_request: CommissionAppointmentRequest,
+    accepted_proposal: CommissionAppointmentProposal,
+    appointment_from: datetime,
+    appointment_to: datetime,
+) -> None:
+    if (
+        appointment_request.status != AppointmentRequestStatus.ACCEPTED.value
+        or not accepted_proposal.accepted
+        or accepted_proposal.appointment_request_id != appointment_request.id
+    ):
+        raise ValueError("Es liegt kein bestätigter Termin vor.")
+
+    if (
+        appointment_from.utcoffset() is None
+        or appointment_to.utcoffset() is None
+    ):
+        raise ValueError("Die Zeitzone des bestätigten Termins fehlt.")
+
+    start_at = appointment_from.astimezone(timezone.utc)
+    end_at = appointment_to.astimezone(timezone.utc)
+
+    if end_at <= start_at:
+        raise ValueError("Das Ende des Termins muss nach dem Beginn liegen.")
+
+    smtp_host = settings.get(SettingKeys.SMTP_HOST).strip()
+    smtp_port = settings.get(SettingKeys.SMTP_PORT)
+    smtp_sender = settings.get(SettingKeys.SMTP_SENDER).strip()
+
+    if not smtp_host or not smtp_sender:
+        raise RuntimeError("SMTP-Server oder Absenderadresse fehlen.")
+
+    commission = appointment_request.commission
+    order_number = " ".join(
+        str(commission.erp_idnum or commission.code or commission.id).split()
+    )
+    salutation = (
+        f"Guten Tag {appointment_request.recipient_name},"
+        if appointment_request.recipient_name
+        else "Guten Tag,"
+    )
+    appointment_text = format_proposal(accepted_proposal)
+    details = [
+        f"Auftrag: {order_number}",
+        *appointment_email_details(appointment_request),
+    ]
+
+    if commission.apartment_address:
+        details.append(f"Adresse: {commission.apartment_address}")
+
+    plain_details = "\n".join(details)
+    html_details = "<br>".join(escape(value) for value in details)
+    calendar_hint = (
+        "Öffnen Sie die Kalenderdatei im Anhang, "
+        "um den Termin in Ihren Kalender zu übernehmen."
+    )
+
+    message = EmailMessage()
+    message["Subject"] = f"Terminbestätigung – Auftrag {order_number}"
+    message["From"] = smtp_sender
+    message["To"] = normalize_email_address(appointment_request.recipient_email)
+    message.set_content(
+        f"{salutation}\n\n"
+        "Ihr Termin wurde bestätigt:\n\n"
+        f"{appointment_text}\n\n"
+        f"{plain_details}\n\n"
+        f"{calendar_hint}\n"
+    )
+    message.add_alternative(
+        '<!doctype html><html lang="de">'
+        '<body style="font-family:Arial,sans-serif;line-height:1.5">'
+        f"<p>{escape(salutation)}</p>"
+        "<p>Ihr Termin wurde bestätigt:</p>"
+        f"<p><strong>{escape(appointment_text)}</strong></p>"
+        f"<p>{html_details}</p>"
+        f"<p>{escape(calendar_hint)}</p>"
+        "</body></html>",
+        subtype="html",
+    )
+
+    calendar = Calendar()
+    calendar.add("prodid", "-//WattNu//Terminvereinbarung//DE")
+    calendar.add("version", "2.0")
+    calendar.add("calscale", "GREGORIAN")
+
+    event = Event()
+    event.add(
+        "uid",
+        str(uuid5(
+            NAMESPACE_URL,
+            f"wattnu:appointment:{appointment_request.token_hash}",
+        )),
+    )
+    event.add("dtstamp", utc_now())
+    event.add("dtstart", start_at)
+    event.add("dtend", end_at)
+    event.add("summary", f"Handwerkertermin – Auftrag {order_number}")
+    event.add("description", plain_details)
+    event.add("status", "CONFIRMED")
+    event.add("transp", "OPAQUE")
+    event.add("sequence", 0)
+
+    if commission.apartment_address:
+        event.add("location", commission.apartment_address)
+
+    calendar.add_component(event)
+    message.add_attachment(
+        calendar.to_ical(),
+        maintype="text",
+        subtype="calendar",
+        filename="termin.ics",
+        params={"charset": "utf-8"},
+    )
+
+    send_email(message, smtp_host=smtp_host, smtp_port=smtp_port)
 
 
 def send_appointment_response_email(

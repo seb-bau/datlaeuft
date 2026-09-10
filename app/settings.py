@@ -329,6 +329,13 @@ class SettingKeys:
         "Öffentliche Basis-URL",
         "E-Mail",
     )
+    APPOINTMENT_EMAIL_INCLUDE_TOPIC = SettingDefinition[bool](
+        "appointments.email_include_topic",
+        SettingValueType.BOOL,
+        True,
+        "Auftragsthema in Termin-E-Mails anzeigen",
+        "Terminvereinbarung",
+    )
 
     APPOINTMENT_LINK_VALID_DAYS = SettingDefinition[int](
         "appointments.link_valid_days",

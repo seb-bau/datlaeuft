@@ -36,6 +36,17 @@
         </p>
         {% endif %}
 
+        {% if confirmation_email_sent is sameas true %}
+        <p class="text-muted">
+          Eine Bestätigung mit Kalenderdatei wurde per E-Mail versendet.
+        </p>
+        {% elif confirmation_email_sent is sameas false %}
+        <div class="alert alert-warning">
+          Ihr Termin ist bestätigt. Die Bestätigungs-E-Mail konnte jedoch
+          nicht versendet werden. Bitte notieren Sie sich den Termin.
+        </div>
+        {% endif %}
+
         {% elif state == "rejected" %}
         <h1 class="h3">
           Vorschläge abgelehnt
