@@ -65,6 +65,8 @@ class ErpOutboxState(str, Enum):
 class PushEventType(str, Enum):
     NEW_COMMISSION = "new_commission"
     CHANGED_COMMISSION = "changed_commission"
+    APPOINTMENT_ACCEPTED = "appointment_accepted"
+    APPOINTMENT_REJECTED = "appointment_rejected"
     NEW_SAFETY_INSPECTION = (
         "new_safety_inspection"
     )

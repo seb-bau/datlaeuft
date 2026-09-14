@@ -152,6 +152,8 @@ def enqueue_commission_push(
     commission: Commission,
     event_type: PushEventType,
     user: User | None = None,
+    *,
+    message_detail: str | None = None,
 ) -> PushBatch:
     target_user = user or commission.user
 
@@ -164,7 +166,11 @@ def enqueue_commission_push(
     if commission.id is None:
         db.session.flush()
 
-    title, body = _commission_message(commission, event_type)
+    title, body = _commission_message(
+        commission,
+        event_type,
+        message_detail=message_detail,
+    )
     payload = {
         "aps": {
             "alert": {
@@ -457,8 +463,12 @@ def _event_enabled(
             user.push_new_commission_enabled
         )
 
+    if event_type == PushEventType.CHANGED_COMMISSION:
+        return False
+
     if event_type in {
-        PushEventType.CHANGED_COMMISSION,
+        PushEventType.APPOINTMENT_ACCEPTED,
+        PushEventType.APPOINTMENT_REJECTED,
         PushEventType.COMMISSION_PRIORITY_RAISED,
     }:
         return bool(
@@ -484,13 +494,15 @@ def _event_enabled(
 def _commission_message(
     commission: Commission,
     event_type: PushEventType,
+    *,
+    message_detail: str | None = None,
 ) -> tuple[str, str]:
     reference = (
         commission.erp_idnum
         or commission.code
         or f"Auftrag {commission.id}"
     )
-    display_title = commission.display_title
+    body = f"{reference}: {message_detail or commission.display_title}"
 
     if event_type == PushEventType.NEW_COMMISSION:
         title = (
@@ -498,12 +510,16 @@ def _commission_message(
             if commission.is_high_priority
             else "Neuer Auftrag"
         )
-        return title, f"{reference}: {display_title}"
+    elif event_type == PushEventType.COMMISSION_PRIORITY_RAISED:
+        title = "Auftrag jetzt mit hoher Priorität"
+    elif event_type == PushEventType.APPOINTMENT_ACCEPTED:
+        title = "Termin angenommen"
+    elif event_type == PushEventType.APPOINTMENT_REJECTED:
+        title = "Termin abgelehnt"
+    else:
+        raise ValueError("Der Push-Ereignistyp ist für Aufträge nicht zulässig.")
 
-    if event_type == PushEventType.COMMISSION_PRIORITY_RAISED:
-        return "Auftrag jetzt mit hoher Priorität", f"{reference}: {display_title}"
-
-    return "Auftrag geändert", f"{reference}: {display_title}"
+    return title, body[:500]
 
 
 def _safety_inspection_message(

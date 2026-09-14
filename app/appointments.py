@@ -316,9 +316,17 @@ def appointment_response(
             },
         )
 
+        message_detail = (
+            f"{appointment_from:%d.%m.%Y}, "
+            f"{appointment_from:%H:%M}–{appointment_to:%H:%M} Uhr"
+        )
+        if tenant_comment:
+            message_detail += f" · Kommentar: {tenant_comment}"
+
         enqueue_commission_push(
             commission=commission,
-            event_type=PushEventType.CHANGED_COMMISSION,
+            event_type=PushEventType.APPOINTMENT_ACCEPTED,
+            message_detail=message_detail,
         )
 
         db.session.commit()
@@ -364,9 +372,14 @@ def appointment_response(
             },
         )
 
+        message_detail = "Alle Terminvorschläge wurden abgelehnt."
+        if tenant_comment:
+            message_detail += f" · Kommentar: {tenant_comment}"
+
         enqueue_commission_push(
             commission=appointment_request.commission,
-            event_type=PushEventType.CHANGED_COMMISSION,
+            event_type=PushEventType.APPOINTMENT_REJECTED,
+            message_detail=message_detail,
         )
 
         db.session.commit()
