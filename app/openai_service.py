@@ -169,17 +169,58 @@ def analyze_ticket_content(
         )
         response.raise_for_status()
         response_data = response.json()
+    except requests.HTTPError as exc:
+        error_response = exc.response
+        error_payload: dict[str, Any] = {}
+
+        if error_response is not None:
+            try:
+                parsed_payload = error_response.json()
+                if isinstance(parsed_payload, dict):
+                    error_payload = parsed_payload
+            except ValueError:
+                pass
+
+        error_data = error_payload.get("error")
+        if not isinstance(error_data, dict):
+            error_data = {}
+
+        status_code = (
+            error_response.status_code
+            if error_response is not None
+            else None
+        )
+        request_id = (
+            error_response.headers.get("x-request-id")
+            if error_response is not None
+            else None
+        )
+        error_message = str(
+            error_data.get("message")
+            or "Unbekannter OpenAI-Fehler"
+        )
+
+        current_app.logger.warning(
+            "openai_ticket_analysis_failed "
+            "status=%s type=%s code=%s "
+            "request_id=%s message=%s",
+            status_code,
+            error_data.get("type"),
+            error_data.get("code"),
+            request_id,
+            error_message,
+        )
+
+        raise RuntimeError(
+            f"OpenAI lehnt die Anfrage ab: {error_message}"
+        ) from exc
     except (
-        requests.RequestException,
-        ValueError,
+            requests.RequestException,
+            ValueError,
     ) as exc:
         current_app.logger.warning(
-            "openai_ticket_analysis_failed status=%s",
-            getattr(
-                locals().get("response"),
-                "status_code",
-                None,
-            ),
+            "openai_ticket_analysis_failed message=%s",
+            str(exc),
         )
         raise RuntimeError(
             "Die KI-Analyse konnte nicht ausgeführt werden."
