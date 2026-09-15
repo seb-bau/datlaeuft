@@ -399,6 +399,7 @@ def ticket_license_agreement_local_id(
                 "rentalagreement",
                 "tenancyagreement",
                 "mietvertrag",
+                "vertrag"
             )
         ):
             continue
