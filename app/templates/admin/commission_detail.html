@@ -19,7 +19,7 @@
     font-size: .72rem;
   }
 
-  .process-info-list {
+    .process-info-list {
     max-height: 520px;
     overflow-y: auto;
   }
@@ -27,7 +27,7 @@
   .process-info-row {
     display: flex;
     justify-content: flex-start;
-    margin-bottom: .75rem;
+    margin-bottom: .4rem;
   }
 
   .process-info-row-own {
@@ -36,8 +36,8 @@
 
   .process-info-bubble {
     max-width: min(75%, 720px);
-    padding: .75rem 1rem;
-    border-radius: 1rem;
+    padding: .5rem .75rem;
+    border-radius: .75rem;
     background: var(--bs-secondary-bg);
   }
 
@@ -48,6 +48,8 @@
   .process-info-body {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    line-height: 1.3;
+  }
   }
 </style>
 
@@ -295,9 +297,7 @@
             {% endif %}
           </div>
 
-          <div class="process-info-body">
-            {{ information.body }}
-          </div>
+          <div class="process-info-body">{{ information.body }}</div>
 
           <div class="small text-muted mt-2">
             {% if information.erp_date %}
