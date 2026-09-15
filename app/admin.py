@@ -104,6 +104,7 @@ from .models import (
     UserJurisdictionPersonMapping,
     WowiEconomicUnit,
     WowiEconomicUnitJurisdiction,
+    ProcessInfo,
 )
 from .offer_archive import (
     OfferArchiveError,
@@ -175,6 +176,12 @@ from datetime import date, time
 from uuid import uuid4
 
 from .commission_priority import set_manual_commission_priority
+
+from .process_info_service import (
+    create_outgoing_info,
+    sync_process_infos,
+    write_outgoing_info,
+)
 
 admin_bp = Blueprint("admin", __name__)
 INVOICE_TIME_TYPES = (
@@ -4652,6 +4659,41 @@ def commission_detail(
         commission_id,
     )
 
+    process_infos: list[ProcessInfo] = []
+    process_info_sync_error: str | None = None
+
+    if item.crafts_process_erp_id is not None:
+        try:
+            sync_process_infos(
+                item.crafts_process_erp_id,
+                notify=True,
+            )
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            process_info_sync_error = str(exc)
+            current_app.logger.exception(
+                "process_info_admin_sync_failed "
+                "commission_id=%s",
+                item.id,
+            )
+
+        process_infos = (
+            ProcessInfo.query.filter(
+                ProcessInfo.process_erp_id
+                == item.crafts_process_erp_id,
+                ProcessInfo.state != "deleted",
+            )
+            .order_by(
+                ProcessInfo.erp_date
+                .is_(None)
+                .asc(),
+                ProcessInfo.erp_date.asc(),
+                ProcessInfo.created_at.asc(),
+            )
+            .all()
+        )
+
     photos = (
         CommissionPhoto.query
         .filter(
@@ -4743,6 +4785,75 @@ def commission_detail(
         has_work_report=bool(
             item.time_entries
         ),
+        process_infos=process_infos,
+        process_info_sync_error=process_info_sync_error,
+    )
+
+
+@admin_bp.post(
+    "/admin/commissions/<int:commission_id>/infos"
+)
+@foreman_required
+def commission_info_create(
+    commission_id: int,
+) -> Any:
+    commission = db.get_or_404(
+        Commission,
+        commission_id,
+    )
+    information = None
+
+    try:
+        information = create_outgoing_info(
+            commission=commission,
+            user=current_user,
+            request_id=str(uuid4()),
+            body=request.form.get("body"),
+        )
+
+        if information.state != "synced":
+            information = write_outgoing_info(
+                information.id
+            )
+
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception(
+            "process_info_admin_create_failed "
+            "commission_id=%s",
+            commission.id,
+        )
+
+        if information is None:
+            flash(
+                "Die Information konnte nicht "
+                "gespeichert werden.",
+                "danger",
+            )
+        else:
+            flash(
+                "Die Information wurde lokal gespeichert, "
+                "aber die Übertragung an Wowiport konnte "
+                f"nicht bestätigt werden: {exc}",
+                "warning",
+            )
+
+    else:
+        flash(
+            "Die Information wurde in Wowiport gespeichert.",
+            "success",
+        )
+
+    return redirect(
+        url_for(
+            "admin.commission_detail",
+            commission_id=commission.id,
+        )
+        + "#zusatzinformationen"
     )
 
 
