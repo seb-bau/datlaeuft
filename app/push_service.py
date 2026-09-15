@@ -23,6 +23,7 @@ from .models import (
     utc_now,
     SafetyInspectionJob,
     SafetyInspectionJobStatus,
+    ProcessInfo
 )
 from .settings import SettingKeys, settings
 
@@ -194,6 +195,55 @@ def enqueue_commission_push(
         payload=payload,
         commission=commission,
         collapse_id=collapse_id,
+    )
+
+
+def enqueue_process_info_push(
+    user: User,
+    commission: Commission,
+    info: ProcessInfo,
+    badge: int,
+) -> PushBatch:
+    if not user.is_active_flag:
+        return PushBatch(
+            batch_id=str(uuid4()),
+            queued_count=0,
+        )
+
+    title = "Neue Zusatzinformation"
+    body = info.body[:500]
+    payload = {
+        "aps": {
+            "alert": {
+                "title": title,
+                "body": body,
+            },
+            "sound": "default",
+            "badge": max(badge, 0),
+        },
+        "event_type": (
+            PushEventType
+            .NEW_PROCESS_INFO
+            .value
+        ),
+        "commission_id": commission.id,
+        "process_info_id": info.id,
+        "open_infos": True,
+    }
+
+    return _enqueue_for_user(
+        user=user,
+        event_type=(
+            PushEventType
+            .NEW_PROCESS_INFO
+        ),
+        title=title,
+        body=body,
+        payload=payload,
+        commission=None,
+        collapse_id=(
+            f"process-info-{info.id}"
+        ),
     )
 
 
@@ -643,6 +693,77 @@ def _deliver(delivery_id: int) -> None:
             "Der Benutzer hat diese Mitteilung deaktiviert.",
         )
         return
+
+    if (
+            event_type
+            == PushEventType.NEW_PROCESS_INFO
+    ):
+        from .process_info_service import (
+            is_info_unread,
+            unread_count_for_user,
+        )
+
+        info_id = str(
+            delivery.payload.get(
+                "process_info_id"
+            )
+            or ""
+        )
+        info = db.session.get(
+            ProcessInfo,
+            info_id,
+        )
+
+        commissions = (
+            []
+            if info is None
+            else Commission.query.filter(
+                Commission
+                .crafts_process_erp_id
+                == info.process_erp_id,
+                Commission.user_id
+                == user.id,
+                Commission.deleted_at
+                .is_(None),
+                Commission.local_status
+                != CommissionLocalStatus
+                .DELETED.value,
+            ).all()
+        )
+
+        if (
+                info is None
+                or not commissions
+                or not is_info_unread(
+            info,
+            user.id,
+        )
+        ):
+            _discard_delivery(
+                delivery,
+                (
+                    "Die Zusatzinformation "
+                    "ist nicht mehr ungelesen."
+                ),
+            )
+            return
+
+        payload = dict(
+            delivery.payload
+        )
+        aps = dict(
+            payload.get("aps") or {}
+        )
+        aps["badge"] = (
+            unread_count_for_user(
+                user.id
+            )
+        )
+        payload["aps"] = aps
+        payload["commission_id"] = (
+            commissions[0].id
+        )
+        delivery.payload = payload
 
     if delivery.commission_id is not None:
         commission = db.session.get(

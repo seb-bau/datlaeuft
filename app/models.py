@@ -67,6 +67,7 @@ class PushEventType(str, Enum):
     CHANGED_COMMISSION = "changed_commission"
     APPOINTMENT_ACCEPTED = "appointment_accepted"
     APPOINTMENT_REJECTED = "appointment_rejected"
+    NEW_PROCESS_INFO = "new_process_info"
     NEW_SAFETY_INSPECTION = (
         "new_safety_inspection"
     )
@@ -802,6 +803,166 @@ class CommissionTicketLink(db.Model):
     )
     ticket_erp_id: Mapped[int] = mapped_column(
         db.Integer, primary_key=True, index=True,
+    )
+
+
+class ProcessInfoThread(db.Model):
+    __tablename__ = "process_info_thread"
+
+    process_erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        primary_key=True,
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    next_sync_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+        index=True,
+    )
+    last_error: Mapped[str | None] = mapped_column(db.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+
+class ProcessInfo(db.Model):
+    __tablename__ = "process_info"
+    __table_args__ = (
+        UniqueConstraint(
+            "process_erp_id",
+            "erp_note_id",
+            name="uq_process_info_erp_note",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        db.String(36),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    process_erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+        index=True,
+    )
+    erp_note_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    sender_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    direction: Mapped[str] = mapped_column(
+        db.String(20),
+        nullable=False,
+        index=True,
+    )
+    body: Mapped[str] = mapped_column(
+        db.Text,
+        nullable=False,
+    )
+    erp_body: Mapped[str] = mapped_column(
+        db.Text,
+        nullable=False,
+    )
+    erp_note_ids_before: Mapped[list[int] | None] = mapped_column(
+        db.JSON
+    )
+    author_name: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    erp_date: Mapped[date | None] = mapped_column(
+        db.Date
+    )
+    version: Mapped[int] = mapped_column(
+        db.Integer,
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        db.String(20),
+        default="pending",
+        server_default="pending",
+        nullable=False,
+        index=True,
+    )
+    mail_state: Mapped[str] = mapped_column(
+        db.String(20),
+        default="not_required",
+        server_default="not_required",
+        nullable=False,
+        index=True,
+    )
+    mail_attempt_count: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    mail_available_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    mail_recipients: Mapped[list[str] | None] = mapped_column(
+        db.JSON
+    )
+    last_error: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    sender_user: Mapped[User | None] = relationship()
+
+
+class ProcessInfoRead(db.Model):
+    __tablename__ = "process_info_read"
+
+    process_info_id: Mapped[str] = mapped_column(
+        db.ForeignKey(
+            "process_info.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "user_account.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    read_version: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+    )
+    read_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
     )
 
 

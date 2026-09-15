@@ -49,7 +49,9 @@ from .safety_inspection_service import (
     reconcile_safety_inspection_assignments,
     reconcile_safety_inspection_defects,
 )
-
+from .process_info_service import (
+    bootstrap_process_infos,
+)
 
 from datetime import datetime
 
@@ -588,7 +590,22 @@ def register_cli(app: Flask) -> None:
         click.echo(
             f"Webhooks={result['webhooks']} "
             f"ERP-Aufgaben={result['outbox']} "
+            f"Vorgangsinfos={result['process_infos']} "
             f"Push-Zustellungen={result['push']}"
+        )
+
+    @app.cli.command(
+        "datlaeuft-bootstrap-process-infos"
+    )
+    def bootstrap_process_info_history() -> None:
+        (
+            process_count,
+            info_count,
+        ) = bootstrap_process_infos()
+
+        click.echo(
+            f"Vorgänge={process_count} "
+            f"Informationen={info_count}"
         )
 
     @app.cli.command("datlaeuft-worker")

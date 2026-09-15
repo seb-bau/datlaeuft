@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 import base64
+import requests
 
 from typing import Any
 
@@ -820,6 +821,144 @@ class WowiportService:
             previous_page = page
 
         return rows
+
+    def get_process_notes(
+            self,
+            process_erp_id: int,
+    ) -> list[dict[str, Any]]:
+        return self.read_all_rows(
+            "CommissioningRead/CraftProcess/Note",
+            {
+                "craftsProcessId": process_erp_id,
+                "showNullValues": "true",
+            },
+        )
+
+    def create_process_note(
+            self,
+            process_erp_id: int,
+            body: str,
+    ) -> dict[str, Any]:
+        adapter = self.client._rest_adapter
+        endpoint = (
+            "CommissioningEdit/CraftsProcess/"
+            f"{process_erp_id}/Note"
+        )
+        url = adapter.url + endpoint
+        headers = {
+            "User-Agent": adapter.user_agent,
+            "Accept": "application/json",
+            "Authorization": (
+                f"Bearer {adapter.access_token}"
+            ),
+        }
+
+        response = requests.post(
+            url,
+            params={"apiKey": adapter.api_key},
+            headers=headers,
+            json=body,
+            timeout=30,
+        )
+
+        if response.status_code == 401:
+            (
+                adapter.access_token,
+                adapter.refresh_token,
+            ) = adapter._create_token(
+                refresh_token=adapter.refresh_token
+            )
+            headers["Authorization"] = (
+                f"Bearer {adapter.access_token}"
+            )
+            response = requests.post(
+                url,
+                params={"apiKey": adapter.api_key},
+                headers=headers,
+                json=body,
+                timeout=30,
+            )
+
+        if not 200 <= response.status_code < 300:
+            raise RuntimeError(
+                "Wowiport hat die Information abgelehnt: "
+                f"HTTP {response.status_code} "
+                f"{response.text[:500]}"
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                "Wowiport hat keine gültige Antwort geliefert."
+            ) from exc
+
+        if isinstance(data, dict):
+            return data
+
+        if (
+                isinstance(data, list)
+                and data
+                and isinstance(data[0], dict)
+        ):
+            return data[0]
+
+        raise RuntimeError(
+            "Wowiport hat das Speichern der Information nicht bestätigt."
+        )
+
+    def get_commission_responsible_official_id(
+            self,
+            commission_erp_id: int,
+    ) -> int | None:
+        rows = self.read_all_rows(
+            "CommissioningRead/Commissions",
+            {
+                "id": commission_erp_id,
+                "includeResponsibleOfficialRepair": "true",
+                "showNullValues": "true",
+            },
+            paginate=False,
+        )
+
+        if not rows:
+            return None
+
+        official = self._row_value(
+            rows[0],
+            "ResponsibleOfficialRepair",
+        )
+        raw_id = (
+            self._row_value(official, "Id")
+            if isinstance(official, dict)
+            else None
+        )
+
+        try:
+            return int(raw_id) if raw_id is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def get_responsible_official(
+            self,
+            official_erp_id: int,
+    ) -> dict[str, Any]:
+        rows = self.read_all_rows(
+            "CommercialInventory/ResponsibleOfficial",
+            {
+                "responsibleOfficialId": official_erp_id,
+                "includeMainCommunication": "true",
+                "showNullValues": "true",
+            },
+            paginate=False,
+        )
+
+        if not rows:
+            raise RuntimeError(
+                "Der zuständige Sachbearbeiter wurde nicht gefunden."
+            )
+
+        return rows[0]
 
     def _resolve_sales_tax_id(
             self,

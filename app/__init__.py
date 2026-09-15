@@ -7,6 +7,7 @@ from . import models
 from .admin import admin_bp
 from .api import api_bp
 from .auth import auth_bp
+from .process_info_api import process_info_api_bp
 from .cli import register_cli
 from .extensions import cors, csrf, db, jwt, login_manager, migrate
 from .logging_service import configure_logging
@@ -69,6 +70,7 @@ def create_app() -> Flask:
         safety_inspection_jobs_admin_bp
     )
     app.register_blueprint(api_bp)
+    app.register_blueprint(process_info_api_bp)
     app.register_blueprint(
         safety_inspection_api_bp
     )
@@ -78,6 +80,7 @@ def create_app() -> Flask:
         safety_inspection_protocol_admin_bp
     )
     csrf.exempt(api_bp)
+    csrf.exempt(process_info_api_bp)
     csrf.exempt(
         safety_inspection_api_bp
     )

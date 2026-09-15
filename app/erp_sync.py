@@ -32,6 +32,10 @@ from .push_service import (
     requeue_stale_push_deliveries,
 )
 from .commission_priority import sync_ticket_commission_priorities
+from .process_info_service import (
+    process_process_info_work,
+    sync_process_infos,
+)
 
 
 def enqueue_erp_operation(
@@ -152,10 +156,14 @@ def process_due_work(
     enqueue_pending_commission_photo_uploads()
     webhook_count = process_webhook_batch(webhook_limit)
     outbox_count = process_outbox_batch(outbox_limit)
+    process_info_count = (
+        process_process_info_work()
+    )
     push_count = process_push_batch(push_limit)
     return {
         "webhooks": webhook_count,
         "outbox": outbox_count,
+        "process_infos": process_info_count,
         "push": push_count,
     }
 
@@ -619,6 +627,50 @@ def process_webhook_event(event_id: int) -> None:
         )
         return
 
+    entity_type = "".join(
+        character
+        for character
+        in (
+                event.entity_type
+                or ""
+        ).casefold()
+        if character.isalnum()
+    )
+
+    if entity_type in {
+        "craftprocess",
+        "craftsprocess",
+    }:
+        if event.entity_id is None:
+            raise RuntimeError(
+                "Webhook enthält keine "
+                "Vorgangs-ID."
+            )
+
+        if (
+                event.action
+                or ""
+        ).casefold() != "deleted":
+            sync_process_infos(
+                event.entity_id,
+                notify=True,
+            )
+
+        event.message = (
+            "Vorgangsinformationen verarbeitet"
+        )
+
+        audit(
+            "webhook.wowiport",
+            "crafts_process",
+            event.entity_id,
+            {
+                "action": event.action,
+                "event_id": event.id,
+            },
+        )
+        return
+
     if (event.entity_type or "").casefold() != "commission":
         event.message = "Ignorierte Entität"
         return
@@ -696,6 +748,7 @@ def run_worker(
         if (
                 result["webhooks"] == 0
                 and result["outbox"] == 0
+                and result["process_infos"] == 0
                 and result["push"] == 0
         ):
             sleep(poll_seconds)

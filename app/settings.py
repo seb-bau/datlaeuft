@@ -101,6 +101,13 @@ class SettingKeys:
         "Abgleichintervall für Gebäude- und Wohnungsfotos in Minuten",
         "Synchronisierung",
     )
+    PROCESS_INFO_SYNC_INTERVAL_MINUTES = SettingDefinition[int](
+        "wowi.process_info_sync_interval_minutes",
+        SettingValueType.INT,
+        5,
+        "Abgleichintervall für Vorgangsinformationen in Minuten",
+        "Synchronisierung",
+    )
     WOWI_APPROVED_STATUS_ID = SettingDefinition[int](
         "wowi.approved_status_id", SettingValueType.INT, 6, "Status-ID Freigegeben", "Wowiport")
     WOWI_WEBHOOK_TOKEN = SettingDefinition[str](
