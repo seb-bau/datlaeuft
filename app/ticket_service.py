@@ -10,6 +10,7 @@ from .models import (
     TicketAiState,
     TicketMirror,
     TicketMirrorState,
+    WowiLicenseAgreement,
     utc_now,
 )
 from .openai_service import analyze_ticket_content
@@ -354,6 +355,82 @@ def ticket_assignments(
             assignments.append(assignment)
 
     return assignments
+
+
+def ticket_license_agreement_local_id(
+    ticket: TicketMirror,
+) -> int | None:
+    assignments = (
+        ticket.assignments
+        if isinstance(ticket.assignments, list)
+        else []
+    )
+    agreement_erp_ids: set[int] = set()
+
+    for assignment in assignments:
+        if not isinstance(assignment, dict):
+            continue
+
+        assignment_entity = value(
+            assignment,
+            "AssignmentEntity",
+        )
+
+        if not isinstance(assignment_entity, dict):
+            continue
+
+        entity_code = "".join(
+            character
+            for character in str(
+                value(
+                    assignment_entity,
+                    "Code",
+                )
+                or ""
+            ).casefold()
+            if character.isalnum()
+        )
+
+        if not any(
+            code_part in entity_code
+            for code_part in (
+                "licenseagreement",
+                "leaseagreement",
+                "rentalagreement",
+                "tenancyagreement",
+                "mietvertrag",
+            )
+        ):
+            continue
+
+        entity_id = as_int(
+            value(
+                assignment,
+                "EntityId",
+            )
+        )
+
+        if entity_id is not None:
+            agreement_erp_ids.add(entity_id)
+
+    if len(agreement_erp_ids) != 1:
+        return None
+
+    agreement = (
+        WowiLicenseAgreement.query
+        .filter(
+            WowiLicenseAgreement.erp_id
+            == next(iter(agreement_erp_ids)),
+            WowiLicenseAgreement.active.is_(True),
+        )
+        .one_or_none()
+    )
+
+    return (
+        agreement.id
+        if agreement is not None
+        else None
+    )
 
 
 def ticket_excerpt(

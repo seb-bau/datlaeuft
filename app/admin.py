@@ -110,7 +110,10 @@ from .models import (
     TicketMirror,
     TicketMirrorState,
 )
-from .ticket_service import analyze_ticket_mirror
+from .ticket_service import (
+    analyze_ticket_mirror,
+    ticket_license_agreement_local_id,
+)
 from .offer_archive import (
     OfferArchiveError,
     archive_offer,
@@ -2263,7 +2266,10 @@ def ticket_analyze(
             "info",
         )
         return redirect(
-            url_for("admin.tickets")
+            url_for(
+                "admin.commission_create",
+                ticket_id=ticket.id,
+            )
         )
 
     if ticket.deleted_at is not None:
@@ -2292,6 +2298,12 @@ def ticket_analyze(
         flash(
             "Der KI-Vorschlag wurde erstellt.",
             "success",
+        )
+        return redirect(
+            url_for(
+                "admin.commission_create",
+                ticket_id=ticket.id,
+            )
         )
     except Exception as exc:
         db.session.rollback()
@@ -2520,6 +2532,28 @@ def commission_create() -> Any:
                     "units": "1",
                 }
             ]
+
+            license_agreement_id = (
+                ticket_license_agreement_local_id(
+                    source_ticket
+                )
+            )
+
+            if license_agreement_id is not None:
+                try:
+                    selected_object = (
+                        get_commission_object_choice(
+                            "license_agreement",
+                            license_agreement_id,
+                        )
+                    )
+                except ValueError as exc:
+                    flash(
+                        "Der im Ticket verknüpfte "
+                        "Mietvertrag konnte nicht "
+                        f"übernommen werden: {exc}",
+                        "warning",
+                    )
 
             if (
                 source_ticket.ai_craft_activity_id
