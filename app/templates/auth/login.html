@@ -1,48 +1,559 @@
 {% extends "base.html" %}
-{% block title %}Anmelden{% endblock %}
+{% block title %}Anmelden · WattNu{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
-  <div class="col-md-5 col-lg-4">
-    <div class="card shadow-sm">
-      <div class="card-body p-4">
-        <h1 class="h4 mb-4">Anmelden</h1>
-        {% if password_enabled %}
-        <form method="post">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="mb-3">
-            <label class="form-label">E-Mail</label>
-            <input class="form-control" type="email" name="email" autocomplete="username" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Kennwort</label>
-            <input class="form-control" type="password" name="password" autocomplete="current-password" required>
-          </div>
-          <button class="btn btn-primary w-100" type="submit">Anmelden</button>
-        </form>
-        {% endif %}
-        {% if microsoft_enabled or generic_oidc_enabled %}
-        <hr>
-        {% endif %}
+<style>
+  body {
+    background: #eef3f1 !important;
+  }
+
+  body > .navbar {
+    display: none;
+  }
+
+  main.container-fluid {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: 0 !important;
+  }
+
+  main.container-fluid > .mb-3 {
+    position: fixed;
+    top: 1.25rem;
+    left: 50%;
+    z-index: 20;
+    width: min(560px, calc(100% - 2rem));
+    transform: translateX(-50%);
+  }
+
+  .login-page {
+    display: grid;
+    min-height: 100vh;
+    min-height: 100dvh;
+    place-items: center;
+    padding: 2rem;
+    overflow: hidden;
+    background:
+      radial-gradient(
+        circle at 12% 18%,
+        rgba(20, 151, 111, .15),
+        transparent 32rem
+      ),
+      radial-gradient(
+        circle at 88% 82%,
+        rgba(113, 173, 72, .14),
+        transparent 28rem
+      ),
+      linear-gradient(145deg, #f7faf9, #e9f1ee);
+  }
+
+  .login-shell {
+    position: relative;
+    display: grid;
+    grid-template-columns:
+      minmax(0, 1.08fr)
+      minmax(360px, .92fr);
+    width: min(1040px, 100%);
+    min-height: 650px;
+    overflow: hidden;
+    border: 1px solid rgba(12, 82, 63, .12);
+    border-radius: 28px;
+    background: rgba(255, 255, 255, .92);
+    box-shadow:
+      0 30px 80px rgba(13, 61, 48, .14),
+      0 8px 24px rgba(13, 61, 48, .08);
+  }
+
+  .login-brand {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    overflow: hidden;
+    padding: 4rem;
+    color: #fff;
+    background:
+      linear-gradient(
+        145deg,
+        #006f55 0%,
+        #008568 52%,
+        #075a49 100%
+      );
+  }
+
+  .login-brand::before,
+  .login-brand::after {
+    position: absolute;
+    content: "";
+    border: 1px solid rgba(255, 255, 255, .13);
+    border-radius: 50%;
+  }
+
+  .login-brand::before {
+    top: -9rem;
+    right: -9rem;
+    width: 25rem;
+    height: 25rem;
+  }
+
+  .login-brand::after {
+    top: 5rem;
+    right: 3rem;
+    width: 12rem;
+    height: 12rem;
+  }
+
+  .login-brand-content {
+    position: relative;
+    z-index: 1;
+    max-width: 32rem;
+  }
+
+  .login-logo {
+    width: 76px;
+    height: 76px;
+    margin-bottom: 2rem;
+    overflow: hidden;
+    border-radius: 20px;
+    box-shadow: 0 14px 32px rgba(0, 42, 32, .32);
+  }
+
+  .login-logo img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .login-kicker {
+    margin-bottom: .75rem;
+    color: rgba(255, 255, 255, .7);
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+
+  .login-brand h1 {
+    max-width: 26rem;
+    margin-bottom: 1.25rem;
+    font-size: clamp(2.2rem, 4vw, 3.6rem);
+    font-weight: 700;
+    line-height: 1.04;
+    letter-spacing: -.045em;
+  }
+
+  .login-brand-description {
+    max-width: 29rem;
+    margin: 0;
+    color: rgba(255, 255, 255, .78);
+    font-size: 1.05rem;
+    line-height: 1.65;
+  }
+
+  .login-benefits {
+    display: grid;
+    gap: .8rem;
+    margin: 2rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .login-benefits li {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    color: rgba(255, 255, 255, .9);
+    font-size: .92rem;
+  }
+
+  .login-benefit-icon {
+    display: grid;
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .14);
+    font-size: .75rem;
+    font-weight: 700;
+  }
+
+  .login-panel {
+    display: flex;
+    align-items: center;
+    padding: 3.5rem;
+    background: rgba(255, 255, 255, .95);
+  }
+
+  .login-card {
+    width: 100%;
+    max-width: 420px;
+    margin: auto;
+  }
+
+  .login-mobile-brand {
+    display: none;
+    align-items: center;
+    gap: .75rem;
+    margin-bottom: 2rem;
+    color: #075a49;
+    font-size: 1.15rem;
+    font-weight: 700;
+  }
+
+  .login-mobile-brand img {
+    width: 42px;
+    height: 42px;
+    border-radius: 11px;
+  }
+
+  .login-eyebrow {
+    margin-bottom: .55rem;
+    color: #087f62;
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .login-card h2 {
+    margin-bottom: .75rem;
+    color: #17221f;
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -.035em;
+  }
+
+  .login-intro {
+    margin-bottom: 2rem;
+    color: #66736f;
+    line-height: 1.55;
+  }
+
+  .auth-stack {
+    display: grid;
+    gap: .75rem;
+  }
+
+  .microsoft-sign-in {
+    display: grid;
+    grid-template-columns: 21px 1fr 21px;
+    align-items: center;
+    width: 100%;
+    height: 41px;
+    padding: 0 11px;
+    border: 1px solid #8c8c8c;
+    border-radius: 2px;
+    background: #fff;
+    color: #5e5e5e;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none;
+    transition:
+      background-color .15s ease,
+      border-color .15s ease;
+  }
+
+  .microsoft-sign-in:hover {
+    border-color: #666;
+    background: #f5f5f5;
+    color: #1a1a1a;
+  }
+
+  .microsoft-sign-in:focus-visible {
+    outline: 3px solid rgba(0, 120, 212, .28);
+    outline-offset: 2px;
+  }
+
+  .microsoft-sign-in img {
+    width: 21px;
+    height: 21px;
+  }
+
+  .microsoft-sign-in span {
+    text-align: center;
+  }
+
+  .account-hint {
+    margin: .65rem 0 0;
+    color: #7a8581;
+    font-size: .78rem;
+    text-align: center;
+  }
+
+  .generic-sign-in {
+    min-height: 44px;
+    border-color: #b7c1be;
+    color: #35413d;
+    font-weight: 600;
+  }
+
+  .auth-divider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 1.75rem 0;
+    color: #89938f;
+    font-size: .78rem;
+  }
+
+  .auth-divider::before,
+  .auth-divider::after {
+    flex: 1;
+    height: 1px;
+    content: "";
+    background: #e0e6e4;
+  }
+
+  .login-form {
+    display: grid;
+    gap: 1.15rem;
+  }
+
+  .login-form .form-label {
+    margin-bottom: .45rem;
+    color: #35413d;
+    font-size: .85rem;
+    font-weight: 600;
+  }
+
+  .login-form .form-control {
+    min-height: 50px;
+    border-color: #d7dfdc;
+    border-radius: 11px;
+    background: #fbfcfc;
+  }
+
+  .login-form .form-control:focus {
+    border-color: #168d6e;
+    background: #fff;
+    box-shadow: 0 0 0 .22rem rgba(22, 141, 110, .13);
+  }
+
+  .login-submit {
+    min-height: 50px;
+    margin-top: .25rem;
+    border: 0;
+    border-radius: 11px;
+    background: #087f62;
+    font-weight: 700;
+    box-shadow: 0 10px 20px rgba(8, 127, 98, .18);
+  }
+
+  .login-submit:hover,
+  .login-submit:focus {
+    background: #066b53;
+  }
+
+  .login-security {
+    display: flex;
+    justify-content: center;
+    gap: .45rem;
+    margin: 2rem 0 0;
+    color: #89938f;
+    font-size: .75rem;
+    text-align: center;
+  }
+
+  @media (max-width: 850px) {
+    .login-shell {
+      grid-template-columns: 1fr;
+      width: min(500px, 100%);
+      min-height: auto;
+    }
+
+    .login-brand {
+      display: none;
+    }
+
+    .login-panel {
+      padding: 3rem;
+    }
+
+    .login-mobile-brand {
+      display: flex;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .login-page {
+      padding: 0;
+      background: #fff;
+    }
+
+    .login-shell {
+      min-height: 100vh;
+      min-height: 100dvh;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .login-panel {
+      padding: 2rem 1.5rem;
+    }
+  }
+</style>
+
+<section class="login-page">
+  <div class="login-shell">
+    <aside class="login-brand">
+<!--      <div class="login-brand-content">-->
+<!--        <div class="login-logo">-->
+<!--          <img-->
+<!--            src="{{ url_for('static', filename='favicon.ico') }}"-->
+<!--            alt=""-->
+<!--          >-->
+<!--        </div>-->
+
+<!--        <div class="login-kicker">WattNu</div>-->
+
+<!--        <h1>-->
+<!--          Arbeit organisieren. Fortschritt sehen.-->
+<!--        </h1>-->
+
+<!--        <p class="login-brand-description">-->
+<!--          Aufträge, Termine und Dokumentation an einem-->
+<!--          zentralen Ort – sicher und zuverlässig.-->
+<!--        </p>-->
+
+<!--        <ul class="login-benefits">-->
+<!--          <li>-->
+<!--            <span class="login-benefit-icon">✓</span>-->
+<!--            Aufträge jederzeit im Blick-->
+<!--          </li>-->
+<!--          <li>-->
+<!--            <span class="login-benefit-icon">✓</span>-->
+<!--            Teams und Termine koordinieren-->
+<!--          </li>-->
+<!--          <li>-->
+<!--            <span class="login-benefit-icon">✓</span>-->
+<!--            Fortschritt nachvollziehbar dokumentieren-->
+<!--          </li>-->
+<!--        </ul>-->
+<!--      </div>-->
+    </aside>
+
+    <div class="login-panel">
+      <div class="login-card">
+        <div class="login-mobile-brand">
+          <img
+            src="{{ url_for('static', filename='favicon.ico') }}"
+            alt=""
+          >
+          <span>datlaeuft</span>
+        </div>
+
+        <div class="login-eyebrow">
+          Willkommen zurück
+        </div>
+
+        <h2>Anmelden</h2>
+
+        <p class="login-intro">
+          Melde dich an, um deine Arbeitsbereiche und
+          Aufträge zu öffnen.
+        </p>
 
         {% if microsoft_enabled %}
         <a
-          class="btn btn-outline-primary w-100"
+          class="microsoft-sign-in"
           href="{{ url_for('auth.microsoft_login') }}"
         >
-          Mit Microsoft anmelden
+          <img
+            src="{{ url_for(
+              'static',
+              filename='microsoft-symbol.svg'
+            ) }}"
+            alt=""
+            aria-hidden="true"
+          >
+          <span>Mit Microsoft anmelden</span>
+          <span aria-hidden="true"></span>
         </a>
+
+        <p class="account-hint">
+          Geschäfts-, Schul- oder Unikonto
+        </p>
         {% endif %}
 
         {% if generic_oidc_enabled %}
-        <a
-          class="btn btn-outline-secondary w-100 {% if microsoft_enabled %}mt-2{% endif %}"
-          href="{{ url_for('auth.generic_oidc_login') }}"
-        >
-          Mit {{ generic_oidc_provider_name }} anmelden
-        </a>
+        <div class="auth-stack {% if microsoft_enabled %}mt-3{% endif %}">
+          <a
+            class="btn btn-outline-secondary generic-sign-in"
+            href="{{ url_for('auth.generic_oidc_login') }}"
+          >
+            Mit {{ generic_oidc_provider_name }} anmelden
+          </a>
+        </div>
         {% endif %}
+
+        {% if password_enabled
+              and (
+                microsoft_enabled
+                or generic_oidc_enabled
+              )
+        %}
+        <div class="auth-divider">
+          <span>oder mit E-Mail</span>
+        </div>
+        {% endif %}
+
+        {% if password_enabled %}
+        <form method="post" class="login-form">
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <div>
+            <label
+              class="form-label"
+              for="loginEmail"
+            >
+              E-Mail-Adresse
+            </label>
+            <input
+              class="form-control"
+              id="loginEmail"
+              type="email"
+              name="email"
+              autocomplete="username"
+              required
+            >
+          </div>
+
+          <div>
+            <label
+              class="form-label"
+              for="loginPassword"
+            >
+              Kennwort
+            </label>
+            <input
+              class="form-control"
+              id="loginPassword"
+              type="password"
+              name="password"
+              autocomplete="current-password"
+              required
+            >
+          </div>
+
+          <button
+            class="btn btn-primary login-submit"
+            type="submit"
+          >
+            Anmelden
+          </button>
+        </form>
+        {% endif %}
+
+        <p class="login-security">
+          Geschützter Zugang für autorisierte Mitarbeitende
+        </p>
       </div>
     </div>
   </div>
-</div>
+</section>
 {% endblock %}
