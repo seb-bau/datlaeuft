@@ -17,6 +17,38 @@
 </div>
 {% endif %}
 
+{% if source_ticket %}
+<div class="alert alert-primary">
+  <div class="fw-semibold">
+    Auftrag aus Ticket
+    {{ source_ticket.id_num or source_ticket.erp_id }}
+  </div>
+
+  <div>
+    {{ source_ticket.subject or "Ohne Betreff" }}
+  </div>
+
+  {% if source_ticket.ai_craft_activity %}
+  <div class="mt-2">
+    Vorgeschlagenes Gewerk:
+    <strong>
+      {{ source_ticket.ai_craft_activity.name }}
+    </strong>
+    {% if source_ticket.ai_classification_label %}
+    · {{ source_ticket.ai_classification_label }}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if source_ticket.ai_missing_information %}
+  <div class="mt-2">
+    Noch zu klären:
+    {{ source_ticket.ai_missing_information|join(", ") }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
 <form
   method="post"
   enctype="multipart/form-data"
@@ -27,6 +59,13 @@
     name="csrf_token"
     value="{{ csrf_token() }}"
   >
+    {% if source_ticket %}
+  <input
+    type="hidden"
+    name="source_ticket_id"
+    value="{{ source_ticket.id }}"
+  >
+  {% endif %}
   <input
     id="objectType"
     type="hidden"

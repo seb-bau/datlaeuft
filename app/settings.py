@@ -556,6 +556,36 @@ class SettingKeys:
         "Geocoding",
     )
 
+    OPENAI_ENABLED = SettingDefinition[bool](
+        "openai.enabled",
+        SettingValueType.BOOL,
+        False,
+        "KI-Analyse aktivieren",
+        "OpenAI",
+    )
+    OPENAI_API_KEY = SettingDefinition[str](
+        "openai.api_key",
+        SettingValueType.SECRET,
+        "",
+        "OpenAI API-Key",
+        "OpenAI",
+        True,
+    )
+    OPENAI_MODEL = SettingDefinition[str](
+        "openai.model",
+        SettingValueType.STRING,
+        "",
+        "OpenAI-Modell",
+        "OpenAI",
+    )
+    OPENAI_TIMEOUT_SECONDS = SettingDefinition[float](
+        "openai.timeout_seconds",
+        SettingValueType.FLOAT,
+        45.0,
+        "Zeitlimit für KI-Analysen in Sekunden",
+        "OpenAI",
+    )
+
 
 def all_definitions() -> list[SettingDefinition[Any]]:
     definitions: list[SettingDefinition[Any]] = []

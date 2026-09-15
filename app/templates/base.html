@@ -98,6 +98,20 @@ table.datatable thead tr.datatable-filter-row input:focus {
             Aufträge
           </a>
         </li>
+
+                      {% if
+          current_user.is_admin
+          or current_user.is_foreman
+        %}
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            href="{{ url_for('admin.tickets') }}"
+          >
+            Tickets
+          </a>
+        </li>
+        {% endif %}
                       {% if
           current_user.is_admin
           or

@@ -36,6 +36,7 @@ from .process_info_service import (
     process_process_info_work,
     sync_process_infos,
 )
+from .ticket_service import sync_ticket_mirror
 
 
 def enqueue_erp_operation(
@@ -613,17 +614,40 @@ def process_webhook_event(event_id: int) -> None:
 
     if (event.entity_type or "").casefold() == "ticket":
         if event.entity_id is None:
-            raise RuntimeError("Webhook enthält keine Ticket-ID.")
+            raise RuntimeError(
+                "Webhook enthält keine Ticket-ID."
+            )
+
+        service = WowiportService()
+        deleted = (
+                          event.action or ""
+                  ).casefold() == "deleted"
+
+        sync_ticket_mirror(
+            event.entity_id,
+            service,
+            deleted=deleted,
+        )
 
         count = sync_ticket_commission_priorities(
             event.entity_id,
-            WowiportService(),
-            deleted=(event.action or "").casefold() == "deleted",
+            service,
+            deleted=deleted,
         )
-        event.message = f"Ticketpriorität für {count} Aufträge geprüft"
+
+        event.message = (
+            "Ticket gespiegelt; Priorität für "
+            f"{count} Aufträge geprüft"
+        )
+
         audit(
-            "webhook.wowiport", "ticket", event.entity_id,
-            {"action": event.action, "event_id": event.id},
+            "webhook.wowiport",
+            "ticket",
+            event.entity_id,
+            {
+                "action": event.action,
+                "event_id": event.id,
+            },
         )
         return
 

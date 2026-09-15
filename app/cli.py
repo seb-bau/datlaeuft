@@ -54,6 +54,7 @@ from .process_info_service import (
 )
 
 from datetime import datetime
+from .ticket_service import sync_all_ticket_mirrors
 
 
 def register_cli(app: Flask) -> None:
@@ -78,6 +79,17 @@ def register_cli(app: Flask) -> None:
                 f"{item.name}\t"
                 f"{state}"
             )
+
+    @app.cli.command("datlaeuft-sync-tickets")
+    def sync_tickets() -> None:
+        result = sync_all_ticket_mirrors()
+        db.session.commit()
+
+        click.echo(
+            f"Gefunden={result['seen']} "
+            f"Neu={result['created']} "
+            f"Aktualisiert={result['updated']}"
+        )
 
     @app.cli.command("datlaeuft-retry-erp-operation")
     @click.argument("operation_id", type=int)

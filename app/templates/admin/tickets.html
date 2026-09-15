@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+{% block title %}Tickets{% endblock %}
+
+{% block content %}
+<div
+  class="d-flex flex-wrap justify-content-between
+         align-items-center gap-3 mb-4"
+>
+  <div>
+    <h1 class="h3 mb-1">Tickets</h1>
+    <div class="text-muted">
+      Gespiegelte Tickets aus Wowiport
+    </div>
+  </div>
+
+  <form
+    class="d-flex gap-2"
+    method="get"
+  >
+    <input
+      type="hidden"
+      name="state"
+      value="{{ selected_state }}"
+    >
+    <input
+      class="form-control"
+      type="search"
+      name="q"
+      value="{{ search_text }}"
+      placeholder="Ticket, Betreff oder Inhalt"
+    >
+    <button
+      class="btn btn-outline-primary"
+      type="submit"
+    >
+      Suchen
+    </button>
+  </form>
+</div>
+
+{% if not openai_configured %}
+<div class="alert alert-warning">
+  Die KI-Analyse ist noch nicht vollständig
+  konfiguriert. API-Key, Modell und Aktivierung
+  findest du unter Einstellungen.
+</div>
+{% endif %}
+
+<ul class="nav nav-pills mb-4">
+  {% for value, label in [
+    ("new", "Zu prüfen"),
+    ("ignored", "Kein Auftrag"),
+    ("converted", "Auftrag erstellt"),
+    ("all", "Alle")
+  ] %}
+  <li class="nav-item">
+    <a
+      class="nav-link
+             {% if selected_state == value %}active{% endif %}"
+      href="{{ url_for(
+        'admin.tickets',
+        state=value,
+        q=search_text
+      ) }}"
+    >
+      {{ label }}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+
+<div class="vstack gap-3">
+  {% for ticket in pagination.items %}
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div
+        class="d-flex flex-wrap justify-content-between
+               align-items-start gap-3"
+      >
+        <div class="flex-grow-1">
+          <div
+            class="d-flex flex-wrap align-items-center
+                   gap-2 mb-2"
+          >
+            <span class="fw-semibold">
+              Ticket
+              {{ ticket.id_num or ticket.erp_id }}
+            </span>
+
+            <span class="badge text-bg-secondary">
+              {{ ticket.state_label }}
+            </span>
+
+            {% if ticket.priority_erp_id == 3 %}
+            <span class="badge text-bg-danger">
+              Hohe Priorität
+            </span>
+            {% endif %}
+
+            {% if ticket.status_code %}
+            <span class="badge text-bg-light">
+              {{ ticket.status_code }}
+            </span>
+            {% endif %}
+          </div>
+
+          <h2 class="h5 mb-2">
+            {{ ticket.subject or "Ohne Betreff" }}
+          </h2>
+
+          {% if ticket.content_excerpt %}
+          <p class="mb-2 text-body-secondary">
+            {{ ticket.content_excerpt }}
+          </p>
+          {% endif %}
+
+          <div class="small text-muted">
+            {% if ticket.department_name %}
+            {{ ticket.department_name }} ·
+            {% endif %}
+
+            {% if ticket.received_at %}
+            {{ ticket.received_at.strftime(
+              "%d.%m.%Y %H:%M"
+            ) }}
+            {% endif %}
+          </div>
+
+          {% if ticket.ai_state != "not_requested" %}
+          <div class="border rounded p-3 mt-3 bg-light">
+            <div
+              class="d-flex flex-wrap align-items-center
+                     gap-2 mb-2"
+            >
+              <strong>KI-Vorschlag</strong>
+
+              <span class="badge text-bg-info">
+                {{ ticket.ai_state_label }}
+              </span>
+
+              {% if ticket.ai_classification_label %}
+              <span class="badge text-bg-secondary">
+                {{ ticket.ai_classification_label }}
+              </span>
+              {% endif %}
+            </div>
+
+            {% if ticket.ai_craft_activity %}
+            <div>
+              Gewerk:
+              <strong>
+                {{ ticket.ai_craft_activity.name }}
+              </strong>
+            </div>
+            {% endif %}
+
+            {% if ticket.ai_commission_text %}
+            <div class="mt-2">
+              {{ ticket.ai_commission_text }}
+            </div>
+            {% endif %}
+
+            {% if ticket.ai_missing_information %}
+            <div class="mt-2 text-warning-emphasis">
+              Noch zu klären:
+              {{ ticket.ai_missing_information|join(", ") }}
+            </div>
+            {% endif %}
+
+            {% if ticket.ai_error %}
+            <div class="mt-2 text-danger">
+              {{ ticket.ai_error }}
+            </div>
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="d-flex flex-column gap-2">
+          {% if
+            ticket.state != "converted"
+            and openai_configured
+          %}
+          <form
+            method="post"
+            action="{{ url_for(
+              'admin.ticket_analyze',
+              ticket_id=ticket.id
+            ) }}"
+          >
+            <input
+              type="hidden"
+              name="csrf_token"
+              value="{{ csrf_token() }}"
+            >
+            <button
+              class="btn btn-outline-primary w-100"
+              type="submit"
+            >
+              KI-Vorschlag erstellen
+            </button>
+          </form>
+          {% endif %}
+
+          {% if ticket.state != "converted" %}
+          <a
+            class="btn btn-primary"
+            href="{{ url_for(
+              'admin.commission_create',
+              ticket_id=ticket.id
+            ) }}"
+          >
+            Auftrag erstellen
+          </a>
+          {% endif %}
+
+          {% if ticket.state == "new" %}
+          <form
+            method="post"
+            action="{{ url_for(
+              'admin.ticket_ignore',
+              ticket_id=ticket.id
+            ) }}"
+          >
+            <input
+              type="hidden"
+              name="csrf_token"
+              value="{{ csrf_token() }}"
+            >
+            <button
+              class="btn btn-outline-secondary w-100"
+              type="submit"
+            >
+              Kein Auftrag
+            </button>
+          </form>
+          {% elif ticket.state == "ignored" %}
+          <form
+            method="post"
+            action="{{ url_for(
+              'admin.ticket_restore',
+              ticket_id=ticket.id
+            ) }}"
+          >
+            <input
+              type="hidden"
+              name="csrf_token"
+              value="{{ csrf_token() }}"
+            >
+            <button
+              class="btn btn-outline-secondary w-100"
+              type="submit"
+            >
+              Erneut prüfen
+            </button>
+          </form>
+          {% elif ticket.commission %}
+          <a
+            class="btn btn-outline-primary"
+            href="{{ url_for(
+              'admin.commission_detail',
+              commission_id=ticket.commission.id
+            ) }}"
+          >
+            Auftrag anzeigen
+          </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert alert-info">
+    Keine Tickets gefunden.
+  </div>
+  {% endfor %}
+</div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-4">
+  <ul class="pagination">
+    {% for page_number in pagination.iter_pages() %}
+      {% if page_number %}
+      <li
+        class="page-item
+               {% if page_number == pagination.page %}active{% endif %}"
+      >
+        <a
+          class="page-link"
+          href="{{ url_for(
+            'admin.tickets',
+            page=page_number,
+            state=selected_state,
+            q=search_text
+          ) }}"
+        >
+          {{ page_number }}
+        </a>
+      </li>
+      {% else %}
+      <li class="page-item disabled">
+        <span class="page-link">…</span>
+      </li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}

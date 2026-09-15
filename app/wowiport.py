@@ -579,6 +579,52 @@ class WowiportService:
                 "Der OPENWOWI-Dateiinhalt ist ungültig."
             ) from exc
 
+    def get_ticket_rows(
+        self,
+        *,
+        ticket_erp_id: int | None = None,
+        include_comments: bool = False,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        limit = 100
+
+        while True:
+            params: dict[str, Any] = {
+                "includeAssignmentEntity": "true",
+                "includeComments": (
+                    "true" if include_comments else "false"
+                ),
+                "showNullValues": "true",
+                "limit": limit,
+                "offset": offset,
+            }
+
+            if ticket_erp_id is not None:
+                params["ticketId"] = ticket_erp_id
+
+            result = self.client._rest_adapter.get(
+                endpoint="CommunicationRead/Ticket",
+                ep_params=params,
+                force_refresh=True,
+            )
+            page = getattr(result, "data", result)
+
+            if not isinstance(page, list) or any(
+                not isinstance(row, dict)
+                for row in page
+            ):
+                raise RuntimeError(
+                    "OPENWOWI hat keine gültige Ticketliste geliefert."
+                )
+
+            rows.extend(page)
+
+            if len(page) < limit:
+                return rows
+
+            offset += limit
+
     def get_commission_ticket_rows(
             self,
             commission_erp_id: int,

@@ -45,6 +45,19 @@ class CommissionSyncState(str, Enum):
     FAILED = "failed"
 
 
+class TicketMirrorState(str, Enum):
+    NEW = "new"
+    IGNORED = "ignored"
+    CONVERTED = "converted"
+
+
+class TicketAiState(str, Enum):
+    NOT_REQUESTED = "not_requested"
+    READY = "ready"
+    STALE = "stale"
+    FAILED = "failed"
+
+
 class ErpOperationType(str, Enum):
     CREATE_COMMISSION = "create_commission"
     ACCEPT_COMMISSION = "accept_commission"
@@ -804,6 +817,164 @@ class CommissionTicketLink(db.Model):
     ticket_erp_id: Mapped[int] = mapped_column(
         db.Integer, primary_key=True, index=True,
     )
+
+
+class TicketMirror(db.Model):
+    __tablename__ = "ticket_mirror"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    id_num: Mapped[str | None] = mapped_column(
+        db.String(120),
+        index=True,
+    )
+    subject: Mapped[str | None] = mapped_column(
+        db.String(500),
+        index=True,
+    )
+    content_excerpt: Mapped[str | None] = mapped_column(db.Text)
+    received_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    status_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    status_code: Mapped[str | None] = mapped_column(
+        db.String(120),
+        index=True,
+    )
+    priority_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    priority_code: Mapped[str | None] = mapped_column(
+        db.String(120),
+    )
+    source_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    source_code: Mapped[str | None] = mapped_column(
+        db.String(120),
+    )
+    department_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    department_name: Mapped[str | None] = mapped_column(
+        db.String(255),
+    )
+    assigned_user_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    assignments: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        db.JSON
+    )
+    state: Mapped[str] = mapped_column(
+        db.String(30),
+        default=TicketMirrorState.NEW.value,
+        server_default=TicketMirrorState.NEW.value,
+        nullable=False,
+        index=True,
+    )
+    commission_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("commission.id", ondelete="SET NULL"),
+        index=True,
+    )
+    source_signature: Mapped[str | None] = mapped_column(
+        db.String(64)
+    )
+    ai_state: Mapped[str] = mapped_column(
+        db.String(30),
+        default=TicketAiState.NOT_REQUESTED.value,
+        server_default=TicketAiState.NOT_REQUESTED.value,
+        nullable=False,
+        index=True,
+    )
+    ai_candidate: Mapped[bool | None] = mapped_column(db.Boolean)
+    ai_classification: Mapped[str | None] = mapped_column(
+        db.String(30)
+    )
+    ai_craft_activity_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("craft_activity.id", ondelete="SET NULL"),
+        index=True,
+    )
+    ai_title: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    ai_commission_text: Mapped[str | None] = mapped_column(db.Text)
+    ai_damage_location: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    ai_missing_information: Mapped[list[str] | None] = mapped_column(
+        db.JSON
+    )
+    ai_model: Mapped[str | None] = mapped_column(
+        db.String(120)
+    )
+    ai_input_hash: Mapped[str | None] = mapped_column(
+        db.String(64)
+    )
+    ai_generated_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    ai_error: Mapped[str | None] = mapped_column(db.Text)
+    synced_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    commission: Mapped[Commission | None] = relationship()
+    ai_craft_activity: Mapped[CraftActivity | None] = relationship()
+
+    @property
+    def state_label(self) -> str:
+        return {
+            TicketMirrorState.NEW.value: "Zu prüfen",
+            TicketMirrorState.IGNORED.value: "Kein Auftrag",
+            TicketMirrorState.CONVERTED.value: "Auftrag erstellt",
+        }.get(self.state, self.state)
+
+    @property
+    def ai_state_label(self) -> str:
+        return {
+            TicketAiState.NOT_REQUESTED.value: "Nicht analysiert",
+            TicketAiState.READY.value: "Vorschlag vorhanden",
+            TicketAiState.STALE.value: "Vorschlag veraltet",
+            TicketAiState.FAILED.value: "Analyse fehlgeschlagen",
+        }.get(self.ai_state, self.ai_state)
+
+    @property
+    def ai_classification_label(self) -> str:
+        return {
+            "clear": "Eindeutig",
+            "ambiguous": "Mehrdeutig",
+            "no_match": "Nicht zuordenbar",
+        }.get(self.ai_classification or "", "")
 
 
 class ProcessInfoThread(db.Model):

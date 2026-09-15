@@ -105,7 +105,12 @@ from .models import (
     WowiEconomicUnit,
     WowiEconomicUnitJurisdiction,
     ProcessInfo,
+    CommissionTicketLink,
+    TicketAiState,
+    TicketMirror,
+    TicketMirrorState,
 )
+from .ticket_service import analyze_ticket_mirror
 from .offer_archive import (
     OfferArchiveError,
     archive_offer,
@@ -2144,6 +2149,224 @@ def save_web_commission_photo(
     return photo, False
 
 
+@admin_bp.get("/admin/tickets")
+@foreman_required
+def tickets() -> Any:
+    selected_state = request.args.get(
+        "state",
+        TicketMirrorState.NEW.value,
+    )
+    search_text = request.args.get(
+        "q",
+        "",
+    ).strip()
+    page = max(
+        request.args.get(
+            "page",
+            1,
+            type=int,
+        ),
+        1,
+    )
+
+    query = TicketMirror.query.filter(
+        TicketMirror.deleted_at.is_(None)
+    )
+
+    valid_states = {
+        item.value
+        for item in TicketMirrorState
+    }
+
+    if selected_state in valid_states:
+        query = query.filter(
+            TicketMirror.state == selected_state
+        )
+    else:
+        selected_state = "all"
+
+    if search_text:
+        like_term = f"%{search_text}%"
+        conditions = [
+            TicketMirror.id_num.ilike(like_term),
+            TicketMirror.subject.ilike(like_term),
+            TicketMirror.content_excerpt.ilike(
+                like_term
+            ),
+        ]
+
+        if search_text.isdigit():
+            conditions.append(
+                TicketMirror.erp_id
+                == int(search_text)
+            )
+
+        query = query.filter(
+            or_(*conditions)
+        )
+
+    pagination = query.order_by(
+        TicketMirror.received_at.desc(),
+        TicketMirror.id.desc(),
+    ).paginate(
+        page=page,
+        per_page=50,
+        error_out=False,
+    )
+
+    openai_configured = bool(
+        settings.get(
+            SettingKeys.OPENAI_ENABLED
+        )
+        and str(
+            settings.get(
+                SettingKeys.OPENAI_API_KEY
+            )
+        ).strip()
+        and str(
+            settings.get(
+                SettingKeys.OPENAI_MODEL
+            )
+        ).strip()
+    )
+
+    return render_template(
+        "admin/tickets.html",
+        pagination=pagination,
+        selected_state=selected_state,
+        search_text=search_text,
+        openai_configured=openai_configured,
+    )
+
+
+@admin_bp.post(
+    "/admin/tickets/<int:ticket_id>/analyze"
+)
+@foreman_required
+def ticket_analyze(
+    ticket_id: int,
+) -> Any:
+    ticket = db.get_or_404(
+        TicketMirror,
+        ticket_id,
+    )
+
+    if ticket.deleted_at is not None:
+        abort(404)
+
+    try:
+        analyze_ticket_mirror(
+            ticket,
+            current_user.id,
+        )
+        audit(
+            "ticket.ai.analyze",
+            "ticket",
+            ticket.erp_id,
+            {
+                "model": ticket.ai_model,
+                "classification": (
+                    ticket.ai_classification
+                ),
+                "craft_activity_id": (
+                    ticket.ai_craft_activity_id
+                ),
+            },
+        )
+        db.session.commit()
+        flash(
+            "Der KI-Vorschlag wurde erstellt.",
+            "success",
+        )
+    except Exception as exc:
+        db.session.rollback()
+
+        failed_ticket = db.session.get(
+            TicketMirror,
+            ticket_id,
+        )
+
+        if failed_ticket is not None:
+            failed_ticket.ai_state = (
+                TicketAiState.FAILED.value
+            )
+            failed_ticket.ai_error = str(exc)[:2000]
+            db.session.commit()
+
+        current_app.logger.exception(
+            "ticket_ai_analysis_failed ticket_id=%s",
+            ticket_id,
+        )
+        flash(
+            str(exc),
+            "danger",
+        )
+
+    return redirect(
+        url_for("admin.tickets")
+    )
+
+
+@admin_bp.post(
+    "/admin/tickets/<int:ticket_id>/ignore"
+)
+@foreman_required
+def ticket_ignore(
+    ticket_id: int,
+) -> Any:
+    ticket = db.get_or_404(
+        TicketMirror,
+        ticket_id,
+    )
+
+    if (
+        ticket.state
+        != TicketMirrorState.CONVERTED.value
+    ):
+        ticket.state = (
+            TicketMirrorState.IGNORED.value
+        )
+        audit(
+            "ticket.ignore",
+            "ticket",
+            ticket.erp_id,
+        )
+        db.session.commit()
+
+    return redirect(
+        url_for("admin.tickets")
+    )
+
+
+@admin_bp.post(
+    "/admin/tickets/<int:ticket_id>/restore"
+)
+@foreman_required
+def ticket_restore(
+    ticket_id: int,
+) -> Any:
+    ticket = db.get_or_404(
+        TicketMirror,
+        ticket_id,
+    )
+
+    if (
+        ticket.state
+        != TicketMirrorState.CONVERTED.value
+    ):
+        ticket.state = TicketMirrorState.NEW.value
+        audit(
+            "ticket.restore",
+            "ticket",
+            ticket.erp_id,
+        )
+        db.session.commit()
+
+    return redirect(
+        url_for("admin.tickets")
+    )
+
+
 @admin_bp.route(
     "/admin/commissions/new",
     methods=["GET", "POST"],
@@ -2198,6 +2421,104 @@ def commission_create() -> Any:
     position_rows = [{}]
     selected_object = None
 
+    source_ticket = None
+    form_values = request.form
+    source_ticket_id = (
+        request.form.get(
+            "source_ticket_id",
+            type=int,
+        )
+        if request.method == "POST"
+        else request.args.get(
+            "ticket_id",
+            type=int,
+        )
+    )
+
+    if source_ticket_id is not None:
+        source_ticket_query = (
+            TicketMirror.query
+            .filter(
+                TicketMirror.id
+                == source_ticket_id,
+                TicketMirror.deleted_at.is_(None),
+            )
+        )
+
+        if request.method == "POST":
+            source_ticket_query = (
+                source_ticket_query
+                .with_for_update()
+            )
+
+        source_ticket = (
+            source_ticket_query.one_or_none()
+        )
+
+        if source_ticket is None:
+            flash(
+                "Das Ticket wurde nicht gefunden.",
+                "danger",
+            )
+            return redirect(
+                url_for("admin.tickets")
+            )
+
+        if (
+            source_ticket.state
+            == TicketMirrorState.CONVERTED.value
+        ):
+            flash(
+                "Aus diesem Ticket wurde bereits "
+                "ein Auftrag erstellt.",
+                "warning",
+            )
+            return redirect(
+                url_for("admin.tickets")
+            )
+
+        if request.method == "GET":
+            form_values = {
+                "title": (
+                    source_ticket.ai_title
+                    or source_ticket.subject
+                    or ""
+                ),
+                "damage_location": (
+                    source_ticket.ai_damage_location
+                    or ""
+                ),
+                "priority": (
+                    "high"
+                    if source_ticket.priority_erp_id == 3
+                    else "normal"
+                ),
+            }
+            position_rows = [
+                {
+                    "commission_text": (
+                        source_ticket.ai_commission_text
+                        or source_ticket.content_excerpt
+                        or source_ticket.subject
+                        or ""
+                    ),
+                    "units": "1",
+                }
+            ]
+
+            if (
+                source_ticket.ai_craft_activity_id
+                is not None
+            ):
+                service_positions.sort(
+                    key=lambda item: (
+                        item.craft_activity_id
+                        != source_ticket
+                        .ai_craft_activity_id,
+                        item.title.casefold(),
+                    )
+                )
+
     if request.method == "POST":
         form_data = read_commission_form()
         position_rows = (
@@ -2238,6 +2559,23 @@ def commission_create() -> Any:
             )
 
             db.session.flush()
+
+            if source_ticket is not None:
+                source_ticket.state = (
+                    TicketMirrorState.CONVERTED.value
+                )
+                source_ticket.commission_id = (
+                    commission.id
+                )
+
+                db.session.add(
+                    CommissionTicketLink(
+                        commission_id=commission.id,
+                        ticket_erp_id=(
+                            source_ticket.erp_id
+                        ),
+                    )
+                )
 
             photo_upload = request.files.get(
                 "photo"
@@ -2305,8 +2643,9 @@ def commission_create() -> Any:
         service_positions=service_positions,
         commission_types=commission_types,
         position_rows=position_rows,
-        form_values=request.form,
+        form_values=form_values,
         selected_object=selected_object,
+        source_ticket=source_ticket,
     )
 
 
