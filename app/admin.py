@@ -36,7 +36,7 @@ from .auth import (
 from .entra import import_entra_users
 from .extensions import db
 from .logging_service import configure_logging
-from .settings import all_definitions, grouped_definitions, settings
+from .settings import all_definitions, grouped_definitions, settings, SettingKeys
 from .catalog import sync_catalogs_from_wowiport
 from .object_directory import (
     commission_creation_tasks,
@@ -2250,6 +2250,21 @@ def ticket_analyze(
         TicketMirror,
         ticket_id,
     )
+
+    if (
+        ticket.ai_state
+        == TicketAiState.READY.value
+        and ticket.ai_input_hash
+        == ticket.source_signature
+    ):
+        flash(
+            "Für den aktuellen Ticketstand ist bereits "
+            "ein KI-Vorschlag vorhanden.",
+            "info",
+        )
+        return redirect(
+            url_for("admin.tickets")
+        )
 
     if ticket.deleted_at is not None:
         abort(404)
