@@ -878,43 +878,42 @@ def ticket_settings() -> Any:
             for service_position in service_positions
         }
         selected_positions = {}
-
-        raw_commission_type_id = (
-            request.form.get(
-                "default_commission_type_id",
-                "",
-            ).strip()
-        )
-
-        if raw_commission_type_id:
-            default_commission_type_id = int(
-                raw_commission_type_id
-            )
-        else:
-            default_commission_type_id = 0
-
-        available_type_ids = {
-            item.erp_id
-            for item in commission_types
-        }
-
-        if (
-                default_commission_type_id
-                and default_commission_type_id
-                not in available_type_ids
-        ):
-            raise ValueError(
-                "Die ausgewählte Standard-"
-                "Auftragsart ist nicht verfügbar."
-            )
-
-        settings.set(
-            SettingKeys
-            .WOWI_DEFAULT_COMMISSION_TYPE_ID,
-            default_commission_type_id,
-        )
-
         try:
+            raw_commission_type_id = (
+                request.form.get(
+                    "default_commission_type_id",
+                    "",
+                ).strip()
+            )
+
+            if raw_commission_type_id:
+                default_commission_type_id = int(
+                    raw_commission_type_id
+                )
+            else:
+                default_commission_type_id = 0
+
+            available_type_ids = {
+                item.erp_id
+                for item in commission_types
+            }
+
+            if (
+                    default_commission_type_id
+                    and default_commission_type_id
+                    not in available_type_ids
+            ):
+                raise ValueError(
+                    "Die ausgewählte Standard-"
+                    "Auftragsart ist nicht verfügbar."
+                )
+
+            settings.set(
+                SettingKeys
+                .WOWI_DEFAULT_COMMISSION_TYPE_ID,
+                default_commission_type_id,
+            )
+
             for craft_activity in craft_activities:
                 raw_position_id = request.form.get(
                     (
@@ -2796,6 +2795,23 @@ def commission_create() -> Any:
             )
 
         if request.method == "GET":
+            selected_commission_type_id = (
+                preferred_commission_type_id(
+                    selected_service_position,
+                    available_commission_type_ids,
+                    default_commission_type_id,
+                )
+            )
+
+            if (
+                    selected_commission_type_id
+                    is not None
+            ):
+                form_values[
+                    "commission_type_id"
+                ] = (
+                    selected_commission_type_id
+                )
             form_values = {
                 "title": (
                     source_ticket.ai_title
@@ -2846,97 +2862,76 @@ def commission_create() -> Any:
                         "warning",
                     )
 
+
             if (
-                source_ticket.ai_craft_activity_id
-                is not None
+                    source_ticket.ai_craft_activity_id
+                    is not None
             ):
-                if (
-                        source_ticket.ai_craft_activity_id
-                        is not None
-                ):
-                    service_positions.sort(
-                        key=lambda item: (
-                            item.craft_activity_id
-                            != source_ticket
-                            .ai_craft_activity_id,
-                            item.title.casefold(),
-                        )
+                service_positions.sort(
+                    key=lambda item: (
+                        item.craft_activity_id
+                        != source_ticket
+                        .ai_craft_activity_id,
+                        item.title.casefold(),
                     )
+                )
 
-                    available_position_ids = {
-                        item.id
-                        for item in service_positions
-                    }
+                available_position_ids = {
+                    item.id
+                    for item in service_positions
+                }
 
-                    ai_service_position = (
-                        source_ticket.ai_task_template
+                ai_service_position = (
+                    source_ticket.ai_task_template
+                )
+
+                if (
+                        ai_service_position is not None
+                        and ai_service_position.id
+                        in available_position_ids
+                        and ai_service_position
+                        .craft_activity_id
+                        == source_ticket
+                        .ai_craft_activity_id
+                ):
+                    selected_service_position = (
+                        ai_service_position
+                    )
+                    position_selection_source = "KI"
+                else:
+                    fallback = (
+                        TicketCraftFallback.query
+                        .filter_by(
+                            craft_activity_id=(
+                                source_ticket
+                                .ai_craft_activity_id
+                            )
+                        )
+                        .one_or_none()
                     )
 
                     if (
-                            ai_service_position is not None
-                            and ai_service_position.id
+                            fallback is not None
+                            and fallback.task_template_id
                             in available_position_ids
-                            and ai_service_position
-                            .craft_activity_id
-                            == source_ticket
-                            .ai_craft_activity_id
                     ):
                         selected_service_position = (
-                            ai_service_position
+                            fallback.task_template
                         )
-                        position_selection_source = "KI"
-                    else:
-                        fallback = (
-                            TicketCraftFallback.query
-                            .filter_by(
-                                craft_activity_id=(
-                                    source_ticket
-                                    .ai_craft_activity_id
-                                )
-                            )
-                            .one_or_none()
+                        position_selection_source = (
+                            "Fallback"
                         )
 
-                        if (
-                                fallback is not None
-                                and fallback.task_template_id
-                                in available_position_ids
-                        ):
-                            selected_service_position = (
-                                fallback.task_template
-                            )
-                            position_selection_source = (
-                                "Fallback"
-                            )
-
-                    if (
-                            selected_service_position
-                            is not None
-                    ):
-                        position_rows[0][
-                            "service_catalog_id"
-                        ] = (
-                            selected_service_position
-                            .erp_service_catalogue_id
-                        )
-
-        selected_commission_type_id = (
-            preferred_commission_type_id(
-                selected_service_position,
-                available_commission_type_ids,
-                default_commission_type_id,
-            )
-        )
-
-        if (
-                selected_commission_type_id
-                is not None
-        ):
-            form_values[
-                "commission_type_id"
-            ] = (
-                selected_commission_type_id
-            )
+                if (
+                        selected_service_position
+                        is not None
+                ):
+                    position_rows[0][
+                        "service_catalog_id"
+                    ] = (
+                        selected_service_position
+                        .erp_service_catalogue_id
+                    )
 
     if request.method == "POST":
         form_data = read_commission_form()
@@ -3070,6 +3065,9 @@ def commission_create() -> Any:
         ),
         position_selection_source=(
             position_selection_source
+        ),
+        default_commission_type_id=(
+            default_commission_type_id
         ),
     )
 

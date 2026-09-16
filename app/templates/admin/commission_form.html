@@ -818,6 +818,7 @@
 
         updateRemoveButtons();
         updateCraftOptions();
+        updateCommissionTypeOptions();
       }
     );
   }
@@ -837,6 +838,7 @@
       positions.appendChild(fragment);
       updateRemoveButtons();
       updateCraftOptions();
+      updateCommissionTypeOptions();
     }
   );
 
@@ -858,8 +860,8 @@
         updateCraftOptions(
           event.target
         );
+        updateCommissionTypeOptions();
       }
-    }
   );
 
   searchObject.addEventListener(
@@ -992,5 +994,6 @@ function updateCommissionTypeOptions() {
 
   commissionType.value = "";
 }
+updateCommissionTypeOptions();
 </script>
 {% endblock %}

@@ -335,6 +335,23 @@ def create_pending_commission(
                 ),
             )
         )
+    for service_position in service_positions:
+        mapped_type_ids = integer_set(
+            service_position
+            .commission_type_erp_ids
+            or []
+        )
+
+        if (
+            mapped_type_ids
+            and commission_type_id
+            not in mapped_type_ids
+        ):
+            raise ValueError(
+                "Die ausgewählte Auftragsart "
+                "ist für mindestens eine "
+                "Leistungsposition nicht zulässig."
+            )
 
     assignment = resolve_commission_assignment(
         service_positions,
