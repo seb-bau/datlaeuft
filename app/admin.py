@@ -6062,7 +6062,8 @@ def time_templates() -> Any:
         query = query.filter(TimeTaskTemplate.source == source_filter)
 
     items = query.order_by(
-        CraftActivity.name.asc().nulls_last(),
+        TimeTaskTemplate.craft_activity_id.is_(None).asc(),
+        CraftActivity.name.asc(),
         TimeTaskTemplate.title.asc(),
         TimeTaskTemplate.code.asc(),
     ).all()
