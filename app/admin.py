@@ -2795,23 +2795,6 @@ def commission_create() -> Any:
             )
 
         if request.method == "GET":
-            selected_commission_type_id = (
-                preferred_commission_type_id(
-                    selected_service_position,
-                    available_commission_type_ids,
-                    default_commission_type_id,
-                )
-            )
-
-            if (
-                    selected_commission_type_id
-                    is not None
-            ):
-                form_values[
-                    "commission_type_id"
-                ] = (
-                    selected_commission_type_id
-                )
             form_values = {
                 "title": (
                     source_ticket.ai_title
@@ -2932,6 +2915,23 @@ def commission_create() -> Any:
                         selected_service_position
                         .erp_service_catalogue_id
                     )
+            selected_commission_type_id = (
+                preferred_commission_type_id(
+                    selected_service_position,
+                    available_commission_type_ids,
+                    default_commission_type_id,
+                )
+            )
+
+            if (
+                    selected_commission_type_id
+                    is not None
+            ):
+                form_values[
+                    "commission_type_id"
+                ] = (
+                    selected_commission_type_id
+                )
 
     if request.method == "POST":
         form_data = read_commission_form()
