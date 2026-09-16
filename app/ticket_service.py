@@ -143,9 +143,43 @@ def analyze_ticket_mirror(
         for item in crafts
     ]
 
+    craft_ids = {
+        item.id
+        for item in crafts
+    }
+
+    service_positions = (
+        commission_creation_tasks()
+        .filter(
+            TimeTaskTemplate.craft_activity_id.in_(
+                craft_ids
+            )
+        )
+        .order_by(
+            TimeTaskTemplate.craft_activity_id.asc(),
+            TimeTaskTemplate.title.asc(),
+            TimeTaskTemplate.code.asc(),
+        )
+        .all()
+    )
+
+    service_position_options = [
+        {
+            "id": item.id,
+            "craft_activity_id": (
+                item.craft_activity_id
+            ),
+            "code": item.code,
+            "title": item.title,
+            "erp_idnum": item.erp_idnum,
+        }
+        for item in service_positions
+    ]
+
     result, model = analyze_ticket_content(
         analysis_ticket_data(row),
         craft_options,
+        service_position_options,
         actor_user_id,
     )
 
@@ -159,6 +193,27 @@ def analyze_ticket_mirror(
 
     if craft_activity_id not in craft_ids:
         craft_activity_id = None
+
+    service_positions_by_id = {
+        item.id: item
+        for item in service_positions
+    }
+    service_position_id = as_int(
+        result.get("service_position_id")
+    )
+    selected_service_position = (
+        service_positions_by_id.get(
+            service_position_id
+        )
+    )
+
+    if (
+        selected_service_position is None
+        or selected_service_position
+        .craft_activity_id
+        != craft_activity_id
+    ):
+        service_position_id = None
 
     missing_information = result.get(
         "missing_information"
@@ -198,6 +253,11 @@ def analyze_ticket_mirror(
         )
         if text
     ]
+
+    ticket.ai_task_template_id = (
+        service_position_id
+    )
+
     ticket.ai_model = model
     ticket.ai_input_hash = ticket.source_signature
     ticket.ai_generated_at = utc_now()

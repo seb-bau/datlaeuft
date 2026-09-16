@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}KI-Auftragsvorgaben{% endblock %}
+{% block content %}
+<div
+  class="d-flex justify-content-between align-items-center mb-4"
+>
+  <div>
+    <h1 class="h3 mb-1">
+      KI-Auftragsvorgaben
+    </h1>
+    <div class="text-muted">
+      Fallback-Leistungspositionen für nicht
+      eindeutige KI-Vorschläge
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  Die KI versucht zunächst, eine passende
+  Leistungsposition auszuwählen. Liefert sie keine
+  eindeutige Auswahl, wird die hier hinterlegte
+  Fallback-Position des Gewerks verwendet.
+</div>
+
+<form method="post" class="card shadow-sm">
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
+
+  <div class="card-body">
+    <table
+      class="table table-striped datatable align-middle"
+    >
+      <thead>
+        <tr>
+          <th>Gewerk</th>
+          <th>Code</th>
+          <th
+            data-filter="false"
+            data-dt-order="disable"
+          >
+            Fallback-Leistungsposition
+          </th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for craft_activity in craft_activities %}
+        {% set mapping = mappings.get(
+          craft_activity.id
+        ) %}
+        <tr>
+          <td>
+            {{ craft_activity.name }}
+          </td>
+          <td>
+            {{ craft_activity.code or "" }}
+          </td>
+          <td>
+            <select
+              class="form-select form-select-sm"
+              name="fallback_position_{{ craft_activity.id }}"
+            >
+              <option value="">
+                Keine Fallback-Position
+              </option>
+
+              {% for service_position in positions_by_craft.get(
+                craft_activity.id,
+                []
+              ) %}
+              <option
+                value="{{ service_position.id }}"
+                {% if mapping and mapping.task_template_id == service_position.id %}selected{% endif %}
+              >
+                {{ service_position.code }}
+                ·
+                {{ service_position.title }}
+                {% if service_position.erp_idnum %}
+                · {{ service_position.erp_idnum }}
+                {% endif %}
+              </option>
+              {% endfor %}
+            </select>
+
+            {% if not positions_by_craft.get(
+              craft_activity.id
+            ) %}
+            <div class="form-text text-danger">
+              Keine für Aufträge verfügbare
+              Leistungsposition vorhanden.
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card-footer text-end">
+    <button
+      class="btn btn-primary"
+      type="submit"
+    >
+      KI-Auftragsvorgaben speichern
+    </button>
+  </div>
+</form>
+{% endblock %}

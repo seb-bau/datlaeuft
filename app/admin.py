@@ -109,6 +109,7 @@ from .models import (
     TicketAiState,
     TicketMirror,
     TicketMirrorState,
+    TicketCraftFallback,
 )
 from .ticket_service import (
     analyze_ticket_mirror,
@@ -790,6 +791,172 @@ def offer_settings() -> Any:
         positions_by_craft=(
             positions_by_craft
         ),
+        mappings=mappings,
+    )
+
+
+@admin_bp.route(
+    "/admin/ticket-settings",
+    methods=["GET", "POST"],
+)
+@admin_required
+def ticket_settings() -> Any:
+    craft_activities = (
+        CraftActivity.query
+        .filter(
+            CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
+        )
+        .order_by(
+            CraftActivity.name.asc(),
+            CraftActivity.id.asc(),
+        )
+        .all()
+    )
+
+    service_positions = (
+        commission_creation_tasks()
+        .order_by(
+            TimeTaskTemplate.title.asc(),
+            TimeTaskTemplate.code.asc(),
+        )
+        .all()
+    )
+
+    positions_by_craft = {
+        craft_activity.id: []
+        for craft_activity in craft_activities
+    }
+
+    for service_position in service_positions:
+        craft_positions = positions_by_craft.get(
+            service_position.craft_activity_id
+        )
+
+        if craft_positions is not None:
+            craft_positions.append(
+                service_position
+            )
+
+    mappings = {
+        mapping.craft_activity_id: mapping
+        for mapping in (
+            TicketCraftFallback.query.all()
+        )
+    }
+
+    if request.method == "POST":
+        positions_by_id = {
+            service_position.id: service_position
+            for service_position in service_positions
+        }
+        selected_positions = {}
+
+        try:
+            for craft_activity in craft_activities:
+                raw_position_id = request.form.get(
+                    (
+                        "fallback_position_"
+                        f"{craft_activity.id}"
+                    ),
+                    "",
+                ).strip()
+
+                if not raw_position_id:
+                    continue
+
+                try:
+                    position_id = int(
+                        raw_position_id
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        "Eine ausgewählte "
+                        "Leistungsposition ist "
+                        "ungültig."
+                    ) from exc
+
+                service_position = (
+                    positions_by_id.get(position_id)
+                )
+
+                if (
+                    service_position is None
+                    or service_position
+                    .craft_activity_id
+                    != craft_activity.id
+                ):
+                    raise ValueError(
+                        "Die Leistungsposition für "
+                        f"{craft_activity.name} "
+                        "gehört nicht zum Gewerk."
+                    )
+
+                selected_positions[
+                    craft_activity.id
+                ] = service_position
+
+            for craft_activity in craft_activities:
+                mapping = mappings.get(
+                    craft_activity.id
+                )
+                service_position = (
+                    selected_positions.get(
+                        craft_activity.id
+                    )
+                )
+
+                if service_position is None:
+                    if mapping is not None:
+                        db.session.delete(mapping)
+
+                    continue
+
+                if mapping is None:
+                    mapping = TicketCraftFallback(
+                        craft_activity=craft_activity
+                    )
+                    db.session.add(mapping)
+
+                mapping.task_template = (
+                    service_position
+                )
+                mapping.updated_by = current_user
+                mapping.updated_at = utc_now()
+
+            audit(
+                "ticket.settings.update",
+                metadata={
+                    "fallback_count": len(
+                        selected_positions
+                    ),
+                },
+            )
+            db.session.commit()
+
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+
+            return redirect(
+                url_for(
+                    "admin.ticket_settings"
+                )
+            )
+
+        flash(
+            "KI-Auftragsvorgaben gespeichert.",
+            "success",
+        )
+
+        return redirect(
+            url_for("admin.ticket_settings")
+        )
+
+    return render_template(
+        "admin/ticket_settings.html",
+        craft_activities=craft_activities,
+        positions_by_craft=positions_by_craft,
         mappings=mappings,
     )
 
@@ -2292,7 +2459,11 @@ def ticket_analyze(
                 "craft_activity_id": (
                     ticket.ai_craft_activity_id
                 ),
+                "task_template_id": (
+                    ticket.ai_task_template_id
+                ),
             },
+
         )
         db.session.commit()
         flash(
@@ -2448,6 +2619,9 @@ def commission_create() -> Any:
     position_rows = [{}]
     selected_object = None
 
+    selected_service_position = None
+    position_selection_source = None
+
     source_ticket = None
     form_values = request.form
     source_ticket_id = (
@@ -2559,14 +2733,75 @@ def commission_create() -> Any:
                 source_ticket.ai_craft_activity_id
                 is not None
             ):
-                service_positions.sort(
-                    key=lambda item: (
-                        item.craft_activity_id
-                        != source_ticket
-                        .ai_craft_activity_id,
-                        item.title.casefold(),
+                if (
+                        source_ticket.ai_craft_activity_id
+                        is not None
+                ):
+                    service_positions.sort(
+                        key=lambda item: (
+                            item.craft_activity_id
+                            != source_ticket
+                            .ai_craft_activity_id,
+                            item.title.casefold(),
+                        )
                     )
-                )
+
+                    available_position_ids = {
+                        item.id
+                        for item in service_positions
+                    }
+
+                    ai_service_position = (
+                        source_ticket.ai_task_template
+                    )
+
+                    if (
+                            ai_service_position is not None
+                            and ai_service_position.id
+                            in available_position_ids
+                            and ai_service_position
+                            .craft_activity_id
+                            == source_ticket
+                            .ai_craft_activity_id
+                    ):
+                        selected_service_position = (
+                            ai_service_position
+                        )
+                        position_selection_source = "KI"
+                    else:
+                        fallback = (
+                            TicketCraftFallback.query
+                            .filter_by(
+                                craft_activity_id=(
+                                    source_ticket
+                                    .ai_craft_activity_id
+                                )
+                            )
+                            .one_or_none()
+                        )
+
+                        if (
+                                fallback is not None
+                                and fallback.task_template_id
+                                in available_position_ids
+                        ):
+                            selected_service_position = (
+                                fallback.task_template
+                            )
+                            position_selection_source = (
+                                "Fallback"
+                            )
+
+                    if (
+                            selected_service_position
+                            is not None
+                    ):
+                        position_rows[0][
+                            "service_catalog_id"
+                        ] = (
+                            selected_service_position
+                            .erp_service_catalogue_id
+                        )
 
     if request.method == "POST":
         form_data = read_commission_form()
@@ -2695,6 +2930,12 @@ def commission_create() -> Any:
         form_values=form_values,
         selected_object=selected_object,
         source_ticket=source_ticket,
+        selected_service_position=(
+            selected_service_position
+        ),
+        position_selection_source=(
+            position_selection_source
+        ),
     )
 
 

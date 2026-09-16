@@ -907,6 +907,15 @@ class TicketMirror(db.Model):
         db.ForeignKey("craft_activity.id", ondelete="SET NULL"),
         index=True,
     )
+    ai_task_template_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey(
+                "time_task_template.id",
+                ondelete="SET NULL",
+            ),
+            index=True,
+        )
+    )
     ai_title: Mapped[str | None] = mapped_column(
         db.String(255)
     )
@@ -975,6 +984,12 @@ class TicketMirror(db.Model):
             "ambiguous": "Mehrdeutig",
             "no_match": "Nicht zuordenbar",
         }.get(self.ai_classification or "", "")
+
+    ai_task_template: Mapped[
+        TimeTaskTemplate | None
+    ] = relationship(
+        foreign_keys=[ai_task_template_id]
+    )
 
 
 class ProcessInfoThread(db.Model):
@@ -3510,6 +3525,52 @@ class OfferPosition(db.Model):
 
 class OfferCraftFallback(db.Model):
     __tablename__ = "offer_craft_fallback"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    craft_activity_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey("craft_activity.id"),
+            unique=True,
+            nullable=False,
+            index=True,
+        )
+    )
+    task_template_id: Mapped[int] = (
+        mapped_column(
+            db.ForeignKey("time_task_template.id"),
+            unique=True,
+            nullable=False,
+            index=True,
+        )
+    )
+    updated_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+            index=True,
+        )
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    craft_activity: Mapped[CraftActivity] = (
+        relationship()
+    )
+    task_template: Mapped[TimeTaskTemplate] = (
+        relationship()
+    )
+    updated_by: Mapped[User | None] = (
+        relationship()
+    )
+
+
+class TicketCraftFallback(db.Model):
+    __tablename__ = "ticket_craft_fallback"
 
     id: Mapped[int] = mapped_column(
         primary_key=True
