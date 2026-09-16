@@ -29,6 +29,43 @@
     value="{{ csrf_token() }}"
   >
 
+  <div class="card-body border-bottom">
+  <div class="row">
+    <div class="col-lg-6">
+      <label
+        class="form-label"
+        for="defaultCommissionType"
+      >
+        Standard-Auftragsart
+      </label>
+
+      <select
+        class="form-select"
+        id="defaultCommissionType"
+        name="default_commission_type_id"
+      >
+        <option value="">
+          Kein Fallback
+        </option>
+
+        {% for commission_type in commission_types %}
+        <option
+          value="{{ commission_type.erp_id }}"
+          {% if default_commission_type_id == commission_type.erp_id %}selected{% endif %}
+        >
+          {{ commission_type.code }}
+        </option>
+        {% endfor %}
+      </select>
+
+      <div class="form-text">
+        Wird verwendet, wenn die Leistungsposition
+        keine eindeutige Auftragsart vorgibt.
+      </div>
+    </div>
+  </div>
+</div>
+
   <div class="card-body">
     <table
       class="table table-striped datatable align-middle"

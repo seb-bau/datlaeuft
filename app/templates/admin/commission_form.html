@@ -87,6 +87,7 @@
         </label>
         <select
           class="form-select"
+          id="commissionType"
           name="commission_type_id"
           required
         >
@@ -318,6 +319,7 @@
                 <option
                   value="{{ service_position.erp_service_catalogue_id }}"
                   data-craft-id="{{ service_position.craft_activity_id }}"
+                  data-commission-type-ids="{{ (service_position.commission_type_erp_ids or [])|tojson }}"
                   {% if position.get('service_catalog_id')|int == service_position.erp_service_catalogue_id %}selected{% endif %}
                 >
                   {{ service_position.code }}
@@ -459,6 +461,7 @@
           <option
             value="{{ service_position.erp_service_catalogue_id }}"
             data-craft-id="{{ service_position.craft_activity_id }}"
+            data-commission-type-ids="{{ (service_position.commission_type_erp_ids or [])|tojson }}"
           >
             {{ service_position.code }}
             ·
@@ -885,5 +888,109 @@
   if (initialObject) {
     selectObject(initialObject);
   }
+
+  const commissionType = document.getElementById(
+  "commissionType"
+);
+
+const defaultCommissionTypeId = String(
+  {{ default_commission_type_id|tojson }}
+);
+
+const availableCommissionTypeIds = new Set(
+  Array.from(commissionType.options)
+    .map((option) => option.value)
+    .filter(Boolean)
+);
+
+function updateCommissionTypeOptions() {
+  const selectedOptions = Array.from(
+    positions.querySelectorAll(
+      '[name="position_service_catalog_id"]'
+    )
+  )
+    .map((select) => select.selectedOptions[0])
+    .filter((option) => {
+      return option && option.value;
+    });
+
+  let compatibleTypeIds = new Set(
+    availableCommissionTypeIds
+  );
+
+  selectedOptions.forEach((option) => {
+    let mappedTypeIds = [];
+
+    try {
+      mappedTypeIds = JSON.parse(
+        option.dataset.commissionTypeIds
+        || "[]"
+      ).map(String);
+    } catch {
+      mappedTypeIds = [];
+    }
+
+    mappedTypeIds = mappedTypeIds.filter(
+      (typeId) => {
+        return availableCommissionTypeIds.has(
+          typeId
+        );
+      }
+    );
+
+    if (mappedTypeIds.length) {
+      const mappedTypeIdSet = new Set(
+        mappedTypeIds
+      );
+
+      compatibleTypeIds = new Set(
+        Array.from(compatibleTypeIds)
+          .filter((typeId) => {
+            return mappedTypeIdSet.has(typeId);
+          })
+      );
+    }
+  });
+
+  Array.from(commissionType.options)
+    .forEach((option) => {
+      option.disabled = Boolean(
+        option.value
+        && !compatibleTypeIds.has(
+          option.value
+        )
+      );
+    });
+
+  if (
+    commissionType.value
+    && compatibleTypeIds.has(
+      commissionType.value
+    )
+  ) {
+    return;
+  }
+
+  if (compatibleTypeIds.size === 1) {
+    commissionType.value = (
+      Array.from(compatibleTypeIds)[0]
+    );
+    return;
+  }
+
+  if (
+    defaultCommissionTypeId !== "0"
+    && compatibleTypeIds.has(
+      defaultCommissionTypeId
+    )
+  ) {
+    commissionType.value = (
+      defaultCommissionTypeId
+    );
+    return;
+  }
+
+  commissionType.value = "";
+}
 </script>
 {% endblock %}

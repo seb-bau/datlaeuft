@@ -86,6 +86,16 @@ class SettingKeys:
         "Wowiport",
     )
 
+    WOWI_DEFAULT_COMMISSION_TYPE_ID = (
+        SettingDefinition[int](
+            "wowi.default_commission_type_id",
+            SettingValueType.INT,
+            0,
+            "Standard-Auftragsart",
+            "Wowiport",
+        )
+    )
+
     WOWI_DOCUMENT_SYNC_INTERVAL_MINUTES = SettingDefinition[int](
         "wowi.document_sync_interval_minutes",
         SettingValueType.INT,

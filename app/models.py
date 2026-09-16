@@ -2328,6 +2328,9 @@ class TimeTaskTemplate(db.Model):
     craft_activity_id: Mapped[int | None] = mapped_column(db.ForeignKey("craft_activity.id"), index=True)
     erp_service_catalogue_id: Mapped[int | None] = mapped_column(db.Integer, unique=True, index=True)
     erp_idnum: Mapped[str | None] = mapped_column(db.String(120), index=True)
+    commission_type_erp_ids: Mapped[
+        list[int] | None
+    ] = mapped_column(db.JSON)
     source: Mapped[str] = mapped_column(db.String(40), default="manual", server_default="manual", nullable=False)
     active: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))

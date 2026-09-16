@@ -823,6 +823,33 @@ def ticket_settings() -> Any:
         .all()
     )
 
+    allowed_type_ids = (
+        configured_commission_type_ids()
+    )
+
+    commission_types = (
+        WowiCommissionType.query
+        .filter(
+            WowiCommissionType.active.is_(True),
+            WowiCommissionType.erp_id.in_(
+                allowed_type_ids
+            ),
+        )
+        .order_by(
+            WowiCommissionType.code.asc(),
+            WowiCommissionType.erp_id.asc(),
+        )
+        .all()
+    )
+
+    default_commission_type_id = int(
+        settings.get(
+            SettingKeys
+            .WOWI_DEFAULT_COMMISSION_TYPE_ID
+        )
+        or 0
+    )
+
     positions_by_craft = {
         craft_activity.id: []
         for craft_activity in craft_activities
@@ -851,6 +878,41 @@ def ticket_settings() -> Any:
             for service_position in service_positions
         }
         selected_positions = {}
+
+        raw_commission_type_id = (
+            request.form.get(
+                "default_commission_type_id",
+                "",
+            ).strip()
+        )
+
+        if raw_commission_type_id:
+            default_commission_type_id = int(
+                raw_commission_type_id
+            )
+        else:
+            default_commission_type_id = 0
+
+        available_type_ids = {
+            item.erp_id
+            for item in commission_types
+        }
+
+        if (
+                default_commission_type_id
+                and default_commission_type_id
+                not in available_type_ids
+        ):
+            raise ValueError(
+                "Die ausgewählte Standard-"
+                "Auftragsart ist nicht verfügbar."
+            )
+
+        settings.set(
+            SettingKeys
+            .WOWI_DEFAULT_COMMISSION_TYPE_ID,
+            default_commission_type_id,
+        )
 
         try:
             for craft_activity in craft_activities:
@@ -958,6 +1020,10 @@ def ticket_settings() -> Any:
         craft_activities=craft_activities,
         positions_by_craft=positions_by_craft,
         mappings=mappings,
+        commission_types=commission_types,
+        default_commission_type_id=(
+            default_commission_type_id
+        ),
     )
 
 
@@ -2565,6 +2631,45 @@ def ticket_restore(
     )
 
 
+def preferred_commission_type_id(
+    service_position: TimeTaskTemplate | None,
+    available_type_ids: set[int],
+    default_type_id: int,
+) -> int | None:
+    if service_position is None:
+        return (
+            default_type_id
+            if default_type_id
+            in available_type_ids
+            else None
+        )
+
+    mapped_type_ids = {
+        int(item)
+        for item in (
+            service_position
+            .commission_type_erp_ids
+            or []
+        )
+        if int(item) in available_type_ids
+    }
+
+    if len(mapped_type_ids) == 1:
+        return next(iter(mapped_type_ids))
+
+    if (
+        default_type_id in available_type_ids
+        and (
+            not mapped_type_ids
+            or default_type_id
+            in mapped_type_ids
+        )
+    ):
+        return default_type_id
+
+    return None
+
+
 @admin_bp.route(
     "/admin/commissions/new",
     methods=["GET", "POST"],
@@ -2615,6 +2720,18 @@ def commission_create() -> Any:
         )
     else:
         commission_types = []
+
+    available_commission_type_ids = {
+        item.erp_id
+        for item in commission_types
+    }
+    default_commission_type_id = int(
+        settings.get(
+            SettingKeys
+            .WOWI_DEFAULT_COMMISSION_TYPE_ID
+        )
+        or 0
+    )
 
     position_rows = [{}]
     selected_object = None
@@ -2802,6 +2919,24 @@ def commission_create() -> Any:
                             selected_service_position
                             .erp_service_catalogue_id
                         )
+
+        selected_commission_type_id = (
+            preferred_commission_type_id(
+                selected_service_position,
+                available_commission_type_ids,
+                default_commission_type_id,
+            )
+        )
+
+        if (
+                selected_commission_type_id
+                is not None
+        ):
+            form_values[
+                "commission_type_id"
+            ] = (
+                selected_commission_type_id
+            )
 
     if request.method == "POST":
         form_data = read_commission_form()

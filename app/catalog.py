@@ -160,6 +160,11 @@ def sync_service_positions_from_wowiport(service: WowiportService | None = None)
         service_position.code = code
         service_position.title = title
         service_position.erp_idnum = _extract_service_position_erp_idnum(entry)
+        service_position.commission_type_erp_ids = (
+            _extract_commission_type_erp_ids(
+                entry
+            )
+        )
         service_position.craft_activity = craft_activity
         service_position.source = "wowiport"
         service_position.active = not _entry_is_inactive(entry)
@@ -268,6 +273,31 @@ def _extract_suggested_minutes(entry: Any, current_value: int | None) -> int:
         return value
 
     return current_value or 0
+
+
+def _extract_commission_type_erp_ids(
+    entry: Any,
+) -> list[int]:
+    commission_types = (
+        _attr(entry, "commission_types")
+        or _attr(entry, "CommissionTypes")
+        or []
+    )
+    result = set()
+
+    for commission_type in commission_types:
+        erp_id = _as_int(
+            _first_text(
+                _attr(commission_type, "id_"),
+                _attr(commission_type, "id"),
+                _attr(commission_type, "Id"),
+            )
+        )
+
+        if erp_id is not None:
+            result.add(erp_id)
+
+    return sorted(result)
 
 
 def _entry_is_inactive(entry: Any) -> bool:
