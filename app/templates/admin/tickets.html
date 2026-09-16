@@ -40,9 +40,9 @@
 
 {% if not openai_configured %}
 <div class="alert alert-warning">
-  Die KI-Analyse ist noch nicht vollständig
-  konfiguriert. API-Key, Modell und Aktivierung
-  findest du unter Einstellungen.
+Die automatische Auftragserstellung ist noch
+nicht vollständig konfiguriert. Die benötigten
+Einstellungen findest du unter Einstellungen.
 </div>
 {% endif %}
 
@@ -126,25 +126,6 @@
             {% endif %}
           </div>
 
-          {% if ticket.ai_state != "not_requested" %}
-          <div class="border rounded p-3 mt-3 bg-light">
-            <div
-              class="d-flex flex-wrap align-items-center
-                     gap-2 mb-2"
-            >
-              <strong>KI-Vorschlag</strong>
-
-              <span class="badge text-bg-info">
-                {{ ticket.ai_state_label }}
-              </span>
-
-              {% if ticket.ai_classification_label %}
-              <span class="badge text-bg-secondary">
-                {{ ticket.ai_classification_label }}
-              </span>
-              {% endif %}
-            </div>
-
             {% if ticket.ai_craft_activity %}
             <div>
               Gewerk:
@@ -177,42 +158,29 @@
         </div>
 
         <div class="d-flex flex-column gap-2">
-          {% if
-            ticket.state != "converted"
-            and openai_configured
-          %}
-          <form
-            method="post"
-            action="{{ url_for(
-              'admin.ticket_analyze',
-              ticket_id=ticket.id
-            ) }}"
-          >
-            <input
-              type="hidden"
-              name="csrf_token"
-              value="{{ csrf_token() }}"
-            >
-            <button
-              class="btn btn-outline-primary w-100"
-              type="submit"
-            >
-              KI-Vorschlag erstellen
-            </button>
-          </form>
-          {% endif %}
+        {% if ticket.state != "converted" %}
+<form
+  method="post"
+  action="{{ url_for(
+    'admin.ticket_analyze',
+    ticket_id=ticket.id
+  ) }}"
+>
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token() }}"
+  >
 
-          {% if ticket.state != "converted" %}
-          <a
-            class="btn btn-primary"
-            href="{{ url_for(
-              'admin.commission_create',
-              ticket_id=ticket.id
-            ) }}"
-          >
-            Auftrag erstellen
-          </a>
-          {% endif %}
+  <button
+    class="btn btn-primary w-100"
+    type="submit"
+    {% if not openai_configured %}disabled{% endif %}
+  >
+    Auftrag erstellen
+  </button>
+</form>
+{% endif %}
 
           {% if ticket.state == "new" %}
           <form

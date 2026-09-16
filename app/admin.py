@@ -2492,11 +2492,6 @@ def ticket_analyze(
         and ticket.ai_input_hash
         == ticket.source_signature
     ):
-        flash(
-            "Für den aktuellen Ticketstand ist bereits "
-            "ein KI-Vorschlag vorhanden.",
-            "info",
-        )
         return redirect(
             url_for(
                 "admin.commission_create",
@@ -2531,10 +2526,6 @@ def ticket_analyze(
 
         )
         db.session.commit()
-        flash(
-            "Der KI-Vorschlag wurde erstellt.",
-            "success",
-        )
         return redirect(
             url_for(
                 "admin.commission_create",
