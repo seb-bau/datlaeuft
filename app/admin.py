@@ -41,6 +41,7 @@ from .catalog import sync_catalogs_from_wowiport
 from .object_directory import (
     commission_creation_tasks,
     get_commission_object_choice,
+    resolve_commission_assignment,
     resolve_commission_object,
     search_commission_objects,
     sync_object_directory,
@@ -2711,6 +2712,31 @@ def commission_create() -> Any:
     else:
         commission_types = []
 
+    craftsman_users = (
+        User.query
+        .filter(
+            User.is_active_flag.is_(True),
+            User.craftsman_erp_id.isnot(None),
+        )
+        .order_by(
+            User.display_name.asc(),
+            User.id.asc(),
+        )
+        .all()
+    )
+
+    company_codes = (
+        WowiCompanyCode.query
+        .filter(
+            WowiCompanyCode.active.is_(True)
+        )
+        .order_by(
+            WowiCompanyCode.code.asc(),
+            WowiCompanyCode.name.asc(),
+        )
+        .all()
+    )
+
     available_commission_type_ids = {
         item.erp_id
         for item in commission_types
@@ -3047,6 +3073,8 @@ def commission_create() -> Any:
         "admin/commission_form.html",
         service_positions=service_positions,
         commission_types=commission_types,
+        craftsman_users=craftsman_users,
+        company_codes=company_codes,
         position_rows=position_rows,
         form_values=form_values,
         selected_object=selected_object,
@@ -3060,6 +3088,128 @@ def commission_create() -> Any:
         default_commission_type_id=(
             default_commission_type_id
         ),
+    )
+
+
+@admin_bp.get(
+    "/admin/commissions/assignment-preview"
+)
+@foreman_required
+def commission_assignment_preview() -> Any:
+    object_type = request.args.get(
+        "object_type",
+        "",
+    ).strip()
+    object_id = request.args.get(
+        "object_id",
+        type=int,
+    )
+    service_catalog_ids = {
+        item
+        for item in request.args.getlist(
+            "service_catalog_id",
+            type=int,
+        )
+        if item is not None
+    }
+
+    if not object_type or object_id is None:
+        return jsonify(
+            {
+                "message": (
+                    "Für die automatische Zuweisung "
+                    "muss ein Objekt ausgewählt sein."
+                )
+            }
+        ), 400
+
+    if not service_catalog_ids:
+        return jsonify(
+            {
+                "message": (
+                    "Für die automatische Zuweisung "
+                    "muss eine Leistungsposition "
+                    "ausgewählt sein."
+                )
+            }
+        ), 400
+
+    try:
+        object_context = resolve_commission_object(
+            {
+                "object_type": object_type,
+                "object_id": object_id,
+            }
+        )
+
+        service_positions = (
+            TimeTaskTemplate.query
+            .filter(
+                TimeTaskTemplate.active.is_(True),
+                TimeTaskTemplate
+                .erp_service_catalogue_id
+                .in_(service_catalog_ids),
+            )
+            .all()
+        )
+
+        if (
+            len(service_positions)
+            != len(service_catalog_ids)
+        ):
+            raise ValueError(
+                "Mindestens eine Leistungsposition "
+                "ist nicht verfügbar."
+            )
+
+        assignment = resolve_commission_assignment(
+            service_positions,
+            object_context,
+        )
+
+        company_code = (
+            WowiCompanyCode.query
+            .filter(
+                WowiCompanyCode.erp_id
+                == object_context.economic_unit
+                .company_code_erp_id,
+                WowiCompanyCode.active.is_(True),
+            )
+            .one_or_none()
+        )
+
+        if company_code is None:
+            raise ValueError(
+                "Das automatisch ermittelte Buchwerk "
+                "ist nicht verfügbar."
+            )
+
+    except ValueError as exc:
+        return jsonify(
+            {
+                "message": str(exc),
+            }
+        ), 400
+
+    return jsonify(
+        {
+            "craftsman_user_id": assignment.user.id,
+            "craftsman_erp_id": (
+                assignment.user.craftsman_erp_id
+            ),
+            "craftsman_name": (
+                assignment.user.display_name
+            ),
+            "company_code_erp_id": (
+                company_code.erp_id
+            ),
+            "company_code_code": (
+                company_code.code
+            ),
+            "company_code_name": (
+                company_code.name
+            ),
+        }
     )
 
 
@@ -8193,10 +8343,16 @@ def read_commission_form() -> dict[str, Any]:
             "execution_to"
         ),
         "positions": positions,
-        "company_code_code": request.form.get(
-            "company_code_code"
+        "craftsman_user_id": request.form.get(
+            "craftsman_user_id"
         ),
-        "priority": request.form.get("priority", "normal"),
+        "company_code_erp_id": request.form.get(
+            "company_code_erp_id"
+        ),
+        "priority": request.form.get(
+            "priority",
+            "normal",
+        ),
     }
 
 

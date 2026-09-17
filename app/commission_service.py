@@ -14,6 +14,7 @@ from .models import (
     ErpOperationType,
     TimeTaskTemplate,
     User,
+    WowiCompanyCode,
     utc_now,
 )
 from .object_directory import (
@@ -118,15 +119,47 @@ def create_pending_commission(
             or None
         )
 
+    company_code_erp_id = (
+        object_context.economic_unit
+        .company_code_erp_id
+    )
+    company_code_code = (
+        object_context.economic_unit
+        .company_code_code
+    )
+
+    requested_company_code_erp_id = optional_int(
+        data.get("company_code_erp_id"),
+        "Buchwerk",
+    )
+
+    if requested_company_code_erp_id is not None:
+        selected_company_code = (
+            WowiCompanyCode.query
+            .filter(
+                WowiCompanyCode.erp_id
+                == requested_company_code_erp_id,
+                WowiCompanyCode.active.is_(True),
+            )
+            .one_or_none()
+        )
+
+        if selected_company_code is None:
+            raise ValueError(
+                "Das ausgewählte Buchwerk "
+                "ist nicht verfügbar."
+            )
+
+        company_code_erp_id = (
+            selected_company_code.erp_id
+        )
+        company_code_code = (
+            selected_company_code.code
+        )
+
     commission = Commission(
-        company_code_erp_id=(
-            object_context.economic_unit
-            .company_code_erp_id
-        ),
-        company_code_code=(
-            object_context.economic_unit
-            .company_code_code
-        ),
+        company_code_erp_id=company_code_erp_id,
+        company_code_code=company_code_code,
         economic_unit_erp_id=(
             object_context.economic_unit.erp_id
         ),
@@ -357,9 +390,35 @@ def create_pending_commission(
         service_positions,
         object_context,
     )
-    commission.user = assignment.user
+
+    assigned_user = assignment.user
+    requested_user_id = optional_int(
+        data.get("craftsman_user_id"),
+        "Handwerker",
+    )
+
+    if requested_user_id is not None:
+        selected_user = (
+            User.query
+            .filter(
+                User.id == requested_user_id,
+                User.is_active_flag.is_(True),
+                User.craftsman_erp_id.isnot(None),
+            )
+            .one_or_none()
+        )
+
+        if selected_user is None:
+            raise ValueError(
+                "Der ausgewählte Handwerker "
+                "ist nicht verfügbar."
+            )
+
+        assigned_user = selected_user
+
+    commission.user = assigned_user
     commission.craftsman_erp_id = (
-        assignment.user.craftsman_erp_id
+        assigned_user.craftsman_erp_id
     )
     commission.department_erp_id = (
         assignment.department.erp_id
