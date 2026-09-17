@@ -3092,6 +3092,7 @@ def commission_create() -> Any:
     return render_template(
         "admin/commission_form.html",
         service_positions=service_positions,
+        craft_activities=craft_activities,
         commission_types=commission_types,
         craftsman_users=craftsman_users,
         company_codes=company_codes,
@@ -3108,9 +3109,6 @@ def commission_create() -> Any:
         default_commission_type_id=(
             default_commission_type_id
         ),
-        service_positions=service_positions,
-        craft_activities=craft_activities,
-        commission_types=commission_types,
     )
 
 
