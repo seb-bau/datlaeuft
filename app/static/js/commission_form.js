@@ -766,12 +766,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     );
 
-    if (initialObject) {
-        selectObject(initialObject, false);
-    } else {
-        updateAssignmentPreview();
-    }
-
     const commissionType = document.getElementById(
         "commissionType"
     );
@@ -872,5 +866,18 @@ document.addEventListener("DOMContentLoaded", () => {
         commissionType.value = "";
     }
 
+        updateRemoveButtons();
+    filterServicePositions();
     updateCommissionTypeOptions();
+
+    submitCommission.disabled = (
+        !canCreate
+        || !objectId.value
+    );
+
+    if (initialObject) {
+        selectObject(initialObject, false);
+    } else {
+        updateAssignmentPreview();
+    }
 });
