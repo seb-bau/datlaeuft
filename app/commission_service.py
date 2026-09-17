@@ -30,6 +30,7 @@ def create_pending_commission(
     data: dict[str, Any],
     created_by_user: User,
     source: CommissionSource,
+    allow_assignment_override: bool = False,
 ) -> Commission:
     is_high_priority = parse_commission_priority(
         data.get("priority", "normal")
@@ -128,9 +129,13 @@ def create_pending_commission(
         .company_code_code
     )
 
-    requested_company_code_erp_id = optional_int(
-        data.get("company_code_erp_id"),
-        "Buchwerk",
+    requested_company_code_erp_id = (
+        optional_int(
+            data.get("company_code_erp_id"),
+            "Buchwerk",
+        )
+        if allow_assignment_override
+        else None
     )
 
     if requested_company_code_erp_id is not None:
@@ -392,9 +397,13 @@ def create_pending_commission(
     )
 
     assigned_user = assignment.user
-    requested_user_id = optional_int(
-        data.get("craftsman_user_id"),
-        "Handwerker",
+    requested_user_id = (
+        optional_int(
+            data.get("craftsman_user_id"),
+            "Handwerker",
+        )
+        if allow_assignment_override
+        else None
     )
 
     if requested_user_id is not None:

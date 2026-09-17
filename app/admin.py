@@ -2981,12 +2981,11 @@ def commission_create() -> Any:
             selected_object = None
 
         try:
-            commission = (
-                create_pending_commission(
-                    data=form_data,
-                    created_by_user=current_user,
-                    source=CommissionSource.WEB,
-                )
+            commission = create_pending_commission(
+                data=form_data,
+                created_by_user=current_user,
+                source=CommissionSource.WEB,
+                allow_assignment_override=True,
             )
 
             db.session.flush()
