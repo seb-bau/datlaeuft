@@ -340,6 +340,41 @@
         </div>
       </div>
 
+            <div class="col-lg-6">
+        <label
+          class="form-label"
+          for="craftActivity"
+        >
+          Gewerk
+        </label>
+        <select
+          class="form-select"
+          id="craftActivity"
+          name="craft_activity_id"
+          required
+        >
+          <option value="">
+            Bitte auswählen
+          </option>
+
+          {% for item in craft_activities %}
+          <option
+            value="{{ item.id }}"
+            {% if form_values.get('craft_activity_id')|int == item.id %}selected{% endif %}
+          >
+            {{ item.name }}
+            {% if item.code %}
+              · {{ item.code }}
+            {% endif %}
+          </option>
+          {% endfor %}
+        </select>
+        <div class="form-text">
+          Die Leistungspositionen werden passend
+          zum Gewerk gefiltert.
+        </div>
+      </div>
+
       <div id="positions" class="col-12">
         {% for position in position_rows %}
         <div class="position-row border rounded p-3 mb-3">
@@ -604,6 +639,9 @@
   const submitCommission = document.getElementById(
     "submitCommission"
   );
+  const craftActivity = document.getElementById(
+    "craftActivity"
+  );
   const craftsmanUser = document.getElementById(
   "craftsmanUser"
   );
@@ -676,17 +714,31 @@
     return row;
   }
 
-  function selectObject(item) {
+  function selectObject(
+    item,
+    resetAssignments = true
+  ) {
     objectType.value = item.object_type;
     objectId.value = item.object_id;
-    objectSummary.replaceChildren();
 
-    const heading = document.createElement(
-      "div"
+    applyAutomaticValue(
+      companyCode,
+      String(
+        item.company_code?.erp_id
+        || ""
+      ),
+      resetAssignments
     );
-    heading.className = "fw-semibold mb-2";
-    heading.textContent = item.label;
-    objectSummary.appendChild(heading);
+
+    if (resetAssignments) {
+      clearAutomaticValue(
+        craftsmanUser,
+        true
+      );
+    }
+
+    updateAssignmentControls();
+    objectSummary.replaceChildren();
 
     const rows = [
       detailRow(
@@ -760,7 +812,9 @@
       || !objectId.value
     );
 
-    updateAssignmentPreview();
+    updateAssignmentPreview({
+      forceCraftsman: resetAssignments
+    });
   }
 
   async function loadObjects() {
@@ -855,42 +909,34 @@
     }
   }
 
-  function updateCraftOptions(
-    preferredSelect = null
-  ) {
+    function filterServicePositions() {
+    const selectedCraftId = craftActivity.value;
     const selects = Array.from(
       positions.querySelectorAll(
         '[name="position_service_catalog_id"]'
       )
     );
-    const preferredOption = (
-      preferredSelect?.selectedOptions[0]
-    );
-    const selectedCraftId = (
-      preferredOption?.dataset.craftId
-      || selects
-        .map(
-          (select) => (
-            select.selectedOptions[0]
-              ?.dataset
-              .craftId
-          )
-        )
-        .find(Boolean)
-      || null
-    );
+
+    addPosition.disabled = !selectedCraftId;
 
     selects.forEach((select) => {
-      Array.from(
-        select.options
-      ).forEach((option) => {
-        option.disabled = Boolean(
-          selectedCraftId
-          && option.value
-          && option.dataset.craftId
-            !== selectedCraftId
-        );
-      });
+      Array.from(select.options)
+        .forEach((option) => {
+          if (!option.value) {
+            option.hidden = false;
+            option.disabled = false;
+            return;
+          }
+
+          const matchesCraft = Boolean(
+            selectedCraftId
+            && option.dataset.craftId
+              === selectedCraftId
+          );
+
+          option.hidden = !matchesCraft;
+          option.disabled = !matchesCraft;
+        });
 
       if (
         select.value
@@ -901,21 +947,14 @@
       ) {
         select.value = "";
       }
-    });
-  }
 
-    function selectedServiceCatalogIds() {
-    return Array.from(
-      new Set(
-        Array.from(
-          positions.querySelectorAll(
-            '[name="position_service_catalog_id"]'
-          )
-        )
-          .map((select) => select.value)
-          .filter(Boolean)
-      )
-    );
+      select.disabled = !selectedCraftId;
+      select.options[0].textContent = (
+        selectedCraftId
+          ? "Bitte auswählen"
+          : "Bitte zuerst Gewerk auswählen"
+      );
+    });
   }
 
   function setAssignmentStatus(
@@ -932,14 +971,16 @@
 
   function applyAutomaticValue(
     select,
-    value
+    value,
+    force = false
   ) {
     const previousAutomaticValue = (
       select.dataset.automaticValue
       || ""
     );
     const shouldReplace = (
-      !select.value
+      force
+      || !select.value
       || select.value
         === previousAutomaticValue
     );
@@ -951,15 +992,21 @@
     }
   }
 
-  function clearAutomaticValue(select) {
+  function clearAutomaticValue(
+    select,
+    force = false
+  ) {
     const automaticValue = (
       select.dataset.automaticValue
       || ""
     );
 
     if (
-      automaticValue
-      && select.value === automaticValue
+      force
+      || (
+        automaticValue
+        && select.value === automaticValue
+      )
     ) {
       select.value = "";
     }
@@ -967,44 +1014,99 @@
     delete select.dataset.automaticValue;
   }
 
-  async function updateAssignmentPreview() {
-    const serviceCatalogIds = (
-      selectedServiceCatalogIds()
+  function updateAssignmentControls() {
+    const hasObject = Boolean(
+      objectType.value
+      && objectId.value
     );
+    const hasCraft = Boolean(
+      craftActivity.value
+    );
+
+    companyCode.disabled = !hasObject;
+    resetCompanyCode.disabled = !hasObject;
+    craftsmanUser.disabled = !(
+      hasObject
+      && hasCraft
+    );
+    resetCraftsman.disabled = !(
+      hasObject
+      && hasCraft
+    );
+  }
+
+  async function updateAssignmentPreview({
+    forceCompanyCode = false,
+    forceCraftsman = false
+  } = {}) {
     const currentRequestId = (
       ++assignmentRequestId
     );
+    const selectedCraftId = (
+      craftActivity.value
+    );
+    const hasObject = Boolean(
+      objectType.value
+      && objectId.value
+    );
 
-    if (
-      !objectType.value
-      || !objectId.value
-      || !serviceCatalogIds.length
-    ) {
-      clearAutomaticValue(craftsmanUser);
-      clearAutomaticValue(companyCode);
+    if (forceCompanyCode) {
+      clearAutomaticValue(
+        companyCode,
+        true
+      );
+    }
+
+    if (forceCraftsman) {
+      clearAutomaticValue(
+        craftsmanUser,
+        true
+      );
+    }
+
+    if (!hasObject) {
+      clearAutomaticValue(
+        companyCode,
+        true
+      );
+      clearAutomaticValue(
+        craftsmanUser,
+        true
+      );
+      updateAssignmentControls();
       setAssignmentStatus(
-        "Wird nach Auswahl von Objekt und "
-        + "Leistungsposition ermittelt."
+        "Bitte ein Objekt wählen. "
+        + "Das Gewerk kann unabhängig davon "
+        + "ausgewählt werden."
       );
       return;
     }
+
+    if (!selectedCraftId) {
+      clearAutomaticValue(
+        craftsmanUser,
+        true
+      );
+    }
+
+    updateAssignmentControls();
 
     const parameters = new URLSearchParams({
       object_type: objectType.value,
       object_id: objectId.value
     });
 
-    serviceCatalogIds.forEach(
-      (serviceCatalogId) => {
-        parameters.append(
-          "service_catalog_id",
-          serviceCatalogId
-        );
-      }
-    );
+    if (selectedCraftId) {
+      parameters.set(
+        "craft_activity_id",
+        selectedCraftId
+      );
+    }
 
     setAssignmentStatus(
-      "Automatische Zuweisung wird ermittelt …"
+      selectedCraftId
+        ? "Automatische Zuweisung wird ermittelt …"
+        : "Buchwerk wird aus dem Objekt ermittelt …"
     );
 
     try {
@@ -1012,7 +1114,8 @@
         "{{ url_for(
           'admin.commission_assignment_preview'
         ) }}"
-        + `?${parameters.toString()}`
+        + "?"
+        + parameters.toString()
       );
       const response = await fetch(previewUrl);
       const payload = await response.json();
@@ -1022,6 +1125,16 @@
         !== assignmentRequestId
       ) {
         return;
+      }
+
+      if (payload.company_code_erp_id) {
+        applyAutomaticValue(
+          companyCode,
+          String(
+            payload.company_code_erp_id
+          ),
+          forceCompanyCode
+        );
       }
 
       if (!response.ok) {
@@ -1034,29 +1147,36 @@
         );
       }
 
-      const craftsmanValue = String(
-        payload.craftsman_user_id
-        || ""
-      );
-      const companyCodeValue = String(
-        payload.company_code_erp_id
-        || ""
-      );
+      if (selectedCraftId) {
+        applyAutomaticValue(
+          craftsmanUser,
+          String(
+            payload.craftsman_user_id
+            || ""
+          ),
+          forceCraftsman
+        );
+        setAssignmentStatus(
+          "Automatischer Vorschlag: "
+          + payload.craftsman_name
+          + " · Buchwerk "
+          + payload.company_code_code
+        );
+      } else {
+        clearAutomaticValue(
+          craftsmanUser,
+          true
+        );
+        setAssignmentStatus(
+          "Buchwerk "
+          + payload.company_code_code
+          + " wurde aus dem Objekt ermittelt. "
+          + "Für den Handwerker bitte "
+          + "ein Gewerk wählen."
+        );
+      }
 
-      applyAutomaticValue(
-        craftsmanUser,
-        craftsmanValue
-      );
-      applyAutomaticValue(
-        companyCode,
-        companyCodeValue
-      );
-
-      setAssignmentStatus(
-        `Automatischer Vorschlag: `
-        + `${payload.craftsman_name} · `
-        + `Buchwerk ${payload.company_code_code}`
-      );
+      updateAssignmentControls();
 
     } catch (error) {
       if (
@@ -1067,15 +1187,30 @@
       }
 
       clearAutomaticValue(craftsmanUser);
-      clearAutomaticValue(companyCode);
+      updateAssignmentControls();
+
+      const message = (
+        error instanceof Error
+        && error.name === "Error"
+        && error.message
+      )
+        ? error.message
+        : (
+          "Die automatische Zuweisung "
+          + "konnte nicht geladen werden."
+        );
+
       setAssignmentStatus(
-        error.message,
+        message,
         true
       );
     }
   }
 
-  function restoreAutomaticValue(select) {
+  function restoreAutomaticValue(
+    select,
+    requestOptions
+  ) {
     const automaticValue = (
       select.dataset.automaticValue
       || ""
@@ -1083,9 +1218,12 @@
 
     if (automaticValue) {
       select.value = automaticValue;
+      return;
     }
 
-    updateAssignmentPreview();
+    updateAssignmentPreview(
+      requestOptions
+    );
   }
 
   function updateRemoveButtons() {
@@ -1110,9 +1248,8 @@
           .remove();
 
         updateRemoveButtons();
-        updateCraftOptions();
+        filterServicePositions();
         updateCommissionTypeOptions();
-        updateAssignmentPreview();
       }
     );
   }
@@ -1131,9 +1268,7 @@
       bindRemoveButton(button);
       positions.appendChild(fragment);
       updateRemoveButtons();
-      updateCraftOptions();
       updateCommissionTypeOptions();
-      updateAssignmentPreview();
     }
   );
 
@@ -1145,19 +1280,50 @@
       bindRemoveButton(button);
     });
 
-    positions.addEventListener(
+  positions.addEventListener(
     "change",
     (event) => {
       if (
         event.target.name
         === "position_service_catalog_id"
       ) {
-        updateCraftOptions(
-          event.target
-        );
         updateCommissionTypeOptions();
-        updateAssignmentPreview();
       }
+    }
+  );
+
+    resetCraftsman.addEventListener(
+    "click",
+    () => {
+      restoreAutomaticValue(
+        craftsmanUser,
+        {
+          forceCraftsman: true
+        }
+      );
+    }
+  );
+
+  resetCompanyCode.addEventListener(
+    "click",
+    () => {
+      restoreAutomaticValue(
+        companyCode,
+        {
+          forceCompanyCode: true
+        }
+      );
+    }
+  );
+
+  craftActivity.addEventListener(
+    "change",
+    () => {
+      filterServicePositions();
+      updateCommissionTypeOptions();
+      updateAssignmentPreview({
+        forceCraftsman: true
+      });
     }
   );
 

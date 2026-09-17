@@ -2688,6 +2688,19 @@ def commission_create() -> Any:
         .all()
     )
 
+    craft_activity_by_id = {
+        item.craft_activity.id: item.craft_activity
+        for item in service_positions
+        if item.craft_activity is not None
+    }
+    craft_activities = sorted(
+        craft_activity_by_id.values(),
+        key=lambda item: (
+            item.name.casefold(),
+            item.id,
+        ),
+    )
+
     allowed_type_ids = (
         configured_commission_type_ids()
     )
@@ -2828,6 +2841,14 @@ def commission_create() -> Any:
                     else "normal"
                 ),
             }
+
+            if (
+                source_ticket.ai_craft_activity_id
+                in craft_activity_by_id
+            ):
+                form_values["craft_activity_id"] = (
+                    source_ticket.ai_craft_activity_id
+                )
             position_rows = [
                 {
                     "commission_text": (
@@ -3087,6 +3108,9 @@ def commission_create() -> Any:
         default_commission_type_id=(
             default_commission_type_id
         ),
+        service_positions=service_positions,
+        craft_activities=craft_activities,
+        commission_types=commission_types,
     )
 
 
@@ -3103,14 +3127,10 @@ def commission_assignment_preview() -> Any:
         "object_id",
         type=int,
     )
-    service_catalog_ids = {
-        item
-        for item in request.args.getlist(
-            "service_catalog_id",
-            type=int,
-        )
-        if item is not None
-    }
+    craft_activity_id = request.args.get(
+        "craft_activity_id",
+        type=int,
+    )
 
     if not object_type or object_id is None:
         return jsonify(
@@ -3122,17 +3142,6 @@ def commission_assignment_preview() -> Any:
             }
         ), 400
 
-    if not service_catalog_ids:
-        return jsonify(
-            {
-                "message": (
-                    "Für die automatische Zuweisung "
-                    "muss eine Leistungsposition "
-                    "ausgewählt sein."
-                )
-            }
-        ), 400
-
     try:
         object_context = resolve_commission_object(
             {
@@ -3140,32 +3149,6 @@ def commission_assignment_preview() -> Any:
                 "object_id": object_id,
             }
         )
-
-        service_positions = (
-            TimeTaskTemplate.query
-            .filter(
-                TimeTaskTemplate.active.is_(True),
-                TimeTaskTemplate
-                .erp_service_catalogue_id
-                .in_(service_catalog_ids),
-            )
-            .all()
-        )
-
-        if (
-            len(service_positions)
-            != len(service_catalog_ids)
-        ):
-            raise ValueError(
-                "Mindestens eine Leistungsposition "
-                "ist nicht verfügbar."
-            )
-
-        assignment = resolve_commission_assignment(
-            service_positions,
-            object_context,
-        )
-
         company_code = (
             WowiCompanyCode.query
             .filter(
@@ -3190,7 +3173,44 @@ def commission_assignment_preview() -> Any:
             }
         ), 400
 
-    return jsonify(
+    payload = {
+        "company_code_erp_id": company_code.erp_id,
+        "company_code_code": company_code.code,
+        "company_code_name": company_code.name,
+    }
+
+    if craft_activity_id is None:
+        return jsonify(payload)
+
+    try:
+        service_position = (
+            commission_creation_tasks()
+            .filter(
+                TimeTaskTemplate.craft_activity_id
+                == craft_activity_id
+            )
+            .order_by(
+                TimeTaskTemplate.id.asc()
+            )
+            .first()
+        )
+
+        if service_position is None:
+            raise ValueError(
+                "Das ausgewählte Gewerk ist "
+                "nicht verfügbar."
+            )
+
+        assignment = resolve_commission_assignment(
+            [service_position],
+            object_context,
+        )
+
+    except ValueError as exc:
+        payload["message"] = str(exc)
+        return jsonify(payload), 400
+
+    payload.update(
         {
             "craftsman_user_id": assignment.user.id,
             "craftsman_erp_id": (
@@ -3199,17 +3219,9 @@ def commission_assignment_preview() -> Any:
             "craftsman_name": (
                 assignment.user.display_name
             ),
-            "company_code_erp_id": (
-                company_code.erp_id
-            ),
-            "company_code_code": (
-                company_code.code
-            ),
-            "company_code_name": (
-                company_code.name
-            ),
         }
     )
+    return jsonify(payload)
 
 
 @admin_bp.get(
@@ -8310,6 +8322,9 @@ def read_commission_form() -> dict[str, Any]:
         ),
         "commission_type_id": request.form.get(
             "commission_type_id"
+        ),
+        "craft_activity_id": request.form.get(
+            "craft_activity_id"
         ),
         "crafts_process_id": request.form.get(
             "crafts_process_id"

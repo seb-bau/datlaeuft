@@ -55,6 +55,18 @@ def create_pending_commission(
         data
     )
     position_data = data.get("positions")
+    selected_craft_activity_id = optional_int(
+        data.get("craft_activity_id"),
+        "Gewerk",
+    )
+
+    if (
+        source == CommissionSource.WEB
+        and selected_craft_activity_id is None
+    ):
+        raise ValueError(
+            "Gewerk muss angegeben werden."
+        )
 
     if (
         not isinstance(position_data, list)
@@ -395,6 +407,19 @@ def create_pending_commission(
         service_positions,
         object_context,
     )
+    if (
+        selected_craft_activity_id is not None
+        and any(
+            service_position.craft_activity_id
+            != selected_craft_activity_id
+            for service_position in service_positions
+        )
+    ):
+        raise ValueError(
+            "Mindestens eine Leistungsposition "
+            "gehört nicht zum ausgewählten Gewerk."
+        )
+
 
     assigned_user = assignment.user
     requested_user_id = (
