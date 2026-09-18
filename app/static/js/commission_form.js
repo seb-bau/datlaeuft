@@ -41,6 +41,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const objectSearch = document.getElementById(
         "objectSearch"
     );
+    const objectSearchContext = document.getElementById(
+    "objectSearchContext"
+    );
     const objectResults = document.getElementById(
         "objectResults"
     );
@@ -212,7 +215,10 @@ document.addEventListener("DOMContentLoaded", () => {
         objectResults.appendChild(message);
     }
 
-    async function loadObjects(query) {
+    async function loadObjects(
+        query,
+        searchContext
+    ) {
         const currentRequestId = (
             ++objectSearchRequestId
         );
@@ -229,6 +235,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 window.location.origin
             );
             searchUrl.searchParams.set("q", query);
+            searchUrl.searchParams.set(
+                "context",
+                searchContext
+            );
 
             const response = await fetch(
                 searchUrl.toString()
@@ -674,32 +684,52 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     );
 
+    function scheduleObjectSearch(
+    delay = objectSearchDelayMilliseconds
+) {
+        window.clearTimeout(
+            objectSearchTimer
+        );
+
+        objectSearchRequestId += 1;
+        objectResults.replaceChildren();
+
+        const query = objectSearch.value.trim();
+
+        if (
+            query.length
+            < minimumObjectSearchLength
+        ) {
+            return;
+        }
+
+        const searchContext = (
+            objectSearchContext.value
+        );
+
+        objectSearchTimer = window.setTimeout(
+            () => {
+                objectSearchTimer = null;
+                loadObjects(
+                    query,
+                    searchContext
+                );
+            },
+            delay
+        );
+    }
+
     objectSearch.addEventListener(
         "input",
         () => {
-            window.clearTimeout(
-                objectSearchTimer
-            );
+            scheduleObjectSearch();
+        }
+    );
 
-            objectSearchRequestId += 1;
-            objectResults.replaceChildren();
-
-            const query = objectSearch.value.trim();
-
-            if (
-                query.length
-                < minimumObjectSearchLength
-            ) {
-                return;
-            }
-
-            objectSearchTimer = window.setTimeout(
-                () => {
-                    objectSearchTimer = null;
-                    loadObjects(query);
-                },
-                objectSearchDelayMilliseconds
-            );
+    objectSearchContext.addEventListener(
+        "change",
+        () => {
+            scheduleObjectSearch(0);
         }
     );
 
@@ -728,7 +758,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            loadObjects(query);
+            loadObjects(
+                query,
+                objectSearchContext.value
+            );
         }
     );
 

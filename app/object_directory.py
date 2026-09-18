@@ -1589,6 +1589,7 @@ def commission_creation_tasks():
 
 def search_commission_objects(
     search_text: str,
+    search_context: str = "tenant",
     limit: int = 30,
 ) -> list[dict[str, Any]]:
     normalized = " ".join(
@@ -1602,78 +1603,97 @@ def search_commission_objects(
     choices = []
     seen = set()
 
-    contractors = (
-        WowiContractor.query
-        .join(WowiLicenseAgreement)
-        .filter(
-            WowiContractor.active.is_(True),
-            WowiLicenseAgreement.active.is_(True),
-            or_(
+    if search_context in {
+        "tenant",
+        "all",
+    }:
+        contractors = (
+            WowiContractor.query
+            .join(WowiLicenseAgreement)
+            .filter(
+                WowiContractor.active.is_(True),
+                WowiLicenseAgreement.active.is_(True),
                 WowiContractor.display_name.ilike(
                     pattern
+                ),
+            )
+            .order_by(
+                WowiContractor.display_name.asc()
+            )
+            .limit(limit)
+            .all()
+        )
+
+        for contractor in contractors:
+            agreement = contractor.license_agreement
+
+            if agreement is None:
+                continue
+
+            key = (
+                "license_agreement",
+                agreement.id,
+            )
+            _append_choice(
+                choices,
+                seen,
+                key,
+            )
+
+    if search_context in {
+        "agreement",
+        "all",
+    }:
+        agreements = (
+            WowiLicenseAgreement.query
+            .filter(
+                WowiLicenseAgreement.active.is_(
+                    True
                 ),
                 WowiLicenseAgreement.id_num.ilike(
                     pattern
                 ),
-            ),
-        )
-        .order_by(
-            WowiContractor.display_name.asc()
-        )
-        .limit(limit)
-        .all()
-    )
-
-    for contractor in contractors:
-        agreement = contractor.license_agreement
-
-        if agreement is None:
-            continue
-
-        key = (
-            "license_agreement",
-            agreement.id,
-        )
-        _append_choice(
-            choices,
-            seen,
-            key,
+            )
+            .order_by(
+                WowiLicenseAgreement.id_num.asc()
+            )
+            .limit(limit)
+            .all()
         )
 
-    agreements = (
-        WowiLicenseAgreement.query
-        .filter(
-            WowiLicenseAgreement.active.is_(True),
-            WowiLicenseAgreement.id_num.ilike(
-                pattern
-            ),
-        )
-        .order_by(
-            WowiLicenseAgreement.id_num.asc()
-        )
-        .limit(limit)
-        .all()
-    )
+        for agreement in agreements:
+            key = (
+                "license_agreement",
+                agreement.id,
+            )
+            _append_choice(
+                choices,
+                seen,
+                key,
+            )
 
-    for agreement in agreements:
-        key = (
-            "license_agreement",
-            agreement.id,
-        )
-        _append_choice(
-            choices,
-            seen,
-            key,
-        )
-
-    use_units = (
-        WowiUseUnit.query
-        .filter(
-            WowiUseUnit.active.is_(True),
-            WowiUseUnit.building.has(
-                WowiBuilding.active.is_(True)
-            ),
-            or_(
+    if search_context in {
+        "use_unit",
+        "address",
+        "all",
+    }:
+        if search_context == "use_unit":
+            use_unit_match = or_(
+                WowiUseUnit.id_num.ilike(
+                    pattern
+                ),
+                WowiUseUnit
+                .description_of_position
+                .ilike(pattern),
+            )
+        elif search_context == "address":
+            use_unit_match = (
+                WowiUseUnit.address.ilike(
+                    pattern
+                )
+            )
+        else:
+            use_unit_match = or_(
                 WowiUseUnit.id_num.ilike(
                     pattern
                 ),
@@ -1683,79 +1703,92 @@ def search_commission_objects(
                 WowiUseUnit
                 .description_of_position
                 .ilike(pattern),
-            ),
-        )
-        .order_by(
-            WowiUseUnit.id_num.asc()
-        )
-        .limit(limit)
-        .all()
-    )
+            )
 
-    for use_unit in use_units:
-        agreements = [
-            agreement
-            for agreement
-            in use_unit.license_agreements
-            if agreement.active
-        ]
-        keys = (
-            [
-                (
-                    "license_agreement",
-                    agreement.id,
-                )
-                for agreement in agreements
-            ]
-            if agreements
-            else [
-                (
-                    "use_unit",
-                    use_unit.id,
-                )
-            ]
+        use_units = (
+            WowiUseUnit.query
+            .filter(
+                WowiUseUnit.active.is_(True),
+                WowiUseUnit.building.has(
+                    WowiBuilding.active.is_(True)
+                ),
+                use_unit_match,
+            )
+            .order_by(
+                WowiUseUnit.id_num.asc()
+            )
+            .limit(limit)
+            .all()
         )
 
-        for key in keys:
+        for use_unit in use_units:
+            agreements = [
+                agreement
+                for agreement
+                in use_unit.license_agreements
+                if agreement.active
+            ]
+            keys = (
+                [
+                    (
+                        "license_agreement",
+                        agreement.id,
+                    )
+                    for agreement in agreements
+                ]
+                if agreements
+                else [
+                    (
+                        "use_unit",
+                        use_unit.id,
+                    )
+                ]
+            )
+
+            for key in keys:
+                _append_choice(
+                    choices,
+                    seen,
+                    key,
+                )
+
+    if search_context in {
+        "address",
+        "all",
+    }:
+        buildings = (
+            WowiBuilding.query
+            .filter(
+                WowiBuilding.active.is_(True),
+                WowiBuilding.use_units.any(
+                    WowiUseUnit.active.is_(True)
+                ),
+                or_(
+                    WowiBuilding.id_num.ilike(
+                        pattern
+                    ),
+                    WowiBuilding.address.ilike(
+                        pattern
+                    ),
+                ),
+            )
+            .order_by(
+                WowiBuilding.id_num.asc()
+            )
+            .limit(limit)
+            .all()
+        )
+
+        for building in buildings:
+            key = (
+                "building",
+                building.id,
+            )
             _append_choice(
                 choices,
                 seen,
                 key,
             )
-
-    buildings = (
-        WowiBuilding.query
-        .filter(
-            WowiBuilding.active.is_(True),
-            WowiBuilding.use_units.any(
-                WowiUseUnit.active.is_(True)
-            ),
-            or_(
-                WowiBuilding.id_num.ilike(
-                    pattern
-                ),
-                WowiBuilding.address.ilike(
-                    pattern
-                ),
-            ),
-        )
-        .order_by(
-            WowiBuilding.id_num.asc()
-        )
-        .limit(limit)
-        .all()
-    )
-
-    for building in buildings:
-        key = (
-            "building",
-            building.id,
-        )
-        _append_choice(
-            choices,
-            seen,
-            key,
-        )
 
     return choices[:limit]
 
