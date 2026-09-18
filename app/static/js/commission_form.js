@@ -65,12 +65,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const companyCode = document.getElementById(
         "companyCode"
     );
-    const resetCraftsman = document.getElementById(
-        "resetCraftsman"
-    );
-    const resetCompanyCode = document.getElementById(
-        "resetCompanyCode"
-    );
     const assignmentStatus = document.getElementById(
         "assignmentStatus"
     );
@@ -128,6 +122,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
         updateAssignmentControls();
         objectSummary.replaceChildren();
+        objectSummary.classList.remove(
+            "d-flex",
+            "align-items-center",
+            "justify-content-center",
+            "text-center"
+        );
 
         const heading = document.createElement(
             "div"
@@ -204,7 +204,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const message = document.createElement(
             "div"
         );
-        message.className = className;
+        message.className = (
+            className
+            + " text-center"
+        );
         message.textContent = text;
         objectResults.appendChild(message);
     }
@@ -421,21 +424,15 @@ document.addEventListener("DOMContentLoaded", () => {
         );
 
         companyCode.disabled = !hasObject;
-        resetCompanyCode.disabled = !hasObject;
         craftsmanUser.disabled = !(
-            hasObject
-            && hasCraft
-        );
-        resetCraftsman.disabled = !(
             hasObject
             && hasCraft
         );
     }
 
     async function updateAssignmentPreview({
-                                               forceCompanyCode = false,
-                                               forceCraftsman = false
-                                           } = {}) {
+        forceCraftsman = false
+        } = {}) {
         const currentRequestId = (
             ++assignmentRequestId
         );
@@ -446,13 +443,6 @@ document.addEventListener("DOMContentLoaded", () => {
             objectType.value
             && objectId.value
         );
-
-        if (forceCompanyCode) {
-            clearAutomaticValue(
-                companyCode,
-                true
-            );
-        }
 
         if (forceCraftsman) {
             clearAutomaticValue(
@@ -600,35 +590,22 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function restoreAutomaticValue(
-        select,
-        requestOptions
-    ) {
-        const automaticValue = (
-            select.dataset.automaticValue
-            || ""
-        );
-
-        if (automaticValue) {
-            select.value = automaticValue;
-            return;
-        }
-
-        updateAssignmentPreview(
-            requestOptions
-        );
-    }
-
     function updateRemoveButtons() {
         const rows = positions.querySelectorAll(
             ".position-row"
         );
 
-        rows.forEach((row) => {
+        rows.forEach((row, rowIndex) => {
             const button = row.querySelector(
                 ".remove-position"
             );
-            button.disabled = rows.length === 1;
+            const isFirstPosition = rowIndex === 0;
+
+            button.classList.toggle(
+                "d-none",
+                isFirstPosition
+            );
+            button.disabled = isFirstPosition;
         });
     }
 
@@ -683,30 +660,6 @@ document.addEventListener("DOMContentLoaded", () => {
             ) {
                 updateCommissionTypeOptions();
             }
-        }
-    );
-
-    resetCraftsman.addEventListener(
-        "click",
-        () => {
-            restoreAutomaticValue(
-                craftsmanUser,
-                {
-                    forceCraftsman: true
-                }
-            );
-        }
-    );
-
-    resetCompanyCode.addEventListener(
-        "click",
-        () => {
-            restoreAutomaticValue(
-                companyCode,
-                {
-                    forceCompanyCode: true
-                }
-            );
         }
     );
 
