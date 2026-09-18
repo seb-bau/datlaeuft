@@ -90,71 +90,72 @@
       <div class="col-12">
         <h2 class="h6 mb-2">Objekt</h2>
 
-        <label
-          class="form-label small fw-semibold mb-1"
-          for="objectSearch"
-        >
-          Objekt suchen
-        </label>
-
-        <div class="input-group input-group-sm">
+      <div class="row g-2 align-items-stretch">
+        <div class="col-lg-8">
           <label
-            class="input-group-text"
-            for="objectSearchContext"
+            class="form-label small fw-semibold mb-1"
+            for="objectSearch"
           >
-            Suche in
+            Objekt suchen
           </label>
 
-          <select
-            id="objectSearchContext"
-            class="form-select flex-grow-0 w-auto"
-            aria-label="Suchkontext"
-          >
-            <option value="tenant" selected>
-              Mieter
-            </option>
-            <option value="address">
-              Adresse/Gebäude
-            </option>
-            <option value="agreement">
-              Mietvertrag
-            </option>
-            <option value="use_unit">
-              Nutzungseinheit
-            </option>
-            <option value="all">
-              Alle Bereiche
-            </option>
-          </select>
+          <div class="input-group input-group-sm">
+            <label
+              class="input-group-text"
+              for="objectSearchContext"
+            >
+              Suche in
+            </label>
 
-          <input
-            id="objectSearch"
-            class="form-control"
-            type="search"
-            autocomplete="off"
-            placeholder="Mindestens zwei Zeichen eingeben"
-          >
-        </div>
+            <select
+              id="objectSearchContext"
+              class="form-select flex-grow-0 w-auto"
+              aria-label="Suchkontext"
+            >
+              <option value="tenant" selected>
+                Mieter
+              </option>
+              <option value="address">
+                Adresse/Gebäude
+              </option>
+              <option value="agreement">
+                Mietvertrag
+              </option>
+              <option value="use_unit">
+                Nutzungseinheit
+              </option>
+              <option value="all">
+                Alle Bereiche
+              </option>
+            </select>
 
-        <div class="form-text">
-          Die Suche startet automatisch ab zwei Zeichen.
-        </div>
-
-            <div
-              id="objectResults"
-              class="list-group small mt-2"
-              aria-live="polite"
-            ></div>
+            <input
+              id="objectSearch"
+              class="form-control"
+              type="search"
+              autocomplete="off"
+              placeholder="Mindestens zwei Zeichen eingeben"
+            >
           </div>
 
-          <div class="col-lg-4">
-            <div
-              id="objectSummary"
-              class="border rounded bg-body-tertiary px-3 py-2 small h-100 d-flex align-items-center justify-content-center text-center"
-            >
-              <div class="text-muted">
-                Noch kein Objekt ausgewählt.
-              </div>
+          <div class="form-text">
+            Die Suche startet automatisch ab zwei Zeichen.
+          </div>
+
+          <div
+            id="objectResults"
+            class="list-group small mt-2"
+            aria-live="polite"
+          ></div>
+        </div>
+
+        <div class="col-lg-4">
+          <div
+            id="objectSummary"
+            class="border rounded bg-body-tertiary px-3 py-2 small h-100 d-flex align-items-center justify-content-center text-center"
+          >
+            <div class="text-muted">
+              Noch kein Objekt ausgewählt.
             </div>
           </div>
         </div>
