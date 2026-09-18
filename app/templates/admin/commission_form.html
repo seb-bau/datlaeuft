@@ -85,14 +85,75 @@
     value="{{ selected_object.get('object_id', '') if selected_object else '' }}"
   >
 
-  <div class="card-body">
+    <div class="card-body p-3">
     <div class="row g-3">
-      <div class="col-md-6">
-        <label class="form-label" for="commissionType">
+      <div class="col-12">
+        <h2 class="h6 mb-2">Objekt</h2>
+
+        <div class="row g-2 align-items-start">
+          <div class="col-lg-8">
+            <label
+              class="form-label small fw-semibold mb-1"
+              for="objectSearch"
+            >
+              Mieter, Vertrag, Nutzungseinheit oder Adresse
+            </label>
+
+            <div class="input-group input-group-sm">
+              <input
+                id="objectSearch"
+                class="form-control form-control-sm"
+                type="search"
+                autocomplete="off"
+                placeholder="Mindestens zwei Zeichen eingeben"
+              >
+              <button
+                id="searchObject"
+                class="btn btn-outline-primary"
+                type="button"
+              >
+                Suchen
+              </button>
+            </div>
+
+            <div class="form-text">
+              Die Suche startet automatisch ab zwei Zeichen.
+              Gebäude können direkt gewählt werden.
+            </div>
+
+            <div
+              id="objectResults"
+              class="list-group small mt-2"
+              aria-live="polite"
+            ></div>
+          </div>
+
+          <div class="col-lg-4">
+            <div
+              id="objectSummary"
+              class="border rounded bg-body-tertiary px-3 py-2 small"
+            >
+              <div class="text-muted">
+                Noch kein Objekt ausgewählt.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 border-top pt-3">
+        <h2 class="h6 mb-0">Auftragsdaten</h2>
+      </div>
+
+      <div class="col-md-4">
+        <label
+          class="form-label small fw-semibold mb-1"
+          for="commissionType"
+        >
           Auftragsart
         </label>
         <select
-          class="form-select"
+          class="form-select form-select-sm"
           id="commissionType"
           name="commission_type_id"
           required
@@ -111,110 +172,45 @@
           {% endfor %}
         </select>
       </div>
-            <div class="col-md-6">
-        <label class="form-label" for="commissionPriority">Priorität</label>
-        <select class="form-select" id="commissionPriority" name="priority" required>
-          <option value="normal" {% if form_values.get('priority', 'normal') == 'normal' %}selected{% endif %}>Normal</option>
-          <option value="high" {% if form_values.get('priority') == 'high' %}selected{% endif %}>Hoch</option>
+
+      <div class="col-md-2">
+        <label
+          class="form-label small fw-semibold mb-1"
+          for="commissionPriority"
+        >
+          Priorität
+        </label>
+        <select
+          class="form-select form-select-sm"
+          id="commissionPriority"
+          name="priority"
+          required
+        >
+          <option
+            value="normal"
+            {% if form_values.get('priority', 'normal') == 'normal' %}selected{% endif %}
+          >
+            Normal
+          </option>
+          <option
+            value="high"
+            {% if form_values.get('priority') == 'high' %}selected{% endif %}
+          >
+            Hoch
+          </option>
         </select>
       </div>
 
-      <div class="col-12">
-        <hr>
-        <h2 class="h5">Objektbezug</h2>
-      </div>
-
-      <div class="col-lg-7">
-        <label
-          class="form-label"
-          for="objectSearch"
-        >
-          Mieter, Vertrag, Nutzungseinheit oder Adresse
-        </label>
-
-        <div class="input-group">
-          <input
-            id="objectSearch"
-            class="form-control"
-            type="search"
-            autocomplete="off"
-            placeholder="Mindestens zwei Zeichen eingeben"
-          >
-          <button
-            id="searchObject"
-            class="btn btn-outline-primary"
-            type="button"
-          >
-            Suchen
-          </button>
-        </div>
-
-        <div class="form-text">
-          Für Keller, Treppenhaus oder Außenanlage
-          kann direkt ein Gebäude gewählt werden.
-        </div>
-
-        <div
-          id="objectResults"
-          class="list-group mt-2"
-        ></div>
-      </div>
-
-      <div class="col-lg-5">
-        <div
-          id="objectSummary"
-          class="border rounded p-3 h-100"
-        >
-          <div class="text-muted">
-            Noch kein Objekt ausgewählt.
-          </div>
-        </div>
-      </div>
-
-      <div class="col-12">
-        <hr>
-        <h2 class="h5">Auftragsdaten</h2>
-      </div>
-
-      <div class="col-md-6">
-        <label class="form-label">
-          Kurztitel
-        </label>
-        <input
-          class="form-control"
-          name="title"
-          value="{{ form_values.get('title', '') }}"
-        >
-      </div>
-
-      <div class="col-md-6">
-        <label class="form-label">
-          Schadensort
-        </label>
-        <input
-          class="form-control"
-          name="damage_location"
-          value="{{ form_values.get('damage_location', '') }}"
-        >
-      </div>
-
-      <div class="col-md-6">
-        <label class="form-label">
-          Ansprechpartner vor Ort
-        </label>
-        <input
-          class="form-control"
-          name="contact_person"
-          value="{{ form_values.get('contact_person', '') }}"
-        >
-      </div>
-
       <div class="col-md-3">
-        <label class="form-label">
+        <label
+          class="form-label small fw-semibold mb-1"
+          for="executionFrom"
+        >
           Ausführung von
         </label>
         <input
-          class="form-control"
+          class="form-control form-control-sm"
+          id="executionFrom"
           type="datetime-local"
           name="execution_from"
           value="{{ form_values.get('execution_from', '') }}"
@@ -222,42 +218,46 @@
       </div>
 
       <div class="col-md-3">
-        <label class="form-label">
+        <label
+          class="form-label small fw-semibold mb-1"
+          for="executionTo"
+        >
           Ausführung bis
         </label>
         <input
-          class="form-control"
+          class="form-control form-control-sm"
+          id="executionTo"
           type="datetime-local"
           name="execution_to"
           value="{{ form_values.get('execution_to', '') }}"
         >
       </div>
 
-      <div class="col-12">
-        <hr>
+      <div class="col-12 border-top pt-3">
         <div class="d-flex justify-content-between align-items-center">
-          <h2 class="h5 mb-0">
+          <h2 class="h6 mb-0">
             Auftragspositionen
           </h2>
           <button
             id="addPosition"
             class="btn btn-sm btn-outline-primary"
             type="button"
+            {% if not form_values.get('craft_activity_id') %}disabled{% endif %}
           >
             Position hinzufügen
           </button>
         </div>
       </div>
 
-            <div class="col-lg-6">
+      <div class="col-md-4">
         <label
-          class="form-label"
+          class="form-label small fw-semibold mb-1"
           for="craftActivity"
         >
           Gewerk
         </label>
         <select
-          class="form-select"
+          class="form-select form-select-sm"
           id="craftActivity"
           name="craft_activity_id"
           required
@@ -279,71 +279,23 @@
           {% endfor %}
         </select>
         <div class="form-text">
-          Die Leistungspositionen werden passend
-          zum Gewerk gefiltert.
+          Filtert die verfügbaren Leistungspositionen.
         </div>
       </div>
 
       <div id="positions" class="col-12">
         {% for position in position_rows %}
-        <div class="position-row border rounded p-3 mb-3">
-          <div class="row g-3">
-            <div class="col-md-2">
-              <label class="form-label">
-                Positionscode
-              </label>
-              <input
-                class="form-control form-control-sm"
-                name="position_code"
-                value="{{ position.get('code', '') }}"
-              >
-            </div>
-
-            <div class="col-md-5">
-              <label class="form-label">
-                Auftragstext
-              </label>
-              <input
-                class="form-control form-control-sm"
-                name="position_text"
-                value="{{ position.get('commission_text', '') }}"
-                required
-              >
-            </div>
-
-            <div class="col-md-3">
-              <label class="form-label">
-                Interne Beschreibung
-              </label>
-              <input
-                class="form-control form-control-sm"
-                name="position_internal_description"
-                value="{{ position.get('internal_description', '') }}"
-              >
-            </div>
-
-            <div class="col-md-2">
-              <label class="form-label">
-                Menge
-              </label>
-              <input
-                class="form-control form-control-sm"
-                type="number"
-                step="0.01"
-                min="0.01"
-                name="position_units"
-                value="{{ position.get('units', '1') }}"
-              >
-            </div>
-
-            <div class="col-md-10">
-              <label class="form-label">
+        <div class="position-row border rounded px-3 py-2 mb-2">
+          <div class="row g-2 align-items-end">
+            <div class="col-lg-5">
+              <label class="form-label small fw-semibold mb-1">
                 Leistungsposition
               </label>
               <select
                 class="form-select form-select-sm"
                 name="position_service_catalog_id"
                 required
+                {% if not form_values.get('craft_activity_id') %}disabled{% endif %}
               >
                 <option value="">
                   Bitte auswählen
@@ -359,15 +311,24 @@
                   {{ service_position.code }}
                   ·
                   {{ service_position.title }}
-                  ·
-                  Gewerk:
-                  {{ service_position.craft_activity.name }}
                 </option>
                 {% endfor %}
               </select>
             </div>
 
-            <div class="col-md-2 d-flex align-items-end">
+            <div class="col-lg-5">
+              <label class="form-label small fw-semibold mb-1">
+                Auftragstext
+              </label>
+              <input
+                class="form-control form-control-sm"
+                name="position_text"
+                value="{{ position.get('commission_text', '') }}"
+                required
+              >
+            </div>
+
+            <div class="col-lg-2">
               <button
                 class="btn btn-sm btn-outline-danger remove-position w-100"
                 type="button"
@@ -380,20 +341,19 @@
         {% endfor %}
       </div>
 
-      <div class="col-12">
-        <hr>
-        <h2 class="h5">Zuweisung</h2>
+      <div class="col-12 border-top pt-3">
+        <h2 class="h6 mb-0">Zuweisung</h2>
       </div>
 
-      <div class="col-lg-6">
+      <div class="col-md-6">
         <label
-          class="form-label"
+          class="form-label small fw-semibold mb-1"
           for="craftsmanUser"
         >
           Handwerker
         </label>
 
-        <div class="input-group">
+        <div class="input-group input-group-sm">
           <select
             class="form-select"
             id="craftsmanUser"
@@ -425,15 +385,15 @@
         </div>
       </div>
 
-      <div class="col-lg-6">
+      <div class="col-md-6">
         <label
-          class="form-label"
+          class="form-label small fw-semibold mb-1"
           for="companyCode"
         >
           Buchwerk
         </label>
 
-        <div class="input-group">
+        <div class="input-group input-group-sm">
           <select
             class="form-select"
             id="companyCode"
@@ -476,17 +436,20 @@
         </div>
       </div>
 
-      <div class="col-12">
-        <hr>
-        <h2 class="h5">Auftragsfoto</h2>
+      <div class="col-12 border-top pt-3">
+        <h2 class="h6 mb-0">Auftragsfoto</h2>
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">
+        <label
+          class="form-label small fw-semibold mb-1"
+          for="photoUpload"
+        >
           Foto
         </label>
         <input
-          class="form-control"
+          class="form-control form-control-sm"
+          id="photoUpload"
           type="file"
           name="photo"
           accept="image/*"
@@ -497,11 +460,15 @@
       </div>
 
       <div class="col-md-6">
-        <label class="form-label">
+        <label
+          class="form-label small fw-semibold mb-1"
+          for="photoCaption"
+        >
           Bildbeschreibung
         </label>
         <input
-          class="form-control"
+          class="form-control form-control-sm"
+          id="photoCaption"
           name="photo_caption"
           maxlength="500"
           value="{{ form_values.get('photo_caption', '') }}"
@@ -510,13 +477,13 @@
     </div>
   </div>
 
-  <div class="card-footer d-flex justify-content-between align-items-center">
-    <span class="text-muted">
+    <div class="card-footer px-3 py-2 d-flex justify-content-between align-items-center">
+    <span class="small text-muted">
       Der Auftrag bleibt bis zur Wowiport-Bestätigung
       auf „Erfasst“.
     </span>
     <button
-      class="btn btn-primary"
+      class="btn btn-sm btn-primary"
       id="submitCommission"
       type="submit"
       {% if not commission_types or not service_positions %}disabled{% endif %}
@@ -527,61 +494,17 @@
 </form>
 
 <template id="positionTemplate">
-  <div class="position-row border rounded p-3 mb-3">
-    <div class="row g-3">
-      <div class="col-md-2">
-        <label class="form-label">
-          Positionscode
-        </label>
-        <input
-          class="form-control form-control-sm"
-          name="position_code"
-        >
-      </div>
-
-      <div class="col-md-5">
-        <label class="form-label">
-          Auftragstext
-        </label>
-        <input
-          class="form-control form-control-sm"
-          name="position_text"
-          required
-        >
-      </div>
-
-      <div class="col-md-3">
-        <label class="form-label">
-          Interne Beschreibung
-        </label>
-        <input
-          class="form-control form-control-sm"
-          name="position_internal_description"
-        >
-      </div>
-
-      <div class="col-md-2">
-        <label class="form-label">
-          Menge
-        </label>
-        <input
-          class="form-control form-control-sm"
-          type="number"
-          step="0.01"
-          min="0.01"
-          name="position_units"
-          value="1"
-        >
-      </div>
-
-      <div class="col-md-10">
-        <label class="form-label">
+  <div class="position-row border rounded px-3 py-2 mb-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-lg-5">
+        <label class="form-label small fw-semibold mb-1">
           Leistungsposition
         </label>
         <select
           class="form-select form-select-sm"
           name="position_service_catalog_id"
           required
+          disabled
         >
           <option value="">
             Bitte auswählen
@@ -596,15 +519,23 @@
             {{ service_position.code }}
             ·
             {{ service_position.title }}
-            ·
-            Gewerk:
-            {{ service_position.craft_activity.name }}
           </option>
           {% endfor %}
         </select>
       </div>
 
-      <div class="col-md-2 d-flex align-items-end">
+      <div class="col-lg-5">
+        <label class="form-label small fw-semibold mb-1">
+          Auftragstext
+        </label>
+        <input
+          class="form-control form-control-sm"
+          name="position_text"
+          required
+        >
+      </div>
+
+      <div class="col-lg-2">
         <button
           class="btn btn-sm btn-outline-danger remove-position w-100"
           type="button"

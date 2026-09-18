@@ -41,9 +41,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const objectSearch = document.getElementById(
         "objectSearch"
     );
-    const searchObject = document.getElementById(
-        "searchObject"
-    );
     const objectResults = document.getElementById(
         "objectResults"
     );
@@ -78,6 +75,10 @@ document.addEventListener("DOMContentLoaded", () => {
         "assignmentStatus"
     );
     let assignmentRequestId = 0;
+    const minimumObjectSearchLength = 2;
+    const objectSearchDelayMilliseconds = 300;
+    let objectSearchTimer = null;
+    let objectSearchRequestId = 0;
 
     function objectText(item) {
         const values = [
@@ -102,36 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
             .join(" · ");
     }
 
-    function detailRow(label, value) {
-        if (!value) {
-            return null;
-        }
-
-        const row = document.createElement(
-            "div"
-        );
-        row.className = "mb-2";
-
-        const title = document.createElement(
-            "div"
-        );
-        title.className = "small text-muted";
-        title.textContent = label;
-
-        const content = document.createElement(
-            "div"
-        );
-        content.textContent = value;
-
-        row.append(
-            title,
-            content
-        );
-
-        return row;
-    }
-
-    function selectObject(
+        function selectObject(
         item,
         resetAssignments = true
     ) {
@@ -156,77 +128,62 @@ document.addEventListener("DOMContentLoaded", () => {
 
         updateAssignmentControls();
         objectSummary.replaceChildren();
+
         const heading = document.createElement(
             "div"
         );
-        heading.className = "fw-semibold mb-3";
+        heading.className = "fw-semibold text-truncate";
         heading.textContent = item.label;
+
+        const details = document.createElement(
+            "div"
+        );
+        details.className = "text-muted text-truncate";
+        details.textContent = [
+            item.license_agreement?.id_num
+                ? `Vertrag ${item.license_agreement.id_num}`
+                : null,
+            item.use_unit?.id_num
+                ? `Nutzungseinheit ${item.use_unit.id_num}`
+                : null,
+            item.building?.address,
+            item.building?.id_num
+                ? `Gebäude ${item.building.id_num}`
+                : null,
+        ]
+            .filter(Boolean)
+            .join(" · ");
+
+        const economicUnit = [
+            item.economic_unit?.id_num,
+            item.economic_unit?.name,
+        ]
+            .filter(Boolean)
+            .join(" · ");
+
+        const metadata = document.createElement(
+            "div"
+        );
+        metadata.className = "text-muted text-truncate";
+        metadata.textContent = [
+            economicUnit
+                ? `WE ${economicUnit}`
+                : null,
+            item.company_code?.code
+                ? `Buchwerk ${item.company_code.code}`
+                : null,
+        ]
+            .filter(Boolean)
+            .join(" · ");
+
         objectSummary.appendChild(heading);
 
-        const rows = [
-            detailRow(
-                "Mieter",
-                item.tenant_name
-                || (
-                    item.is_vacancy
-                        ? "Leerstand"
-                        : null
-                )
-            ),
-            detailRow(
-                "Buchwerk",
-                item.company_code?.code
-            ),
-            detailRow(
-                "Wirtschaftseinheit",
-                [
-                    item.economic_unit?.id_num,
-                    item.economic_unit?.name,
-                ]
-                    .filter(Boolean)
-                    .join(" · ")
-            ),
-            detailRow(
-                "Gebäude",
-                [
-                    item.building?.id_num,
-                    item.building?.address,
-                ]
-                    .filter(Boolean)
-                    .join(" · ")
-            ),
-            detailRow(
-                "Nutzungseinheit",
-                [
-                    item.use_unit?.id_num,
-                    item.use_unit?.floor,
-                    item.use_unit?.position,
-                    item.use_unit?.description,
-                ]
-                    .filter(Boolean)
-                    .join(" · ")
-            ),
-            detailRow(
-                "Mietvertrag",
-                item.license_agreement?.id_num
-            ),
-        ];
+        if (details.textContent) {
+            objectSummary.appendChild(details);
+        }
 
-        rows
-            .filter(Boolean)
-            .forEach((row) => {
-                objectSummary.appendChild(row);
-            });
-
-        const contactPerson = document.querySelector(
-            '[name="contact_person"]'
-        );
-
-        if (
-            item.tenant_name
-            && !contactPerson.value
-        ) {
-            contactPerson.value = item.tenant_name;
+        if (metadata.textContent) {
+            objectSummary.appendChild(metadata);
         }
 
         objectResults.replaceChildren();
@@ -240,24 +197,28 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    async function loadObjects() {
-        const query = objectSearch.value.trim();
+        function showObjectSearchMessage(
+        text,
+        className
+    ) {
+        const message = document.createElement(
+            "div"
+        );
+        message.className = className;
+        message.textContent = text;
+        objectResults.appendChild(message);
+    }
+
+    async function loadObjects(query) {
+        const currentRequestId = (
+            ++objectSearchRequestId
+        );
 
         objectResults.replaceChildren();
-
-        if (query.length < 2) {
-            const message = document.createElement(
-                "div"
-            );
-            message.className = "text-danger mt-2";
-            message.textContent = (
-                "Bitte mindestens zwei Zeichen eingeben."
-            );
-            objectResults.appendChild(message);
-            return;
-        }
-
-        searchObject.disabled = true;
+        showObjectSearchMessage(
+            "Suche läuft …",
+            "list-group-item text-muted"
+        );
 
         try {
             const searchUrl = new URL(
@@ -271,6 +232,15 @@ document.addEventListener("DOMContentLoaded", () => {
             );
             const payload = await response.json();
 
+            if (
+                currentRequestId
+                !== objectSearchRequestId
+            ) {
+                return;
+            }
+
+            objectResults.replaceChildren();
+
             if (!response.ok) {
                 throw new Error(
                     payload.message
@@ -279,14 +249,10 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             if (!payload.items.length) {
-                const message = document.createElement(
-                    "div"
+                showObjectSearchMessage(
+                    "Keine passenden Objekte gefunden.",
+                    "list-group-item text-muted"
                 );
-                message.className = "text-muted mt-2";
-                message.textContent = (
-                    "Keine passenden Objekte gefunden."
-                );
-                objectResults.appendChild(message);
                 return;
             }
 
@@ -297,7 +263,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 button.type = "button";
                 button.className = (
                     "list-group-item "
-                    + "list-group-item-action"
+                    + "list-group-item-action py-2"
                 );
 
                 const title = document.createElement(
@@ -322,17 +288,21 @@ document.addEventListener("DOMContentLoaded", () => {
                 );
                 objectResults.appendChild(button);
             });
-
         } catch (error) {
-            const message = document.createElement(
-                "div"
-            );
-            message.className = "text-danger mt-2";
-            message.textContent = error.message;
-            objectResults.appendChild(message);
+            if (
+                currentRequestId
+                !== objectSearchRequestId
+            ) {
+                return;
+            }
 
-        } finally {
-            searchObject.disabled = false;
+            objectResults.replaceChildren();
+            showObjectSearchMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Die Suche ist fehlgeschlagen.",
+                "list-group-item text-danger"
+            );
         }
     }
 
@@ -751,18 +721,61 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     );
 
-    searchObject.addEventListener(
-        "click",
-        loadObjects
+    objectSearch.addEventListener(
+        "input",
+        () => {
+            window.clearTimeout(
+                objectSearchTimer
+            );
+
+            objectSearchRequestId += 1;
+            objectResults.replaceChildren();
+
+            const query = objectSearch.value.trim();
+
+            if (
+                query.length
+                < minimumObjectSearchLength
+            ) {
+                return;
+            }
+
+            objectSearchTimer = window.setTimeout(
+                () => {
+                    objectSearchTimer = null;
+                    loadObjects(query);
+                },
+                objectSearchDelayMilliseconds
+            );
+        }
     );
 
     objectSearch.addEventListener(
         "keydown",
         (event) => {
-            if (event.key === "Enter") {
-                event.preventDefault();
-                loadObjects();
+            if (
+                event.key !== "Enter"
+                || event.isComposing
+            ) {
+                return;
             }
+
+            event.preventDefault();
+            window.clearTimeout(
+                objectSearchTimer
+            );
+            objectSearchTimer = null;
+
+            const query = objectSearch.value.trim();
+
+            if (
+                query.length
+                < minimumObjectSearchLength
+            ) {
+                return;
+            }
+
+            loadObjects(query);
         }
     );
 

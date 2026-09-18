@@ -8241,27 +8241,15 @@ def apply_inventory_movement(
 
 
 def read_commission_form() -> dict[str, Any]:
-    position_codes = request.form.getlist(
-        "position_code"
-    )
     position_texts = request.form.getlist(
         "position_text"
-    )
-    position_internal_descriptions = request.form.getlist(
-        "position_internal_description"
-    )
-    position_units = request.form.getlist(
-        "position_units"
     )
     service_catalog_ids = request.form.getlist(
         "position_service_catalog_id"
     )
 
     position_count = max(
-        len(position_codes),
         len(position_texts),
-        len(position_internal_descriptions),
-        len(position_units),
         len(service_catalog_ids),
         1,
     )
@@ -8269,20 +8257,8 @@ def read_commission_form() -> dict[str, Any]:
     positions = []
 
     for position_index in range(position_count):
-        code = list_value(
-            position_codes,
-            position_index,
-        )
         commission_text = list_value(
             position_texts,
-            position_index,
-        )
-        internal_description = list_value(
-            position_internal_descriptions,
-            position_index,
-        )
-        units = list_value(
-            position_units,
             position_index,
         )
         service_catalog_id = list_value(
@@ -8292,9 +8268,7 @@ def read_commission_form() -> dict[str, Any]:
 
         if not any(
             [
-                code,
                 commission_text,
-                internal_description,
                 service_catalog_id,
             ]
         ):
@@ -8302,11 +8276,9 @@ def read_commission_form() -> dict[str, Any]:
 
         positions.append(
             {
-                "code": code,
                 "commission_text": commission_text,
-                "internal_description": internal_description,
                 "description": commission_text,
-                "units": units,
+                "units": 1.0,
                 "service_catalog_id": service_catalog_id,
             }
         )
@@ -8327,8 +8299,12 @@ def read_commission_form() -> dict[str, Any]:
         "crafts_process_id": request.form.get(
             "crafts_process_id"
         ),
-        "creditor_id": request.form.get("creditor_id"),
-        "department_id": request.form.get("department_id"),
+        "creditor_id": request.form.get(
+            "creditor_id"
+        ),
+        "department_id": request.form.get(
+            "department_id"
+        ),
         "responsible_official_repair_id": request.form.get(
             "responsible_official_repair_id"
         ),
@@ -8340,13 +8316,6 @@ def read_commission_form() -> dict[str, Any]:
         ),
         "license_agreement_idnum": request.form.get(
             "license_agreement_idnum"
-        ),
-        "title": request.form.get("title"),
-        "damage_location": request.form.get(
-            "damage_location"
-        ),
-        "contact_person": request.form.get(
-            "contact_person"
         ),
         "execution_from": request.form.get(
             "execution_from"
