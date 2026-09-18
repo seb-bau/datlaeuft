@@ -46,6 +46,20 @@
     {{ source_ticket.ai_missing_information|join(", ") }}
   </div>
   {% endif %}
+    {% if source_ticket.ai_state == 'ready' and source_ticket.ai_assignment_rule and source_ticket.ai_assigned_user %}
+  <div class="mt-2">
+    KI-Zuweisungsregel:
+    <strong>
+      {{ source_ticket.ai_assignment_rule.name }}
+    </strong>
+    · {{ source_ticket.ai_assigned_user.display_name }}
+    {% if source_ticket.ai_assignment_mode == 'force' %}
+    · verbindlich
+    {% else %}
+    · Vorschlag
+    {% endif %}
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -59,6 +73,9 @@
   data-object-search-url="{{ url_for('admin.commission_object_search') }}"
   data-assignment-preview-url="{{ url_for('admin.commission_assignment_preview') }}"
   data-default-commission-type-id="{{ default_commission_type_id }}"
+  data-assignment-rule-user-id="{{ source_ticket.ai_assigned_user_id if source_ticket and source_ticket.ai_state == 'ready' and source_ticket.ai_assigned_user_id else '' }}"
+  data-assignment-rule-label="{{ source_ticket.ai_assignment_rule.name if source_ticket and source_ticket.ai_state == 'ready' and source_ticket.ai_assignment_rule else '' }}"
+  data-assignment-locked="{{ 'true' if source_ticket and source_ticket.ai_state == 'ready' and source_ticket.ai_assignment_mode == 'force' and source_ticket.ai_assigned_user_id else 'false' }}"
 >
   <input
     type="hidden"
@@ -379,6 +396,7 @@
           id="craftsmanUser"
           name="craftsman_user_id"
           required
+          {% if source_ticket and source_ticket.ai_state == 'ready' and source_ticket.ai_assignment_mode == 'force' and source_ticket.ai_assigned_user_id %}disabled{% endif %}
         >
           <option value="">
             Wird automatisch ermittelt

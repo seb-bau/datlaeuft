@@ -7,6 +7,8 @@ from typing import Any
 from .extensions import db
 from .models import (
     CraftActivity,
+    TicketAiAssignmentMode,
+    TicketAiAssignmentRule,
     TicketAiState,
     TicketMirror,
     TicketMirrorState,
@@ -16,7 +18,11 @@ from .models import (
 from .object_directory import (
     commission_creation_tasks,
 )
-from .openai_service import analyze_ticket_content
+from .openai_service import (
+    TICKET_ANALYSIS_PROMPT_VERSION,
+    analyze_ticket_content,
+)
+from .settings import SettingKeys, settings
 from .utils import parse_datetime
 from .wowiport import WowiportService
 
@@ -123,61 +129,29 @@ def analyze_ticket_mirror(
 
     ticket = upsert_ticket_row(row)
 
-    crafts = (
-        CraftActivity.query
-        .filter(
-            CraftActivity.active.is_(True),
-            CraftActivity.app_enabled.is_(True),
-            CraftActivity.erp_id.isnot(None),
-        )
-        .order_by(
-            CraftActivity.name.asc(),
-            CraftActivity.id.asc(),
-        )
-        .all()
-    )
-
-    craft_options = [
-        {
-            "id": item.id,
-            "code": item.code,
-            "name": item.name,
-        }
-        for item in crafts
+    configuration = ticket_analysis_configuration()
+    crafts = configuration["crafts"]
+    craft_options = configuration["craft_options"]
+    service_positions = configuration[
+        "service_positions"
+    ]
+    service_position_options = configuration[
+        "service_position_options"
+    ]
+    assignment_rules = configuration[
+        "assignment_rules"
+    ]
+    assignment_rule_options = configuration[
+        "assignment_rule_options"
     ]
 
-    craft_ids = {
-        item.id
-        for item in crafts
-    }
-
-    service_positions = (
-        commission_creation_tasks()
-        .filter(
-            TimeTaskTemplate.craft_activity_id.in_(
-                craft_ids
-            )
-        )
-        .order_by(
-            TimeTaskTemplate.craft_activity_id.asc(),
-            TimeTaskTemplate.title.asc(),
-            TimeTaskTemplate.code.asc(),
-        )
-        .all()
+    result, model = analyze_ticket_content(
+        analysis_ticket_data(row),
+        craft_options,
+        service_position_options,
+        assignment_rule_options,
+        actor_user_id,
     )
-
-    service_position_options = [
-        {
-            "id": item.id,
-            "craft_activity_id": (
-                item.craft_activity_id
-            ),
-            "code": item.code,
-            "title": item.title,
-            "erp_idnum": item.erp_idnum,
-        }
-        for item in service_positions
-    ]
 
     result, model = analyze_ticket_content(
         analysis_ticket_data(row),
@@ -225,6 +199,11 @@ def analyze_ticket_mirror(
     if not isinstance(missing_information, list):
         missing_information = []
 
+    assignment_rule = resolve_assignment_rule(
+        result,
+        assignment_rules,
+    )
+
     ticket.ai_state = TicketAiState.READY.value
     ticket.ai_candidate = bool(
         result.get("is_commission_candidate")
@@ -261,12 +240,291 @@ def analyze_ticket_mirror(
         service_position_id
     )
 
+    ticket.ai_assignment_rule_id = (
+        assignment_rule.id
+        if assignment_rule is not None
+        else None
+    )
+    ticket.ai_assigned_user_id = (
+        assignment_rule.target_user_id
+        if assignment_rule is not None
+        else None
+    )
+    ticket.ai_assignment_mode = (
+        assignment_rule.enforcement_mode
+        if assignment_rule is not None
+        else None
+    )
+
     ticket.ai_model = model
-    ticket.ai_input_hash = ticket.source_signature
+    ticket.ai_input_hash = (
+        build_ticket_analysis_input_hash(
+            ticket,
+            configuration,
+        )
+    )
     ticket.ai_generated_at = utc_now()
     ticket.ai_error = None
 
     return ticket
+
+
+def ticket_analysis_configuration() -> dict[
+    str,
+    Any,
+]:
+    crafts = (
+        CraftActivity.query
+        .filter(
+            CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
+            CraftActivity.erp_id.isnot(None),
+        )
+        .order_by(
+            CraftActivity.name.asc(),
+            CraftActivity.id.asc(),
+        )
+        .all()
+    )
+    craft_options = [
+        {
+            "id": item.id,
+            "code": item.code,
+            "name": item.name,
+        }
+        for item in crafts
+    ]
+    craft_ids = {
+        item.id
+        for item in crafts
+    }
+    service_positions = (
+        commission_creation_tasks()
+        .filter(
+            TimeTaskTemplate.craft_activity_id.in_(
+                craft_ids
+            )
+        )
+        .order_by(
+            TimeTaskTemplate.craft_activity_id.asc(),
+            TimeTaskTemplate.title.asc(),
+            TimeTaskTemplate.code.asc(),
+        )
+        .all()
+    )
+    service_position_options = [
+        {
+            "id": item.id,
+            "craft_activity_id": (
+                item.craft_activity_id
+            ),
+            "code": item.code,
+            "title": item.title,
+            "erp_idnum": item.erp_idnum,
+        }
+        for item in service_positions
+    ]
+    assignment_rules = (
+        TicketAiAssignmentRule.query
+        .filter(
+            TicketAiAssignmentRule.active.is_(True)
+        )
+        .order_by(
+            TicketAiAssignmentRule.priority.desc(),
+            TicketAiAssignmentRule.id.asc(),
+        )
+        .all()
+    )
+    allowed_modes = {
+        item.value
+        for item in TicketAiAssignmentMode
+    }
+
+    for rule in assignment_rules:
+        target_user = rule.target_user
+
+        if (
+            target_user is None
+            or not target_user.is_active_flag
+            or target_user.craftsman_erp_id is None
+        ):
+            raise RuntimeError(
+                "Die aktive KI-Zuweisungsregel "
+                f"„{rule.name}“ verweist nicht auf "
+                "einen aktiven Handwerker."
+            )
+
+        if rule.enforcement_mode not in allowed_modes:
+            raise RuntimeError(
+                "Die aktive KI-Zuweisungsregel "
+                f"„{rule.name}“ hat ein ungültiges "
+                "Verhalten."
+            )
+
+    assignment_rule_options = [
+        {
+            "id": rule.id,
+            "name": rule.name,
+            "condition": rule.condition_text,
+            "priority": rule.priority,
+        }
+        for rule in assignment_rules
+    ]
+
+    return {
+        "crafts": crafts,
+        "craft_options": craft_options,
+        "service_positions": service_positions,
+        "service_position_options": (
+            service_position_options
+        ),
+        "assignment_rules": assignment_rules,
+        "assignment_rule_options": (
+            assignment_rule_options
+        ),
+    }
+
+
+def ticket_analysis_input_hash(
+    ticket: TicketMirror,
+) -> str:
+    return build_ticket_analysis_input_hash(
+        ticket,
+        ticket_analysis_configuration(),
+    )
+
+
+def build_ticket_analysis_input_hash(
+    ticket: TicketMirror,
+    configuration: dict[str, Any],
+) -> str:
+    assignment_rules = configuration[
+        "assignment_rules"
+    ]
+    data = {
+        "prompt_version": (
+            TICKET_ANALYSIS_PROMPT_VERSION
+        ),
+        "ticket_source_signature": (
+            ticket.source_signature
+        ),
+        "model": str(
+            settings.get(SettingKeys.OPENAI_MODEL)
+        ).strip(),
+        "crafts": configuration["craft_options"],
+        "service_positions": configuration[
+            "service_position_options"
+        ],
+        "assignment_rules": [
+            {
+                "id": rule.id,
+                "name": rule.name,
+                "condition": rule.condition_text,
+                "target_user_id": rule.target_user_id,
+                "enforcement_mode": (
+                    rule.enforcement_mode
+                ),
+                "priority": rule.priority,
+            }
+            for rule in assignment_rules
+        ],
+    }
+    serialized = json.dumps(
+        data,
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(
+        serialized.encode("utf-8")
+    ).hexdigest()
+
+
+def resolve_assignment_rule(
+    result: dict[str, Any],
+    assignment_rules: list[
+        TicketAiAssignmentRule
+    ],
+) -> TicketAiAssignmentRule | None:
+    raw_rule_ids = result.get(
+        "matched_assignment_rule_ids"
+    )
+
+    if not isinstance(raw_rule_ids, list):
+        raise RuntimeError(
+            "Die KI-Analyse hat keine gültigen "
+            "Zuweisungsregeln geliefert."
+        )
+
+    rules_by_id = {
+        rule.id: rule
+        for rule in assignment_rules
+    }
+    matched_rule_ids = set()
+
+    for raw_rule_id in raw_rule_ids:
+        rule_id = as_int(raw_rule_id)
+
+        if rule_id not in rules_by_id:
+            raise RuntimeError(
+                "Die KI-Analyse hat eine ungültige "
+                "Zuweisungsregel geliefert."
+            )
+
+        matched_rule_ids.add(rule_id)
+
+    if not matched_rule_ids:
+        return None
+
+    matched_rules = [
+        rules_by_id[rule_id]
+        for rule_id in matched_rule_ids
+    ]
+    highest_priority = max(
+        rule.priority
+        for rule in matched_rules
+    )
+    highest_priority_rules = [
+        rule
+        for rule in matched_rules
+        if rule.priority == highest_priority
+    ]
+    target_user_ids = {
+        rule.target_user_id
+        for rule in highest_priority_rules
+    }
+
+    if len(target_user_ids) != 1:
+        raise RuntimeError(
+            "Mehrere gleich priorisierte "
+            "KI-Zuweisungsregeln verweisen auf "
+            "unterschiedliche Handwerker."
+        )
+
+    return min(
+        highest_priority_rules,
+        key=lambda rule: rule.id,
+    )
+
+
+def mark_ticket_analyses_stale() -> int:
+    return (
+        TicketMirror.query
+        .filter(
+            TicketMirror.ai_state
+            == TicketAiState.READY.value
+        )
+        .update(
+            {
+                TicketMirror.ai_state: (
+                    TicketAiState.STALE.value
+                )
+            },
+            synchronize_session=False,
+        )
+    )
 
 
 def upsert_ticket_row(

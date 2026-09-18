@@ -20,6 +20,18 @@ document.addEventListener("DOMContentLoaded", () => {
         commissionForm.dataset.defaultCommissionTypeId
         || "0"
     );
+    const assignmentRuleUserId = String(
+        commissionForm.dataset.assignmentRuleUserId
+        || ""
+    );
+    const assignmentRuleLabel = String(
+        commissionForm.dataset.assignmentRuleLabel
+        || ""
+    );
+    const assignmentLocked = (
+        commissionForm.dataset.assignmentLocked
+        === "true"
+    );
     let initialObject = null;
 
     try {
@@ -116,7 +128,11 @@ document.addEventListener("DOMContentLoaded", () => {
             resetAssignments
         );
 
-        if (resetAssignments) {
+        if (
+            resetAssignments
+            && !hasAssignmentRuleValue()
+            && !assignmentLocked
+        ) {
             clearAutomaticValue(
                 craftsmanUser,
                 true
@@ -196,7 +212,11 @@ document.addEventListener("DOMContentLoaded", () => {
         );
 
         updateAssignmentPreview({
-            forceCraftsman: resetAssignments
+            forceCraftsman: (
+                resetAssignments
+                && !hasAssignmentRuleValue()
+                && !assignmentLocked
+            )
         });
     }
 
@@ -424,6 +444,30 @@ document.addEventListener("DOMContentLoaded", () => {
         delete select.dataset.automaticValue;
     }
 
+        function hasAssignmentRuleValue() {
+        return Boolean(
+            assignmentRuleUserId
+            && craftsmanUser.value
+            === assignmentRuleUserId
+        );
+    }
+
+    function assignmentRuleStatusText(
+        companyCodeValue = ""
+    ) {
+        const modeText = assignmentLocked
+            ? "Verbindliche KI-Regel"
+            : "KI-Regel";
+        const companyText = companyCodeValue
+            ? ` · Buchwerk ${companyCodeValue}`
+            : "";
+
+        return (
+            `${modeText} „${assignmentRuleLabel}“`
+            + companyText
+        );
+    }
+
     function updateAssignmentControls() {
         const hasObject = Boolean(
             objectType.value
@@ -434,9 +478,12 @@ document.addEventListener("DOMContentLoaded", () => {
         );
 
         companyCode.disabled = !hasObject;
-        craftsmanUser.disabled = !(
-            hasObject
-            && hasCraft
+        craftsmanUser.disabled = (
+            assignmentLocked
+            || !(
+                hasObject
+                && hasCraft
+            )
         );
     }
 
@@ -454,7 +501,7 @@ document.addEventListener("DOMContentLoaded", () => {
             && objectId.value
         );
 
-        if (forceCraftsman) {
+        if (forceCraftsman && !assignmentLocked) {
             clearAutomaticValue(
                 craftsmanUser,
                 true
@@ -466,20 +513,40 @@ document.addEventListener("DOMContentLoaded", () => {
                 companyCode,
                 true
             );
-            clearAutomaticValue(
-                craftsmanUser,
-                true
-            );
+
+            if (
+                !assignmentLocked
+                && !hasAssignmentRuleValue()
+            ) {
+                clearAutomaticValue(
+                    craftsmanUser,
+                    true
+                );
+            }
+
             updateAssignmentControls();
+
             setAssignmentStatus(
-                "Bitte ein Objekt wählen. "
-                + "Das Gewerk kann unabhängig davon "
-                + "ausgewählt werden."
+                hasAssignmentRuleValue()
+                    ? (
+                        assignmentRuleStatusText()
+                        + ". Bitte zusätzlich ein "
+                        + "Objekt wählen."
+                    )
+                    : (
+                        "Bitte ein Objekt wählen. "
+                        + "Das Gewerk kann unabhängig "
+                        + "davon ausgewählt werden."
+                    )
             );
             return;
         }
 
-        if (!selectedCraftId) {
+        if (
+            !selectedCraftId
+            && !assignmentLocked
+            && !hasAssignmentRuleValue()
+        ) {
             clearAutomaticValue(
                 craftsmanUser,
                 true
@@ -542,11 +609,21 @@ document.addEventListener("DOMContentLoaded", () => {
                 );
             }
 
-            if (selectedCraftId) {
+            if (
+                assignmentLocked
+                || hasAssignmentRuleValue()
+            ) {
+                setAssignmentStatus(
+                    assignmentRuleStatusText(
+                        payload.company_code_code
+                    )
+                );
+            } else if (selectedCraftId) {
                 applyAutomaticValue(
                     craftsmanUser,
                     String(
-                        payload.craftsman_user_id || ""
+                        payload.craftsman_user_id
+                        || ""
                     )
                 );
                 setAssignmentStatus(
@@ -579,7 +656,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            clearAutomaticValue(craftsmanUser);
+            if (
+                !assignmentLocked
+                && !hasAssignmentRuleValue()
+            ) {
+                clearAutomaticValue(craftsmanUser);
+            }
+
             updateAssignmentControls();
 
             const message = (

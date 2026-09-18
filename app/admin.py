@@ -111,10 +111,14 @@ from .models import (
     TicketMirror,
     TicketMirrorState,
     TicketCraftFallback,
+    TicketAiAssignmentMode,
+    TicketAiAssignmentRule,
 )
 from .ticket_service import (
     analyze_ticket_mirror,
     ticket_license_agreement_local_id,
+    mark_ticket_analyses_stale,
+    ticket_analysis_input_hash,
 )
 from .offer_archive import (
     OfferArchiveError,
@@ -1015,6 +1019,41 @@ def ticket_settings() -> Any:
             url_for("admin.ticket_settings")
         )
 
+    assignment_rules = (
+        TicketAiAssignmentRule.query
+        .order_by(
+            TicketAiAssignmentRule.active.desc(),
+            TicketAiAssignmentRule.priority.desc(),
+            TicketAiAssignmentRule.name.asc(),
+            TicketAiAssignmentRule.id.asc(),
+        )
+        .all()
+    )
+    craftsman_users = (
+        User.query
+        .filter(
+            User.is_active_flag.is_(True),
+            User.craftsman_erp_id.isnot(None),
+        )
+        .order_by(
+            User.display_name.asc(),
+            User.id.asc(),
+        )
+        .all()
+    )
+    edit_rule_id = request.args.get(
+        "edit_rule_id",
+        type=int,
+    )
+    edit_assignment_rule = (
+        db.session.get(
+            TicketAiAssignmentRule,
+            edit_rule_id,
+        )
+        if edit_rule_id is not None
+        else None
+    )
+
     return render_template(
         "admin/ticket_settings.html",
         craft_activities=craft_activities,
@@ -1024,6 +1063,250 @@ def ticket_settings() -> Any:
         default_commission_type_id=(
             default_commission_type_id
         ),
+        assignment_rules=assignment_rules,
+        craftsman_users=craftsman_users,
+        edit_assignment_rule=edit_assignment_rule,
+    )
+
+
+@admin_bp.post(
+    "/admin/ticket-settings/assignment-rules/save"
+)
+@admin_required
+def ticket_assignment_rule_save() -> Any:
+    raw_rule_id = request.form.get(
+        "rule_id",
+        "",
+    ).strip()
+    rule_id = None
+
+    try:
+        if raw_rule_id:
+            try:
+                rule_id = int(raw_rule_id)
+            except ValueError as exc:
+                raise ValueError(
+                    "Die Zuweisungsregel ist ungültig."
+                ) from exc
+
+        name = request.form.get(
+            "name",
+            "",
+        ).strip()
+        condition_text = request.form.get(
+            "condition_text",
+            "",
+        ).strip()
+
+        try:
+            target_user_id = int(
+                request.form.get(
+                    "target_user_id",
+                    "",
+                )
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "Ein gültiger Handwerker ist "
+                "erforderlich."
+            ) from exc
+
+        enforcement_mode = request.form.get(
+            "enforcement_mode",
+            "",
+        ).strip()
+
+        try:
+            priority = int(
+                request.form.get(
+                    "priority",
+                    "100",
+                )
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "Die Priorität ist ungültig."
+            ) from exc
+
+        active = request.form.get("active") == "on"
+
+        if not name:
+            raise ValueError(
+                "Eine Bezeichnung ist erforderlich."
+            )
+
+        if len(name) > 160:
+            raise ValueError(
+                "Die Bezeichnung darf höchstens "
+                "160 Zeichen enthalten."
+            )
+
+        if not condition_text:
+            raise ValueError(
+                "Eine Bedingung ist erforderlich."
+            )
+
+        if len(condition_text) > 2000:
+            raise ValueError(
+                "Die Bedingung darf höchstens "
+                "2000 Zeichen enthalten."
+            )
+
+        if not 0 <= priority <= 1000:
+            raise ValueError(
+                "Die Priorität muss zwischen 0 und "
+                "1000 liegen."
+            )
+
+        allowed_modes = {
+            item.value
+            for item in TicketAiAssignmentMode
+        }
+
+        if enforcement_mode not in allowed_modes:
+            raise ValueError(
+                "Das Verhalten der Regel ist ungültig."
+            )
+
+        target_user = (
+            User.query
+            .filter(
+                User.id == target_user_id,
+                User.is_active_flag.is_(True),
+                User.craftsman_erp_id.isnot(None),
+            )
+            .one_or_none()
+        )
+
+        if target_user is None:
+            raise ValueError(
+                "Der ausgewählte Handwerker ist "
+                "nicht verfügbar."
+            )
+
+        if rule_id is None:
+            rule = TicketAiAssignmentRule(
+                created_by_user_id=current_user.id,
+            )
+            db.session.add(rule)
+            audit_action = (
+                "ticket.ai_assignment_rule.create"
+            )
+        else:
+            rule = db.get_or_404(
+                TicketAiAssignmentRule,
+                rule_id,
+            )
+            audit_action = (
+                "ticket.ai_assignment_rule.update"
+            )
+
+        rule.name = name
+        rule.condition_text = condition_text
+        rule.target_user_id = target_user.id
+        rule.enforcement_mode = enforcement_mode
+        rule.priority = priority
+        rule.active = active
+        rule.updated_by_user_id = current_user.id
+        rule.updated_at = utc_now()
+
+        db.session.flush()
+        stale_count = mark_ticket_analyses_stale()
+
+        audit(
+            audit_action,
+            "ticket_ai_assignment_rule",
+            rule.id,
+            {
+                "target_user_id": rule.target_user_id,
+                "enforcement_mode": (
+                    rule.enforcement_mode
+                ),
+                "priority": rule.priority,
+                "active": rule.active,
+                "stale_ticket_count": stale_count,
+            },
+        )
+        db.session.commit()
+
+    except (TypeError, ValueError) as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+
+        return redirect(
+            url_for(
+                "admin.ticket_settings",
+                edit_rule_id=rule_id,
+            )
+        )
+
+    flash(
+        "KI-Zuweisungsregel gespeichert.",
+        "success",
+    )
+    return redirect(
+        url_for("admin.ticket_settings")
+    )
+
+
+@admin_bp.post(
+    "/admin/ticket-settings/assignment-rules/"
+    "<int:rule_id>/toggle"
+)
+@admin_required
+def ticket_assignment_rule_toggle(
+    rule_id: int,
+) -> Any:
+    rule = db.get_or_404(
+        TicketAiAssignmentRule,
+        rule_id,
+    )
+    new_active = not rule.active
+
+    if new_active:
+        target_user = rule.target_user
+
+        if (
+            target_user is None
+            or not target_user.is_active_flag
+            or target_user.craftsman_erp_id is None
+        ):
+            flash(
+                "Die Regel kann nicht aktiviert werden, "
+                "weil der hinterlegte Handwerker nicht "
+                "verfügbar ist.",
+                "danger",
+            )
+            return redirect(
+                url_for("admin.ticket_settings")
+            )
+
+    rule.active = new_active
+    rule.updated_by_user_id = current_user.id
+    rule.updated_at = utc_now()
+    stale_count = mark_ticket_analyses_stale()
+
+    audit(
+        "ticket.ai_assignment_rule.toggle",
+        "ticket_ai_assignment_rule",
+        rule.id,
+        {
+            "active": rule.active,
+            "stale_ticket_count": stale_count,
+        },
+    )
+    db.session.commit()
+
+    flash(
+        (
+            "KI-Zuweisungsregel aktiviert."
+            if rule.active
+            else "KI-Zuweisungsregel deaktiviert."
+        ),
+        "success",
+    )
+    return redirect(
+        url_for("admin.ticket_settings")
     )
 
 
@@ -2487,27 +2770,32 @@ def ticket_analyze(
         ticket_id,
     )
 
-    if (
-        ticket.ai_state
-        == TicketAiState.READY.value
-        and ticket.ai_input_hash
-        == ticket.source_signature
-    ):
-        return redirect(
-            url_for(
-                "admin.commission_create",
-                ticket_id=ticket.id,
-            )
-        )
-
     if ticket.deleted_at is not None:
         abort(404)
 
     try:
+        current_input_hash = (
+            ticket_analysis_input_hash(ticket)
+        )
+
+        if (
+            ticket.ai_state
+            == TicketAiState.READY.value
+            and ticket.ai_input_hash
+            == current_input_hash
+        ):
+            return redirect(
+                url_for(
+                    "admin.commission_create",
+                    ticket_id=ticket.id,
+                )
+            )
+
         analyze_ticket_mirror(
             ticket,
             current_user.id,
         )
+
         audit(
             "ticket.ai.analyze",
             "ticket",
@@ -2523,16 +2811,26 @@ def ticket_analyze(
                 "task_template_id": (
                     ticket.ai_task_template_id
                 ),
+                "assignment_rule_id": (
+                    ticket.ai_assignment_rule_id
+                ),
+                "assigned_user_id": (
+                    ticket.ai_assigned_user_id
+                ),
+                "assignment_mode": (
+                    ticket.ai_assignment_mode
+                ),
             },
-
         )
         db.session.commit()
+
         return redirect(
             url_for(
                 "admin.commission_create",
                 ticket_id=ticket.id,
             )
         )
+
     except Exception as exc:
         db.session.rollback()
 
@@ -2552,10 +2850,7 @@ def ticket_analyze(
             "ticket_ai_analysis_failed ticket_id=%s",
             ticket_id,
         )
-        flash(
-            str(exc),
-            "danger",
-        )
+        flash(str(exc), "danger")
 
     return redirect(
         url_for("admin.tickets")
@@ -2861,6 +3156,19 @@ def commission_create() -> Any:
                 }
             ]
 
+            if (
+                source_ticket.ai_state
+                == TicketAiState.READY.value
+                and source_ticket.ai_assigned_user_id
+                in {
+                    user.id
+                    for user in craftsman_users
+                }
+            ):
+                form_values["craftsman_user_id"] = (
+                    source_ticket.ai_assigned_user_id
+                )
+
             license_agreement_id = (
                 ticket_license_agreement_local_id(
                     source_ticket
@@ -3001,6 +3309,42 @@ def commission_create() -> Any:
         ):
             selected_object = None
 
+        if (
+                source_ticket is not None
+                and source_ticket.ai_assignment_mode
+                == TicketAiAssignmentMode.FORCE.value
+        ):
+            if (
+                    source_ticket.ai_state
+                    != TicketAiState.READY.value
+                    or source_ticket.ai_input_hash
+                    != ticket_analysis_input_hash(
+                source_ticket
+            )
+            ):
+                raise ValueError(
+                    "Die verbindliche KI-Zuweisung "
+                    "ist veraltet. Das Ticket muss "
+                    "erneut analysiert werden."
+                )
+
+            if (
+                    source_ticket.ai_assigned_user_id
+                    is None
+            ):
+                raise ValueError(
+                    "Die verbindliche KI-Zuweisung "
+                    "enthält keinen Handwerker."
+                )
+
+            form_data["craftsman_user_id"] = (
+                source_ticket.ai_assigned_user_id
+            )
+            form_values = request.form.to_dict()
+            form_values["craftsman_user_id"] = (
+                source_ticket.ai_assigned_user_id
+            )
+
         try:
             commission = create_pending_commission(
                 data=form_data,
@@ -3058,7 +3402,14 @@ def commission_create() -> Any:
                     "position_count": len(
                         commission.positions
                     ),
+                    "assignment_rule_id": (
+                        source_ticket
+                        .ai_assignment_rule_id
+                        if source_ticket is not None
+                        else None
+                    ),
                 },
+
             )
 
             enqueue_commission_push(
@@ -3082,7 +3433,8 @@ def commission_create() -> Any:
                 url_for("admin.commissions")
             )
 
-        except ValueError as exc:
+
+        except (RuntimeError, ValueError) as exc:
             db.session.rollback()
             flash(
                 str(exc),

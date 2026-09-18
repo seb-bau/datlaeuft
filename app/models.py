@@ -58,6 +58,11 @@ class TicketAiState(str, Enum):
     FAILED = "failed"
 
 
+class TicketAiAssignmentMode(str, Enum):
+    SUGGEST = "suggest"
+    FORCE = "force"
+
+
 class ErpOperationType(str, Enum):
     CREATE_COMMISSION = "create_commission"
     ACCEPT_COMMISSION = "accept_commission"
@@ -819,6 +824,75 @@ class CommissionTicketLink(db.Model):
     )
 
 
+class TicketAiAssignmentRule(db.Model):
+    __tablename__ = "ticket_ai_assignment_rule"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(
+        db.String(160),
+        nullable=False,
+    )
+    condition_text: Mapped[str] = mapped_column(
+        db.Text,
+        nullable=False,
+    )
+    target_user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    enforcement_mode: Mapped[str] = mapped_column(
+        db.String(20),
+        default=TicketAiAssignmentMode.SUGGEST.value,
+        server_default=TicketAiAssignmentMode.SUGGEST.value,
+        nullable=False,
+        index=True,
+    )
+    priority: Mapped[int] = mapped_column(
+        db.Integer,
+        default=100,
+        server_default="100",
+        nullable=False,
+        index=True,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    target_user: Mapped[User] = relationship(
+        foreign_keys=[target_user_id]
+    )
+    created_by: Mapped[User | None] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+    updated_by: Mapped[User | None] = relationship(
+        foreign_keys=[updated_by_user_id]
+    )
+
+
 class TicketMirror(db.Model):
     __tablename__ = "ticket_mirror"
 
@@ -916,6 +990,23 @@ class TicketMirror(db.Model):
             index=True,
         )
     )
+    ai_assignment_rule_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey(
+            "ticket_ai_assignment_rule.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
+    ai_assigned_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey(
+            "user_account.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
+    ai_assignment_mode: Mapped[str | None] = mapped_column(
+        db.String(20)
+    )
     ai_title: Mapped[str | None] = mapped_column(
         db.String(255)
     )
@@ -989,6 +1080,15 @@ class TicketMirror(db.Model):
         TimeTaskTemplate | None
     ] = relationship(
         foreign_keys=[ai_task_template_id]
+    )
+
+    ai_assignment_rule: Mapped[
+        TicketAiAssignmentRule | None
+    ] = relationship(
+        foreign_keys=[ai_assignment_rule_id]
+    )
+    ai_assigned_user: Mapped[User | None] = relationship(
+        foreign_keys=[ai_assigned_user_id]
     )
 
 
