@@ -19,6 +19,10 @@ from .models import (
     TimeEntry,
 )
 
+from .performance_review_service import (
+    active_installed_material_movements,
+)
+
 
 WORK_REPORT_SCOPE_BILLED = "billed"
 WORK_REPORT_SCOPE_ALL = "all"
@@ -271,6 +275,67 @@ def work_report_entry_context(
     }
 
 
+def material_quantity_text(
+    value: float,
+) -> str:
+    return (
+        f"{float(value):g}"
+        .replace(".", ",")
+    )
+
+
+def work_report_material_context(
+    commission: Commission,
+) -> list[dict]:
+    grouped = {}
+
+    for movement in (
+        active_installed_material_movements(
+            commission
+        )
+    ):
+        key = (
+            movement.task_template_id,
+            movement.item_id,
+        )
+        row = grouped.setdefault(
+            key,
+            {
+                "task_title": (
+                    movement.task_template.title
+                    if movement.task_template
+                    else "Ohne Leistungsposition"
+                ),
+                "item_number": (
+                    movement.item.item_number
+                ),
+                "item_name": movement.item.name,
+                "unit": movement.item.unit,
+                "quantity": 0.0,
+            },
+        )
+        row["quantity"] += float(
+            movement.quantity
+        )
+
+    rows = list(grouped.values())
+
+    for row in rows:
+        row["quantity_text"] = (
+            material_quantity_text(
+                row["quantity"]
+            )
+        )
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            row["task_title"],
+            row["item_name"],
+        ),
+    )
+
+
 def work_report_context(
     commission: Commission,
     entries: list[TimeEntry],
@@ -319,6 +384,12 @@ def work_report_context(
         )
         for entry in entries
     ]
+
+    material_rows = (
+        work_report_material_context(
+            commission
+        )
+    )
 
     return {
         "commission": commission,
@@ -374,6 +445,8 @@ def work_report_context(
             )
             else "Alle Zeitnachweise"
         ),
+        "material_rows": material_rows,
+        "material_count": len(material_rows),
         "generated_at": datetime.now().strftime(
             "%d.%m.%Y %H:%M"
         ),

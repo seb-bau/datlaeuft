@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}Zeit- und Materialprüfung{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">
+  Zeit- und Materialprüfung
+</h1>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form
+      method="get"
+      class="row g-3 align-items-end"
+    >
+      <div class="col-md-5">
+        <label class="form-label">
+          Suche
+        </label>
+        <input
+          class="form-control"
+          name="q"
+          value="{{ search_text }}"
+          placeholder="Auftrag, Position, Mitarbeiter oder Material"
+        >
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">
+          Status
+        </label>
+        <select
+          class="form-select"
+          name="status"
+        >
+          <option value="needs_review" {% if status_filter == "needs_review" %}selected{% endif %}>
+            Zu prüfen
+          </option>
+          <option value="approved" {% if status_filter == "approved" %}selected{% endif %}>
+            Freigegeben
+          </option>
+          <option value="rejected" {% if status_filter == "rejected" %}selected{% endif %}>
+            Abgelehnt
+          </option>
+          <option value="ok" {% if status_filter == "ok" %}selected{% endif %}>
+            Ohne Abweichung
+          </option>
+          <option value="all" {% if status_filter == "all" %}selected{% endif %}>
+            Alle
+          </option>
+        </select>
+      </div>
+      <div class="col-md-3 d-grid">
+        <button
+          class="btn btn-primary"
+          type="submit"
+        >
+          Filtern
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Auftrag</th>
+            <th>Leistungsposition</th>
+            <th>Zeit</th>
+            <th>Material</th>
+            <th>Ergebnis</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>
+              <a href="{{ url_for(
+                'admin.commission_detail',
+                commission_id=row.commission.id
+              ) }}">
+                {{
+                  row.commission.erp_idnum
+                  or row.commission.code
+                  or row.commission.id
+                }}
+              </a>
+              <div class="small text-muted">
+                {{ row.commission.title or "" }}
+              </div>
+              <a
+                class="btn btn-sm btn-outline-secondary mt-2"
+                href="{{ url_for(
+                  'admin.commission_work_report',
+                  commission_id=row.commission.id
+                ) }}"
+                target="_blank"
+                rel="noopener"
+              >
+                Arbeitsnachweis
+              </a>
+            </td>
+
+            <td>
+              {% if row.task_template %}
+                <strong>
+                  {{ row.task_template.title }}
+                </strong>
+                <div class="small text-muted">
+                  {{ row.task_template.code }}
+                </div>
+              {% else %}
+                <span class="text-danger">
+                  Keine Position zugeordnet
+                </span>
+              {% endif %}
+            </td>
+
+            <td>
+              <div>
+                Ist: {{ row.actual_minutes }} Min.
+              </div>
+              {% if row.expected_minutes %}
+              <div>
+                Soll: {{ row.expected_minutes }} Min.
+              </div>
+              {% endif %}
+              {% if row.time_deviation %}
+              <span class="badge text-bg-warning">
+                Prüfung nötig
+              </span>
+              {% endif %}
+              {% for entry in row.entries %}
+              <div class="small text-muted mt-1">
+                {{ entry.user.display_name }}:
+                {{ entry.minutes }} Min.
+              </div>
+              {% endfor %}
+            </td>
+
+            <td>
+              {% for line in row.material_lines %}
+              <div class="{% if line.deviates %}text-danger{% endif %}">
+                {{ line.item.name }}:
+                Soll {{ "%.2f"|format(line.expected_quantity) }}
+                {{ line.item.unit }},
+                Ist {{ "%.2f"|format(line.actual_quantity) }}
+                {{ line.item.unit }}
+              </div>
+              {% else %}
+              <span class="text-muted">
+                Keine Materialvorgabe
+              </span>
+              {% endfor %}
+            </td>
+
+            <td>
+              {% if row.status == "needs_review" %}
+              <span class="badge text-bg-warning">
+                Prüfung nötig
+              </span>
+              {% elif row.status == "approved" %}
+              <span class="badge text-bg-success">
+                Freigegeben
+              </span>
+              {% elif row.status == "rejected" %}
+              <span class="badge text-bg-danger">
+                Abgelehnt
+              </span>
+              {% else %}
+              <span class="badge text-bg-success">
+                OK
+              </span>
+              {% endif %}
+            </td>
+
+            <td class="text-end">
+              {% if row.status == "needs_review" %}
+              <div class="d-flex gap-2 justify-content-end">
+                <form
+                  method="post"
+                  action="{{ url_for(
+                    'admin.performance_review_decision',
+                    commission_id=row.commission.id,
+                    scope_key=row.scope_key,
+                    decision='approve'
+                  ) }}"
+                >
+                  <input
+                    type="hidden"
+                    name="csrf_token"
+                    value="{{ csrf_token() }}"
+                  >
+                  <input
+                    type="hidden"
+                    name="status"
+                    value="{{ status_filter }}"
+                  >
+                  <input
+                    type="hidden"
+                    name="q"
+                    value="{{ search_text }}"
+                  >
+                  <button
+                    class="btn btn-sm btn-success"
+                    type="submit"
+                  >
+                    Freigeben
+                  </button>
+                </form>
+
+                <form
+                  method="post"
+                  action="{{ url_for(
+                    'admin.performance_review_decision',
+                    commission_id=row.commission.id,
+                    scope_key=row.scope_key,
+                    decision='reject'
+                  ) }}"
+                >
+                  <input
+                    type="hidden"
+                    name="csrf_token"
+                    value="{{ csrf_token() }}"
+                  >
+                  <input
+                    type="hidden"
+                    name="status"
+                    value="{{ status_filter }}"
+                  >
+                  <input
+                    type="hidden"
+                    name="q"
+                    value="{{ search_text }}"
+                  >
+                  <button
+                    class="btn btn-sm btn-outline-danger"
+                    type="submit"
+                  >
+                    Ablehnen
+                  </button>
+                </form>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td
+              colspan="6"
+              class="text-center text-muted"
+            >
+              Keine passenden Prüfungen vorhanden.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

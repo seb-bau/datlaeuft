@@ -142,6 +142,30 @@
       color: #6b7280;
       font-size: 7.5pt;
     }
+
+    .materials {
+      margin-top: 6mm;
+      break-inside: avoid;
+    }
+
+    .material-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 2mm;
+    }
+
+    .material-table th,
+    .material-table td {
+      padding: 1.2mm 2mm;
+      border-bottom: 0.2mm solid #d1d5db;
+      text-align: left;
+    }
+
+    .material-table th:last-child,
+    .material-table td:last-child {
+      text-align: right;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -257,6 +281,36 @@
     {% endif %}
   </div>
   {% endfor %}
+
+  {% if material_rows %}
+  <div class="materials">
+    <h2>Verbautes Material</h2>
+
+    <table class="material-table">
+      <thead>
+        <tr>
+          <th>Leistungsposition</th>
+          <th>Artikel</th>
+          <th>Artikelnummer</th>
+          <th>Menge</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for material in material_rows %}
+        <tr>
+          <td>{{ material.task_title }}</td>
+          <td>{{ material.item_name }}</td>
+          <td>{{ material.item_number }}</td>
+          <td>
+            {{ material.quantity_text }}
+            {{ material.unit }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 
   <div class="summary">
     <table class="summary-table">

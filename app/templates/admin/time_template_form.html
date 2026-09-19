@@ -1,4 +1,64 @@
 {% extends "base.html" %}
+{% macro expected_material_row(material, row_index) %}
+<tr data-material-row>
+  <td>
+    <select
+      class="form-select"
+      name="expected_item_id"
+    >
+      <option value="">Kein Artikel</option>
+      {% for inventory_item in inventory_items %}
+      <option
+        value="{{ inventory_item.id }}"
+        {% if material and material.item_id == inventory_item.id %}selected{% endif %}
+      >
+        {{ inventory_item.name }}
+        ({{ inventory_item.item_number }})
+      </option>
+      {% endfor %}
+    </select>
+  </td>
+  <td>
+    <input
+      class="form-control"
+      type="number"
+      min="0.01"
+      step="0.01"
+      name="expected_quantity"
+      value="{{ material.quantity if material else 1 }}"
+    >
+  </td>
+  <td>
+    <div class="form-check">
+      <input
+        class="form-check-input"
+        type="checkbox"
+        name="expected_required_{{ row_index }}"
+        {% if not material or material.required %}checked{% endif %}
+      >
+      <label class="form-check-label">
+        Ja
+      </label>
+    </div>
+  </td>
+  <td>
+    <input
+      class="form-control"
+      name="expected_note"
+      value="{{ material.note or '' if material else '' }}"
+    >
+  </td>
+  <td class="text-end">
+    <button
+      class="btn btn-sm btn-outline-danger"
+      type="button"
+      data-remove-material
+    >
+      Entfernen
+    </button>
+  </td>
+</tr>
+{% endmacro %}
 {% block title %}Leistungsposition{% endblock %}
 {% block content %}
 <h1 class="h3 mb-4">Leistungsposition</h1>
@@ -37,6 +97,24 @@
       <label class="form-label">SOLL-Zeit in Minuten</label>
       <input class="form-control" type="number" name="suggested_minutes" value="{{ item.suggested_minutes }}">
     </div>
+    <div class="form-check mt-2">
+      <input
+        class="form-check-input"
+        type="checkbox"
+        name="review_when_shorter"
+        id="review_when_shorter"
+        {% if item.review_when_shorter %}checked{% endif %}
+      >
+      <label
+        class="form-check-label"
+        for="review_when_shorter"
+      >
+        Prüfung auch bei kürzerer Ausführungszeit
+      </label>
+    </div>
+    <div class="form-text">
+      Standard: Nein. Kürzere Zeiten lösen dann keine Prüfung aus.
+    </div>
     <div class="col-md-4">
       <label class="form-label">Quelle</label>
       <input class="form-control" value="{{ item.source }}" disabled>
@@ -53,7 +131,17 @@
     </div>
     <div class="col-12">
       <hr>
-      <h2 class="h5">Erwartetes Material</h2>
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h5 mb-0">Erwartetes Material</h2>
+        <button
+          class="btn btn-sm btn-outline-primary"
+          type="button"
+          id="add-expected-material"
+        >
+          Material hinzufügen
+        </button>
+      </div>
+
       <div class="table-responsive">
         <table class="table align-middle">
           <thead>
@@ -62,59 +150,74 @@
               <th style="width: 140px;">Menge</th>
               <th style="width: 130px;">Pflicht</th>
               <th>Hinweis</th>
+              <th style="width: 120px;"></th>
             </tr>
           </thead>
-          <tbody>
+          <tbody
+            id="expected-material-rows"
+            data-next-index="{{ item.expected_materials|length }}"
+          >
             {% for material in item.expected_materials %}
-            {% set row_index = loop.index0 %}
-            <tr>
-              <td>
-                <select class="form-select" name="expected_item_id">
-                  <option value="">Kein Artikel</option>
-                  {% for inventory_item in inventory_items %}
-                  <option value="{{ inventory_item.id }}" {% if material.item_id == inventory_item.id %}selected{% endif %}>{{ inventory_item.name }} ({{ inventory_item.item_number }})</option>
-                  {% endfor %}
-                </select>
-              </td>
-              <td><input class="form-control" type="number" step="0.01" name="expected_quantity" value="{{ material.quantity }}"></td>
-              <td>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="expected_required_{{ row_index }}" {% if material.required %}checked{% endif %}>
-                  <label class="form-check-label">Ja</label>
-                </div>
-              </td>
-              <td><input class="form-control" name="expected_note" value="{{ material.note or '' }}"></td>
-            </tr>
-            {% endfor %}
-            {% set offset = item.expected_materials|length %}
-            {% for i in range(3) %}
-            {% set row_index = offset + loop.index0 %}
-            <tr>
-              <td>
-                <select class="form-select" name="expected_item_id">
-                  <option value="">Kein Artikel</option>
-                  {% for inventory_item in inventory_items %}
-                  <option value="{{ inventory_item.id }}">{{ inventory_item.name }} ({{ inventory_item.item_number }})</option>
-                  {% endfor %}
-                </select>
-              </td>
-              <td><input class="form-control" type="number" step="0.01" name="expected_quantity" value="1"></td>
-              <td>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="expected_required_{{ row_index }}" checked>
-                  <label class="form-check-label">Ja</label>
-                </div>
-              </td>
-              <td><input class="form-control" name="expected_note"></td>
-            </tr>
+              {{ expected_material_row(material, loop.index0) }}
+            {% else %}
+              {{ expected_material_row(none, 0) }}
             {% endfor %}
           </tbody>
         </table>
       </div>
     </div>
+
+    <template id="expected-material-row-template">
+      {{ expected_material_row(none, "__INDEX__") }}
+    </template>
   </div>
   <div class="card-footer text-end">
     <button class="btn btn-primary" type="submit">Speichern</button>
   </div>
 </form>
+{% endblock %}
+{% block scripts %}
+<script>
+  const rows = document.getElementById(
+    "expected-material-rows"
+  );
+  const template = document.getElementById(
+    "expected-material-row-template"
+  );
+  const addButton = document.getElementById(
+    "add-expected-material"
+  );
+
+  addButton.addEventListener("click", () => {
+    const index = Number(
+      rows.dataset.nextIndex
+    );
+    const html = template.innerHTML.replaceAll(
+      "__INDEX__",
+      String(index)
+    );
+
+    rows.insertAdjacentHTML(
+      "beforeend",
+      html
+    );
+    rows.dataset.nextIndex = String(
+      index + 1
+    );
+  });
+
+  rows.addEventListener("click", event => {
+    const button = event.target.closest(
+      "[data-remove-material]"
+    );
+
+    if (!button) {
+      return;
+    }
+
+    button.closest(
+      "[data-material-row]"
+    ).remove();
+  });
+</script>
 {% endblock %}

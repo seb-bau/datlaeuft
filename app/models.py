@@ -2425,6 +2425,12 @@ class TimeTaskTemplate(db.Model):
     code: Mapped[str] = mapped_column(db.String(120), unique=True, nullable=False, index=True)
     title: Mapped[str] = mapped_column(db.String(255), nullable=False, index=True)
     suggested_minutes: Mapped[int] = mapped_column(db.Integer, default=0, nullable=False)
+    review_when_shorter: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
     craft_activity_id: Mapped[int | None] = mapped_column(db.ForeignKey("craft_activity.id"), index=True)
     erp_service_catalogue_id: Mapped[int | None] = mapped_column(db.Integer, unique=True, index=True)
     erp_idnum: Mapped[str | None] = mapped_column(db.String(120), index=True)
@@ -2498,6 +2504,56 @@ class TimeEntry(db.Model):
     user: Mapped[User] = relationship(foreign_keys=[user_id], back_populates="time_entries")
     task_template: Mapped[TimeTaskTemplate | None] = relationship()
     reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_user_id])
+
+
+class CommissionPerformanceReview(db.Model):
+    __tablename__ = "commission_performance_review"
+    __table_args__ = (
+        UniqueConstraint(
+            "commission_id",
+            "scope_key",
+            name="uq_commission_performance_review_scope",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    commission_id: Mapped[int] = mapped_column(
+        db.ForeignKey("commission.id"),
+        nullable=False,
+        index=True,
+    )
+    scope_key: Mapped[str] = mapped_column(
+        db.String(80),
+        nullable=False,
+    )
+    task_template_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("time_task_template.id"),
+        index=True,
+    )
+    fingerprint: Mapped[str] = mapped_column(
+        db.String(64),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        db.String(40),
+        default=TimeReviewStatus.NEEDS_REVIEW.value,
+        server_default=TimeReviewStatus.NEEDS_REVIEW.value,
+        nullable=False,
+        index=True,
+    )
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        index=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+
+    commission: Mapped[Commission] = relationship()
+    task_template: Mapped[TimeTaskTemplate | None] = relationship()
+    reviewed_by: Mapped[User | None] = relationship()
 
 
 class InvoiceBillingRule(db.Model):

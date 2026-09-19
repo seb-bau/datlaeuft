@@ -41,8 +41,7 @@
     or request.path.startswith('/admin/commission-reviews')
     or request.path.startswith('/admin/tickets')
     or request.path.startswith('/admin/invoices')
-    or request.path.startswith('/admin/time-entries')
-    or request.path.startswith('/admin/material-movements')
+    or request.path.startswith('/admin/performance-reviews')
   ) %}
   {% set is_safety_section = request.path.startswith('/admin/safety-inspections') %}
   {% set is_inventory_section = (
@@ -176,10 +175,10 @@
 
               {% if can_access_foreman %}
                 {{ sidebar_link(
-                  'admin.time_entries',
-                  'Stundenzettel',
-                  'clock-history',
-                  request.path.startswith('/admin/time-entries')
+                  'admin.performance_reviews',
+                  'Zeit- und Materialprüfung',
+                  'clipboard-check',
+                  request.path.startswith('/admin/performance-reviews')
                 ) }}
 
                 {{ sidebar_link(
@@ -189,12 +188,6 @@
                   request.path.startswith('/admin/commission-reviews')
                 ) }}
 
-                {{ sidebar_link(
-                  'admin.material_movements',
-                  'Materialprüfung',
-                  'boxes',
-                  request.path.startswith('/admin/material-movements')
-                ) }}
               {% endif %}
             </div>
           </div>

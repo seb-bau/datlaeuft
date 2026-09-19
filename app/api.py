@@ -91,6 +91,10 @@ from .push_service import (
 )
 from datetime import date
 
+from .performance_review_service import (
+    commission_requires_material_confirmation,
+)
+
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 CANCELLATION_NOTE_PREFIX = "Storno zu Buchung #"
@@ -686,6 +690,38 @@ def start_commission(commission_id: int) -> Any:
     }), 202
 
 
+@api_bp.get(
+    "/commissions/<int:commission_id>/completion-check"
+)
+@jwt_required()
+def commission_completion_check(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
+    requires_confirmation = (
+        commission_requires_material_confirmation(
+            commission
+        )
+    )
+
+    return jsonify({
+        "requires_confirmation": (
+            requires_confirmation
+        ),
+        "message": (
+            "Für diesen Auftrag ist eine "
+            "Materialbuchung vorgesehen. "
+            "Auftrag trotzdem abschließen?"
+            if requires_confirmation
+            else None
+        ),
+    })
+
+
 @api_bp.post("/commissions/<int:commission_id>/complete")
 @jwt_required()
 def complete_commission(
@@ -738,6 +774,32 @@ def complete_commission(
         ), 400
 
     completed = data["completed"]
+
+    confirm_missing_material = bool(
+        data.get(
+            "confirm_missing_material",
+            False,
+        )
+    )
+
+    if (
+            completed
+            and commission_requires_material_confirmation(
+        commission
+    )
+            and not confirm_missing_material
+    ):
+        return jsonify({
+            "code": (
+                "material_booking_confirmation_required"
+            ),
+            "message": (
+                "Für diesen Auftrag ist eine "
+                "Materialbuchung vorgesehen. "
+                "Auftrag trotzdem abschließen?"
+            ),
+        }), 409
+
     tenant_charge = bool(
         data.get("tenant_charge", False)
     )
@@ -2829,23 +2891,77 @@ def require_review_permission(user: User) -> None:
         abort(403)
 
 
-def apply_time_review(entry: TimeEntry) -> None:
+def apply_time_review(
+    entry: TimeEntry,
+) -> None:
     task = entry.task_template
-    entry.review_level = ReviewLevel.GREEN.value
-    if task is None or task.suggested_minutes <= 0:
-        entry.review_status = TimeReviewStatus.OK.value
+    entry.deviation_minutes = 0
+    entry.deviation_percent = 0.0
+    entry.review_level = (
+        ReviewLevel.GREEN.value
+    )
+
+    if (
+        task is None
+        or task.suggested_minutes <= 0
+    ):
+        entry.review_status = (
+            TimeReviewStatus.OK.value
+        )
         return
-    difference = abs(entry.minutes - task.suggested_minutes)
-    percent = difference / task.suggested_minutes * 100
-    entry.deviation_minutes = difference
+
+    signed_difference = (
+        entry.minutes
+        - task.suggested_minutes
+    )
+    absolute_difference = abs(
+        signed_difference
+    )
+    percent = (
+        absolute_difference
+        / task.suggested_minutes
+        * 100
+    )
+
+    entry.deviation_minutes = (
+        absolute_difference
+    )
     entry.deviation_percent = percent
-    if (difference > settings.get(SettingKeys.TIME_DEVIATION_MINUTES) or
-            percent > settings.get(SettingKeys.TIME_DEVIATION_PERCENT)):
-        entry.review_status = TimeReviewStatus.NEEDS_REVIEW.value
-        entry.review_level = ReviewLevel.YELLOW.value if entry.deviation_reason or entry.note else ReviewLevel.RED.value
+
+    if (
+        signed_difference < 0
+        and not task.review_when_shorter
+    ):
+        entry.review_status = (
+            TimeReviewStatus.OK.value
+        )
+        return
+
+    if (
+        absolute_difference
+        > settings.get(
+            SettingKeys.TIME_DEVIATION_MINUTES
+        )
+        or percent
+        > settings.get(
+            SettingKeys.TIME_DEVIATION_PERCENT
+        )
+    ):
+        entry.review_status = (
+            TimeReviewStatus.NEEDS_REVIEW.value
+        )
+        entry.review_level = (
+            ReviewLevel.YELLOW.value
+            if (
+                entry.deviation_reason
+                or entry.note
+            )
+            else ReviewLevel.RED.value
+        )
     else:
-        entry.review_status = TimeReviewStatus.OK.value
-        entry.review_level = ReviewLevel.GREEN.value
+        entry.review_status = (
+            TimeReviewStatus.OK.value
+        )
 
 
 def apply_material_review(movement: InventoryMovement) -> None:
@@ -3362,6 +3478,7 @@ def serialize_time_task(
             serialize_expected_material(material)
             for material in item.expected_materials
         ],
+        "review_when_shorter": item.review_when_shorter,
     }
 
 

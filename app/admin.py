@@ -197,6 +197,11 @@ from .process_info_service import (
     write_outgoing_info,
 )
 
+from .performance_review_service import (
+    performance_review_rows,
+    review_performance_scope,
+)
+
 admin_bp = Blueprint("admin", __name__)
 INVOICE_TIME_TYPES = (
     {
@@ -7011,81 +7016,144 @@ def time_template_edit(item_id: int) -> Any:
     return render_template("admin/time_template_form.html", item=item, craft_activities=craft_activities, inventory_items=inventory_items)
 
 
+@admin_bp.get("/admin/performance-reviews")
+@foreman_required
+def performance_reviews() -> Any:
+    status_filter = request.args.get(
+        "status",
+        TimeReviewStatus.NEEDS_REVIEW.value,
+    ).strip()
+    search_text = request.args.get(
+        "q",
+        "",
+    ).strip().lower()
+    rows = performance_review_rows()
+
+    if status_filter != "all":
+        rows = [
+            row
+            for row in rows
+            if row["status"] == status_filter
+        ]
+
+    if search_text:
+        terms = search_text.split()
+
+        rows = [
+            row
+            for row in rows
+            if all(
+                term in " ".join([
+                    str(
+                        row["commission"].erp_idnum
+                        or ""
+                    ),
+                    str(
+                        row["commission"].code
+                        or ""
+                    ),
+                    str(
+                        row["commission"].title
+                        or ""
+                    ),
+                    str(
+                        row["task_template"].code
+                        if row["task_template"]
+                        else ""
+                    ),
+                    str(
+                        row["task_template"].title
+                        if row["task_template"]
+                        else ""
+                    ),
+                    *[
+                        entry.user.display_name
+                        for entry in row["entries"]
+                    ],
+                    *[
+                        line["item"].name
+                        for line
+                        in row["material_lines"]
+                    ],
+                ]).lower()
+                for term in terms
+            )
+        ]
+
+    return render_template(
+        "admin/performance_reviews.html",
+        rows=rows,
+        status_filter=status_filter,
+        search_text=request.args.get(
+            "q",
+            "",
+        ).strip(),
+    )
+
+
+@admin_bp.post(
+    "/admin/performance-reviews/"
+    "<int:commission_id>/<string:scope_key>/"
+    "<string:decision>"
+)
+@foreman_required
+def performance_review_decision(
+    commission_id: int,
+    scope_key: str,
+    decision: str,
+) -> Any:
+    try:
+        item = review_performance_scope(
+            commission_id,
+            scope_key,
+            decision,
+            current_user,
+        )
+    except ValueError as exc:
+        flash(str(exc), "danger")
+    else:
+        audit(
+            "performance.review",
+            "commission_performance_review",
+            item.id,
+            {
+                "commission_id": commission_id,
+                "scope_key": scope_key,
+                "decision": decision,
+            },
+        )
+        db.session.commit()
+        flash(
+            "Zeit- und Materialprüfung aktualisiert.",
+            "success",
+        )
+
+    return redirect(
+        url_for(
+            "admin.performance_reviews",
+            status=request.form.get(
+                "status",
+                "needs_review",
+            ),
+            q=request.form.get("q", ""),
+        )
+    )
+
+
 @admin_bp.get("/admin/time-entries")
 @foreman_required
 def time_entries() -> Any:
-    status_filter = request.args.get("status", "needs_review").strip()
-    review_level_filter = request.args.get("review_level", "").strip()
-    search_text = request.args.get("q", "").strip()
-    query = TimeEntry.query.join(Commission, TimeEntry.commission_id == Commission.id).join(User, TimeEntry.user_id == User.id).outerjoin(TimeTaskTemplate, TimeEntry.task_template_id == TimeTaskTemplate.id)
-    if status_filter and status_filter != "all":
-        query = query.filter(TimeEntry.review_status == status_filter)
-    if review_level_filter:
-        query = query.filter(TimeEntry.review_level == review_level_filter)
-    if search_text:
-        for term in [item.strip() for item in search_text.split() if item.strip()]:
-            like_term = f"%{term}%"
-            query = query.filter(or_(Commission.code.ilike(like_term), Commission.erp_idnum.ilike(like_term), Commission.title.ilike(like_term), TimeTaskTemplate.code.ilike(like_term), TimeTaskTemplate.title.ilike(like_term), User.display_name.ilike(like_term)))
-    items = query.order_by(
-        TimeEntry.service_date.desc(),
-        TimeEntry.created_at.desc(),
-        TimeEntry.id.desc(),
-    ).all()
-    return render_template("admin/time_entries.html", items=items, status_filter=status_filter, review_level_filter=review_level_filter, search_text=search_text)
-
-
-@admin_bp.post("/admin/time-entries/<int:item_id>/<string:decision>")
-@foreman_required
-def time_entry_review(item_id: int, decision: str) -> Any:
-    item = db.get_or_404(TimeEntry, item_id)
-    if decision == "approve":
-        item.review_status = TimeReviewStatus.APPROVED.value
-    elif decision == "reject":
-        item.review_status = TimeReviewStatus.REJECTED.value
-    item.reviewed_by_user_id = current_user.id
-    item.reviewed_at = utc_now()
-    audit("time.review", "time_entry", item.id, {"decision": decision})
-    db.session.commit()
-    flash("Stundenzettel aktualisiert.", "success")
-    return redirect(url_for("admin.time_entries"))
+    return redirect(
+        url_for("admin.performance_reviews")
+    )
 
 
 @admin_bp.get("/admin/material-movements")
 @foreman_required
 def material_movements() -> Any:
-    status_filter = request.args.get("status", "needs_review").strip()
-    review_level_filter = request.args.get("review_level", "").strip()
-    source_filter = request.args.get("source", "").strip()
-    search_text = request.args.get("q", "").strip()
-    query = InventoryMovement.query.join(InventoryItem, InventoryMovement.item_id == InventoryItem.id).outerjoin(Commission, InventoryMovement.commission_id == Commission.id).outerjoin(User, InventoryMovement.user_id == User.id).outerjoin(TimeTaskTemplate, InventoryMovement.task_template_id == TimeTaskTemplate.id)
-    if status_filter and status_filter != "all":
-        query = query.filter(InventoryMovement.review_status == status_filter)
-    if review_level_filter:
-        query = query.filter(InventoryMovement.review_level == review_level_filter)
-    if source_filter:
-        query = query.filter(InventoryMovement.source == source_filter)
-    if search_text:
-        for term in [item.strip() for item in search_text.split() if item.strip()]:
-            like_term = f"%{term}%"
-            query = query.filter(or_(InventoryItem.item_number.ilike(like_term), InventoryItem.name.ilike(like_term), Commission.code.ilike(like_term), Commission.erp_idnum.ilike(like_term), Commission.title.ilike(like_term), TimeTaskTemplate.code.ilike(like_term), TimeTaskTemplate.title.ilike(like_term), User.display_name.ilike(like_term)))
-    items = query.order_by(InventoryMovement.occurred_at.desc()).all()
-    return render_template("admin/material_movements.html", items=items, status_filter=status_filter, review_level_filter=review_level_filter, source_filter=source_filter, search_text=search_text, material_sources=MaterialSource)
-
-
-@admin_bp.post("/admin/material-movements/<int:item_id>/<string:decision>")
-@foreman_required
-def material_movement_review(item_id: int, decision: str) -> Any:
-    item = db.get_or_404(InventoryMovement, item_id)
-    if decision == "approve":
-        item.review_status = TimeReviewStatus.APPROVED.value
-    elif decision == "reject":
-        item.review_status = TimeReviewStatus.REJECTED.value
-    item.reviewed_by_user_id = current_user.id
-    item.reviewed_at = utc_now()
-    audit("material.review", "inventory_movement", item.id, {"decision": decision})
-    db.session.commit()
-    flash("Materialbuchung aktualisiert.", "success")
-    return redirect(url_for("admin.material_movements"))
+    return redirect(
+        url_for("admin.performance_reviews")
+    )
 
 
 @admin_bp.post(
@@ -8301,6 +8369,10 @@ def save_time_template_form(item: TimeTaskTemplate) -> None:
     item.code = request.form.get("code", "").strip()
     item.title = request.form.get("title", "").strip()
     item.suggested_minutes = int(request.form.get("suggested_minutes", 0) or 0)
+    item.review_when_shorter = (
+            "review_when_shorter"
+            in request.form
+    )
     item.active = "active" in request.form
 
     raw_craft_activity_id = request.form.get("craft_activity_id", "").strip()
@@ -8310,30 +8382,97 @@ def save_time_template_form(item: TimeTaskTemplate) -> None:
         item.source = "manual"
 
 
-def save_expected_materials_form(item: TimeTaskTemplate) -> None:
-    item.expected_materials.clear()
-    item_ids = request.form.getlist("expected_item_id")
-    quantities = request.form.getlist("expected_quantity")
-    notes = request.form.getlist("expected_note")
-    seen_item_ids: set[int] = set()
-    for index, raw_item_id in enumerate(item_ids):
+def save_expected_materials_form(
+    item: TimeTaskTemplate,
+) -> None:
+    item_ids = request.form.getlist(
+        "expected_item_id"
+    )
+    quantities = request.form.getlist(
+        "expected_quantity"
+    )
+    notes = request.form.getlist(
+        "expected_note"
+    )
+    submitted_materials = {}
+
+    for index, raw_item_id in enumerate(
+        item_ids
+    ):
         raw_item_id = raw_item_id.strip()
+
         if not raw_item_id:
             continue
+
         try:
-            item_id = int(raw_item_id)
-            quantity = float((quantities[index] if index < len(quantities) else "1") or 1)
+            inventory_item_id = int(
+                raw_item_id
+            )
+            quantity = float(
+                (
+                    quantities[index]
+                    if index < len(quantities)
+                    else "1"
+                )
+                or 1
+            )
         except (TypeError, ValueError):
             continue
-        if item_id in seen_item_ids or quantity <= 0:
+
+        if (
+            inventory_item_id
+            in submitted_materials
+            or quantity <= 0
+        ):
             continue
-        seen_item_ids.add(item_id)
-        item.expected_materials.append(TimeTaskExpectedMaterial(
-            item_id=item_id,
-            quantity=quantity,
-            required=f"expected_required_{index}" in request.form,
-            note=(notes[index].strip() if index < len(notes) and notes[index].strip() else None),
-        ))
+
+        submitted_materials[
+            inventory_item_id
+        ] = {
+            "quantity": quantity,
+            "required": (
+                f"expected_required_{index}"
+                in request.form
+            ),
+            "note": (
+                notes[index].strip()
+                if (
+                    index < len(notes)
+                    and notes[index].strip()
+                )
+                else None
+            ),
+        }
+
+    existing_materials = {
+        material.item_id: material
+        for material in item.expected_materials
+    }
+
+    for inventory_item_id, values in (
+        submitted_materials.items()
+    ):
+        material = existing_materials.pop(
+            inventory_item_id,
+            None,
+        )
+
+        if material is None:
+            material = TimeTaskExpectedMaterial(
+                item_id=inventory_item_id
+            )
+            item.expected_materials.append(
+                material
+            )
+
+        material.quantity = values["quantity"]
+        material.required = values["required"]
+        material.note = values["note"]
+
+    for material in existing_materials.values():
+        item.expected_materials.remove(
+            material
+        )
 
 
 def save_appointment_window_form(
