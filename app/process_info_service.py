@@ -147,6 +147,13 @@ def sync_process_infos(
     thread = ensure_process_thread(
         process_erp_id
     )
+    initial_sync = (
+            thread.last_synced_at is None
+    )
+    should_notify = (
+            notify
+            and not initial_sync
+    )
 
     existing_items = {
         item.erp_note_id: item
@@ -296,7 +303,7 @@ def sync_process_infos(
         process_erp_id
     )
 
-    if notify:
+    if should_notify:
         from .push_service import (
             enqueue_process_info_push,
         )
