@@ -4,8 +4,16 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from flask import current_app
+
 from .extensions import db
-from .models import CraftActivity, User
+from .models import (
+    CraftActivity,
+    User,
+    UserJurisdictionPersonMapping,
+    WowiEconomicUnit,
+    WowiEconomicUnitJurisdiction,
+)
 from .settings import SettingKeys, settings
 from .wowiport import WowiportService
 
@@ -51,6 +59,10 @@ def sync_users_from_wowiport(
             CraftActivity.erp_id.isnot(None),
         ).all()
     }
+
+    responsible_person_candidates: (
+        dict[str, dict[int, str]] | None
+    ) = None
 
     for row in (
         service.get_craftsmen_for_user_sync()
@@ -133,8 +145,9 @@ def sync_users_from_wowiport(
             continue
 
         if (
-            user is not None
-            and not user.wowiport_managed
+                user is not None
+                and not user.wowiport_managed
+                and not user.entra_oid
         ):
             result.skipped_protected += 1
             continue
@@ -158,6 +171,10 @@ def sync_users_from_wowiport(
             )
             db.session.add(user)
 
+        identity_managed_by_entra = bool(
+            user.entra_oid
+        )
+
         previous_values = (
             user.email,
             user.display_name,
@@ -180,13 +197,17 @@ def sync_users_from_wowiport(
             "person",
         )
 
-        user.email = email
-        user.display_name = (
-            _extract_display_name(
-                row,
-                email,
+        if not identity_managed_by_entra:
+            user.email = email
+            user.display_name = (
+                _extract_display_name(
+                    row,
+                    email,
+                )
             )
-        )
+            user.wowiport_managed = True
+            user.is_active_flag = True
+
         user.craftsman_erp_id = (
             craftsman_erp_id
         )
@@ -228,11 +249,27 @@ def sync_users_from_wowiport(
                 )
             )
         )
-        user.wowiport_managed = True
-        user.is_active_flag = True
         user.craft_activities = (
             craft_activities
         )
+
+        jurisdiction_mapping_changed = False
+
+        if identity_managed_by_entra:
+            if responsible_person_candidates is None:
+                responsible_person_candidates = (
+                    _responsible_person_candidates_by_email(
+                        service,
+                        allowed_domains,
+                    )
+                )
+
+            jurisdiction_mapping_changed = (
+                _sync_jurisdiction_person_mapping_by_email(
+                    user,
+                    responsible_person_candidates,
+                )
+            )
 
         current_values = (
             user.email,
@@ -253,8 +290,8 @@ def sync_users_from_wowiport(
         if created:
             result.created += 1
         elif (
-            previous_values
-            != current_values
+                previous_values != current_values
+                or jurisdiction_mapping_changed
         ):
             result.updated += 1
         else:
@@ -582,3 +619,227 @@ def _text_or_none(
 
     text = str(value).strip()
     return text or None
+
+
+def _responsible_person_candidates_by_email(
+    service: WowiportService,
+    allowed_domains: set[str],
+) -> dict[str, dict[int, str]]:
+    official_candidates: dict[
+        int,
+        dict[int, str | None],
+    ] = {}
+
+    def add_candidate(
+        official_erp_id: int | None,
+        person_erp_id: int | None,
+        person_name: str | None,
+    ) -> None:
+        if (
+            official_erp_id is None
+            or person_erp_id is None
+        ):
+            return
+
+        people = official_candidates.setdefault(
+            official_erp_id,
+            {},
+        )
+        normalized_name = _text_or_none(
+            person_name
+        )
+
+        if (
+            person_erp_id not in people
+            or normalized_name is not None
+        ):
+            people[person_erp_id] = (
+                normalized_name
+            )
+
+    jurisdictions = (
+        WowiEconomicUnitJurisdiction.query
+        .filter(
+            WowiEconomicUnitJurisdiction
+            .active.is_(True),
+            WowiEconomicUnitJurisdiction
+            .responsible_official_erp_id
+            .isnot(None),
+            WowiEconomicUnitJurisdiction
+            .responsible_person_erp_id
+            .isnot(None),
+        )
+        .all()
+    )
+
+    for jurisdiction in jurisdictions:
+        add_candidate(
+            jurisdiction
+            .responsible_official_erp_id,
+            jurisdiction
+            .responsible_person_erp_id,
+            jurisdiction.responsible_name,
+        )
+
+    economic_units = (
+        WowiEconomicUnit.query
+        .filter(
+            WowiEconomicUnit.active.is_(True),
+            WowiEconomicUnit
+            .universal_responsibility
+            .is_(True),
+            WowiEconomicUnit
+            .universal_responsible_official_erp_id
+            .isnot(None),
+            WowiEconomicUnit
+            .universal_responsible_person_erp_id
+            .isnot(None),
+        )
+        .all()
+    )
+
+    for economic_unit in economic_units:
+        add_candidate(
+            economic_unit
+            .universal_responsible_official_erp_id,
+            economic_unit
+            .universal_responsible_person_erp_id,
+            None,
+        )
+
+    candidates_by_email: dict[
+        str,
+        dict[int, str],
+    ] = {}
+
+    for (
+        official_erp_id,
+        people,
+    ) in official_candidates.items():
+        try:
+            row = (
+                service.get_responsible_official(
+                    official_erp_id
+                )
+            )
+        except Exception as exc:
+            current_app.logger.warning(
+                "responsible_official_lookup_failed "
+                "official_erp_id=%s error=%s",
+                official_erp_id,
+                str(exc),
+            )
+            continue
+
+        email = _extract_allowed_email(
+            row,
+            allowed_domains,
+        )
+
+        if email is None:
+            continue
+
+        for (
+            person_erp_id,
+            fallback_name,
+        ) in people.items():
+            person_name = (
+                _extract_display_name(
+                    row,
+                    fallback_name or email,
+                )
+            )
+            candidates_by_email.setdefault(
+                email,
+                {},
+            )[person_erp_id] = person_name
+
+    return candidates_by_email
+
+
+def _sync_jurisdiction_person_mapping_by_email(
+    user: User,
+    candidates_by_email: dict[
+        str,
+        dict[int, str],
+    ],
+) -> bool:
+    normalized_email = str(
+        user.email or ""
+    ).strip().lower()
+
+    if (
+        not normalized_email
+        or user.craftsman_erp_id is None
+    ):
+        return False
+
+    candidates = candidates_by_email.get(
+        normalized_email,
+        {},
+    )
+
+    if not candidates:
+        return False
+
+    if len(candidates) != 1:
+        current_app.logger.warning(
+            "user_jurisdiction_mapping_ambiguous "
+            "user_id=%s candidate_count=%s",
+            user.id,
+            len(candidates),
+        )
+        return False
+
+    person_erp_id, person_name = next(
+        iter(candidates.items())
+    )
+
+    mapping = (
+        UserJurisdictionPersonMapping.query
+        .filter_by(
+            jurisdiction_person_erp_id=(
+                person_erp_id
+            )
+        )
+        .one_or_none()
+    )
+
+    if mapping is None:
+        db.session.add(
+            UserJurisdictionPersonMapping(
+                user=user,
+                jurisdiction_person_erp_id=(
+                    person_erp_id
+                ),
+                person_name_snapshot=(
+                    person_name
+                ),
+                active=True,
+            )
+        )
+        return True
+
+    if mapping.user_id != user.id:
+        current_app.logger.warning(
+            "user_jurisdiction_mapping_conflict "
+            "person_erp_id=%s "
+            "existing_user_id=%s "
+            "target_user_id=%s",
+            person_erp_id,
+            mapping.user_id,
+            user.id,
+        )
+        return False
+
+    if not mapping.active:
+        return False
+
+    if (
+        mapping.person_name_snapshot
+        == person_name
+    ):
+        return False
+
+    mapping.person_name_snapshot = person_name
+    return True
