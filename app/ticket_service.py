@@ -153,13 +153,6 @@ def analyze_ticket_mirror(
         actor_user_id,
     )
 
-    result, model = analyze_ticket_content(
-        analysis_ticket_data(row),
-        craft_options,
-        service_position_options,
-        actor_user_id,
-    )
-
     craft_ids = {
         item.id
         for item in crafts
