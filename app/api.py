@@ -2131,16 +2131,38 @@ def add_commission_material(
     if quantity <= 0:
         abort(400)
 
-    task = None
+    task_template_id = data.get(
+        "task_template_id"
+    )
 
-    if data.get("task_template_id"):
-        task = get_user_visible_time_task(
-            user,
-            int(data["task_template_id"]),
+    if task_template_id in (None, ""):
+        abort(
+            400,
+            description=(
+                "Bitte eine Leistungsposition "
+                "auswählen."
+            ),
         )
 
-        if task is None:
-            abort(403)
+    try:
+        task_template_id = int(
+            task_template_id
+        )
+    except (TypeError, ValueError):
+        abort(
+            400,
+            description=(
+                "Die Leistungsposition ist ungültig."
+            ),
+        )
+
+    task = get_user_visible_time_task(
+        user,
+        task_template_id,
+    )
+
+    if task is None:
+        abort(403)
 
     source = str(
         data.get("source")
