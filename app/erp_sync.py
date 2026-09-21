@@ -47,9 +47,10 @@ def enqueue_erp_operation(
     *,
     actor_user_id: int | None = None,
 ) -> ErpOutboxOperation:
-    existing = ErpOutboxOperation.query.filter_by(
-        idempotency_key=idempotency_key,
-    ).one_or_none()
+    with db.session.no_autoflush:
+        existing = ErpOutboxOperation.query.filter_by(
+            idempotency_key=idempotency_key,
+        ).one_or_none()
 
     if existing is not None:
         return existing

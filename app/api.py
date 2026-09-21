@@ -732,6 +732,12 @@ def complete_commission(
         commission_id,
         user,
     )
+
+    db.session.refresh(
+        commission,
+        with_for_update=True,
+    )
+
     data = request.get_json(silent=True) or {}
 
     if not commission.is_actionable:
