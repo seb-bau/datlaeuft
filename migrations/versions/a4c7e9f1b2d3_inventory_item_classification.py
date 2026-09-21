@@ -4,7 +4,7 @@ import sqlalchemy as sa
 
 revision = "a4c7e9f1b2d3"
 down_revision = (
-    "e8f1a2b3c4d5",
+    "f9a2b3c4d5e6",
     "f3a18c7d9e42",
 )
 branch_labels = None
@@ -234,14 +234,18 @@ def upgrade():
         )
 
     op.execute(
-        """
-        UPDATE inventory_movement
-        INNER JOIN inventory_item
-            ON inventory_item.id = inventory_movement.item_id
-        SET inventory_movement.item_type_id_snapshot =
-            inventory_item.item_type_id
-        WHERE inventory_movement.item_type_id_snapshot IS NULL
-        """
+        sa.text(
+            """
+            UPDATE inventory_movement
+            SET item_type_id_snapshot = (
+                SELECT inventory_item.item_type_id
+                FROM inventory_item
+                WHERE inventory_item.id =
+                    inventory_movement.item_id
+            )
+            WHERE item_type_id_snapshot IS NULL
+            """
+        )
     )
 
 

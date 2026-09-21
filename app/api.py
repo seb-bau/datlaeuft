@@ -16,7 +16,6 @@ from sqlalchemy import and_, or_
 from .media_sync import MEDIA_SOURCE
 from uuid import uuid4
 
-
 from .audit import audit
 from .auth import resolve_microsoft_user, validate_microsoft_id_token
 from .extensions import db
@@ -102,7 +101,6 @@ from .performance_review_service import (
 from .process_info_service import (
     send_commission_status_email,
 )
-
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 CANCELLATION_NOTE_PREFIX = "Storno zu Buchung #"
@@ -410,9 +408,9 @@ def commission_create_options() -> Any:
     )
 
     can_create = (
-        bool(commission_types)
-        and commission_creation_tasks()
-        .first() is not None
+            bool(commission_types)
+            and commission_creation_tasks()
+            .first() is not None
     )
 
     return jsonify(
@@ -506,7 +504,7 @@ def commission_detail(commission_id: int) -> Any:
 )
 @jwt_required()
 def commission_history(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = viewable_commission(
@@ -703,7 +701,7 @@ def start_commission(commission_id: int) -> Any:
 )
 @jwt_required()
 def reject_commission(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -725,9 +723,9 @@ def reject_commission(
         }), 409
 
     if (
-        commission.local_status
-        != CommissionLocalStatus
-        .WAITING_FOR_ACCEPTANCE.value
+            commission.local_status
+            != CommissionLocalStatus
+            .WAITING_FOR_ACCEPTANCE.value
     ):
         return jsonify({
             "message": (
@@ -802,11 +800,11 @@ def reject_commission(
 
 
 def send_commission_status_notification(
-    commission: Commission,
-    *,
-    event_name: str,
-    reason: str,
-    submitted_by: User,
+        commission: Commission,
+        *,
+        event_name: str,
+        reason: str,
+        submitted_by: User,
 ) -> None:
     try:
         send_commission_status_email(
@@ -831,7 +829,7 @@ def send_commission_status_notification(
 )
 @jwt_required()
 def commission_completion_check(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -861,7 +859,7 @@ def commission_completion_check(
 @api_bp.post("/commissions/<int:commission_id>/complete")
 @jwt_required()
 def complete_commission(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -887,8 +885,8 @@ def complete_commission(
         ), 409
 
     if (
-        commission.local_status
-        != CommissionLocalStatus.IN_PROGRESS.value
+            commission.local_status
+            != CommissionLocalStatus.IN_PROGRESS.value
     ):
         return jsonify(
             {
@@ -900,11 +898,8 @@ def complete_commission(
         ), 409
 
     if (
-        "completed" not in data
-        or not isinstance(
-            data.get("completed"),
-            bool,
-        )
+            "completed" not in data
+            or not isinstance(data.get("completed"), bool)
     ):
         return jsonify(
             {
@@ -926,9 +921,7 @@ def complete_commission(
 
     if (
             completed
-            and commission_requires_material_confirmation(
-        commission
-    )
+            and commission_requires_material_confirmation(commission)
             and not confirm_missing_material
     ):
         return jsonify({
@@ -968,7 +961,7 @@ def complete_commission(
         tenant_charge
     )
     commission.completion_reason = (
-        reason or None
+            reason or None
     )
     commission.completion_submitted_by = user
     commission.completion_submitted_at = (
@@ -1083,7 +1076,7 @@ def appointment_windows() -> Any:
 )
 @jwt_required()
 def commission_appointments(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = viewable_commission(
@@ -1115,7 +1108,7 @@ def commission_appointments(
 )
 @jwt_required()
 def commission_appointment_create(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -1208,7 +1201,7 @@ def commission_appointment_create(
 )
 @jwt_required()
 def commission_appointment_cancel(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -1239,8 +1232,8 @@ def commission_appointment_cancel(
     )
 
     if (
-        appointment_from is None
-        and accepted_request is None
+            appointment_from is None
+            and accepted_request is None
     ):
         return jsonify({
             "item": serialize_commission(
@@ -1292,7 +1285,7 @@ def commission_appointment_cancel(
 )
 @jwt_required()
 def commission_attachments(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = viewable_commission(
@@ -1330,8 +1323,8 @@ def commission_attachments(
 )
 @jwt_required()
 def commission_attachment_content(
-    commission_id: int,
-    attachment_id: int,
+        commission_id: int,
+        attachment_id: int,
 ) -> Any:
     user = current_api_user()
     commission = viewable_commission(
@@ -1362,9 +1355,9 @@ def commission_attachment_content(
         abort(404)
 
     display_inline = (
-        attachment.mime_type.startswith("image/")
-        or attachment.mime_type
-        == "application/pdf"
+            attachment.mime_type.startswith("image/")
+            or attachment.mime_type
+            == "application/pdf"
     )
 
     response = send_file(
@@ -1388,8 +1381,8 @@ def commission_attachment_content(
 )
 @jwt_required()
 def commission_attachment_thumbnail(
-    commission_id: int,
-    attachment_id: int,
+        commission_id: int,
+        attachment_id: int,
 ) -> Any:
     user = current_api_user()
     commission = viewable_commission(
@@ -1447,7 +1440,7 @@ def commission_attachment_thumbnail(
 )
 @jwt_required()
 def commission_photos(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = viewable_commission(
@@ -1489,8 +1482,8 @@ def commission_photos(
     photos: list[CommissionPhoto] = []
 
     if (
-        context_filter in {"", "order"}
-        and not entity_filter
+            context_filter in {"", "order"}
+            and not entity_filter
     ):
         photos.extend(
             CommissionPhoto.query
@@ -1510,10 +1503,10 @@ def commission_photos(
         entity_conditions = []
 
         if (
-            entity_filter
-            in {"", "building"}
-            and commission.building_erp_id
-            is not None
+                entity_filter
+                in {"", "building"}
+                and commission.building_erp_id
+                is not None
         ):
             entity_conditions.append(
                 and_(
@@ -1528,10 +1521,10 @@ def commission_photos(
             )
 
         if (
-            entity_filter
-            in {"", "use_unit"}
-            and commission.use_unit_id
-            is not None
+                entity_filter
+                in {"", "use_unit"}
+                and commission.use_unit_id
+                is not None
         ):
             entity_conditions.append(
                 and_(
@@ -1580,8 +1573,8 @@ def commission_photos(
 
 
 def viewable_commission_photo(
-    commission: Commission,
-    photo_id: int,
+        commission: Commission,
+        photo_id: int,
 ) -> CommissionPhoto:
     photo = CommissionPhoto.query.filter(
         CommissionPhoto.id == photo_id,
@@ -1595,20 +1588,20 @@ def viewable_commission_photo(
         return photo
 
     if (
-        photo.commission_id is None
-        and photo.source == MEDIA_SOURCE
-        and (
+            photo.commission_id is None
+            and photo.source == MEDIA_SOURCE
+            and (
             (
-                photo.external_entity_name
-                == "Building"
-                and photo.external_entity_id
-                == commission.building_erp_id
+                    photo.external_entity_name
+                    == "Building"
+                    and photo.external_entity_id
+                    == commission.building_erp_id
             )
             or (
-                photo.external_entity_name
-                == "UseUnit"
-                and photo.external_entity_id
-                == commission.use_unit_id
+                    photo.external_entity_name
+                    == "UseUnit"
+                    and photo.external_entity_id
+                    == commission.use_unit_id
             )
         )
     ):
@@ -1622,7 +1615,7 @@ def viewable_commission_photo(
 )
 @jwt_required()
 def commission_photo_upload(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -1638,11 +1631,11 @@ def commission_photo_upload(
         }), 400
 
     caption = (
-        request.form.get(
-            "caption",
-            "",
-        ).strip()
-        or None
+            request.form.get(
+                "caption",
+                "",
+            ).strip()
+            or None
     )
 
     if caption is not None:
@@ -1755,8 +1748,8 @@ def commission_photo_upload(
 )
 @jwt_required()
 def commission_photo_update(
-    commission_id: int,
-    photo_id: int,
+        commission_id: int,
+        photo_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -1814,8 +1807,8 @@ def commission_photo_update(
 )
 @jwt_required()
 def commission_photo_delete(
-    commission_id: int,
-    photo_id: int,
+        commission_id: int,
+        photo_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -1874,8 +1867,8 @@ def commission_photo_delete(
 )
 @jwt_required()
 def commission_photo_content(
-    commission_id: int,
-    photo_id: int,
+        commission_id: int,
+        photo_id: int,
 ) -> Any:
     user = current_api_user()
     commission = viewable_commission(
@@ -1913,8 +1906,8 @@ def commission_photo_content(
 )
 @jwt_required()
 def commission_photo_thumbnail(
-    commission_id: int,
-    photo_id: int,
+        commission_id: int,
+        photo_id: int,
 ) -> Any:
     user = current_api_user()
     commission = viewable_commission(
@@ -2014,8 +2007,8 @@ def inventory_search() -> Any:
             }), 400
 
     if (
-        len(search_text) < 2
-        and item_type_id is None
+            len(search_text) < 2
+            and item_type_id is None
     ):
         return jsonify({
             "items": []
@@ -2194,8 +2187,8 @@ def inventory_transfer() -> Any:
                 else MaterialUsageStatus.NOT_INSTALLED.value
             ),
             note=(
-                str(data.get("note") or "").strip()
-                or None
+                    str(data.get("note") or "").strip()
+                    or None
             ),
             source_location=source_location,
             target_location=target_location,
@@ -2263,8 +2256,8 @@ def inventory_receipt() -> Any:
                 else MaterialUsageStatus.NOT_INSTALLED.value
             ),
             note=(
-                str(data.get("note") or "").strip()
-                or None
+                    str(data.get("note") or "").strip()
+                    or None
             ),
             target_location=target_location,
             review_status=TimeReviewStatus.OK.value,
@@ -2336,7 +2329,7 @@ def commission_materials(commission_id: int) -> Any:
 @api_bp.post("/commissions/<int:commission_id>/materials")
 @jwt_required()
 def add_commission_material(
-    commission_id: int,
+        commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -2508,8 +2501,8 @@ def add_commission_material(
 @api_bp.post("/commissions/<int:commission_id>/materials/<int:movement_id>/cancel")
 @jwt_required()
 def cancel_commission_material(
-    commission_id: int,
-    movement_id: int,
+        commission_id: int,
+        movement_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
@@ -2535,7 +2528,7 @@ def cancel_commission_material(
         }), 400
 
     if movement.id in cancelled_inventory_movement_ids(
-        commission.id
+            commission.id
     ):
         return jsonify({
             "message": "Diese Materialbuchung wurde bereits storniert."
@@ -2574,12 +2567,12 @@ def cancel_commission_material(
 
     try:
         if (
-            movement.source_location is not None
-            or movement.source == MaterialSource.WAREHOUSE.value
+                movement.source_location is not None
+                or movement.source == MaterialSource.WAREHOUSE.value
         ):
             cancellation.target_location = (
-                movement.source_location
-                or get_default_inventory_location()
+                    movement.source_location
+                    or get_default_inventory_location()
             )
             book_inventory_movement(cancellation)
         else:
@@ -2822,6 +2815,14 @@ def commission_material_review(commission_id: int) -> Any:
         commission_id=commission.id,
         movement_type=InventoryMovementType.WITHDRAWAL.value,
     ).all()
+    cancelled_ids = cancelled_inventory_movement_ids(
+        commission.id
+    )
+    movements = [
+        movement
+        for movement in movements
+        if movement.id not in cancelled_ids
+    ]
     result = []
     for expectation in expectations:
         installed_quantity = sum(
@@ -2830,15 +2831,25 @@ def commission_material_review(commission_id: int) -> Any:
             if (
                     movement.task_template_id
                     == expectation.task_template_id
-                    and movement_matches_expected_material(
-                movement,
-                expectation,
-            )
+                    and movement_matches_expected_material(movement, expectation)
                     and movement.usage_status
                     == MaterialUsageStatus.INSTALLED.value
             )
         )
-        is_ok = installed_quantity + 0.0001 >= expectation.quantity
+        quantity_differs = (
+                abs(
+                    installed_quantity
+                    - float(expectation.quantity)
+                )
+                > 0.0001
+        )
+        is_ok = (
+                not quantity_differs
+                or (
+                        not expectation.required
+                        and installed_quantity <= 0.0001
+                )
+        )
         result.append({
             "task_template": serialize_time_task(expectation.task_template),
             "expected_material": serialize_expected_material(expectation),
@@ -2965,10 +2976,10 @@ def mobile_microsoft_login_available() -> bool:
     redirect_uri = settings.get(SettingKeys.MOBILE_MICROSOFT_REDIRECT_URI).strip()
 
     return (
-        settings.get(SettingKeys.MICROSOFT_LOGIN_ENABLED)
-        and bool(tenant_id)
-        and bool(client_id)
-        and bool(redirect_uri)
+            settings.get(SettingKeys.MICROSOFT_LOGIN_ENABLED)
+            and bool(tenant_id)
+            and bool(client_id)
+            and bool(redirect_uri)
     )
 
 
@@ -3060,7 +3071,7 @@ def cancelled_inventory_movement_ids(commission_id: int) -> set[int]:
 
 
 def find_inventory_item(
-    code: str,
+        code: str,
 ) -> InventoryItem | None:
     if not code:
         return None
@@ -3175,7 +3186,7 @@ def require_review_permission(user: User) -> None:
 
 
 def apply_time_review(
-    entry: TimeEntry,
+        entry: TimeEntry,
 ) -> None:
     task = entry.task_template
     entry.deviation_minutes = 0
@@ -3185,8 +3196,8 @@ def apply_time_review(
     )
 
     if (
-        task is None
-        or task.suggested_minutes <= 0
+            task is None
+            or task.suggested_minutes <= 0
     ):
         entry.review_status = (
             TimeReviewStatus.OK.value
@@ -3194,16 +3205,16 @@ def apply_time_review(
         return
 
     signed_difference = (
-        entry.minutes
-        - task.suggested_minutes
+            entry.minutes
+            - task.suggested_minutes
     )
     absolute_difference = abs(
         signed_difference
     )
     percent = (
-        absolute_difference
-        / task.suggested_minutes
-        * 100
+            absolute_difference
+            / task.suggested_minutes
+            * 100
     )
 
     entry.deviation_minutes = (
@@ -3212,8 +3223,8 @@ def apply_time_review(
     entry.deviation_percent = percent
 
     if (
-        signed_difference < 0
-        and not task.review_when_shorter
+            signed_difference < 0
+            and not task.review_when_shorter
     ):
         entry.review_status = (
             TimeReviewStatus.OK.value
@@ -3221,14 +3232,10 @@ def apply_time_review(
         return
 
     if (
-        absolute_difference
-        > settings.get(
-            SettingKeys.TIME_DEVIATION_MINUTES
-        )
-        or percent
-        > settings.get(
-            SettingKeys.TIME_DEVIATION_PERCENT
-        )
+            absolute_difference
+            > settings.get(SettingKeys.TIME_DEVIATION_MINUTES)
+            or percent
+            > settings.get(SettingKeys.TIME_DEVIATION_PERCENT)
     ):
         entry.review_status = (
             TimeReviewStatus.NEEDS_REVIEW.value
@@ -3236,8 +3243,8 @@ def apply_time_review(
         entry.review_level = (
             ReviewLevel.YELLOW.value
             if (
-                entry.deviation_reason
-                or entry.note
+                    entry.deviation_reason
+                    or entry.note
             )
             else ReviewLevel.RED.value
         )
@@ -3284,7 +3291,7 @@ def apply_material_review(movement: InventoryMovement) -> None:
 
 
 def commission_history_entries(
-    commission: Commission,
+        commission: Commission,
 ) -> list[AuditLog]:
     entries_by_id: dict[int, AuditLog] = {}
 
@@ -3374,7 +3381,7 @@ def commission_history_entries(
 
 
 def serialize_history_entry(
-    entry: AuditLog,
+        entry: AuditLog,
 ) -> dict[str, Any]:
     return {
         "id": entry.id,
@@ -3398,7 +3405,7 @@ def serialize_history_entry(
 
 
 def history_title(
-    entry: AuditLog,
+        entry: AuditLog,
 ) -> str:
     titles = {
         "commission.create.web": "Auftrag im Web erfasst",
@@ -3428,7 +3435,7 @@ def history_title(
 
 
 def history_detail(
-    entry: AuditLog,
+        entry: AuditLog,
 ) -> str | None:
     metadata = entry.metadata_json or {}
     action = entry.action
@@ -3622,7 +3629,7 @@ def serialize_commission(
 
 
 def serialize_inventory_location(
-    item: InventoryLocation,
+        item: InventoryLocation,
 ) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -3634,7 +3641,7 @@ def serialize_inventory_location(
 
 
 def serialize_inventory_stock(
-    item: InventoryStock,
+        item: InventoryStock,
 ) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -3646,7 +3653,7 @@ def serialize_inventory_stock(
 
 
 def serialize_inventory_item_group(
-    item: InventoryItemGroup,
+        item: InventoryItemGroup,
 ) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -3660,7 +3667,7 @@ def serialize_inventory_item_group(
 
 
 def serialize_inventory_item_type(
-    item: InventoryItemType,
+        item: InventoryItemType,
 ) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -3677,7 +3684,7 @@ def serialize_inventory_item_type(
 
 
 def serialize_inventory_item(
-    item: InventoryItem,
+        item: InventoryItem,
 ) -> dict[str, Any]:
     stocks = sorted(
         [
@@ -3727,17 +3734,17 @@ def serialize_inventory_item(
 
 
 def serialize_inventory_movement(
-    item: InventoryMovement,
-    cancelled_ids: set[int] | None = None,
-    can_edit: bool = False,
+        item: InventoryMovement,
+        cancelled_ids: set[int] | None = None,
+        can_edit: bool = False,
 ) -> dict[str, Any]:
     cancelled_ids = cancelled_ids or set()
     is_cancelled = item.id in cancelled_ids
     can_cancel = (
-        can_edit
-        and item.movement_type
-        == InventoryMovementType.WITHDRAWAL.value
-        and not is_cancelled
+            can_edit
+            and item.movement_type
+            == InventoryMovementType.WITHDRAWAL.value
+            and not is_cancelled
     )
 
     return {
@@ -3810,8 +3817,8 @@ def serialize_inventory_movement(
 
 
 def serialize_time_task(
-    item: TimeTaskTemplate | None,
-    include_suggested: bool = True,
+        item: TimeTaskTemplate | None,
+        include_suggested: bool = True,
 ) -> dict[str, Any] | None:
     if item is None:
         return None
@@ -3841,7 +3848,7 @@ def serialize_time_task(
 
 
 def serialize_expected_material(
-    item: TimeTaskExpectedMaterial,
+        item: TimeTaskExpectedMaterial,
 ) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -3908,8 +3915,8 @@ def serialize_time_entry(item: TimeEntry, viewer: User | None = None) -> dict[st
 
 
 def serialize_commission_photo(
-    photo: CommissionPhoto,
-    commission_id: int | None = None,
+        photo: CommissionPhoto,
+        commission_id: int | None = None,
 ) -> dict[str, Any]:
     effective_commission_id = (
         photo.commission_id
@@ -3980,7 +3987,7 @@ def serialize_commission_photo(
 
 
 def serialize_commission_attachment(
-    attachment: CommissionAttachment,
+        attachment: CommissionAttachment,
 ) -> dict[str, Any]:
     thumbnail_storage_name = getattr(
         attachment,
@@ -4031,7 +4038,7 @@ def serialize_commission_attachment(
 
 
 def serialize_appointment_window(
-    item: AppointmentWindow,
+        item: AppointmentWindow,
 ) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -4048,7 +4055,7 @@ def serialize_appointment_window(
 
 
 def serialize_appointment_proposal(
-    item,
+        item,
 ) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -4066,7 +4073,7 @@ def serialize_appointment_proposal(
 
 
 def serialize_appointment_request(
-    item: CommissionAppointmentRequest,
+        item: CommissionAppointmentRequest,
 ) -> dict[str, Any]:
     accepted_proposal = next(
         (

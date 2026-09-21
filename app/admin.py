@@ -7500,7 +7500,7 @@ def performance_reviews() -> Any:
                         for entry in row["entries"]
                     ],
                     *[
-                        line["item"].name
+                        str(line["label"])
                         for line
                         in row["material_lines"]
                     ],

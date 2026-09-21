@@ -372,6 +372,7 @@ def review_row(
                 "expected_materials": [
                     {
                         "item_id": expected.item_id,
+                        "item_type_id": expected.item_type_id,
                         "quantity": expected.quantity,
                         "required": expected.required,
                     }
@@ -396,6 +397,9 @@ def review_row(
             {
                 "id": movement.id,
                 "item_id": movement.item_id,
+                "item_type_id": movement_item_type_id(
+                    movement
+                ),
                 "quantity": movement.quantity,
                 "usage_status": (
                     movement.usage_status
