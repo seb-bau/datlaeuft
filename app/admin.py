@@ -1103,18 +1103,50 @@ def ticket_assignment_rule_save() -> Any:
             "",
         ).strip()
 
-        try:
-            target_user_id = int(
-                request.form.get(
-                    "target_user_id",
-                    "",
-                )
-            )
-        except ValueError as exc:
+        def optional_form_id(
+                field_name: str,
+                label: str,
+        ) -> int | None:
+            raw_value = request.form.get(
+                field_name,
+                "",
+            ).strip()
+
+            if not raw_value:
+                return None
+
+            try:
+                value = int(raw_value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{label} ist ungültig."
+                ) from exc
+
+            return value if value > 0 else None
+
+        target_user_id = optional_form_id(
+            "target_user_id",
+            "Der Handwerker",
+        )
+        target_craft_activity_id = optional_form_id(
+            "target_craft_activity_id",
+            "Das Gewerk",
+        )
+        target_task_template_id = optional_form_id(
+            "target_task_template_id",
+            "Die Leistungsposition",
+        )
+
+        if (
+                target_user_id is None
+                and target_craft_activity_id is None
+                and target_task_template_id is None
+        ):
             raise ValueError(
-                "Ein gültiger Handwerker ist "
-                "erforderlich."
-            ) from exc
+                "Die Regel muss mindestens ein Gewerk, "
+                "einen Handwerker oder eine "
+                "Leistungsposition festlegen."
+            )
 
         enforcement_mode = request.form.get(
             "enforcement_mode",
@@ -1173,20 +1205,90 @@ def ticket_assignment_rule_save() -> Any:
                 "Das Verhalten der Regel ist ungültig."
             )
 
-        target_user = (
-            User.query
-            .filter(
-                User.id == target_user_id,
-                User.is_active_flag.is_(True),
-                User.craftsman_erp_id.isnot(None),
+        target_user = None
+        target_craft_activity = None
+        target_task_template = None
+
+        if target_user_id is not None:
+            target_user = (
+                User.query
+                .filter(
+                    User.id == target_user_id,
+                    User.is_active_flag.is_(True),
+                    User.craftsman_erp_id.isnot(None),
+                )
+                .one_or_none()
             )
-            .one_or_none()
+
+            if target_user is None:
+                raise ValueError(
+                    "Der ausgewählte Handwerker ist "
+                    "nicht verfügbar."
+                )
+
+        if target_craft_activity_id is not None:
+            target_craft_activity = (
+                CraftActivity.query
+                .filter(
+                    CraftActivity.id
+                    == target_craft_activity_id,
+                    CraftActivity.active.is_(True),
+                    CraftActivity.app_enabled.is_(True),
+                )
+                .one_or_none()
+            )
+
+            if target_craft_activity is None:
+                raise ValueError(
+                    "Das ausgewählte Gewerk ist "
+                    "nicht verfügbar."
+                )
+
+        if target_task_template_id is not None:
+            target_task_template = (
+                commission_creation_tasks()
+                .filter(
+                    TimeTaskTemplate.id
+                    == target_task_template_id
+                )
+                .one_or_none()
+            )
+
+            if target_task_template is None:
+                raise ValueError(
+                    "Die ausgewählte Leistungsposition "
+                    "ist nicht verfügbar."
+                )
+
+        effective_craft_activity = (
+                target_craft_activity
+                or (
+                    target_task_template.craft_activity
+                    if target_task_template is not None
+                    else None
+                )
         )
 
-        if target_user is None:
+        if (
+                target_craft_activity is not None
+                and target_task_template is not None
+                and target_task_template.craft_activity_id
+                != target_craft_activity.id
+        ):
             raise ValueError(
-                "Der ausgewählte Handwerker ist "
-                "nicht verfügbar."
+                "Die Leistungsposition gehört nicht "
+                "zum ausgewählten Gewerk."
+            )
+
+        if (
+                target_user is not None
+                and effective_craft_activity is not None
+                and effective_craft_activity
+                not in target_user.craft_activities
+        ):
+            raise ValueError(
+                "Der ausgewählte Handwerker ist dem "
+                "ausgewählten Gewerk nicht zugeordnet."
             )
 
         if rule_id is None:
@@ -1208,7 +1310,21 @@ def ticket_assignment_rule_save() -> Any:
 
         rule.name = name
         rule.condition_text = condition_text
-        rule.target_user_id = target_user.id
+        rule.target_user_id = (
+            target_user.id
+            if target_user is not None
+            else None
+        )
+        rule.target_craft_activity_id = (
+            target_craft_activity.id
+            if target_craft_activity is not None
+            else None
+        )
+        rule.target_task_template_id = (
+            target_task_template.id
+            if target_task_template is not None
+            else None
+        )
         rule.enforcement_mode = enforcement_mode
         rule.priority = priority
         rule.active = active
@@ -1230,6 +1346,13 @@ def ticket_assignment_rule_save() -> Any:
                 "priority": rule.priority,
                 "active": rule.active,
                 "stale_ticket_count": stale_count,
+                "target_user_id": rule.target_user_id,
+                "target_craft_activity_id": (
+                    rule.target_craft_activity_id
+                ),
+                "target_task_template_id": (
+                    rule.target_task_template_id
+                ),
             },
         )
         db.session.commit()

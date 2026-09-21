@@ -267,7 +267,31 @@
           </div>
         </div>
 
-        <div class="col-lg-6">
+        <div class="col-lg-4">
+          <label class="form-label" for="ruleTargetCraft">
+            Gewerk
+          </label>
+          <select
+            class="form-select"
+            id="ruleTargetCraft"
+            name="target_craft_activity_id"
+          >
+            <option value="">Nicht beeinflussen</option>
+            {% for craft_activity in craft_activities %}
+            <option
+              value="{{ craft_activity.id }}"
+              {% if edit_assignment_rule and edit_assignment_rule.target_craft_activity_id == craft_activity.id %}selected{% endif %}
+            >
+              {{ craft_activity.name }}
+              {% if craft_activity.code %}
+              · {{ craft_activity.code }}
+              {% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-lg-4">
           <label class="form-label" for="ruleTargetUser">
             Handwerker
           </label>
@@ -275,9 +299,8 @@
             class="form-select"
             id="ruleTargetUser"
             name="target_user_id"
-            required
           >
-            <option value="">Bitte auswählen</option>
+            <option value="">Automatisch ermitteln</option>
             {% for user in craftsman_users %}
             <option
               value="{{ user.id }}"
@@ -286,6 +309,34 @@
               {{ user.display_name }}
               · Wowiport-ID {{ user.craftsman_erp_id }}
             </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-lg-4">
+          <label class="form-label" for="ruleTargetTask">
+            Leistungsposition
+          </label>
+          <select
+            class="form-select"
+            id="ruleTargetTask"
+            name="target_task_template_id"
+          >
+            <option value="">Nicht beeinflussen</option>
+            {% for craft_activity in craft_activities %}
+              {% if positions_by_craft.get(craft_activity.id) %}
+              <optgroup label="{{ craft_activity.name }}">
+                {% for service_position in positions_by_craft.get(craft_activity.id, []) %}
+                <option
+                  value="{{ service_position.id }}"
+                  {% if edit_assignment_rule and edit_assignment_rule.target_task_template_id == service_position.id %}selected{% endif %}
+                >
+                  {{ service_position.code }}
+                  · {{ service_position.title }}
+                </option>
+                {% endfor %}
+              </optgroup>
+              {% endif %}
             {% endfor %}
           </select>
         </div>
@@ -304,13 +355,13 @@
               value="suggest"
               {% if edit_assignment_rule and edit_assignment_rule.enforcement_mode == 'suggest' %}selected{% endif %}
             >
-              Handwerker vorschlagen
+              Als Vorschlag übernehmen
             </option>
             <option
               value="force"
               {% if not edit_assignment_rule or edit_assignment_rule.enforcement_mode == 'force' %}selected{% endif %}
             >
-              Handwerker verbindlich zuweisen
+              Verbindlich übernehmen
             </option>
           </select>
         </div>

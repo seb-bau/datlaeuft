@@ -197,6 +197,53 @@ def analyze_ticket_mirror(
         assignment_rules,
     )
 
+    if assignment_rule is not None:
+        if (
+                assignment_rule
+                        .target_task_template_id
+                is not None
+        ):
+            selected_service_position = (
+                service_positions_by_id.get(
+                    assignment_rule
+                    .target_task_template_id
+                )
+            )
+
+            if selected_service_position is None:
+                raise RuntimeError(
+                    "Die ausgewählte KI-Regel verweist "
+                    "auf eine nicht verfügbare "
+                    "Leistungsposition."
+                )
+
+            service_position_id = (
+                selected_service_position.id
+            )
+            craft_activity_id = (
+                selected_service_position
+                .craft_activity_id
+            )
+
+        if (
+                assignment_rule
+                        .target_craft_activity_id
+                is not None
+        ):
+            craft_activity_id = (
+                assignment_rule
+                .target_craft_activity_id
+            )
+
+            if (
+                    selected_service_position is not None
+                    and selected_service_position
+                    .craft_activity_id
+                    != craft_activity_id
+            ):
+                service_position_id = None
+                selected_service_position = None
+
     ticket.ai_state = TicketAiState.READY.value
     ticket.ai_candidate = bool(
         result.get("is_commission_candidate")
@@ -335,16 +382,75 @@ def ticket_analysis_configuration() -> dict[
 
     for rule in assignment_rules:
         target_user = rule.target_user
+        target_craft_activity = (
+            rule.target_craft_activity
+        )
+        target_task_template = (
+            rule.target_task_template
+        )
 
         if (
-            target_user is None
-            or not target_user.is_active_flag
-            or target_user.craftsman_erp_id is None
+                target_user is None
+                and target_craft_activity is None
+                and target_task_template is None
+        ):
+            raise RuntimeError(
+                "Die aktive KI-Zuweisungsregel "
+                f"„{rule.name}“ besitzt kein Ergebnis."
+            )
+
+        if (
+                target_user is not None
+                and (
+                not target_user.is_active_flag
+                or target_user.craftsman_erp_id
+                is None
+        )
         ):
             raise RuntimeError(
                 "Die aktive KI-Zuweisungsregel "
                 f"„{rule.name}“ verweist nicht auf "
                 "einen aktiven Handwerker."
+            )
+
+        if (
+                target_craft_activity is not None
+                and (
+                not target_craft_activity.active
+                or not target_craft_activity.app_enabled
+        )
+        ):
+            raise RuntimeError(
+                "Die aktive KI-Zuweisungsregel "
+                f"„{rule.name}“ verweist auf ein "
+                "nicht verfügbares Gewerk."
+            )
+
+        if (
+                target_task_template is not None
+                and (
+                not target_task_template.active
+                or target_task_template
+                        .erp_service_catalogue_id is None
+        )
+        ):
+            raise RuntimeError(
+                "Die aktive KI-Zuweisungsregel "
+                f"„{rule.name}“ verweist auf eine "
+                "nicht verfügbare Leistungsposition."
+            )
+
+        if (
+                target_craft_activity is not None
+                and target_task_template is not None
+                and target_task_template
+                .craft_activity_id
+                != target_craft_activity.id
+        ):
+            raise RuntimeError(
+                "Gewerk und Leistungsposition der "
+                f"KI-Zuweisungsregel „{rule.name}“ "
+                "passen nicht zusammen."
             )
 
         if rule.enforcement_mode not in allowed_modes:
@@ -414,6 +520,12 @@ def build_ticket_analysis_input_hash(
                 "name": rule.name,
                 "condition": rule.condition_text,
                 "target_user_id": rule.target_user_id,
+                "target_craft_activity_id": (
+                    rule.target_craft_activity_id
+                ),
+                "target_task_template_id": (
+                    rule.target_task_template_id
+                ),
                 "enforcement_mode": (
                     rule.enforcement_mode
                 ),
@@ -484,16 +596,21 @@ def resolve_assignment_rule(
         for rule in matched_rules
         if rule.priority == highest_priority
     ]
-    target_user_ids = {
-        rule.target_user_id
+    target_signatures = {
+        (
+            rule.target_user_id,
+            rule.target_craft_activity_id,
+            rule.target_task_template_id,
+            rule.enforcement_mode,
+        )
         for rule in highest_priority_rules
     }
 
-    if len(target_user_ids) != 1:
+    if len(target_signatures) != 1:
         raise RuntimeError(
             "Mehrere gleich priorisierte "
-            "KI-Zuweisungsregeln verweisen auf "
-            "unterschiedliche Handwerker."
+            "KI-Zuweisungsregeln haben "
+            "unterschiedliche Ergebnisse."
         )
 
     return min(

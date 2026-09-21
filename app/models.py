@@ -836,9 +836,32 @@ class TicketAiAssignmentRule(db.Model):
         db.Text,
         nullable=False,
     )
-    target_user_id: Mapped[int] = mapped_column(
-        db.ForeignKey("user_account.id"),
-        nullable=False,
+    target_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey(
+            "user_account.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+    target_craft_activity_id: Mapped[
+        int | None
+        ] = mapped_column(
+        db.ForeignKey(
+            "craft_activity.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+    target_task_template_id: Mapped[
+        int | None
+        ] = mapped_column(
+        db.ForeignKey(
+            "time_task_template.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
         index=True,
     )
     enforcement_mode: Mapped[str] = mapped_column(
@@ -882,8 +905,18 @@ class TicketAiAssignmentRule(db.Model):
         nullable=False,
     )
 
-    target_user: Mapped[User] = relationship(
+    target_user: Mapped[User | None] = relationship(
         foreign_keys=[target_user_id]
+    )
+    target_craft_activity: Mapped[
+        CraftActivity | None
+        ] = relationship(
+        foreign_keys=[target_craft_activity_id]
+    )
+    target_task_template: Mapped[
+        "TimeTaskTemplate | None"
+    ] = relationship(
+        foreign_keys=[target_task_template_id]
     )
     created_by: Mapped[User | None] = relationship(
         foreign_keys=[created_by_user_id]

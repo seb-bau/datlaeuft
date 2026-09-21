@@ -95,6 +95,10 @@ from .performance_review_service import (
     commission_requires_material_confirmation,
 )
 
+from .process_info_service import (
+    send_commission_status_email,
+)
+
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 CANCELLATION_NOTE_PREFIX = "Storno zu Buchung #"
@@ -690,6 +694,134 @@ def start_commission(commission_id: int) -> Any:
     }), 202
 
 
+@api_bp.post(
+    "/commissions/<int:commission_id>/reject"
+)
+@jwt_required()
+def reject_commission(
+    commission_id: int,
+) -> Any:
+    user = current_api_user()
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
+
+    db.session.refresh(
+        commission,
+        with_for_update=True,
+    )
+
+    if not commission.is_actionable:
+        return jsonify({
+            "message": (
+                "Der Auftrag wartet noch auf eine "
+                "OPENWOWI-Auftragsnummer."
+            )
+        }), 409
+
+    if (
+        commission.local_status
+        != CommissionLocalStatus
+        .WAITING_FOR_ACCEPTANCE.value
+    ):
+        return jsonify({
+            "message": (
+                "Nur ein noch nicht angenommener "
+                "Auftrag kann abgelehnt werden."
+            )
+        }), 409
+
+    data = request.get_json(silent=True) or {}
+    reason = str(
+        data.get("reason") or ""
+    ).strip()
+
+    if not reason:
+        return jsonify({
+            "message": (
+                "Bitte einen Grund für die "
+                "Ablehnung angeben."
+            )
+        }), 400
+
+    commission.completion_successful = False
+    commission.tenant_charge_requested = False
+    commission.completion_reason = reason
+    commission.completion_submitted_by = user
+    commission.completion_submitted_at = utc_now()
+    commission.completed_at = None
+    commission.local_status = (
+        CommissionLocalStatus
+        .COMPLETION_REVIEW.value
+    )
+    commission.erp_sync_state = (
+        CommissionSyncState.PENDING.value
+    )
+    commission.erp_sync_message = None
+
+    enqueue_erp_operation(
+        commission,
+        ErpOperationType.REFUSE_COMMISSION,
+        f"commission:refused:{commission.id}",
+        actor_user_id=user.id,
+    )
+
+    audit(
+        "commission.reject",
+        "commission",
+        commission.id,
+        {
+            "reason": reason,
+        },
+    )
+
+    sync_offer_from_commission(
+        commission
+    )
+
+    db.session.commit()
+
+    send_commission_status_notification(
+        commission,
+        event_name="Auftrag abgelehnt",
+        reason=reason,
+        submitted_by=user,
+    )
+
+    return jsonify({
+        "item": serialize_commission(
+            commission,
+            viewer=user,
+        )
+    }), 202
+
+
+def send_commission_status_notification(
+    commission: Commission,
+    *,
+    event_name: str,
+    reason: str,
+    submitted_by: User,
+) -> None:
+    try:
+        send_commission_status_email(
+            commission,
+            event_name=event_name,
+            reason=reason,
+            submitted_by=submitted_by,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "commission_status_email_failed "
+            "commission_id=%s event=%s",
+            commission.id,
+            event_name,
+        )
+
+
 @api_bp.get(
     "/commissions/<int:commission_id>/completion-check"
 )
@@ -895,6 +1027,16 @@ def complete_commission(
     )
 
     db.session.commit()
+
+    if not completed:
+        send_commission_status_notification(
+            commission,
+            event_name=(
+                "Auftrag nicht erfolgreich abgeschlossen"
+            ),
+            reason=reason,
+            submitted_by=user,
+        )
 
     return jsonify(
         {

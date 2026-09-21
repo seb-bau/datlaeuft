@@ -1021,16 +1021,14 @@ def bootstrap_process_infos() -> tuple[int, int]:
     return len(process_ids), changed
 
 
-def _responsible_official_emails(
-    process_erp_id: int,
+def commission_notification_emails(
+    commissions: list[Commission],
 ) -> list[str]:
     service = WowiportService()
     official_ids: set[int] = set()
     fallback_recipients: set[str] = set()
 
-    for commission in commissions_for_process(
-        process_erp_id
-    ):
+    for commission in commissions:
         official_id = (
             commission
             .responsible_official_repair_erp_id
@@ -1071,10 +1069,8 @@ def _responsible_official_emails(
     recipients: set[str] = set()
 
     for official_id in official_ids:
-        row = (
-            service.get_responsible_official(
-                official_id
-            )
+        row = service.get_responsible_official(
+            official_id
         )
         person = _row_value(
             row,
@@ -1093,10 +1089,7 @@ def _responsible_official_emails(
                 communication,
                 "Content",
             )
-            if isinstance(
-                communication,
-                dict,
-            )
+            if isinstance(communication, dict)
             else None
         )
 
@@ -1109,6 +1102,124 @@ def _responsible_official_emails(
         return sorted(recipients)
 
     return sorted(fallback_recipients)
+
+
+def _responsible_official_emails(
+    process_erp_id: int,
+) -> list[str]:
+    return commission_notification_emails(
+        commissions_for_process(
+            process_erp_id
+        )
+    )
+
+
+def send_commission_status_email(
+    commission: Commission,
+    *,
+    event_name: str,
+    reason: str,
+    submitted_by: User,
+) -> None:
+    recipients = commission_notification_emails(
+        [commission]
+    )
+
+    if not recipients:
+        raise RuntimeError(
+            "Für den Auftrag wurde keine "
+            "E-Mail-Adresse gefunden."
+        )
+
+    smtp_host = settings.get(
+        SettingKeys.SMTP_HOST
+    ).strip()
+    smtp_port = settings.get(
+        SettingKeys.SMTP_PORT
+    )
+    smtp_sender = settings.get(
+        SettingKeys.SMTP_SENDER
+    ).strip()
+
+    if not smtp_host or not smtp_sender:
+        raise RuntimeError(
+            "SMTP-Server oder Absenderadresse fehlen."
+        )
+
+    position_lines = [
+        (
+            f"{index}. {position.display_text}"
+            f" · Menge {position.units:g}"
+        )
+        for index, position in enumerate(
+            commission.positions,
+            start=1,
+        )
+    ]
+
+    message = EmailMessage()
+    message["From"] = smtp_sender
+    message["To"] = ", ".join(recipients)
+    message["Subject"] = (
+        f"{event_name}: "
+        f"{commission.erp_idnum or commission.code or commission.id}"
+    )
+
+    message.set_content(
+        "\n".join(
+            (
+                event_name,
+                "",
+                (
+                    "Auftrag: "
+                    f"{commission.erp_idnum or commission.code or commission.id}"
+                ),
+                (
+                    "Titel: "
+                    f"{commission.display_title}"
+                ),
+                (
+                    "Beschreibung: "
+                    f"{commission.description or '-'}"
+                ),
+                (
+                    "Schadensort: "
+                    f"{commission.damage_location or '-'}"
+                ),
+                (
+                    "Adresse: "
+                    f"{commission.apartment_address or '-'}"
+                ),
+                (
+                    "Lage: "
+                    f"{commission.apartment_location or '-'}"
+                ),
+                (
+                    "Mieter: "
+                    f"{commission.tenant_name or '-'}"
+                ),
+                (
+                    "Handwerker: "
+                    f"{submitted_by.display_name}"
+                ),
+                "",
+                "Leistungspositionen:",
+                *(
+                    position_lines
+                    or ["Keine Leistungspositionen vorhanden"]
+                ),
+                "",
+                "Begründung / Kommentar:",
+                reason,
+            )
+        )
+    )
+
+    send_email(
+        message,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+    )
 
 
 def _send_process_info_email(

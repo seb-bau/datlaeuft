@@ -185,14 +185,11 @@
           </span>
         {% elif selected_craft_activities %}
           <div class="d-flex flex-wrap gap-2">
-            {% for activity in selected_craft_activities %}
-            <span class="badge text-bg-primary">
-              {{ activity.name }}
-              {% if activity.code %}
-                · {{ activity.code }}
-              {% endif %}
-            </span>
-            {% endfor %}
+        {% for activity in selected_craft_activities %}
+        <span class="badge text-bg-primary">
+          {{ activity.name }}
+        </span>
+        {% endfor %}
           </div>
         {% else %}
           <span class="text-warning">
@@ -377,10 +374,14 @@
     }
 
     const badges = selectedItems.map((option) => {
-      const name = option.querySelector(".fw-semibold")?.textContent?.trim() || "";
-      const code = option.querySelector(".small")?.textContent?.trim() || "";
-      const label = code ? `${name} · ${code}` : name;
-      return `<span class="badge text-bg-primary">${escapeHtml(label)}</span>`;
+      const name = option.querySelector(
+        ".fw-semibold"
+      )?.textContent?.trim() || "";
+
+      return (
+        `<span class="badge text-bg-primary">`
+        + `${escapeHtml(name)}</span>`
+      );
     }).join("");
 
     selectedCraftActivities.innerHTML = `<div class="d-flex flex-wrap gap-2">${badges}</div>`;
