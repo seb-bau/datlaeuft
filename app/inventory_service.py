@@ -9,6 +9,7 @@ from .models import (
     InventoryMovement,
     InventoryMovementType,
     InventoryStock,
+    TimeTaskExpectedMaterial,
 )
 
 
@@ -101,6 +102,91 @@ def change_inventory_stock(
     stock.quantity = max(new_quantity, 0)
 
 
+def prepare_inventory_movement(
+    movement: InventoryMovement,
+) -> InventoryMovement:
+    item = movement.item
+
+    if item is None:
+        raise ValueError(
+            "Für die Buchung fehlt der Artikel."
+        )
+
+    item_type = item.item_type
+    item_group = (
+        item_type.group
+        if item_type
+        else None
+    )
+
+    if movement.item_type_id_snapshot is None:
+        movement.item_type_id_snapshot = (
+            item_type.id
+            if item_type
+            else None
+        )
+
+    if movement.item_group_id_snapshot is None:
+        movement.item_group_id_snapshot = (
+            item_group.id
+            if item_group
+            else None
+        )
+
+    serial_number = str(
+        movement.serial_number or ""
+    ).strip()
+    movement.serial_number = (
+        serial_number
+        or None
+    )
+
+    if (
+        movement.movement_type
+        == InventoryMovementType.WITHDRAWAL.value
+        and item.serial_number_required
+    ):
+        if abs(float(movement.quantity) - 1.0) > 0.0001:
+            raise ValueError(
+                "Seriennummernpflichtige Artikel "
+                "müssen einzeln mit Menge 1 gebucht werden."
+            )
+
+        if movement.serial_number is None:
+            raise ValueError(
+                "Für diesen Artikel muss eine "
+                "Seriennummer angegeben werden."
+            )
+
+    return movement
+
+
+def movement_item_type_id(
+    movement: InventoryMovement,
+) -> int | None:
+    if movement.item_type_id_snapshot is not None:
+        return movement.item_type_id_snapshot
+
+    if movement.item is None:
+        return None
+
+    return movement.item.item_type_id
+
+
+def movement_matches_expected_material(
+    movement: InventoryMovement,
+    expected: TimeTaskExpectedMaterial,
+) -> bool:
+    if expected.item_id is not None:
+        return movement.item_id == expected.item_id
+
+    return (
+        expected.item_type_id is not None
+        and movement_item_type_id(movement)
+        == expected.item_type_id
+    )
+
+
 def book_inventory_movement(
     movement: InventoryMovement,
 ) -> InventoryMovement:
@@ -112,6 +198,10 @@ def book_inventory_movement(
             raise ValueError("Die Korrekturmenge darf nicht 0 sein.")
     elif quantity <= 0:
         raise ValueError("Die Buchungsmenge muss größer als 0 sein.")
+
+    prepare_inventory_movement(
+        movement
+    )
 
     db.session.add(movement)
 

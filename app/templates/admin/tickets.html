@@ -128,29 +128,33 @@ Einstellungen findest du unter Einstellungen.
         </div>
 
         <div class="d-flex flex-column gap-2">
-        {% if ticket.state != "converted" %}
-<form
-  method="post"
-  action="{{ url_for(
-    'admin.ticket_analyze',
-    ticket_id=ticket.id
-  ) }}"
->
-  <input
-    type="hidden"
-    name="csrf_token"
-    value="{{ csrf_token() }}"
-  >
+          {% if ticket.state != "ignored" %}
+          <form
+            method="post"
+            action="{{ url_for(
+              'admin.ticket_analyze',
+              ticket_id=ticket.id
+            ) }}"
+          >
+            <input
+              type="hidden"
+              name="csrf_token"
+              value="{{ csrf_token() }}"
+            >
 
-  <button
-    class="btn btn-primary w-100"
-    type="submit"
-    {% if not openai_configured %}disabled{% endif %}
-  >
-    Auftrag erstellen
-  </button>
-</form>
-{% endif %}
+            <button
+              class="btn btn-primary w-100"
+              type="submit"
+              {% if not openai_configured %}disabled{% endif %}
+            >
+              {% if ticket.commissions %}
+                Weiteren Auftrag erstellen
+              {% else %}
+                Auftrag erstellen
+              {% endif %}
+            </button>
+          </form>
+          {% endif %}
 
           {% if ticket.state == "new" %}
           <form
@@ -192,15 +196,20 @@ Einstellungen findest du unter Einstellungen.
               Erneut prüfen
             </button>
           </form>
-          {% elif ticket.commission %}
+          {% endif %}
+
+          {% if ticket.commissions %}
           <a
             class="btn btn-outline-primary"
             href="{{ url_for(
-              'admin.commission_detail',
-              commission_id=ticket.commission.id
+              'admin.ticket_commissions',
+              ticket_id=ticket.id
             ) }}"
           >
-            Auftrag anzeigen
+            Aufträge anzeigen
+            <span class="badge text-bg-primary ms-1">
+              {{ ticket.commissions|length }}
+            </span>
           </a>
           {% endif %}
         </div>

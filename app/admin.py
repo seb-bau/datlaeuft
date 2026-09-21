@@ -52,6 +52,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 from .commission_service import create_pending_commission
 from .models import (
     Commission,
@@ -113,6 +114,8 @@ from .models import (
     TicketCraftFallback,
     TicketAiAssignmentMode,
     TicketAiAssignmentRule,
+    InventoryItemGroup,
+    InventoryItemType,
 )
 from .ticket_service import (
     analyze_ticket_mirror,
@@ -2816,8 +2819,16 @@ def tickets() -> Any:
         1,
     )
 
-    query = TicketMirror.query.filter(
-        TicketMirror.deleted_at.is_(None)
+    query = (
+        TicketMirror.query
+        .options(
+            selectinload(
+                TicketMirror.commissions
+            )
+        )
+        .filter(
+            TicketMirror.deleted_at.is_(None)
+        )
     )
 
     valid_states = {
@@ -2883,6 +2894,55 @@ def tickets() -> Any:
         selected_state=selected_state,
         search_text=search_text,
         openai_configured=openai_configured,
+    )
+
+
+@admin_bp.get(
+    "/admin/tickets/<int:ticket_id>/commissions"
+)
+@foreman_required
+def ticket_commissions(
+    ticket_id: int,
+) -> Any:
+    ticket = (
+        TicketMirror.query
+        .options(
+            selectinload(
+                TicketMirror.commissions
+            )
+        )
+        .filter(
+            TicketMirror.id == ticket_id,
+            TicketMirror.deleted_at.is_(None),
+        )
+        .one_or_none()
+    )
+
+    if ticket is None:
+        abort(404)
+
+    local_status_labels = {
+        "recorded": "Erfasst",
+        "waiting_for_acceptance": (
+            "Warte auf Annahme"
+        ),
+        "open": "Beauftragt",
+        "in_progress": "In Bearbeitung",
+        "completion_review": (
+            "Nicht abgeschlossen"
+        ),
+        "tenant_charge_review": (
+            "Mieterbelastung"
+        ),
+        "done": "Erledigt",
+        "deleted": "Gelöscht",
+    }
+
+    return render_template(
+        "admin/ticket_commissions.html",
+        ticket=ticket,
+        commissions=ticket.commissions,
+        local_status_labels=local_status_labels,
     )
 
 
@@ -3229,19 +3289,6 @@ def commission_create() -> Any:
             flash(
                 "Das Ticket wurde nicht gefunden.",
                 "danger",
-            )
-            return redirect(
-                url_for("admin.tickets")
-            )
-
-        if (
-            source_ticket.state
-            == TicketMirrorState.CONVERTED.value
-        ):
-            flash(
-                "Aus diesem Ticket wurde bereits "
-                "ein Auftrag erstellt.",
-                "warning",
             )
             return redirect(
                 url_for("admin.tickets")
@@ -6593,6 +6640,152 @@ def inventory_location_update(
     )
 
 
+@admin_bp.route(
+    "/admin/inventory-classifications",
+    methods=["GET", "POST"],
+)
+@foreman_required
+def inventory_classifications() -> Any:
+    if request.method == "POST":
+        entity_type = request.form.get(
+            "entity_type",
+            "",
+        ).strip()
+
+        try:
+            if entity_type == "group":
+                raw_entity_id = request.form.get(
+                    "entity_id",
+                    "",
+                ).strip()
+                item_group = (
+                    db.get_or_404(
+                        InventoryItemGroup,
+                        int(raw_entity_id),
+                    )
+                    if raw_entity_id
+                    else InventoryItemGroup()
+                )
+
+                save_inventory_group_form(
+                    item_group
+                )
+
+                if item_group.id is None:
+                    db.session.add(
+                        item_group
+                    )
+
+                db.session.flush()
+
+                audit(
+                    "inventory.group.save",
+                    "inventory_item_group",
+                    item_group.id,
+                )
+
+                message = (
+                    "Artikelgruppe gespeichert."
+                )
+
+            elif entity_type == "type":
+                raw_entity_id = request.form.get(
+                    "entity_id",
+                    "",
+                ).strip()
+                item_type = (
+                    db.get_or_404(
+                        InventoryItemType,
+                        int(raw_entity_id),
+                    )
+                    if raw_entity_id
+                    else InventoryItemType()
+                )
+
+                save_inventory_type_form(
+                    item_type
+                )
+
+                if item_type.id is None:
+                    db.session.add(
+                        item_type
+                    )
+
+                db.session.flush()
+
+                audit(
+                    "inventory.type.save",
+                    "inventory_item_type",
+                    item_type.id,
+                )
+
+                message = (
+                    "Artikelart gespeichert."
+                )
+
+            else:
+                raise ValueError(
+                    "Die Art des Datensatzes ist ungültig."
+                )
+
+            db.session.commit()
+            flash(
+                message,
+                "success",
+            )
+
+        except (ValueError, IntegrityError) as exc:
+            db.session.rollback()
+
+            flash(
+                (
+                    str(exc)
+                    if isinstance(exc, ValueError)
+                    else (
+                        "Code oder Bezeichnung "
+                        "ist bereits vergeben."
+                    )
+                ),
+                "danger",
+            )
+
+        return redirect(
+            url_for(
+                "admin.inventory_classifications"
+            )
+        )
+
+    groups = (
+        InventoryItemGroup.query
+        .order_by(
+            InventoryItemGroup.active.desc(),
+            InventoryItemGroup.name.asc(),
+        )
+        .all()
+    )
+
+    item_types = (
+        InventoryItemType.query
+        .join(
+            InventoryItemGroup,
+            InventoryItemType.group_id
+            == InventoryItemGroup.id,
+        )
+        .order_by(
+            InventoryItemGroup.name.asc(),
+            InventoryItemType.active.desc(),
+            InventoryItemType.name.asc(),
+        )
+        .all()
+    )
+
+    return render_template(
+        "admin/inventory_classifications.html",
+        groups=groups,
+        item_types=item_types,
+    )
+
+
 @admin_bp.route("/admin/inventory", methods=["GET", "POST"])
 @foreman_required
 def inventory() -> Any:
@@ -6606,7 +6799,30 @@ def inventory() -> Any:
         flash("Artikel gespeichert.", "success")
         return redirect(url_for("admin.inventory"))
     items = InventoryItem.query.order_by(InventoryItem.name.asc()).all()
-    return render_template("admin/inventory.html", items=items)
+
+    item_types = (
+        InventoryItemType.query
+        .join(
+            InventoryItemGroup,
+            InventoryItemType.group_id
+            == InventoryItemGroup.id,
+        )
+        .filter(
+            InventoryItemType.active.is_(True),
+            InventoryItemGroup.active.is_(True),
+        )
+        .order_by(
+            InventoryItemGroup.name.asc(),
+            InventoryItemType.name.asc(),
+        )
+        .all()
+    )
+
+    return render_template(
+        "admin/inventory.html",
+        items=items,
+        item_types=item_types,
+    )
 
 
 @admin_bp.route(
@@ -6637,6 +6853,13 @@ def inventory_item(
                             "quantity",
                             0,
                         )
+                    ),
+                    serial_number=(
+                            request.form.get(
+                                "serial_number",
+                                "",
+                            ).strip()
+                            or None
                     ),
                     note=(
                             request.form.get(
@@ -6768,6 +6991,20 @@ def inventory_item(
         InventoryMovementType.TRANSFER.value: "Umbuchung",
     }
 
+    item_types = (
+        InventoryItemType.query
+        .join(
+            InventoryItemGroup,
+            InventoryItemType.group_id
+            == InventoryItemGroup.id,
+        )
+        .order_by(
+            InventoryItemGroup.name.asc(),
+            InventoryItemType.name.asc(),
+        )
+        .all()
+    )
+
     return render_template(
         "admin/inventory_item.html",
         item=item,
@@ -6778,6 +7015,7 @@ def inventory_item(
         locations=locations,
         location_stocks=location_stocks,
         movement_type_labels=movement_type_labels,
+        item_types=item_types,
     )
 
 
@@ -7127,16 +7365,84 @@ def time_template_edit(item_id: int) -> Any:
         .all()
     )
     inventory_items = InventoryItem.query.filter_by(active=True).order_by(InventoryItem.name.asc()).all()
+    inventory_item_types = (
+        InventoryItemType.query
+        .join(
+            InventoryItemGroup,
+            InventoryItemType.group_id
+            == InventoryItemGroup.id,
+        )
+        .order_by(
+            InventoryItemGroup.name.asc(),
+            InventoryItemType.name.asc(),
+        )
+        .all()
+    )
+
+    inventory_items = (
+        InventoryItem.query
+        .order_by(
+            InventoryItem.name.asc()
+        )
+        .all()
+    )
 
     if request.method == "POST":
-        save_time_template_form(item)
-        save_expected_materials_form(item)
-        audit("service_position.update", "time_task_template", item.id)
-        db.session.commit()
-        flash("Leistungsposition gespeichert.", "success")
-        return redirect(url_for("admin.time_templates"))
+        try:
+            save_time_template_form(
+                item
+            )
+            save_expected_materials_form(
+                item
+            )
 
-    return render_template("admin/time_template_form.html", item=item, craft_activities=craft_activities, inventory_items=inventory_items)
+            audit(
+                "service_position.update",
+                "time_task_template",
+                item.id,
+            )
+
+            db.session.commit()
+
+            flash(
+                "Leistungsposition gespeichert.",
+                "success",
+            )
+
+            return redirect(
+                url_for(
+                    "admin.time_templates"
+                )
+            )
+
+        except (ValueError, IntegrityError) as exc:
+            db.session.rollback()
+
+            flash(
+                (
+                    str(exc)
+                    if isinstance(exc, ValueError)
+                    else (
+                        "Die Materialvorgabe "
+                        "konnte nicht gespeichert werden."
+                    )
+                ),
+                "danger",
+            )
+
+            return redirect(
+                url_for(
+                    "admin.time_template_edit",
+                    item_id=item.id,
+                )
+            )
+
+    return render_template("admin/time_template_form.html",
+                           item=item,
+                           craft_activities=craft_activities,
+                           inventory_items=inventory_items,
+                           inventory_item_types=inventory_item_types,
+                           )
 
 
 @admin_bp.get("/admin/performance-reviews")
@@ -8418,6 +8724,109 @@ def optional_form_decimal(
         ) from exc
 
 
+def save_inventory_group_form(
+    item_group: InventoryItemGroup,
+) -> None:
+    code = request.form.get(
+        "code",
+        "",
+    ).strip()
+    name = request.form.get(
+        "name",
+        "",
+    ).strip()
+
+    if not code:
+        raise ValueError(
+            "Der Code der Artikelgruppe fehlt."
+        )
+
+    if not name:
+        raise ValueError(
+            "Die Bezeichnung der Artikelgruppe fehlt."
+        )
+
+    item_group.code = code
+    item_group.name = name
+    item_group.serial_number_required = (
+        "serial_number_required"
+        in request.form
+    )
+    item_group.active = (
+        "active"
+        in request.form
+    )
+
+
+def save_inventory_type_form(
+    item_type: InventoryItemType,
+) -> None:
+    code = request.form.get(
+        "code",
+        "",
+    ).strip()
+    name = request.form.get(
+        "name",
+        "",
+    ).strip()
+    unit = request.form.get(
+        "unit",
+        "Stk",
+    ).strip()
+    raw_group_id = request.form.get(
+        "group_id",
+        "",
+    ).strip()
+
+    if not code:
+        raise ValueError(
+            "Der Code der Artikelart fehlt."
+        )
+
+    if not name:
+        raise ValueError(
+            "Die Bezeichnung der Artikelart fehlt."
+        )
+
+    if not unit:
+        raise ValueError(
+            "Die Einheit der Artikelart fehlt."
+        )
+
+    if not raw_group_id:
+        raise ValueError(
+            "Bitte eine Artikelgruppe auswählen."
+        )
+
+    try:
+        group_id = int(
+            raw_group_id
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Die Artikelgruppe ist ungültig."
+        ) from exc
+
+    item_group = db.session.get(
+        InventoryItemGroup,
+        group_id,
+    )
+
+    if item_group is None:
+        raise ValueError(
+            "Die Artikelgruppe wurde nicht gefunden."
+        )
+
+    item_type.code = code
+    item_type.name = name
+    item_type.unit = unit
+    item_type.group = item_group
+    item_type.active = (
+        "active"
+        in request.form
+    )
+
+
 def save_inventory_form(
     item: InventoryItem,
 ) -> None:
@@ -8429,12 +8838,62 @@ def save_inventory_form(
         "name",
         "",
     ).strip()
-    item.unit = request.form.get(
-        "unit",
-        "Stk",
+
+    if not item.item_number:
+        raise ValueError(
+            "Die Artikelnummer fehlt."
+        )
+
+    if not item.name:
+        raise ValueError(
+            "Der Artikelname fehlt."
+        )
+
+    raw_item_type_id = request.form.get(
+        "item_type_id",
+        "",
     ).strip()
+
+    if raw_item_type_id:
+        try:
+            item_type_id = int(
+                raw_item_type_id
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "Die Artikelart ist ungültig."
+            ) from exc
+
+        item_type = db.session.get(
+            InventoryItemType,
+            item_type_id,
+        )
+
+        if item_type is None:
+            raise ValueError(
+                "Die Artikelart wurde nicht gefunden."
+            )
+
+        item.item_type = item_type
+        item.unit = item_type.unit
+
+    else:
+        item.item_type = None
+        item.unit = request.form.get(
+            "unit",
+            "Stk",
+        ).strip()
+
+    if not item.unit:
+        raise ValueError(
+            "Die Einheit fehlt."
+        )
+
     item.ean = (
-        request.form.get("ean")
+        request.form.get(
+            "ean",
+            "",
+        ).strip()
         or None
     )
     item.reorder_level = float(
@@ -8485,7 +8944,10 @@ def save_inventory_form(
     item.billing_vat_rate = (
         billing_vat_rate
     )
-    item.active = "active" in request.form
+    item.active = (
+        "active"
+        in request.form
+    )
 
 
 def save_time_template_form(item: TimeTaskTemplate) -> None:
@@ -8508,8 +8970,8 @@ def save_time_template_form(item: TimeTaskTemplate) -> None:
 def save_expected_materials_form(
     item: TimeTaskTemplate,
 ) -> None:
-    item_ids = request.form.getlist(
-        "expected_item_id"
+    targets = request.form.getlist(
+        "expected_target"
     )
     quantities = request.form.getlist(
         "expected_quantity"
@@ -8519,17 +8981,32 @@ def save_expected_materials_form(
     )
     submitted_materials = {}
 
-    for index, raw_item_id in enumerate(
-        item_ids
+    for index, raw_target in enumerate(
+        targets
     ):
-        raw_item_id = raw_item_id.strip()
+        raw_target = raw_target.strip()
 
-        if not raw_item_id:
+        if not raw_target:
             continue
 
+        target_kind, separator, raw_target_id = (
+            raw_target.partition(":")
+        )
+
+        if (
+            not separator
+            or target_kind not in {
+                "type",
+                "item",
+            }
+        ):
+            raise ValueError(
+                "Die Materialvorgabe ist ungültig."
+            )
+
         try:
-            inventory_item_id = int(
-                raw_item_id
+            target_id = int(
+                raw_target_id
             )
             quantity = float(
                 (
@@ -8539,19 +9016,47 @@ def save_expected_materials_form(
                 )
                 or 1
             )
-        except (TypeError, ValueError):
-            continue
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Die Menge der Materialvorgabe ist ungültig."
+            ) from exc
 
-        if (
-            inventory_item_id
-            in submitted_materials
-            or quantity <= 0
-        ):
-            continue
+        if quantity <= 0:
+            raise ValueError(
+                "Die erwartete Materialmenge "
+                "muss größer als 0 sein."
+            )
+
+        target_key = (
+            target_kind,
+            target_id,
+        )
+
+        if target_key in submitted_materials:
+            raise ValueError(
+                "Dieselbe Materialvorgabe "
+                "wurde mehrfach ausgewählt."
+            )
+
+        target = db.session.get(
+            (
+                InventoryItemType
+                if target_kind == "type"
+                else InventoryItem
+            ),
+            target_id,
+        )
+
+        if target is None:
+            raise ValueError(
+                "Die ausgewählte Materialvorgabe "
+                "wurde nicht gefunden."
+            )
 
         submitted_materials[
-            inventory_item_id
+            target_key
         ] = {
+            "target": target,
             "quantity": quantity,
             "required": (
                 f"expected_required_{index}"
@@ -8567,26 +9072,71 @@ def save_expected_materials_form(
             ),
         }
 
-    existing_materials = {
-        material.item_id: material
-        for material in item.expected_materials
+    selected_type_ids = {
+        target_id
+        for target_kind, target_id
+        in submitted_materials
+        if target_kind == "type"
     }
 
-    for inventory_item_id, values in (
+    for target_key, values in (
         submitted_materials.items()
     ):
+        target_kind, target_id = target_key
+
+        if target_kind != "item":
+            continue
+
+        inventory_item = values["target"]
+
+        if (
+            inventory_item.item_type_id is not None
+            and inventory_item.item_type_id
+            in selected_type_ids
+        ):
+            raise ValueError(
+                "Eine Artikelart und ein konkreter "
+                "Artikel dieser Art dürfen nicht "
+                "gleichzeitig erwartet werden."
+            )
+
+    existing_materials = {}
+
+    for material in item.expected_materials:
+        if material.item_type_id is not None:
+            key = (
+                "type",
+                material.item_type_id,
+            )
+        else:
+            key = (
+                "item",
+                material.item_id,
+            )
+
+        existing_materials[key] = material
+
+    for target_key, values in (
+        submitted_materials.items()
+    ):
+        target_kind, target_id = target_key
         material = existing_materials.pop(
-            inventory_item_id,
+            target_key,
             None,
         )
 
         if material is None:
-            material = TimeTaskExpectedMaterial(
-                item_id=inventory_item_id
-            )
+            material = TimeTaskExpectedMaterial()
             item.expected_materials.append(
                 material
             )
+
+        if target_kind == "type":
+            material.item = None
+            material.item_type = values["target"]
+        else:
+            material.item_type = None
+            material.item = values["target"]
 
         material.quantity = values["quantity"]
         material.required = values["required"]

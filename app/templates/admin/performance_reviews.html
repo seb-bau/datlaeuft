@@ -143,11 +143,11 @@
             <td>
               {% for line in row.material_lines %}
               <div class="{% if line.deviates %}text-danger{% endif %}">
-                {{ line.item.name }}:
+                {{ line.label }}:
                 Soll {{ "%.2f"|format(line.expected_quantity) }}
-                {{ line.item.unit }},
+                {{ line.unit }},
                 Ist {{ "%.2f"|format(line.actual_quantity) }}
-                {{ line.item.unit }}
+                {{ line.unit }}
               </div>
               {% else %}
               <span class="text-muted">

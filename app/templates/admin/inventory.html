@@ -1,7 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Lager{% endblock %}
 {% block content %}
-<h1 class="h3 mb-4">Lager</h1>
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Lager</h1>
+  <a
+    class="btn btn-outline-primary"
+    href="{{ url_for('admin.inventory_classifications') }}"
+  >
+    Artikelgruppen und Artikelarten
+  </a>
+</div>
 <div class="row g-4">
   <div class="col-lg-4">
     <form method="post" class="card shadow-sm">
@@ -15,6 +23,23 @@
         <div class="mb-3">
           <label class="form-label">Name</label>
           <input class="form-control" name="name" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Artikelart</label>
+          <select
+            class="form-select"
+            name="item_type_id"
+          >
+            <option value="">Noch nicht klassifiziert</option>
+            {% for item_type in item_types %}
+            <option value="{{ item_type.id }}">
+              {{ item_type.group.name }} · {{ item_type.name }}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            Bei einer Artikelart wird deren Einheit übernommen.
+          </div>
         </div>
         <div class="mb-3">
           <label class="form-label">Einheit</label>
@@ -47,6 +72,8 @@
               <th></th>
               <th>Artikelnummer</th>
               <th>Name</th>
+              <th>Artikelgruppe</th>
+              <th>Artikelart</th>
               <th>EAN</th>
               <th>Bestand</th>
               <th>Mindestbestand</th>
@@ -63,6 +90,12 @@
               </td>
               <td>{{ item.item_number }}</td>
               <td>{{ item.name }}</td>
+              <td>
+                {{ item.item_type.group.name if item.item_type else "" }}
+              </td>
+              <td>
+                {{ item.item_type.name if item.item_type else "" }}
+              </td>
               <td>{{ item.ean or "" }}</td>
               <td>
                 <span class="{% if item.is_below_reorder_level %}text-danger fw-bold{% endif %}">

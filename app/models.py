@@ -816,11 +816,24 @@ class CommissionTicketLink(db.Model):
     __tablename__ = "commission_ticket_link"
 
     commission_id: Mapped[int] = mapped_column(
-        db.ForeignKey("commission.id", ondelete="CASCADE"),
+        db.ForeignKey(
+            "commission.id",
+            ondelete="CASCADE",
+        ),
         primary_key=True,
     )
     ticket_erp_id: Mapped[int] = mapped_column(
-        db.Integer, primary_key=True, index=True,
+        db.ForeignKey(
+            "ticket_mirror.erp_id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+        index=True,
+    )
+
+    commission: Mapped[Commission] = relationship()
+    ticket: Mapped["TicketMirror"] = relationship(
+        back_populates="commission_links"
     )
 
 
@@ -1082,6 +1095,19 @@ class TicketMirror(db.Model):
     )
 
     commission: Mapped[Commission | None] = relationship()
+    commission_links: Mapped[
+        list[CommissionTicketLink]
+    ] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+    )
+
+    commissions: Mapped[list[Commission]] = relationship(
+        "Commission",
+        secondary="commission_ticket_link",
+        viewonly=True,
+        order_by="Commission.id.desc()",
+    )
     ai_craft_activity: Mapped[CraftActivity | None] = relationship()
 
     @property
@@ -2362,10 +2388,120 @@ class InventoryItemBarcode(db.Model):
     )
 
 
+class InventoryItemGroup(db.Model):
+    __tablename__ = "inventory_item_group"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    code: Mapped[str] = mapped_column(
+        db.String(100),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    serial_number_required: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    item_types: Mapped[list["InventoryItemType"]] = relationship(
+        back_populates="group"
+    )
+
+
+class InventoryItemType(db.Model):
+    __tablename__ = "inventory_item_type"
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id",
+            "name",
+            name="uq_inventory_item_type_group_name",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    group_id: Mapped[int] = mapped_column(
+        db.ForeignKey("inventory_item_group.id"),
+        nullable=False,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(
+        db.String(100),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+        index=True,
+    )
+    unit: Mapped[str] = mapped_column(
+        db.String(40),
+        default="Stk",
+        server_default="Stk",
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    group: Mapped[InventoryItemGroup] = relationship(
+        back_populates="item_types"
+    )
+    items: Mapped[list["InventoryItem"]] = relationship(
+        back_populates="item_type"
+    )
+    expected_task_materials: Mapped[
+        list["TimeTaskExpectedMaterial"]
+    ] = relationship(
+        back_populates="item_type"
+    )
+
+
 class InventoryItem(db.Model):
     __tablename__ = "inventory_item"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    item_type_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey(
+            "inventory_item_type.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
     item_number: Mapped[str] = mapped_column(db.String(100), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(db.String(255), nullable=False)
     unit: Mapped[str] = mapped_column(db.String(40), default="Stk", nullable=False)
@@ -2394,6 +2530,10 @@ class InventoryItem(db.Model):
     )
     expected_task_materials: Mapped[list["TimeTaskExpectedMaterial"]] = relationship(back_populates="item")
 
+    item_type: Mapped[InventoryItemType | None] = relationship(
+        back_populates="items"
+    )
+
     @property
     def is_below_reorder_level(self) -> bool:
         if self.reorder_level <= 0:
@@ -2401,12 +2541,34 @@ class InventoryItem(db.Model):
 
         return self.stock_quantity < self.reorder_level
 
+    @property
+    def serial_number_required(self) -> bool:
+        return bool(
+            self.item_type
+            and self.item_type.group
+            and self.item_type.group.serial_number_required
+        )
+
 
 class InventoryMovement(db.Model):
     __tablename__ = "inventory_movement"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[int] = mapped_column(db.ForeignKey("inventory_item.id"), nullable=False, index=True)
+    item_type_id_snapshot: Mapped[int | None] = mapped_column(
+        db.ForeignKey(
+            "inventory_item_type.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
+    item_group_id_snapshot: Mapped[int | None] = mapped_column(
+        db.ForeignKey(
+            "inventory_item_group.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
     user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
     commission_id: Mapped[int | None] = mapped_column(db.ForeignKey("commission.id"), index=True)
     task_template_id: Mapped[int | None] = mapped_column(db.ForeignKey("time_task_template.id"), index=True)
@@ -2420,6 +2582,10 @@ class InventoryMovement(db.Model):
     )
     movement_type: Mapped[str] = mapped_column(db.String(40), nullable=False, index=True)
     quantity: Mapped[float] = mapped_column(db.Float, nullable=False)
+    serial_number: Mapped[str | None] = mapped_column(
+        db.String(255),
+        index=True,
+    )
     note: Mapped[str | None] = mapped_column(db.Text)
     usage_status: Mapped[str] = mapped_column(db.String(40), default=MaterialUsageStatus.INSTALLED.value,
                                               server_default=MaterialUsageStatus.INSTALLED.value, nullable=False,
@@ -2449,6 +2615,12 @@ class InventoryMovement(db.Model):
         foreign_keys=[target_location_id],
     )
     reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_user_id])
+    item_type_snapshot: Mapped[InventoryItemType | None] = relationship(
+        foreign_keys=[item_type_id_snapshot]
+    )
+    item_group_snapshot: Mapped[InventoryItemGroup | None] = relationship(
+        foreign_keys=[item_group_id_snapshot]
+    )
 
 
 class TimeTaskTemplate(db.Model):
@@ -2486,17 +2658,70 @@ class TimeTaskTemplate(db.Model):
 
 class TimeTaskExpectedMaterial(db.Model):
     __tablename__ = "time_task_expected_material"
-    __table_args__ = (UniqueConstraint("task_template_id", "item_id", name="uq_time_task_expected_material_task_item"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "task_template_id",
+            "item_id",
+            name="uq_time_task_expected_material_task_item",
+        ),
+        UniqueConstraint(
+            "task_template_id",
+            "item_type_id",
+            name="uq_time_task_expected_material_task_type",
+        ),
+        db.CheckConstraint(
+            (
+                "(item_id IS NOT NULL "
+                "AND item_type_id IS NULL) "
+                "OR "
+                "(item_id IS NULL "
+                "AND item_type_id IS NOT NULL)"
+            ),
+            name="ck_time_task_expected_material_target",
+        ),
+    )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    task_template_id: Mapped[int] = mapped_column(db.ForeignKey("time_task_template.id"), nullable=False, index=True)
-    item_id: Mapped[int] = mapped_column(db.ForeignKey("inventory_item.id"), nullable=False, index=True)
-    quantity: Mapped[float] = mapped_column(db.Float, default=1, server_default="1", nullable=False)
-    required: Mapped[bool] = mapped_column(db.Boolean, default=True, server_default="1", nullable=False)
-    note: Mapped[str | None] = mapped_column(db.Text)
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+    task_template_id: Mapped[int] = mapped_column(
+        db.ForeignKey("time_task_template.id"),
+        nullable=False,
+        index=True,
+    )
+    item_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("inventory_item.id"),
+        index=True,
+    )
+    item_type_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("inventory_item_type.id"),
+        index=True,
+    )
+    quantity: Mapped[float] = mapped_column(
+        db.Float,
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
+    required: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default="1",
+        nullable=False,
+    )
+    note: Mapped[str | None] = mapped_column(
+        db.Text
+    )
 
-    task_template: Mapped[TimeTaskTemplate] = relationship(back_populates="expected_materials")
-    item: Mapped[InventoryItem] = relationship(back_populates="expected_task_materials")
+    task_template: Mapped[TimeTaskTemplate] = relationship(
+        back_populates="expected_materials"
+    )
+    item: Mapped[InventoryItem | None] = relationship(
+        back_populates="expected_task_materials"
+    )
+    item_type: Mapped[InventoryItemType | None] = relationship(
+        back_populates="expected_task_materials"
+    )
 
 
 class TimeEntry(db.Model):

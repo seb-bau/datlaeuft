@@ -48,6 +48,8 @@ from .models import (
     AppointmentWindow,
     CommissionAppointmentRequest,
     CommissionAttachment,
+    InventoryItemGroup,
+    InventoryItemType,
 )
 from .offer_service import (
     sync_offer_from_commission,
@@ -64,6 +66,8 @@ from .inventory_service import (
     book_inventory_movement,
     get_default_inventory_location,
     get_inventory_location,
+    movement_matches_expected_material,
+    prepare_inventory_movement,
 )
 from .settings import SettingKeys, settings
 from .utils import iso_datetime
@@ -1986,21 +1990,74 @@ def inventory_lookup() -> Any:
 def inventory_search() -> Any:
     current_api_user()
 
-    search_text = request.args.get("q", "").strip()
+    search_text = request.args.get(
+        "q",
+        "",
+    ).strip()
+    raw_item_type_id = request.args.get(
+        "item_type_id",
+        "",
+    ).strip()
 
-    if len(search_text) < 2:
-        return jsonify({"items": []})
+    item_type_id = None
+
+    if raw_item_type_id:
+        try:
+            item_type_id = int(
+                raw_item_type_id
+            )
+        except ValueError:
+            return jsonify({
+                "message": (
+                    "Die Artikelart ist ungültig."
+                )
+            }), 400
+
+    if (
+        len(search_text) < 2
+        and item_type_id is None
+    ):
+        return jsonify({
+            "items": []
+        })
 
     try:
-        limit = int(request.args.get("limit", 12))
+        limit = int(
+            request.args.get(
+                "limit",
+                12,
+            )
+        )
     except ValueError:
         limit = 12
 
-    limit = min(max(limit, 1), 50)
-
-    query = InventoryItem.query.filter(
-        InventoryItem.active.is_(True)
+    limit = min(
+        max(limit, 1),
+        50,
     )
+
+    query = (
+        InventoryItem.query
+        .outerjoin(
+            InventoryItemType,
+            InventoryItem.item_type_id
+            == InventoryItemType.id,
+        )
+        .outerjoin(
+            InventoryItemGroup,
+            InventoryItemType.group_id
+            == InventoryItemGroup.id,
+        )
+        .filter(
+            InventoryItem.active.is_(True)
+        )
+    )
+
+    if item_type_id is not None:
+        query = query.filter(
+            InventoryItem.item_type_id
+            == item_type_id
+        )
 
     for term in [
         item.strip()
@@ -2015,17 +2072,41 @@ def inventory_search() -> Any:
             )
             .filter(
                 InventoryItemBarcode.active.is_(True),
-                InventoryItemBarcode.code.ilike(like_term),
+                InventoryItemBarcode.code.ilike(
+                    like_term
+                ),
             )
         )
 
         query = query.filter(
             or_(
-                InventoryItem.name.ilike(like_term),
-                InventoryItem.item_number.ilike(like_term),
-                InventoryItem.ean.ilike(like_term),
-                InventoryItem.qr_code_payload.ilike(like_term),
-                InventoryItem.id.in_(barcode_item_ids),
+                InventoryItem.name.ilike(
+                    like_term
+                ),
+                InventoryItem.item_number.ilike(
+                    like_term
+                ),
+                InventoryItem.ean.ilike(
+                    like_term
+                ),
+                InventoryItem.qr_code_payload.ilike(
+                    like_term
+                ),
+                InventoryItemType.name.ilike(
+                    like_term
+                ),
+                InventoryItemType.code.ilike(
+                    like_term
+                ),
+                InventoryItemGroup.name.ilike(
+                    like_term
+                ),
+                InventoryItemGroup.code.ilike(
+                    like_term
+                ),
+                InventoryItem.id.in_(
+                    barcode_item_ids
+                ),
             )
         )
 
@@ -2345,6 +2426,15 @@ def add_commission_material(
         source=source,
         usage_status=usage_status,
         deviation_reason=data.get("deviation_reason"),
+        serial_number=(
+                str(
+                    data.get(
+                        "serial_number"
+                    )
+                    or ""
+                ).strip()
+                or None
+        ),
     )
 
     try:
@@ -2370,9 +2460,13 @@ def add_commission_material(
                 )
             )
             book_inventory_movement(movement)
-
         else:
-            db.session.add(movement)
+            prepare_inventory_movement(
+                movement
+            )
+            db.session.add(
+                movement
+            )
 
     except (TypeError, ValueError) as exc:
         db.session.rollback()
@@ -2469,6 +2563,13 @@ def cancel_commission_material(
         usage_status=MaterialUsageStatus.RETURNED.value,
         review_status=TimeReviewStatus.OK.value,
         review_level=ReviewLevel.GREEN.value,
+        serial_number=movement.serial_number,
+        item_type_id_snapshot=(
+            movement.item_type_id_snapshot
+        ),
+        item_group_id_snapshot=(
+            movement.item_group_id_snapshot
+        ),
     )
 
     try:
@@ -2482,7 +2583,12 @@ def cancel_commission_material(
             )
             book_inventory_movement(cancellation)
         else:
-            db.session.add(cancellation)
+            prepare_inventory_movement(
+                cancellation
+            )
+            db.session.add(
+                cancellation
+            )
 
     except ValueError as exc:
         db.session.rollback()
@@ -2721,9 +2827,16 @@ def commission_material_review(commission_id: int) -> Any:
         installed_quantity = sum(
             movement.quantity
             for movement in movements
-            if movement.task_template_id == expectation.task_template_id
-            and movement.item_id == expectation.item_id
-            and movement.usage_status == MaterialUsageStatus.INSTALLED.value
+            if (
+                    movement.task_template_id
+                    == expectation.task_template_id
+                    and movement_matches_expected_material(
+                movement,
+                expectation,
+            )
+                    and movement.usage_status
+                    == MaterialUsageStatus.INSTALLED.value
+            )
         )
         is_ok = installed_quantity + 0.0001 >= expectation.quantity
         result.append({
@@ -3152,7 +3265,14 @@ def apply_material_review(movement: InventoryMovement) -> None:
     expectations = list(task.expected_materials)
     if not expectations:
         return
-    matching = [item for item in expectations if item.item_id == movement.item_id]
+    matching = [
+        expected
+        for expected in expectations
+        if movement_matches_expected_material(
+            movement,
+            expected,
+        )
+    ]
     if not matching:
         movement.review_status = TimeReviewStatus.NEEDS_REVIEW.value
         movement.review_level = ReviewLevel.YELLOW.value if has_reason else ReviewLevel.RED.value
@@ -3525,6 +3645,37 @@ def serialize_inventory_stock(
     }
 
 
+def serialize_inventory_item_group(
+    item: InventoryItemGroup,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "code": item.code,
+        "name": item.name,
+        "serial_number_required": (
+            item.serial_number_required
+        ),
+        "active": item.active,
+    }
+
+
+def serialize_inventory_item_type(
+    item: InventoryItemType,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "code": item.code,
+        "name": item.name,
+        "unit": item.unit,
+        "active": item.active,
+        "group": (
+            serialize_inventory_item_group(
+                item.group
+            )
+        ),
+    }
+
+
 def serialize_inventory_item(
     item: InventoryItem,
 ) -> dict[str, Any]:
@@ -3562,6 +3713,16 @@ def serialize_inventory_item(
             serialize_inventory_stock(stock)
             for stock in stocks
         ],
+        "item_type": (
+            serialize_inventory_item_type(
+                item.item_type
+            )
+            if item.item_type
+            else None
+        ),
+        "serial_number_required": (
+            item.serial_number_required
+        ),
     }
 
 
@@ -3618,6 +3779,33 @@ def serialize_inventory_movement(
         "occurred_at": iso_datetime(item.occurred_at),
         "is_cancelled": is_cancelled,
         "can_cancel": can_cancel,
+        "serial_number": item.serial_number,
+        "item_type": (
+            serialize_inventory_item_type(
+                item.item_type_snapshot
+                or item.item.item_type
+            )
+            if (
+                    item.item_type_snapshot
+                    or item.item.item_type
+            )
+            else None
+        ),
+        "item_group": (
+            serialize_inventory_item_group(
+                item.item_group_snapshot
+                or (
+                    item.item.item_type.group
+                    if item.item.item_type
+                    else None
+                )
+            )
+            if (
+                    item.item_group_snapshot
+                    or item.item.item_type
+            )
+            else None
+        ),
     }
 
 
@@ -3652,11 +3840,28 @@ def serialize_time_task(
     }
 
 
-def serialize_expected_material(item: TimeTaskExpectedMaterial) -> dict[str, Any]:
+def serialize_expected_material(
+    item: TimeTaskExpectedMaterial,
+) -> dict[str, Any]:
     return {
         "id": item.id,
-        "task_template_id": item.task_template_id,
-        "item": serialize_inventory_item(item.item),
+        "task_template_id": (
+            item.task_template_id
+        ),
+        "item": (
+            serialize_inventory_item(
+                item.item
+            )
+            if item.item
+            else None
+        ),
+        "item_type": (
+            serialize_inventory_item_type(
+                item.item_type
+            )
+            if item.item_type
+            else None
+        ),
         "quantity": item.quantity,
         "required": item.required,
         "note": item.note,

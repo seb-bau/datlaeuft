@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+{% block title %}Artikelgruppen und Artikelarten{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">
+    Artikelgruppen und Artikelarten
+  </h1>
+  <a
+    class="btn btn-outline-secondary"
+    href="{{ url_for('admin.inventory') }}"
+  >
+    Zurück zum Lager
+  </a>
+</div>
+
+<div class="row g-4 mb-4">
+  <div class="col-lg-6">
+    <form method="post" class="card shadow-sm h-100">
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+      <input
+        type="hidden"
+        name="entity_type"
+        value="group"
+      >
+      <div class="card-header">
+        Artikelgruppe anlegen
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Code</label>
+          <input
+            class="form-control"
+            name="code"
+            required
+          >
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Bezeichnung</label>
+          <input
+            class="form-control"
+            name="name"
+            required
+          >
+        </div>
+        <div class="form-check mb-3">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="serial_number_required"
+            id="newGroupSerialNumberRequired"
+          >
+          <label
+            class="form-check-label"
+            for="newGroupSerialNumberRequired"
+          >
+            Seriennummer bei Entnahme erforderlich
+          </label>
+        </div>
+        <div class="form-check">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="active"
+            id="newGroupActive"
+            checked
+          >
+          <label
+            class="form-check-label"
+            for="newGroupActive"
+          >
+            Aktiv
+          </label>
+        </div>
+      </div>
+      <div class="card-footer text-end">
+        <button class="btn btn-primary" type="submit">
+          Artikelgruppe speichern
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-lg-6">
+    <form method="post" class="card shadow-sm h-100">
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+      <input
+        type="hidden"
+        name="entity_type"
+        value="type"
+      >
+      <div class="card-header">
+        Artikelart anlegen
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Artikelgruppe</label>
+          <select
+            class="form-select"
+            name="group_id"
+            required
+          >
+            <option value="">Bitte auswählen</option>
+            {% for group in groups %}
+            <option value="{{ group.id }}">
+              {{ group.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Code</label>
+          <input
+            class="form-control"
+            name="code"
+            required
+          >
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Bezeichnung</label>
+          <input
+            class="form-control"
+            name="name"
+            required
+          >
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Einheit</label>
+          <input
+            class="form-control"
+            name="unit"
+            value="Stk"
+            required
+          >
+        </div>
+        <div class="form-check">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="active"
+            id="newTypeActive"
+            checked
+          >
+          <label
+            class="form-check-label"
+            for="newTypeActive"
+          >
+            Aktiv
+          </label>
+        </div>
+      </div>
+      <div class="card-footer text-end">
+        <button class="btn btn-primary" type="submit">
+          Artikelart speichern
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header">
+    Artikelgruppen
+  </div>
+  <div class="card-body">
+    {% for group in groups %}
+    <form
+      method="post"
+      class="row g-3 align-items-end border-bottom pb-3 mb-3"
+    >
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+      <input
+        type="hidden"
+        name="entity_type"
+        value="group"
+      >
+      <input
+        type="hidden"
+        name="entity_id"
+        value="{{ group.id }}"
+      >
+      <div class="col-lg-2">
+        <label class="form-label">Code</label>
+        <input
+          class="form-control"
+          name="code"
+          value="{{ group.code }}"
+          required
+        >
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label">Bezeichnung</label>
+        <input
+          class="form-control"
+          name="name"
+          value="{{ group.name }}"
+          required
+        >
+      </div>
+      <div class="col-lg-3">
+        <div class="form-check mb-2">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="serial_number_required"
+            id="groupSerial{{ group.id }}"
+            {% if group.serial_number_required %}checked{% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="groupSerial{{ group.id }}"
+          >
+            Seriennummer erforderlich
+          </label>
+        </div>
+      </div>
+      <div class="col-lg-2">
+        <div class="form-check mb-2">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="active"
+            id="groupActive{{ group.id }}"
+            {% if group.active %}checked{% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="groupActive{{ group.id }}"
+          >
+            Aktiv
+          </label>
+        </div>
+      </div>
+      <div class="col-lg-2 d-grid">
+        <button
+          class="btn btn-outline-primary"
+          type="submit"
+        >
+          Speichern
+        </button>
+      </div>
+    </form>
+    {% else %}
+    <div class="text-muted">
+      Noch keine Artikelgruppen vorhanden.
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header">
+    Artikelarten
+  </div>
+  <div class="card-body">
+    {% for item_type in item_types %}
+    <form
+      method="post"
+      class="row g-3 align-items-end border-bottom pb-3 mb-3"
+    >
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+      <input
+        type="hidden"
+        name="entity_type"
+        value="type"
+      >
+      <input
+        type="hidden"
+        name="entity_id"
+        value="{{ item_type.id }}"
+      >
+      <div class="col-lg-3">
+        <label class="form-label">Artikelgruppe</label>
+        <select
+          class="form-select"
+          name="group_id"
+          required
+        >
+          {% for group in groups %}
+          <option
+            value="{{ group.id }}"
+            {% if item_type.group_id == group.id %}selected{% endif %}
+          >
+            {{ group.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">Code</label>
+        <input
+          class="form-control"
+          name="code"
+          value="{{ item_type.code }}"
+          required
+        >
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label">Bezeichnung</label>
+        <input
+          class="form-control"
+          name="name"
+          value="{{ item_type.name }}"
+          required
+        >
+      </div>
+      <div class="col-lg-1">
+        <label class="form-label">Einheit</label>
+        <input
+          class="form-control"
+          name="unit"
+          value="{{ item_type.unit }}"
+          required
+        >
+      </div>
+      <div class="col-lg-1">
+        <div class="form-check mb-2">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="active"
+            id="typeActive{{ item_type.id }}"
+            {% if item_type.active %}checked{% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="typeActive{{ item_type.id }}"
+          >
+            Aktiv
+          </label>
+        </div>
+      </div>
+      <div class="col-lg-2 d-grid">
+        <button
+          class="btn btn-outline-primary"
+          type="submit"
+        >
+          Speichern
+        </button>
+      </div>
+    </form>
+    {% else %}
+    <div class="text-muted">
+      Noch keine Artikelarten vorhanden.
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

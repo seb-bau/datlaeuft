@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}
+Aufträge zu Ticket {{ ticket.id_num or ticket.erp_id }}
+{% endblock %}
+
+{% block content %}
+<div
+  class="d-flex flex-wrap justify-content-between
+         align-items-start gap-3 mb-4"
+>
+  <div>
+    <h1 class="h3 mb-1">
+      Aufträge zu Ticket
+      {{ ticket.id_num or ticket.erp_id }}
+    </h1>
+    <div class="text-muted">
+      {{ ticket.subject or "Ohne Betreff" }}
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <form
+      method="post"
+      action="{{ url_for(
+        'admin.ticket_analyze',
+        ticket_id=ticket.id
+      ) }}"
+    >
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+      <button
+        class="btn btn-primary"
+        type="submit"
+      >
+        Weiteren Auftrag erstellen
+      </button>
+    </form>
+
+    <a
+      class="btn btn-outline-secondary"
+      href="{{ url_for('admin.tickets') }}"
+    >
+      Zurück
+    </a>
+  </div>
+</div>
+
+{% if ticket.content_excerpt %}
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <div class="small text-muted mb-1">
+      Ticketinhalt
+    </div>
+    <div class="text-pre-wrap">
+      {{ ticket.content_excerpt }}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card shadow-sm">
+  <div class="card-header">
+    <strong>
+      {{ commissions|length }}
+      {% if commissions|length == 1 %}
+        Auftrag
+      {% else %}
+        Aufträge
+      {% endif %}
+    </strong>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-striped align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Auftrag</th>
+          <th>Titel</th>
+          <th>Status</th>
+          <th>Handwerker</th>
+          <th>Abschlussgrund</th>
+          <th class="text-end">Aktion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for commission in commissions %}
+        <tr>
+          <td>
+            {{ commission.erp_idnum
+               or commission.code
+               or commission.id }}
+          </td>
+          <td>{{ commission.display_title }}</td>
+          <td>
+            <span class="badge text-bg-secondary">
+              {{ local_status_labels.get(
+                commission.local_status,
+                commission.local_status
+              ) }}
+            </span>
+          </td>
+          <td>
+            {{ commission.user.display_name
+               if commission.user
+               else "Nicht zugewiesen" }}
+          </td>
+          <td>
+            {{ commission.completion_reason or "–" }}
+          </td>
+          <td class="text-end">
+            <a
+              class="btn btn-sm btn-outline-primary"
+              href="{{ url_for(
+                'admin.commission_detail',
+                commission_id=commission.id
+              ) }}"
+            >
+              Öffnen
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td
+            colspan="6"
+            class="text-center text-muted py-4"
+          >
+            Zu diesem Ticket wurde noch kein
+            Auftrag angelegt.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -17,6 +17,27 @@
           <input class="form-control" name="name" value="{{ item.name }}" required>
         </div>
         <div class="mb-3">
+          <label class="form-label">Artikelart</label>
+          <select
+            class="form-select"
+            name="item_type_id"
+          >
+            <option value="">Noch nicht klassifiziert</option>
+            {% for item_type in item_types %}
+            <option
+              value="{{ item_type.id }}"
+              {% if item.item_type_id == item_type.id %}selected{% endif %}
+            >
+              {{ item_type.group.name }} · {{ item_type.name }}
+              {% if not item_type.active %}· inaktiv{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            Die Einheit wird von der Artikelart übernommen.
+          </div>
+        </div>
+        <div class="mb-3">
           <label class="form-label">Einheit</label>
           <input class="form-control" name="unit" value="{{ item.unit }}">
         </div>
@@ -176,11 +197,27 @@
             type="number"
             step="0.01"
             name="quantity"
+            id="movementQuantity"
             required
           >
           <div class="form-text">
             Bei einer Korrektur sind auch negative Werte möglich.
           </div>
+        </div>
+
+        <div
+          class="mb-3 d-none"
+          id="serialNumberGroup"
+        >
+          <label class="form-label">
+            Seriennummer
+          </label>
+          <input
+            class="form-control"
+            name="serial_number"
+            id="serialNumber"
+            autocomplete="off"
+          >
         </div>
 
         <div class="mb-3">
@@ -440,6 +477,7 @@
               <th>Von</th>
               <th>Nach</th>
               <th>Menge</th>
+              <th>Seriennummer</th>
               <th>Benutzer</th>
               <th>Auftrag</th>
               <th>Notiz</th>
@@ -462,6 +500,7 @@
                 {{ movement.target_location.name if movement.target_location else "" }}
               </td>
               <td>{{ movement.quantity }} {{ item.unit }}</td>
+              <td>{{ movement.serial_number or "" }}</td>
               <td>{{ movement.user.display_name if movement.user else "" }}</td>
               <td>{{ movement.commission.erp_id if movement.commission else "" }}</td>
               <td>{{ movement.note or "" }}</td>
@@ -479,6 +518,16 @@
   const targetLocation = document.getElementById("targetLocation");
   const sourceLocationGroup = document.getElementById("sourceLocationGroup");
   const targetLocationGroup = document.getElementById("targetLocationGroup");
+    const serialNumberGroup = document.getElementById(
+    "serialNumberGroup"
+  );
+  const serialNumber = document.getElementById(
+    "serialNumber"
+  );
+  const movementQuantity = document.getElementById(
+    "movementQuantity"
+  );
+  const serialNumberRequired = {{ item.serial_number_required|tojson }};
 
   function updateMovementLocationFields() {
     const type = movementType.value;
@@ -510,6 +559,25 @@
       && sourceLocation.value === targetLocation.value
     ) {
       targetLocation.value = "";
+    }
+
+    const requiresSerialNumber = (
+      serialNumberRequired
+      && type === "withdrawal"
+    );
+
+    serialNumberGroup.classList.toggle(
+      "d-none",
+      !requiresSerialNumber
+    );
+    serialNumber.required = requiresSerialNumber;
+
+    if (requiresSerialNumber) {
+      movementQuantity.value = "1";
+      movementQuantity.readOnly = true;
+    } else {
+      serialNumber.value = "";
+      movementQuantity.readOnly = false;
     }
   }
 

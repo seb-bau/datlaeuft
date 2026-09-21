@@ -4,18 +4,33 @@
   <td>
     <select
       class="form-select"
-      name="expected_item_id"
+      name="expected_target"
     >
-      <option value="">Kein Artikel</option>
-      {% for inventory_item in inventory_items %}
-      <option
-        value="{{ inventory_item.id }}"
-        {% if material and material.item_id == inventory_item.id %}selected{% endif %}
-      >
-        {{ inventory_item.name }}
-        ({{ inventory_item.item_number }})
-      </option>
-      {% endfor %}
+      <option value="">Keine Vorgabe</option>
+      <optgroup label="Artikelarten">
+        {% for inventory_item_type in inventory_item_types %}
+        <option
+          value="type:{{ inventory_item_type.id }}"
+          {% if material and material.item_type_id == inventory_item_type.id %}selected{% endif %}
+        >
+          {{ inventory_item_type.group.name }}
+          · {{ inventory_item_type.name }}
+          {% if not inventory_item_type.active %}· inaktiv{% endif %}
+        </option>
+        {% endfor %}
+      </optgroup>
+      <optgroup label="Konkrete Artikel">
+        {% for inventory_item in inventory_items %}
+        <option
+          value="item:{{ inventory_item.id }}"
+          {% if material and material.item_id == inventory_item.id %}selected{% endif %}
+        >
+          {{ inventory_item.name }}
+          ({{ inventory_item.item_number }})
+          {% if not inventory_item.active %}· inaktiv{% endif %}
+        </option>
+        {% endfor %}
+      </optgroup>
     </select>
   </td>
   <td>
@@ -45,7 +60,7 @@
     <input
       class="form-control"
       name="expected_note"
-      value="{{ material.note or '' if material else '' }}"
+      value="{% if material %}{{ material.note or '' }}{% endif %}"
     >
   </td>
   <td class="text-end">
@@ -146,7 +161,7 @@
         <table class="table align-middle">
           <thead>
             <tr>
-              <th>Artikel</th>
+              <th>Artikelart oder konkreter Artikel</th>
               <th style="width: 140px;">Menge</th>
               <th style="width: 130px;">Pflicht</th>
               <th>Hinweis</th>

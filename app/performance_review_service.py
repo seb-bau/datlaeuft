@@ -22,6 +22,10 @@ from .models import (
 )
 from .settings import SettingKeys, settings
 
+from .inventory_service import (
+    movement_item_type_id,
+)
+
 
 FINAL_STATUSES = {
     CommissionLocalStatus.COMPLETION_REVIEW.value,
@@ -209,54 +213,98 @@ def review_row(
         )
     )
 
-    actual_by_item = {}
-
-    for movement in movements:
+    installed_movements = [
+        movement
+        for movement in movements
         if (
-            movement.usage_status
-            == MaterialUsageStatus.INSTALLED.value
-        ):
-            actual_by_item[
-                movement.item_id
-            ] = (
+                movement.usage_status
+                == MaterialUsageStatus.INSTALLED.value
+        )
+    ]
+    actual_by_item = {}
+    actual_by_type = {}
+
+    for movement in installed_movements:
+        actual_by_item[
+            movement.item_id
+        ] = (
                 actual_by_item.get(
                     movement.item_id,
                     0.0,
                 )
                 + float(movement.quantity)
+        )
+
+        item_type_id = movement_item_type_id(
+            movement
+        )
+
+        if item_type_id is not None:
+            actual_by_type[
+                item_type_id
+            ] = (
+                    actual_by_type.get(
+                        item_type_id,
+                        0.0,
+                    )
+                    + float(movement.quantity)
             )
 
     material_lines = []
     expected_item_ids = set()
+    expected_type_ids = set()
 
     if task:
         for expected in task.expected_materials:
-            expected_item_ids.add(
-                expected.item_id
-            )
-            actual_quantity = (
-                actual_by_item.get(
-                    expected.item_id,
-                    0.0,
+            if expected.item_id is not None:
+                expected_item_ids.add(
+                    expected.item_id
                 )
-            )
+                actual_quantity = (
+                    actual_by_item.get(
+                        expected.item_id,
+                        0.0,
+                    )
+                )
+                label = expected.item.name
+                unit = expected.item.unit
+            else:
+                expected_type_ids.add(
+                    expected.item_type_id
+                )
+                actual_quantity = (
+                    actual_by_type.get(
+                        expected.item_type_id,
+                        0.0,
+                    )
+                )
+                label = (
+                    f"{expected.item_type.group.name} "
+                    f"· {expected.item_type.name}"
+                )
+                unit = expected.item_type.unit
+
             quantity_differs = (
-                abs(
-                    actual_quantity
-                    - float(expected.quantity)
-                )
-                > 0.0001
+                    abs(
+                        actual_quantity
+                        - float(expected.quantity)
+                    )
+                    > 0.0001
             )
             deviates = (
                 quantity_differs
                 if expected.required
                 else (
-                    actual_quantity > 0.0001
-                    and quantity_differs
+                        actual_quantity > 0.0001
+                        and quantity_differs
                 )
             )
+
             material_lines.append({
+                "label": label,
+                "unit": unit,
                 "item": expected.item,
+                "item_type": expected.item_type,
                 "expected_quantity": float(
                     expected.quantity
                 ),
@@ -266,18 +314,28 @@ def review_row(
             })
 
     for item_id, actual_quantity in (
-        actual_by_item.items()
+            actual_by_item.items()
     ):
         if item_id in expected_item_ids:
             continue
 
         movement = next(
-            item
-            for item in movements
-            if item.item_id == item_id
+            movement
+            for movement in installed_movements
+            if movement.item_id == item_id
         )
+        item_type_id = movement_item_type_id(
+            movement
+        )
+
+        if item_type_id in expected_type_ids:
+            continue
+
         material_lines.append({
+            "label": movement.item.name,
+            "unit": movement.item.unit,
             "item": movement.item,
+            "item_type": movement.item.item_type,
             "expected_quantity": 0.0,
             "actual_quantity": actual_quantity,
             "required": False,
