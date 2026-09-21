@@ -392,12 +392,36 @@
           </div>
 
           <div class="col-lg-2">
-            <button
-              class="btn btn-sm btn-outline-primary w-100"
-              type="submit"
-            >
-              Speichern
-            </button>
+            <div class="d-flex gap-2">
+              <button
+                class="btn btn-sm btn-outline-primary flex-grow-1"
+                type="submit"
+              >
+                Speichern
+              </button>
+
+              <button
+                class="btn btn-sm btn-outline-danger"
+                type="submit"
+                formaction="{{ url_for(
+                  'admin.inventory_barcode_delete',
+                  item_id=item.id,
+                  barcode_id=barcode.id
+                ) }}"
+                formmethod="post"
+                formnovalidate
+                onclick="return confirm(
+                  'Diesen scanbaren Code wirklich entfernen?'
+                )"
+                title="Code entfernen"
+                aria-label="Code entfernen"
+              >
+                <i
+                  class="bi bi-trash"
+                  aria-hidden="true"
+                ></i>
+              </button>
+            </div>
           </div>
         </form>
         {% endfor %}

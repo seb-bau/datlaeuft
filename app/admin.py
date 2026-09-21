@@ -7236,6 +7236,59 @@ def inventory_barcode_update(
     )
 
 
+@admin_bp.post(
+    "/admin/inventory/<int:item_id>/barcodes/"
+    "<int:barcode_id>/delete"
+)
+@foreman_required
+def inventory_barcode_delete(
+    item_id: int,
+    barcode_id: int,
+) -> Any:
+    item = db.get_or_404(
+        InventoryItem,
+        item_id,
+    )
+
+    barcode = (
+        InventoryItemBarcode.query
+        .filter_by(
+            id=barcode_id,
+            item_id=item.id,
+        )
+        .one_or_none()
+    )
+
+    if barcode is None:
+        abort(404)
+
+    audit(
+        "inventory.barcode.delete",
+        "inventory_item",
+        item.id,
+        {
+            "barcode_id": barcode.id,
+            "code": barcode.code,
+            "kind": barcode.kind,
+        },
+    )
+
+    db.session.delete(barcode)
+    db.session.commit()
+
+    flash(
+        "Code entfernt.",
+        "success",
+    )
+
+    return redirect(
+        url_for(
+            "admin.inventory_item",
+            item_id=item.id,
+        )
+    )
+
+
 @admin_bp.get("/admin/inventory/<int:item_id>/qr.png")
 @foreman_required
 def inventory_qr(item_id: int) -> Response:
