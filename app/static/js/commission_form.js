@@ -618,6 +618,14 @@ document.addEventListener("DOMContentLoaded", () => {
         updateFieldState(select);
     }
 
+    function hasAssignmentRuleValue() {
+        return Boolean(
+            assignmentRuleUserId
+            && craftsmanUser.value
+            === assignmentRuleUserId
+        );
+    }
+
     function assignmentRuleStatusText(
         companyCodeValue = ""
     ) {
