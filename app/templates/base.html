@@ -59,6 +59,7 @@
     or request.path.startswith('/admin/settings')
     or request.path.startswith('/admin/sync-health')
     or request.path.startswith('/admin/inventory-locations')
+    or request.path.startswith('/admin/inventory-classifications')
     or request.path.startswith('/admin/time-templates')
     or request.path.startswith('/admin/appointment-windows')
   ) %}
@@ -401,6 +402,13 @@
                 'Lagerorte',
                 'geo-alt',
                 request.path.startswith('/admin/inventory-locations')
+              ) }}
+
+              {{ sidebar_link(
+                'admin.inventory_classifications',
+                'Artikelgruppen und -arten',
+                'tags',
+                request.path.startswith('/admin/inventory-classifications')
               ) }}
 
               {{ sidebar_link(
