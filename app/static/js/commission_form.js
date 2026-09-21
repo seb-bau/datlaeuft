@@ -242,6 +242,8 @@ document.addEventListener("DOMContentLoaded", () => {
         true
     );
     let assignmentRequestId = 0;
+    let assignmentAbortController = null;
+    const assignmentTimeoutMilliseconds = 12000;
     const minimumObjectSearchLength = 2;
     const objectSearchDelayMilliseconds = 300;
     let objectSearchTimer = null;
@@ -657,6 +659,22 @@ document.addEventListener("DOMContentLoaded", () => {
         const currentRequestId = (
             ++assignmentRequestId
         );
+        if (assignmentAbortController) {
+            assignmentAbortController.abort();
+        }
+
+        const abortController =
+            new AbortController();
+
+        assignmentAbortController =
+            abortController;
+
+        const timeoutId = window.setTimeout(
+            () => {
+                abortController.abort();
+            },
+            assignmentTimeoutMilliseconds
+        );
         const selectedCraftId = (
             craftActivity.value
         );
@@ -703,6 +721,14 @@ document.addEventListener("DOMContentLoaded", () => {
                         + "davon ausgewählt werden."
                     )
             );
+            window.clearTimeout(timeoutId);
+
+            if (
+                assignmentAbortController
+                === abortController
+            ) {
+                assignmentAbortController = null;
+            }
             return;
         }
 
@@ -745,9 +771,37 @@ document.addEventListener("DOMContentLoaded", () => {
             previewUrl.search = parameters.toString();
 
             const response = await fetch(
-                previewUrl.toString()
+                previewUrl.toString(),
+                {
+                    method: "GET",
+                    headers: {
+                        Accept: "application/json"
+                    },
+                    cache: "no-store",
+                    signal: abortController.signal
+                }
             );
-            const payload = await response.json();
+
+            const contentType = (
+                response.headers.get(
+                    "content-type"
+                )
+                || ""
+            );
+
+            if (
+                !contentType.includes(
+                    "application/json"
+                )
+            ) {
+                throw new Error(
+                    "Der Server hat keine gültige "
+                    + "Zuweisungsantwort geliefert."
+                );
+            }
+
+            const payload =
+                await response.json();
 
             if (
                 currentRequestId
@@ -783,13 +837,41 @@ document.addEventListener("DOMContentLoaded", () => {
                     )
                 );
             } else if (selectedCraftId) {
+                const craftsmanUserId = String(
+                    payload.craftsman_user_id
+                    || ""
+                );
+
+                if (!craftsmanUserId) {
+                    throw new Error(
+                        "Für diese Kombination wurde "
+                        + "kein Handwerker ermittelt."
+                    );
+                }
+
+                const hasCraftsmanOption =
+                    Array.from(
+                        craftsmanUser.options
+                    ).some((option) => {
+                        return (
+                            option.value
+                            === craftsmanUserId
+                        );
+                    });
+
+                if (!hasCraftsmanOption) {
+                    throw new Error(
+                        "Der automatisch ermittelte "
+                        + "Handwerker ist nicht in der "
+                        + "Auswahlliste verfügbar."
+                    );
+                }
+
                 applyAutomaticValue(
                     craftsmanUser,
-                    String(
-                        payload.craftsman_user_id
-                        || ""
-                    )
+                    craftsmanUserId
                 );
+
                 setAssignmentStatus(
                     "Automatischer Vorschlag: "
                     + payload.craftsman_name
@@ -830,20 +912,38 @@ document.addEventListener("DOMContentLoaded", () => {
             updateAssignmentControls();
 
             const message = (
-                error instanceof Error
-                && error.name === "Error"
-                && error.message
+                error instanceof DOMException
+                && error.name === "AbortError"
             )
-                ? error.message
-                : (
+                ? (
                     "Die automatische Zuweisung "
-                    + "konnte nicht geladen werden."
-                );
+                    + "hat zu lange gedauert. "
+                    + "Bitte Objekt oder Gewerk "
+                    + "erneut auswählen."
+                )
+                : (
+                    error instanceof Error
+                    && error.message
+                )
+                    ? error.message
+                    : (
+                        "Die automatische Zuweisung "
+                        + "konnte nicht geladen werden."
+                    );
 
-            setAssignmentStatus(
+                        setAssignmentStatus(
                 message,
                 true
             );
+        } finally {
+            window.clearTimeout(timeoutId);
+
+            if (
+                assignmentAbortController
+                === abortController
+            ) {
+                assignmentAbortController = null;
+            }
         }
     }
 
