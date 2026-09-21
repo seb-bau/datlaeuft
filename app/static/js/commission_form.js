@@ -83,6 +83,164 @@ document.addEventListener("DOMContentLoaded", () => {
     const assignmentStatus = document.getElementById(
         "assignmentStatus"
     );
+        const automaticFieldClass =
+        "field-state-automatic";
+    const requiredFieldClass =
+        "field-state-required";
+
+    function fieldValue(field) {
+        return String(field.value || "").trim();
+    }
+
+    function hasAutomaticValue(field) {
+        const automaticValue = (
+            field.dataset.automaticValue
+        );
+
+        return (
+            automaticValue !== undefined
+            && automaticValue !== ""
+            && fieldValue(field)
+            === String(automaticValue).trim()
+        );
+    }
+
+    function isRequiredFieldMissing(field) {
+        return (
+            field.required
+            && !field.disabled
+            && fieldValue(field) === ""
+        );
+    }
+
+    function updateFieldState(field) {
+        const isMissing =
+            isRequiredFieldMissing(field);
+        const isAutomatic =
+            !isMissing
+            && hasAutomaticValue(field);
+
+        field.classList.toggle(
+            automaticFieldClass,
+            isAutomatic
+        );
+        field.classList.toggle(
+            requiredFieldClass,
+            isMissing
+        );
+
+        if (isMissing) {
+            field.setAttribute(
+                "aria-invalid",
+                "true"
+            );
+        } else {
+            field.removeAttribute(
+                "aria-invalid"
+            );
+        }
+    }
+
+    function updateObjectState() {
+        const automaticValue = String(
+            objectSummary.dataset
+                .automaticValue
+            || ""
+        );
+        const currentValue = String(
+            objectId.value || ""
+        );
+        const isMissing = !currentValue;
+        const isAutomatic = (
+            !isMissing
+            && automaticValue
+            && automaticValue === currentValue
+        );
+
+        objectSummary.classList.toggle(
+            automaticFieldClass,
+            Boolean(isAutomatic)
+        );
+        objectSummary.classList.toggle(
+            requiredFieldClass,
+            isMissing
+        );
+
+        if (isMissing) {
+            objectSummary.setAttribute(
+                "aria-invalid",
+                "true"
+            );
+        } else {
+            objectSummary.removeAttribute(
+                "aria-invalid"
+            );
+        }
+    }
+
+    function updateAllFieldStates() {
+        commissionForm
+            .querySelectorAll(
+                "input[required], "
+                + "select[required], "
+                + "textarea[required]"
+            )
+            .forEach(updateFieldState);
+
+        updateObjectState();
+    }
+
+    function markFieldAsManual(field) {
+        if (
+            "automaticValue"
+            in field.dataset
+        ) {
+            delete field.dataset
+                .automaticValue;
+        }
+
+        updateFieldState(field);
+    }
+
+    commissionForm.addEventListener(
+        "input",
+        (event) => {
+            if (
+                event.target.matches(
+                    "input, textarea"
+                )
+            ) {
+                markFieldAsManual(
+                    event.target
+                );
+            }
+        }
+    );
+
+    commissionForm.addEventListener(
+        "change",
+        (event) => {
+            if (
+                event.target.matches(
+                    "input, select, textarea"
+                )
+            ) {
+                markFieldAsManual(
+                    event.target
+                );
+            }
+
+            updateAllFieldStates();
+        }
+    );
+
+    commissionForm.addEventListener(
+        "invalid",
+        (event) => {
+            updateFieldState(event.target);
+        },
+        true
+    );
     let assignmentRequestId = 0;
     const minimumObjectSearchLength = 2;
     const objectSearchDelayMilliseconds = 300;
@@ -118,6 +276,12 @@ document.addEventListener("DOMContentLoaded", () => {
     ) {
         objectType.value = item.object_type;
         objectId.value = item.object_id;
+                if (resetAssignments) {
+            delete objectSummary.dataset
+                .automaticValue;
+        }
+
+        updateObjectState();
 
         applyAutomaticValue(
             companyCode,
@@ -404,6 +568,9 @@ document.addEventListener("DOMContentLoaded", () => {
         value,
         force = false
     ) {
+        const normalizedValue = String(
+            value || ""
+        );
         const previousAutomaticValue = (
             select.dataset.automaticValue
             || ""
@@ -415,11 +582,14 @@ document.addEventListener("DOMContentLoaded", () => {
             === previousAutomaticValue
         );
 
-        select.dataset.automaticValue = value;
+        select.dataset.automaticValue =
+            normalizedValue;
 
         if (shouldReplace) {
-            select.value = value;
+            select.value = normalizedValue;
         }
+
+        updateFieldState(select);
     }
 
     function clearAutomaticValue(
@@ -435,21 +605,15 @@ document.addEventListener("DOMContentLoaded", () => {
             force
             || (
                 automaticValue
-                && select.value === automaticValue
+                && select.value
+                === automaticValue
             )
         ) {
             select.value = "";
         }
 
         delete select.dataset.automaticValue;
-    }
-
-        function hasAssignmentRuleValue() {
-        return Boolean(
-            assignmentRuleUserId
-            && craftsmanUser.value
-            === assignmentRuleUserId
-        );
+        updateFieldState(select);
     }
 
     function assignmentRuleStatusText(
@@ -733,6 +897,7 @@ document.addEventListener("DOMContentLoaded", () => {
             updateRemoveButtons();
             filterServicePositions();
             updateCommissionTypeOptions();
+            updateAllFieldStates();
         }
     );
 
@@ -962,4 +1127,5 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
         updateAssignmentPreview();
     }
+    updateAllFieldStates();
 });

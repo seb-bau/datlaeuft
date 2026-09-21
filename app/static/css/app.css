@@ -769,3 +769,80 @@ html {
     padding: 1rem;
   }
 }
+
+.field-state-legend {
+  color: var(--app-muted);
+  font-size: .78rem;
+}
+
+.field-state-key {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .3rem .65rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-weight: 650;
+}
+
+.field-state-key-automatic {
+  border-color: #7cb6dc;
+  background: #eaf5fc;
+  color: #164f73;
+}
+
+.field-state-key-required {
+  border-color: #d99a45;
+  background: #fff3df;
+  color: #713d00;
+}
+
+.form-control.field-state-automatic,
+.form-select.field-state-automatic,
+.field-state-automatic {
+  border-color: #5a9dca;
+  background-color: #eaf5fc;
+  color: #17221f;
+  box-shadow: inset 0 0 0 1px rgba(39, 116, 168, .12);
+}
+
+.form-control.field-state-automatic:focus,
+.form-select.field-state-automatic:focus {
+  border-color: #2774a8;
+  background-color: #f1f9fe;
+  color: #17221f;
+  box-shadow:
+    0 0 0 .2rem rgba(39, 116, 168, .16);
+}
+
+.form-control.field-state-required,
+.form-select.field-state-required,
+.field-state-required {
+  border-color: #c97918;
+  background-color: #fff3df;
+  color: #33210b;
+  box-shadow: inset 0 0 0 1px rgba(179, 90, 0, .12);
+}
+
+.form-control.field-state-required:focus,
+.form-select.field-state-required:focus {
+  border-color: #a95100;
+  background-color: #fff8ec;
+  color: #33210b;
+  box-shadow:
+    0 0 0 .2rem rgba(179, 90, 0, .17);
+}
+
+.form-control.field-state-automatic:disabled,
+.form-select.field-state-automatic:disabled {
+  border-color: #7cb6dc;
+  background-color: #eaf5fc;
+  color: #294b60;
+  opacity: 1;
+}
+
+.form-select.field-state-automatic option,
+.form-select.field-state-required option {
+  background-color: var(--bs-body-bg);
+  color: var(--bs-body-color);
+}
