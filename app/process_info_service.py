@@ -15,6 +15,7 @@ from .mail_service import send_email
 from .models import (
     Commission,
     CommissionLocalStatus,
+    CommissionSource,
     ProcessInfo,
     ProcessInfoRead,
     ProcessInfoThread,
@@ -1025,6 +1026,7 @@ def _responsible_official_emails(
 ) -> list[str]:
     service = WowiportService()
     official_ids: set[int] = set()
+    fallback_recipients: set[str] = set()
 
     for commission in commissions_for_process(
         process_erp_id
@@ -1052,6 +1054,19 @@ def _responsible_official_emails(
 
         if official_id is not None:
             official_ids.add(official_id)
+        elif (
+            commission.source
+            == CommissionSource.WEB.value
+            and commission.created_by is not None
+        ):
+            email = (
+                commission.created_by.email
+                or ""
+            ).strip()
+
+            if email:
+                Address(addr_spec=email)
+                fallback_recipients.add(email)
 
     recipients: set[str] = set()
 
@@ -1090,7 +1105,10 @@ def _responsible_official_emails(
             Address(addr_spec=email)
             recipients.add(email)
 
-    return sorted(recipients)
+    if recipients:
+        return sorted(recipients)
+
+    return sorted(fallback_recipients)
 
 
 def _send_process_info_email(
