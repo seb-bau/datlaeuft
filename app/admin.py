@@ -2585,8 +2585,22 @@ def user_create() -> Any:
             save_user_craft_activities(item)
             db.session.flush()
             save_user_work_time_profile_assignment(item)
+            visible_user_ids = (
+                save_user_commission_visibility(
+                    item
+                )
+            )
             db.session.flush()
-            audit("user.create", "user", item.id)
+            audit(
+                "user.create",
+                "user",
+                item.id,
+                metadata={
+                    "visible_commission_user_ids": (
+                        visible_user_ids
+                    ),
+                },
+            )
             db.session.commit()
         except (ValueError, IntegrityError) as exc:
             db.session.rollback()
@@ -2619,6 +2633,7 @@ def user_create() -> Any:
         craft_activities=craft_activities,
         selected_craft_activities=[],
         **user_work_time_profile_context(item),
+        **user_commission_visibility_context(item),
     )
 
 
@@ -2645,6 +2660,11 @@ def user_edit(user_id: int) -> Any:
         try:
             save_user_form(item)
             save_user_craft_activities(item)
+            visible_user_ids = (
+                save_user_commission_visibility(
+                    item
+                )
+            )
             db.session.flush()
             save_user_work_time_profile_assignment(item)
             mapping_ids = (
@@ -2671,6 +2691,9 @@ def user_edit(user_id: int) -> Any:
                         "safety_inspection_"
                         "assignments"
                     ): assignment_result,
+                    "visible_commission_user_ids": (
+                        visible_user_ids
+                    ),
                 },
             )
             db.session.commit()
@@ -8250,6 +8273,82 @@ def user_work_time_profile_context(
             date.today().isoformat()
         ),
     }
+
+
+def user_commission_visibility_context(
+    item: User,
+) -> dict[str, Any]:
+    query = User.query.filter(
+        User.is_active_flag.is_(True),
+        User.craftsman_erp_id.isnot(None),
+    )
+
+    if item.id is not None:
+        query = query.filter(
+            User.id != item.id
+        )
+
+    return {
+        "commission_visibility_users": (
+            query.order_by(
+                User.display_name.asc()
+            ).all()
+        ),
+        (
+            "selected_commission_visibility_"
+            "user_ids"
+        ): {
+            visible_user.id
+            for visible_user
+            in item.visible_commission_users
+        },
+    }
+
+
+def save_user_commission_visibility(
+    item: User,
+) -> list[int]:
+    try:
+        selected_user_ids = {
+            int(value)
+            for value in request.form.getlist(
+                "visible_commission_user_ids"
+            )
+        }
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Die ausgewählten Handwerker sind ungültig."
+        ) from exc
+
+    if item.id is not None:
+        selected_user_ids.discard(item.id)
+
+    if not selected_user_ids:
+        item.visible_commission_users = []
+        return []
+
+    selected_users = (
+        User.query
+        .filter(
+            User.id.in_(selected_user_ids),
+            User.is_active_flag.is_(True),
+            User.craftsman_erp_id.isnot(None),
+        )
+        .order_by(User.display_name.asc())
+        .all()
+    )
+
+    if len(selected_users) != len(
+        selected_user_ids
+    ):
+        raise ValueError(
+            "Mindestens ein ausgewählter "
+            "Handwerker ist nicht verfügbar."
+        )
+
+    item.visible_commission_users = selected_users
+
+    return sorted(selected_user_ids)
 
 
 def save_user_form(item: User) -> None:

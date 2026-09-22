@@ -429,13 +429,6 @@ class SettingKeys:
         "api.cors_origins", SettingValueType.STRING, "*", "CORS Origins", "API")
     MOBILE_TOKEN_NEVER_EXPIRES = SettingDefinition[bool](
         "mobile.token_never_expires", SettingValueType.BOOL, True, "App-Login dauerhaft gültig", "Mobile App")
-    MOBILE_ALLOW_COLLEAGUE_COMMISSIONS = SettingDefinition[bool](
-        "mobile.allow_colleague_commissions",
-        SettingValueType.BOOL,
-        False,
-        "Kollegen-Aufträge in der App anzeigen",
-        "Mobile App"
-    )
     MOBILE_MICROSOFT_CLIENT_ID = SettingDefinition[str](
         "mobile.microsoft_client_id", SettingValueType.STRING, "", "Microsoft Client-ID der iOS-App", "Mobile App")
     MOBILE_MICROSOFT_REDIRECT_URI = SettingDefinition[str](

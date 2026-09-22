@@ -238,6 +238,33 @@ user_craft_activity = db.Table(
     db.Column("craft_activity_id", db.ForeignKey("craft_activity.id"), primary_key=True),
 )
 
+user_commission_visibility = db.Table(
+    "user_commission_visibility",
+    db.Column(
+        "viewer_user_id",
+        db.ForeignKey(
+            "user_account.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    ),
+    db.Column(
+        "visible_user_id",
+        db.ForeignKey(
+            "user_account.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    ),
+    db.CheckConstraint(
+        "viewer_user_id <> visible_user_id",
+        name=(
+            "ck_user_commission_visibility_"
+            "distinct_users"
+        ),
+    ),
+)
+
 
 class SafetyInspectionTemplateVersionStatus(
     str,
@@ -509,6 +536,42 @@ class User(UserMixin, db.Model):
         "CraftActivity",
         secondary=user_craft_activity,
         back_populates="users",
+    )
+    visible_commission_users: Mapped[
+        list["User"]
+    ] = relationship(
+        "User",
+        secondary=user_commission_visibility,
+        primaryjoin=lambda: (
+            User.id
+            == user_commission_visibility
+            .c.viewer_user_id
+        ),
+        secondaryjoin=lambda: (
+            User.id
+            == user_commission_visibility
+            .c.visible_user_id
+        ),
+        back_populates=(
+            "commission_visible_to_users"
+        ),
+    )
+    commission_visible_to_users: Mapped[
+        list["User"]
+    ] = relationship(
+        "User",
+        secondary=user_commission_visibility,
+        primaryjoin=lambda: (
+            User.id
+            == user_commission_visibility
+            .c.visible_user_id
+        ),
+        secondaryjoin=lambda: (
+            User.id
+            == user_commission_visibility
+            .c.viewer_user_id
+        ),
+        back_populates="visible_commission_users",
     )
     push_devices: Mapped[list["PushDevice"]] = relationship(
         back_populates="user",

@@ -306,13 +306,47 @@ def commissions() -> Any:
     status = request.args.get("status", "").strip()
     user_id_filter = request.args.get("user_id", "").strip()
 
-    query = Commission.query.filter(Commission.local_status != CommissionLocalStatus.DELETED.value)
-    can_view_colleagues = can_view_colleague_commissions(user)
+    query = Commission.query.filter(
+        Commission.local_status
+        != CommissionLocalStatus.DELETED.value
+    )
+    allowed_user_ids = (
+        viewable_commission_user_ids(user)
+    )
 
-    if scope != "all" or not can_view_colleagues:
-        query = query.filter_by(user_id=user.id)
-    elif user_id_filter.isdigit():
-        query = query.filter_by(user_id=int(user_id_filter))
+    if scope != "all":
+        query = query.filter(
+            Commission.user_id == user.id
+        )
+    elif user_id_filter:
+        if not user_id_filter.isdigit():
+            return jsonify({
+                "message": (
+                    "Der ausgewählte Handwerker "
+                    "ist ungültig."
+                ),
+            }), 400
+
+        selected_user_id = int(user_id_filter)
+
+        if selected_user_id not in allowed_user_ids:
+            return jsonify({
+                "message": (
+                    "Für diesen Handwerker besteht "
+                    "keine Berechtigung."
+                ),
+            }), 403
+
+        query = query.filter(
+            Commission.user_id
+            == selected_user_id
+        )
+    else:
+        query = query.filter(
+            Commission.user_id.in_(
+                allowed_user_ids
+            )
+        )
 
     if status == "active":
         query = query.filter(
@@ -350,25 +384,36 @@ def commissions() -> Any:
 @jwt_required()
 def commission_users() -> Any:
     user = current_api_user()
+    allowed_user_ids = (
+        viewable_commission_user_ids(user)
+    )
+    colleague_user_ids = (
+        allowed_user_ids - {user.id}
+    )
+    items = [user]
 
-    if not can_view_colleague_commissions(user):
-        return jsonify({"items": [serialize_user(user)]})
+    if colleague_user_ids:
+        items.extend(
+            User.query
+            .filter(
+                User.id.in_(
+                    colleague_user_ids
+                ),
+                User.is_active_flag.is_(True),
+                User.craftsman_erp_id.isnot(None),
+            )
+            .order_by(
+                User.display_name.asc()
+            )
+            .all()
+        )
 
-    items = User.query.join(
-        Commission,
-        Commission.user_id == User.id,
-    ).filter(
-        Commission.local_status != CommissionLocalStatus.DELETED.value,
-        User.is_active_flag.is_(True),
-    ).distinct().order_by(
-        User.display_name.asc(),
-    ).all()
-
-    existing_ids = {item.id for item in items}
-    if user.id not in existing_ids:
-        items.insert(0, user)
-
-    return jsonify({"items": [serialize_user(item) for item in items]})
+    return jsonify({
+        "items": [
+            serialize_user(item)
+            for item in items
+        ],
+    })
 
 
 @api_bp.get("/commissions/create-options")
@@ -3160,8 +3205,23 @@ def current_api_user() -> User:
     return user
 
 
-def can_view_colleague_commissions(user: User) -> bool:
-    return user.is_admin or user.is_foreman or settings.get(SettingKeys.MOBILE_ALLOW_COLLEAGUE_COMMISSIONS)
+def viewable_commission_user_ids(
+    user: User,
+) -> set[int]:
+    visible_user_ids = {user.id}
+
+    visible_user_ids.update(
+        visible_user.id
+        for visible_user
+        in user.visible_commission_users
+        if (
+            visible_user.is_active_flag
+            and visible_user.craftsman_erp_id
+            is not None
+        )
+    )
+
+    return visible_user_ids
 
 
 def can_edit_commission(commission: Commission, user: User) -> bool:
@@ -3176,7 +3236,12 @@ def viewable_commission(commission_id: int, user: User) -> Commission:
     commission = db.session.get(Commission, commission_id)
     if commission is None or commission.local_status == CommissionLocalStatus.DELETED.value:
         abort(404)
-    if commission.user_id != user.id and not can_view_colleague_commissions(user):
+    if (
+        commission.user_id
+        not in viewable_commission_user_ids(
+            user
+        )
+    ):
         abort(403)
     return commission
 
