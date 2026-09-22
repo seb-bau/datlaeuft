@@ -342,20 +342,11 @@
           </button>
         </div>
       </div>
-
-      <div class="col-md-4">
-        <label
-          class="form-label small fw-semibold mb-1"
-          for="craftActivity"
-        >
-          Gewerk
-        </label>
         <select
           class="form-select form-select-sm"
           id="craftActivity"
           name="craft_activity_id"
           data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ form_values.get('craft_activity_id', '') }}{% endif %}"
-          data-preferred-external-craftsman-id="{{ item.preferred_external_craftsman_id or '' }}"
           required
         >
           <option value="">
@@ -365,6 +356,7 @@
           {% for item in craft_activities %}
           <option
             value="{{ item.id }}"
+            data-preferred-external-craftsman-id="{{ item.preferred_external_craftsman_id or '' }}"
             {% if form_values.get('craft_activity_id')|int == item.id %}selected{% endif %}
           >
             {{ item.name }}
@@ -374,10 +366,6 @@
           </option>
           {% endfor %}
         </select>
-        <div class="form-text">
-          Filtert die verfügbaren Leistungspositionen.
-        </div>
-      </div>
 
       <div id="positions" class="col-12">
         {% for position in position_rows %}
