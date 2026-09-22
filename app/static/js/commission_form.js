@@ -83,10 +83,54 @@ document.addEventListener("DOMContentLoaded", () => {
     const assignmentStatus = document.getElementById(
         "assignmentStatus"
     );
+    const assignmentTypeInputs = Array.from(
+    commissionForm.querySelectorAll(
+        "input[name='assignment_type']"
+    )
+    );
+    const internalCraftsmanField =
+        document.getElementById(
+            "internalCraftsmanField"
+        );
+    const externalCraftsmanField =
+        document.getElementById(
+            "externalCraftsmanField"
+        );
+    const externalCraftsman =
+        document.getElementById(
+            "externalCraftsman"
+        );
+    const assignmentRuleHint =
+        document.getElementById(
+            "assignmentRuleHint"
+        );
         const automaticFieldClass =
         "field-state-automatic";
     const requiredFieldClass =
         "field-state-required";
+
+    function selectedAssignmentType() {
+        return (
+            assignmentTypeInputs.find(
+                (input) => input.checked
+            )?.value
+            || "internal"
+        );
+    }
+
+    function isInternalAssignment() {
+        return (
+            selectedAssignmentType()
+            === "internal"
+        );
+    }
+
+    function isInternalAssignmentLocked() {
+        return (
+            isInternalAssignment()
+            && assignmentLocked
+        );
+    }
 
     function fieldValue(field) {
         return String(field.value || "").trim();
@@ -297,7 +341,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (
             resetAssignments
             && !hasAssignmentRuleValue()
-            && !assignmentLocked
+            && !isInternalAssignmentLocked()
         ) {
             clearAutomaticValue(
                 craftsmanUser,
@@ -381,7 +425,7 @@ document.addEventListener("DOMContentLoaded", () => {
             forceCraftsman: (
                 resetAssignments
                 && !hasAssignmentRuleValue()
-                && !assignmentLocked
+                && !isInternalAssignmentLocked()
             )
         });
     }
@@ -618,9 +662,10 @@ document.addEventListener("DOMContentLoaded", () => {
         updateFieldState(select);
     }
 
-    function hasAssignmentRuleValue() {
+        function hasAssignmentRuleValue() {
         return Boolean(
-            assignmentRuleUserId
+            isInternalAssignment()
+            && assignmentRuleUserId
             && craftsmanUser.value
             === assignmentRuleUserId
         );
@@ -629,9 +674,10 @@ document.addEventListener("DOMContentLoaded", () => {
     function assignmentRuleStatusText(
         companyCodeValue = ""
     ) {
-        const modeText = assignmentLocked
-            ? "Verbindliche KI-Regel"
-            : "KI-Regel";
+        const modeText =
+            isInternalAssignmentLocked()
+                ? "Verbindliche KI-Regel"
+                : "KI-Regel";
         const companyText = companyCodeValue
             ? ` · Buchwerk ${companyCodeValue}`
             : "";
@@ -639,6 +685,165 @@ document.addEventListener("DOMContentLoaded", () => {
         return (
             `${modeText} „${assignmentRuleLabel}“`
             + companyText
+        );
+    }
+
+    function externalCraftIds(option) {
+        return String(
+            option.dataset.craftIds || ""
+        )
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+    }
+
+    function filterExternalCraftsmen({
+        force = false,
+        allowedIds = null
+    } = {}) {
+        const selectedCraftId = String(
+            craftActivity.value || ""
+        );
+        const allowedIdSet = (
+            Array.isArray(allowedIds)
+                ? new Set(
+                    allowedIds.map(
+                        (value) => String(value)
+                    )
+                )
+                : null
+        );
+        const previousAutomaticValue = String(
+            externalCraftsman.dataset
+                .automaticValue
+            || ""
+        );
+        const candidates = [];
+
+        Array.from(
+            externalCraftsman.options
+        ).forEach((option) => {
+            if (!option.value) {
+                option.hidden = false;
+                option.disabled = false;
+                return;
+            }
+
+            const craftIds =
+                externalCraftIds(option);
+            const matchesCraft = Boolean(
+                selectedCraftId
+                && (
+                    !craftIds.length
+                    || craftIds.includes(
+                        selectedCraftId
+                    )
+                )
+            );
+            const matchesPreview = (
+                allowedIdSet === null
+                || allowedIdSet.has(
+                    option.value
+                )
+            );
+            const isEligible = (
+                matchesCraft
+                && matchesPreview
+            );
+
+            option.hidden = !isEligible;
+            option.disabled = !isEligible;
+
+            if (isEligible) {
+                candidates.push(option);
+            }
+        });
+
+        const currentIsCandidate =
+            candidates.some((option) => {
+                return (
+                    option.value
+                    === externalCraftsman.value
+                );
+            });
+        const preferredId = String(
+            craftActivity.selectedOptions[0]
+                ?.dataset
+                .preferredExternalCraftsmanId
+            || ""
+        );
+        const automaticOption = (
+            candidates.find((option) => {
+                return option.value
+                    === preferredId;
+            })
+            || (
+                candidates.length === 1
+                    ? candidates[0]
+                    : null
+            )
+        );
+
+        if (
+            force
+            || !currentIsCandidate
+            || (
+                previousAutomaticValue
+                && externalCraftsman.value
+                === previousAutomaticValue
+            )
+        ) {
+            if (automaticOption) {
+                applyAutomaticValue(
+                    externalCraftsman,
+                    automaticOption.value,
+                    true
+                );
+            } else {
+                clearAutomaticValue(
+                    externalCraftsman,
+                    true
+                );
+            }
+        } else {
+            updateFieldState(
+                externalCraftsman
+            );
+        }
+
+        externalCraftsman.options[0]
+            .textContent = (
+                !selectedCraftId
+                    ? (
+                        "Bitte zuerst Gewerk "
+                        + "auswählen"
+                    )
+                    : !candidates.length
+                        ? (
+                            "Kein passender externer "
+                            + "Handwerker"
+                        )
+                        : "Bitte auswählen"
+            );
+
+        return candidates;
+    }
+
+    function selectedExternalCraftsmanName() {
+        const selectedOption =
+            externalCraftsman
+                .selectedOptions[0];
+
+        if (
+            !selectedOption
+            || !selectedOption.value
+        ) {
+            return "";
+        }
+
+        return (
+            selectedOption.dataset.displayName
+            || selectedOption.textContent.trim()
         );
     }
 
@@ -650,23 +855,54 @@ document.addEventListener("DOMContentLoaded", () => {
         const hasCraft = Boolean(
             craftActivity.value
         );
+        const isInternal =
+            isInternalAssignment();
+
+        internalCraftsmanField.classList
+            .toggle(
+                "d-none",
+                !isInternal
+            );
+        externalCraftsmanField.classList
+            .toggle(
+                "d-none",
+                isInternal
+            );
+
+        if (assignmentRuleHint) {
+            assignmentRuleHint.classList
+                .toggle(
+                    "d-none",
+                    !isInternal
+                );
+        }
 
         companyCode.disabled = !hasObject;
+        craftsmanUser.required = isInternal;
+        externalCraftsman.required =
+            !isInternal;
         craftsmanUser.disabled = (
-            assignmentLocked
-            || !(
-                hasObject
-                && hasCraft
-            )
+            !isInternal
+            || isInternalAssignmentLocked()
+            || !(hasObject && hasCraft)
         );
+        externalCraftsman.disabled = (
+            isInternal
+            || !hasCraft
+        );
+
+        updateFieldState(craftsmanUser);
+        updateFieldState(externalCraftsman);
+        updateFieldState(companyCode);
     }
 
     async function updateAssignmentPreview({
         forceCraftsman = false
-        } = {}) {
+    } = {}) {
         const currentRequestId = (
             ++assignmentRequestId
         );
+
         if (assignmentAbortController) {
             assignmentAbortController.abort();
         }
@@ -690,12 +926,23 @@ document.addEventListener("DOMContentLoaded", () => {
             objectType.value
             && objectId.value
         );
+        const isInternal =
+            isInternalAssignment();
 
-        if (forceCraftsman && !assignmentLocked) {
-            clearAutomaticValue(
-                craftsmanUser,
-                true
-            );
+        if (isInternal) {
+            if (
+                forceCraftsman
+                && !isInternalAssignmentLocked()
+            ) {
+                clearAutomaticValue(
+                    craftsmanUser,
+                    true
+                );
+            }
+        } else {
+            filterExternalCraftsmen({
+                force: forceCraftsman
+            });
         }
 
         if (!hasObject) {
@@ -705,7 +952,8 @@ document.addEventListener("DOMContentLoaded", () => {
             );
 
             if (
-                !assignmentLocked
+                isInternal
+                && !isInternalAssignmentLocked()
                 && !hasAssignmentRuleValue()
             ) {
                 clearAutomaticValue(
@@ -716,19 +964,40 @@ document.addEventListener("DOMContentLoaded", () => {
 
             updateAssignmentControls();
 
-            setAssignmentStatus(
-                hasAssignmentRuleValue()
-                    ? (
-                        assignmentRuleStatusText()
-                        + ". Bitte zusätzlich ein "
-                        + "Objekt wählen."
-                    )
-                    : (
-                        "Bitte ein Objekt wählen. "
-                        + "Das Gewerk kann unabhängig "
-                        + "davon ausgewählt werden."
-                    )
-            );
+            if (isInternal) {
+                setAssignmentStatus(
+                    hasAssignmentRuleValue()
+                        ? (
+                            assignmentRuleStatusText()
+                            + ". Bitte zusätzlich "
+                            + "ein Objekt wählen."
+                        )
+                        : (
+                            "Bitte ein Objekt wählen. "
+                            + "Das Gewerk kann "
+                            + "unabhängig davon "
+                            + "ausgewählt werden."
+                        )
+                );
+            } else {
+                const externalName =
+                    selectedExternalCraftsmanName();
+
+                setAssignmentStatus(
+                    externalName
+                        ? (
+                            "Externer Vorschlag: "
+                            + externalName
+                            + ". Bitte zusätzlich "
+                            + "ein Objekt wählen."
+                        )
+                        : (
+                            "Bitte Objekt und Gewerk "
+                            + "auswählen."
+                        )
+                );
+            }
+
             window.clearTimeout(timeoutId);
 
             if (
@@ -737,12 +1006,14 @@ document.addEventListener("DOMContentLoaded", () => {
             ) {
                 assignmentAbortController = null;
             }
+
             return;
         }
 
         if (
-            !selectedCraftId
-            && !assignmentLocked
+            isInternal
+            && !selectedCraftId
+            && !isInternalAssignmentLocked()
             && !hasAssignmentRuleValue()
         ) {
             clearAutomaticValue(
@@ -753,10 +1024,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         updateAssignmentControls();
 
-        const parameters = new URLSearchParams({
-            object_type: objectType.value,
-            object_id: objectId.value
-        });
+        const parameters =
+            new URLSearchParams({
+                assignment_type:
+                    selectedAssignmentType(),
+                object_type: objectType.value,
+                object_id: objectId.value
+            });
 
         if (selectedCraftId) {
             parameters.set(
@@ -767,8 +1041,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
         setAssignmentStatus(
             selectedCraftId
-                ? "Automatische Zuweisung wird ermittelt …"
-                : "Buchwerk wird aus dem Objekt ermittelt …"
+                ? (
+                    isInternal
+                        ? (
+                            "Automatische Zuweisung "
+                            + "wird ermittelt …"
+                        )
+                        : (
+                            "Externe Zuweisung "
+                            + "wird ermittelt …"
+                        )
+                )
+                : (
+                    "Buchwerk wird aus dem "
+                    + "Objekt ermittelt …"
+                )
         );
 
         try {
@@ -776,7 +1063,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 assignmentPreviewUrl,
                 window.location.origin
             );
-            previewUrl.search = parameters.toString();
+            previewUrl.search =
+                parameters.toString();
 
             const response = await fetch(
                 previewUrl.toString(),
@@ -789,7 +1077,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     signal: abortController.signal
                 }
             );
-
             const contentType = (
                 response.headers.get(
                     "content-type"
@@ -821,7 +1108,10 @@ document.addEventListener("DOMContentLoaded", () => {
             if (payload.company_code_erp_id) {
                 applyAutomaticValue(
                     companyCode,
-                    String(payload.company_code_erp_id)
+                    String(
+                        payload
+                            .company_code_erp_id
+                    )
                 );
             }
 
@@ -829,74 +1119,144 @@ document.addEventListener("DOMContentLoaded", () => {
                 throw new Error(
                     payload.message
                     || (
-                        "Die automatische Zuweisung "
-                        + "ist fehlgeschlagen."
+                        "Die automatische "
+                        + "Zuweisung ist "
+                        + "fehlgeschlagen."
                     )
                 );
             }
 
-            if (
-                assignmentLocked
-                || hasAssignmentRuleValue()
-            ) {
-                setAssignmentStatus(
-                    assignmentRuleStatusText(
-                        payload.company_code_code
-                    )
-                );
+            if (isInternal) {
+                if (
+                    isInternalAssignmentLocked()
+                    || hasAssignmentRuleValue()
+                ) {
+                    setAssignmentStatus(
+                        assignmentRuleStatusText(
+                            payload
+                                .company_code_code
+                        )
+                    );
+                } else if (selectedCraftId) {
+                    const craftsmanUserId =
+                        String(
+                            payload
+                                .craftsman_user_id
+                            || ""
+                        );
+
+                    if (!craftsmanUserId) {
+                        throw new Error(
+                            "Für diese Kombination "
+                            + "wurde kein Handwerker "
+                            + "ermittelt."
+                        );
+                    }
+
+                    const hasCraftsmanOption =
+                        Array.from(
+                            craftsmanUser.options
+                        ).some((option) => {
+                            return (
+                                option.value
+                                === craftsmanUserId
+                            );
+                        });
+
+                    if (!hasCraftsmanOption) {
+                        throw new Error(
+                            "Der automatisch "
+                            + "ermittelte Handwerker "
+                            + "ist nicht in der "
+                            + "Auswahlliste verfügbar."
+                        );
+                    }
+
+                    applyAutomaticValue(
+                        craftsmanUser,
+                        craftsmanUserId
+                    );
+
+                    setAssignmentStatus(
+                        "Automatischer Vorschlag: "
+                        + payload.craftsman_name
+                        + " · Buchwerk "
+                        + payload
+                            .company_code_code
+                    );
+                } else {
+                    clearAutomaticValue(
+                        craftsmanUser,
+                        true
+                    );
+                    setAssignmentStatus(
+                        "Buchwerk "
+                        + payload
+                            .company_code_code
+                        + " wurde aus dem Objekt "
+                        + "ermittelt. Für den "
+                        + "Handwerker bitte ein "
+                        + "Gewerk wählen."
+                    );
+                }
             } else if (selectedCraftId) {
-                const craftsmanUserId = String(
-                    payload.craftsman_user_id
+                const candidates =
+                    filterExternalCraftsmen({
+                        allowedIds: payload
+                            .external_candidate_ids
+                    });
+                const automaticId = String(
+                    payload
+                        .external_craftsman_id
                     || ""
                 );
 
-                if (!craftsmanUserId) {
-                    throw new Error(
-                        "Für diese Kombination wurde "
-                        + "kein Handwerker ermittelt."
+                if (automaticId) {
+                    applyAutomaticValue(
+                        externalCraftsman,
+                        automaticId
                     );
                 }
 
-                const hasCraftsmanOption =
-                    Array.from(
-                        craftsmanUser.options
-                    ).some((option) => {
-                        return (
-                            option.value
-                            === craftsmanUserId
-                        );
-                    });
-
-                if (!hasCraftsmanOption) {
+                if (!candidates.length) {
                     throw new Error(
-                        "Der automatisch ermittelte "
-                        + "Handwerker ist nicht in der "
-                        + "Auswahlliste verfügbar."
+                        "Für dieses Gewerk ist "
+                        + "kein externer Handwerker "
+                        + "verfügbar."
                     );
                 }
 
-                applyAutomaticValue(
-                    craftsmanUser,
-                    craftsmanUserId
-                );
+                const externalName =
+                    selectedExternalCraftsmanName();
 
-                setAssignmentStatus(
-                    "Automatischer Vorschlag: "
-                    + payload.craftsman_name
-                    + " · Buchwerk "
-                    + payload.company_code_code
-                );
+                if (externalName) {
+                    setAssignmentStatus(
+                        "Externer Auftragnehmer: "
+                        + externalName
+                        + " · Buchwerk "
+                        + payload
+                            .company_code_code
+                    );
+                } else {
+                    setAssignmentStatus(
+                        `${candidates.length} externe `
+                        + "Handwerker verfügbar. "
+                        + "Bitte auswählen. "
+                        + "Buchwerk "
+                        + payload
+                            .company_code_code
+                    );
+                }
             } else {
-                clearAutomaticValue(
-                    craftsmanUser,
-                    true
-                );
+                filterExternalCraftsmen({
+                    force: true
+                });
                 setAssignmentStatus(
                     "Buchwerk "
                     + payload.company_code_code
-                    + " wurde aus dem Objekt ermittelt. "
-                    + "Für den Handwerker bitte "
-                    + "ein Gewerk wählen."
+                    + " wurde aus dem Objekt "
+                    + "ermittelt. Bitte ein "
+                    + "Gewerk wählen."
                 );
             }
 
@@ -911,10 +1271,13 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             if (
-                !assignmentLocked
+                isInternal
+                && !isInternalAssignmentLocked()
                 && !hasAssignmentRuleValue()
             ) {
-                clearAutomaticValue(craftsmanUser);
+                clearAutomaticValue(
+                    craftsmanUser
+                );
             }
 
             updateAssignmentControls();
@@ -935,11 +1298,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 )
                     ? error.message
                     : (
-                        "Die automatische Zuweisung "
-                        + "konnte nicht geladen werden."
+                        "Die automatische "
+                        + "Zuweisung konnte nicht "
+                        + "geladen werden."
                     );
 
-                        setAssignmentStatus(
+            setAssignmentStatus(
                 message,
                 true
             );
@@ -1034,9 +1398,25 @@ document.addEventListener("DOMContentLoaded", () => {
         () => {
             filterServicePositions();
             updateCommissionTypeOptions();
+            filterExternalCraftsmen({
+                force: true
+            });
             updateAssignmentPreview({
                 forceCraftsman: true
             });
+        }
+    );
+
+    assignmentTypeInputs.forEach(
+        (input) => {
+            input.addEventListener(
+                "change",
+                () => {
+                    filterExternalCraftsmen();
+                    updateAssignmentControls();
+                    updateAssignmentPreview();
+                }
+            );
         }
     );
 
@@ -1229,6 +1609,9 @@ document.addEventListener("DOMContentLoaded", () => {
         !canCreate
         || !objectId.value
     );
+
+    filterExternalCraftsmen();
+    updateAssignmentControls();
 
     if (initialObject) {
         selectObject(initialObject, false);

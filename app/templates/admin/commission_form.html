@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Auftrag erfassen{% endblock %}
 {% block content %}
+{% set selected_assignment_type = 'external' if form_values.get('assignment_type') == 'external' else 'internal' %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h1 class="h3 mb-0">Auftrag erfassen</h1>
   <a
@@ -47,7 +48,7 @@
   </div>
   {% endif %}
     {% if source_ticket.ai_state == 'ready' and source_ticket.ai_assignment_rule and source_ticket.ai_assigned_user %}
-  <div class="mt-2">
+    <div id="assignmentRuleHint" class="mt-2">
     KI-Zuweisungsregel:
     <strong>
       {{ source_ticket.ai_assignment_rule.name }}
@@ -104,6 +105,56 @@
 
     <div class="card-body p-3">
     <div class="row g-3">
+            <div class="col-12">
+        <fieldset>
+          <legend class="form-label small fw-semibold mb-2">
+            Vergabeart
+          </legend>
+
+          <div class="assignment-type-options">
+            <input
+              class="btn-check"
+              type="radio"
+              name="assignment_type"
+              id="assignmentInternal"
+              value="internal"
+              {% if selected_assignment_type == 'internal' %}checked{% endif %}
+              required
+            >
+            <label
+              class="assignment-type-option"
+              for="assignmentInternal"
+            >
+              <span class="fw-semibold">
+                An Regie vergeben
+              </span>
+              <span class="small text-muted">
+                Interne automatische Zuweisung
+              </span>
+            </label>
+
+            <input
+              class="btn-check"
+              type="radio"
+              name="assignment_type"
+              id="assignmentExternal"
+              value="external"
+              {% if selected_assignment_type == 'external' %}checked{% endif %}
+            >
+            <label
+              class="assignment-type-option"
+              for="assignmentExternal"
+            >
+              <span class="fw-semibold">
+                Extern vergeben
+              </span>
+              <span class="small text-muted">
+                Freigeschalteter Auftragnehmer
+              </span>
+            </label>
+          </div>
+        </fieldset>
+      </div>
       <div class="col-12">
         <h2 class="h6 mb-2">Objekt</h2>
 
@@ -304,6 +355,7 @@
           id="craftActivity"
           name="craft_activity_id"
           data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ form_values.get('craft_activity_id', '') }}{% endif %}"
+          data-preferred-external-craftsman-id="{{ item.preferred_external_craftsman_id or '' }}"
           required
         >
           <option value="">
@@ -391,7 +443,10 @@
         <h2 class="h6 mb-0">Zuweisung</h2>
       </div>
 
-      <div class="col-md-6">
+            <div
+        id="internalCraftsmanField"
+        class="col-md-6{% if selected_assignment_type == 'external' %} d-none{% endif %}"
+      >
         <label
           class="form-label small fw-semibold mb-1"
           for="craftsmanUser"
@@ -404,8 +459,7 @@
           id="craftsmanUser"
           name="craftsman_user_id"
           data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ form_values.get('craftsman_user_id', '') }}{% endif %}"
-          required
-          {% if source_ticket and source_ticket.ai_state == 'ready' and source_ticket.ai_assignment_mode == 'force' and source_ticket.ai_assigned_user_id %}disabled{% endif %}
+          {% if selected_assignment_type == 'internal' %}required{% else %}disabled{% endif %}
         >
           <option value="">
             Wird automatisch ermittelt
@@ -421,6 +475,45 @@
           </option>
           {% endfor %}
         </select>
+      </div>
+
+      <div
+        id="externalCraftsmanField"
+        class="col-md-6{% if selected_assignment_type != 'external' %} d-none{% endif %}"
+      >
+        <label
+          class="form-label small fw-semibold mb-1"
+          for="externalCraftsman"
+        >
+          Externer Handwerker
+        </label>
+
+        <select
+          class="form-select form-select-sm"
+          id="externalCraftsman"
+          name="external_craftsman_id"
+          {% if selected_assignment_type == 'external' %}required{% else %}disabled{% endif %}
+        >
+          <option value="">
+            Wird nach Gewerk vorausgewählt
+          </option>
+
+          {% for item in external_craftsmen %}
+          <option
+            value="{{ item.id }}"
+            data-display-name="{{ item.display_name }}"
+            data-craft-ids="{{ item.craft_activities|map(attribute='id')|join(',') }}"
+            {% if form_values.get('external_craftsman_id')|int == item.id %}selected{% endif %}
+          >
+            {{ item.display_name }}
+            · Wowiport-ID {{ item.craftsman_erp_id }}
+          </option>
+          {% endfor %}
+        </select>
+
+        <div class="form-text">
+          Handwerker ohne Gewerk gelten für alle Gewerke.
+        </div>
       </div>
 
       <div class="col-md-6">

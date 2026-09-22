@@ -37,7 +37,7 @@ class CommissionObjectContext:
 
 @dataclass(frozen=True)
 class DepartmentAssignment:
-    user: User
+    user: User | None
     department: WowiDepartment
     jurisdiction: (
         WowiEconomicUnitJurisdiction | None
@@ -47,7 +47,7 @@ class DepartmentAssignment:
 
 @dataclass(frozen=True)
 class CommissionAssignment:
-    user: User
+    user: User | None
     craft_activity: CraftActivity
     department: WowiDepartment
     jurisdiction: (
@@ -1344,6 +1344,8 @@ def resolve_commission_object(
 def resolve_department_assignment(
     economic_unit: WowiEconomicUnit,
     department: WowiDepartment,
+    *,
+    require_user: bool = True,
 ) -> DepartmentAssignment:
     if not department.active:
         raise ValueError(
@@ -1403,61 +1405,71 @@ def resolve_department_assignment(
             .responsible_person_erp_id
         )
 
+    if responsible_official_erp_id is None:
+        raise ValueError(
+            "In der Zuständigkeit fehlt der "
+            "zuständige Sachbearbeiter."
+        )
+
     if (
-        responsible_official_erp_id is None
-        or responsible_person_erp_id is None
+        require_user
+        and responsible_person_erp_id is None
     ):
         raise ValueError(
             "In der Zuständigkeit fehlt "
             "die verantwortliche Person."
         )
 
-    manual_mapping = (
-        UserJurisdictionPersonMapping.query
-        .filter_by(
-            jurisdiction_person_erp_id=(
-                responsible_person_erp_id
-            ),
-            active=True,
+    assigned_user: User | None = None
+
+    if require_user:
+        manual_mapping = (
+            UserJurisdictionPersonMapping.query
+            .filter_by(
+                jurisdiction_person_erp_id=(
+                    responsible_person_erp_id
+                ),
+                active=True,
+            )
+            .one_or_none()
         )
-        .one_or_none()
-    )
 
-    if manual_mapping is not None:
-        assigned_user = manual_mapping.user
+        if manual_mapping is not None:
+            assigned_user = manual_mapping.user
 
-        if (
+            if (
                 assigned_user is None
                 or not assigned_user.is_active_flag
                 or assigned_user.craftsman_erp_id
                 is None
-        ):
-            raise ValueError(
-                "Die manuell zugeordnete "
-                "Wowiport-Person verweist nicht "
-                "auf einen aktiven Handwerker."
-            )
-    else:
-        users = User.query.filter_by(
-            person_erp_id=(
-                responsible_person_erp_id
-            ),
-            is_active_flag=True,
-        ).all()
-        users = [
-            user
-            for user in users
-            if user.craftsman_erp_id is not None
-        ]
+            ):
+                raise ValueError(
+                    "Die manuell zugeordnete "
+                    "Wowiport-Person verweist nicht "
+                    "auf einen aktiven Handwerker."
+                )
+        else:
+            users = User.query.filter_by(
+                person_erp_id=(
+                    responsible_person_erp_id
+                ),
+                is_active_flag=True,
+            ).all()
+            users = [
+                user
+                for user in users
+                if user.craftsman_erp_id
+                is not None
+            ]
 
-        if len(users) != 1:
-            raise ValueError(
-                "Die zuständige Wowiport-Person "
-                "ist keinem eindeutigen aktiven "
-                "Handwerker zugeordnet."
-            )
+            if len(users) != 1:
+                raise ValueError(
+                    "Die zuständige Wowiport-Person "
+                    "ist keinem eindeutigen aktiven "
+                    "Handwerker zugeordnet."
+                )
 
-        assigned_user = users[0]
+            assigned_user = users[0]
 
     return DepartmentAssignment(
         user=assigned_user,
@@ -1474,6 +1486,8 @@ def resolve_commission_assignment(
         TimeTaskTemplate
     ],
     object_context: CommissionObjectContext,
+    *,
+    require_user: bool = True,
 ) -> CommissionAssignment:
     positions = list(service_positions)
 
@@ -1535,6 +1549,7 @@ def resolve_commission_assignment(
     assignment = resolve_department_assignment(
         object_context.economic_unit,
         mapping.department,
+        require_user=require_user,
     )
 
     return CommissionAssignment(

@@ -21,6 +21,9 @@ from .object_directory import (
     resolve_commission_assignment,
     resolve_commission_object,
 )
+from .external_craftsman_service import (
+    resolve_external_craftsman,
+)
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
 from .commission_priority import parse_commission_priority
@@ -32,6 +35,18 @@ def create_pending_commission(
     source: CommissionSource,
     allow_assignment_override: bool = False,
 ) -> Commission:
+    assignment_type = str(
+        data.get("assignment_type")
+        or "internal"
+    ).strip().casefold()
+
+    if assignment_type not in {
+        "internal",
+        "external",
+    }:
+        raise ValueError(
+            "Die Vergabeart ist ungültig."
+        )
     is_high_priority = parse_commission_priority(
         data.get("priority", "normal")
     )
@@ -406,54 +421,93 @@ def create_pending_commission(
     assignment = resolve_commission_assignment(
         service_positions,
         object_context,
+        require_user=(
+                assignment_type == "internal"
+        ),
     )
+
     if (
-        selected_craft_activity_id is not None
-        and any(
-            service_position.craft_activity_id
-            != selected_craft_activity_id
-            for service_position in service_positions
-        )
+            selected_craft_activity_id is not None
+            and any(
+        service_position.craft_activity_id
+        != selected_craft_activity_id
+        for service_position
+        in service_positions
+    )
     ):
         raise ValueError(
             "Mindestens eine Leistungsposition "
             "gehört nicht zum ausgewählten Gewerk."
         )
 
-
-    assigned_user = assignment.user
-    requested_user_id = (
-        optional_int(
-            data.get("craftsman_user_id"),
-            "Handwerker",
-        )
-        if allow_assignment_override
-        else None
-    )
-
-    if requested_user_id is not None:
-        selected_user = (
-            User.query
-            .filter(
-                User.id == requested_user_id,
-                User.is_active_flag.is_(True),
-                User.craftsman_erp_id.isnot(None),
+    if assignment_type == "external":
+        requested_external_craftsman_id = (
+            optional_int(
+                data.get(
+                    "external_craftsman_id"
+                ),
+                "Externer Handwerker",
             )
-            .one_or_none()
+            if allow_assignment_override
+            else None
         )
+        external_craftsman = (
+            resolve_external_craftsman(
+                assignment.craft_activity,
+                requested_external_craftsman_id,
+            )
+        )
+        commission.user = None
+        commission.craftsman_erp_id = (
+            external_craftsman
+            .craftsman_erp_id
+        )
+    else:
+        assigned_user = assignment.user
 
-        if selected_user is None:
+        if assigned_user is None:
             raise ValueError(
-                "Der ausgewählte Handwerker "
-                "ist nicht verfügbar."
+                "Es konnte kein interner "
+                "Handwerker ermittelt werden."
             )
 
-        assigned_user = selected_user
+        requested_user_id = (
+            optional_int(
+                data.get("craftsman_user_id"),
+                "Handwerker",
+            )
+            if allow_assignment_override
+            else None
+        )
 
-    commission.user = assigned_user
-    commission.craftsman_erp_id = (
-        assigned_user.craftsman_erp_id
-    )
+        if requested_user_id is not None:
+            selected_user = (
+                User.query
+                .filter(
+                    User.id
+                    == requested_user_id,
+                    User.is_active_flag.is_(
+                        True
+                    ),
+                    User.craftsman_erp_id
+                    .isnot(None),
+                )
+                .one_or_none()
+            )
+
+            if selected_user is None:
+                raise ValueError(
+                    "Der ausgewählte Handwerker "
+                    "ist nicht verfügbar."
+                )
+
+            assigned_user = selected_user
+
+        commission.user = assigned_user
+        commission.craftsman_erp_id = (
+            assigned_user.craftsman_erp_id
+        )
+
     commission.department_erp_id = (
         assignment.department.erp_id
     )

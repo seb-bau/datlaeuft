@@ -123,6 +123,8 @@ from .models import (
     ExternalCraftsmanAccessToken,
 )
 from .external_craftsman_service import (
+    automatic_external_craftsman,
+    available_external_craftsmen,
     create_invitation_token,
     default_external_username,
     send_external_invitation_email,
@@ -2315,6 +2317,33 @@ def craft_activities() -> Any:
         )
         .all()
     )
+    external_craftsmen = (
+        available_external_craftsmen()
+    )
+    external_craft_ids_by_id = {
+        craftsman.id: {
+            activity.id
+            for activity
+            in craftsman.craft_activities
+        }
+        for craftsman in external_craftsmen
+    }
+    external_craftsman_options_by_craft_id = {
+        item.id: [
+            craftsman
+            for craftsman in external_craftsmen
+            if (
+                not external_craft_ids_by_id[
+                    craftsman.id
+                ]
+                or item.id
+                in external_craft_ids_by_id[
+                    craftsman.id
+                ]
+            )
+        ]
+        for item in items
+    }
 
     if request.method == "POST":
         enabled_ids = set()
@@ -2327,10 +2356,78 @@ def craft_activities() -> Any:
             except ValueError:
                 continue
 
+        preferred_by_craft_id = {}
+
+        for item in items:
+            raw_preferred_id = str(
+                request.form.get(
+                    "preferred_external_"
+                    f"craftsman_id_{item.id}"
+                )
+                or ""
+            ).strip()
+
+            if not raw_preferred_id:
+                preferred_by_craft_id[
+                    item.id
+                ] = None
+                continue
+
+            try:
+                preferred_id = int(
+                    raw_preferred_id
+                )
+            except ValueError:
+                flash(
+                    "Die externe Zuordnung für "
+                    f"„{item.name}“ ist ungültig.",
+                    "danger",
+                )
+                return redirect(
+                    url_for(
+                        "admin.craft_activities"
+                    )
+                )
+
+            preferred_craftsman = next(
+                (
+                    craftsman
+                    for craftsman
+                    in external_craftsman_options_by_craft_id[
+                        item.id
+                    ]
+                    if craftsman.id
+                    == preferred_id
+                ),
+                None,
+            )
+
+            if preferred_craftsman is None:
+                flash(
+                    "Der bevorzugte externe "
+                    "Handwerker ist für das Gewerk "
+                    f"„{item.name}“ nicht verfügbar.",
+                    "danger",
+                )
+                return redirect(
+                    url_for(
+                        "admin.craft_activities"
+                    )
+                )
+
+            preferred_by_craft_id[
+                item.id
+            ] = preferred_craftsman
+
         for item in items:
             item.app_enabled = (
                 item.active
                 and item.id in enabled_ids
+            )
+            item.preferred_external_craftsman = (
+                preferred_by_craft_id[
+                    item.id
+                ]
             )
 
         enabled_count = sum(
@@ -2338,19 +2435,31 @@ def craft_activities() -> Any:
             for item in items
             if item.app_enabled
         )
+        preferred_count = sum(
+            1
+            for item in items
+            if (
+                item
+                .preferred_external_craftsman_id
+                is not None
+            )
+        )
 
         audit(
             "craft_activities.app_access.update",
             metadata={
                 "enabled_count": enabled_count,
+                "preferred_external_count": (
+                    preferred_count
+                ),
                 "total_count": len(items),
             },
         )
         db.session.commit()
 
         flash(
-            f"{enabled_count} Gewerke sind "
-            "für die Anwendung freigegeben.",
+            "Die Gewerkeinstellungen wurden "
+            "gespeichert.",
             "success",
         )
 
@@ -2363,6 +2472,9 @@ def craft_activities() -> Any:
     return render_template(
         "admin/craft_activities.html",
         items=items,
+        external_craftsman_options_by_craft_id=(
+            external_craftsman_options_by_craft_id
+        ),
     )
 
 
@@ -3309,6 +3421,10 @@ def commission_create() -> Any:
         .all()
     )
 
+    external_craftsmen = (
+        available_external_craftsmen()
+    )
+
     company_codes = (
         WowiCompanyCode.query
         .filter(
@@ -3573,9 +3689,13 @@ def commission_create() -> Any:
             selected_object = None
 
         if (
-                source_ticket is not None
-                and source_ticket.ai_assignment_mode
-                == TicketAiAssignmentMode.FORCE.value
+            form_data.get(
+                "assignment_type",
+                "internal",
+            ) == "internal"
+            and source_ticket is not None
+            and source_ticket.ai_assignment_mode
+            == TicketAiAssignmentMode.FORCE.value
         ):
             if (
                     source_ticket.ai_state
@@ -3724,6 +3844,7 @@ def commission_create() -> Any:
         default_commission_type_id=(
             default_commission_type_id
         ),
+        external_craftsmen=external_craftsmen,
     )
 
 
@@ -3732,6 +3853,12 @@ def commission_create() -> Any:
 )
 @foreman_required
 def commission_assignment_preview() -> Any:
+    assignment_type = str(
+        request.args.get(
+            "assignment_type",
+            "internal",
+        )
+    ).strip().casefold()
     object_type = request.args.get(
         "object_type",
         "",
@@ -3744,6 +3871,18 @@ def commission_assignment_preview() -> Any:
         "craft_activity_id",
         type=int,
     )
+
+    if assignment_type not in {
+        "internal",
+        "external",
+    }:
+        return jsonify(
+            {
+                "message": (
+                    "Die Vergabeart ist ungültig."
+                )
+            }
+        ), 400
 
     if not object_type or object_id is None:
         return jsonify(
@@ -3768,15 +3907,17 @@ def commission_assignment_preview() -> Any:
                 WowiCompanyCode.erp_id
                 == object_context.economic_unit
                 .company_code_erp_id,
-                WowiCompanyCode.active.is_(True),
+                WowiCompanyCode.active.is_(
+                    True
+                ),
             )
             .one_or_none()
         )
 
         if company_code is None:
             raise ValueError(
-                "Das automatisch ermittelte Buchwerk "
-                "ist nicht verfügbar."
+                "Das automatisch ermittelte "
+                "Buchwerk ist nicht verfügbar."
             )
 
     except ValueError as exc:
@@ -3787,7 +3928,10 @@ def commission_assignment_preview() -> Any:
         ), 400
 
     payload = {
-        "company_code_erp_id": company_code.erp_id,
+        "assignment_type": assignment_type,
+        "company_code_erp_id": (
+            company_code.erp_id
+        ),
         "company_code_code": company_code.code,
         "company_code_name": company_code.name,
     }
@@ -3817,23 +3961,80 @@ def commission_assignment_preview() -> Any:
         assignment = resolve_commission_assignment(
             [service_position],
             object_context,
+            require_user=(
+                assignment_type == "internal"
+            ),
         )
+
+        if assignment_type == "external":
+            candidates = (
+                available_external_craftsmen(
+                    assignment.craft_activity.id
+                )
+            )
+
+            if not candidates:
+                raise ValueError(
+                    "Für dieses Gewerk ist kein "
+                    "freigeschalteter externer "
+                    "Handwerker verfügbar."
+                )
+
+            automatic_candidate = (
+                automatic_external_craftsman(
+                    assignment.craft_activity,
+                    candidates,
+                )
+            )
+
+            payload.update(
+                {
+                    "external_candidate_ids": [
+                        candidate.id
+                        for candidate in candidates
+                    ],
+                    "external_craftsman_id": (
+                        automatic_candidate.id
+                        if automatic_candidate
+                        is not None
+                        else None
+                    ),
+                    "external_craftsman_name": (
+                        automatic_candidate
+                        .display_name
+                        if automatic_candidate
+                        is not None
+                        else None
+                    ),
+                }
+            )
+        else:
+            if assignment.user is None:
+                raise ValueError(
+                    "Es konnte kein interner "
+                    "Handwerker ermittelt werden."
+                )
+
+            payload.update(
+                {
+                    "craftsman_user_id": (
+                        assignment.user.id
+                    ),
+                    "craftsman_erp_id": (
+                        assignment.user
+                        .craftsman_erp_id
+                    ),
+                    "craftsman_name": (
+                        assignment.user
+                        .display_name
+                    ),
+                }
+            )
 
     except ValueError as exc:
         payload["message"] = str(exc)
         return jsonify(payload), 400
 
-    payload.update(
-        {
-            "craftsman_user_id": assignment.user.id,
-            "craftsman_erp_id": (
-                assignment.user.craftsman_erp_id
-            ),
-            "craftsman_name": (
-                assignment.user.display_name
-            ),
-        }
-    )
     return jsonify(payload)
 
 
@@ -10305,6 +10506,13 @@ def read_commission_form() -> dict[str, Any]:
             "execution_to"
         ),
         "positions": positions,
+        "assignment_type": request.form.get(
+            "assignment_type",
+            "internal",
+        ),
+        "external_craftsman_id": request.form.get(
+            "external_craftsman_id"
+        ),
         "craftsman_user_id": request.form.get(
             "craftsman_user_id"
         ),

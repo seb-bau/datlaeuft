@@ -433,7 +433,24 @@ class CraftActivity(db.Model):
         nullable=False,
     )
     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
-
+    preferred_external_craftsman_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey(
+            "external_craftsman.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+    preferred_external_craftsman: Mapped[
+        "ExternalCraftsman | None"
+    ] = relationship(
+        "ExternalCraftsman",
+        foreign_keys=[
+            preferred_external_craftsman_id
+        ],
+    )
     users: Mapped[list["User"]] = relationship(
         "User",
         secondary=user_craft_activity,

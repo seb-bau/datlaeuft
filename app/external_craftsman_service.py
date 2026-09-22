@@ -8,8 +8,9 @@ import secrets
 from typing import Any
 
 from flask import current_app
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from .extensions import db
 from .mail_service import send_email
@@ -39,6 +40,140 @@ class ExternalCraftsmanSyncResult:
     unchanged: int = 0
     deactivated: int = 0
     skipped: int = 0
+
+
+def available_external_craftsmen(
+    craft_activity_id: int | None = None,
+) -> list[ExternalCraftsman]:
+    query = (
+        ExternalCraftsman.query
+        .options(
+            selectinload(
+                ExternalCraftsman.craft_activities
+            )
+        )
+        .filter(
+            ExternalCraftsman.portal_enabled.is_(True),
+            ExternalCraftsman.wowi_active.is_(True),
+            ExternalCraftsman.email.is_not(None),
+        )
+    )
+
+    if craft_activity_id is not None:
+        query = query.filter(
+            or_(
+                ~ExternalCraftsman
+                .craft_activities
+                .any(),
+                ExternalCraftsman
+                .craft_activities
+                .any(
+                    CraftActivity.id
+                    == craft_activity_id
+                ),
+            )
+        )
+
+    return (
+        query
+        .order_by(
+            ExternalCraftsman.display_name.asc(),
+            ExternalCraftsman.id.asc(),
+        )
+        .all()
+    )
+
+
+def automatic_external_craftsman(
+    craft_activity: CraftActivity,
+    candidates: list[
+        ExternalCraftsman
+    ] | None = None,
+) -> ExternalCraftsman | None:
+    available_candidates = (
+        candidates
+        if candidates is not None
+        else available_external_craftsmen(
+            craft_activity.id
+        )
+    )
+
+    preferred_id = (
+        craft_activity
+        .preferred_external_craftsman_id
+    )
+
+    if preferred_id is not None:
+        preferred_candidate = next(
+            (
+                candidate
+                for candidate
+                in available_candidates
+                if candidate.id == preferred_id
+            ),
+            None,
+        )
+
+        if preferred_candidate is not None:
+            return preferred_candidate
+
+    if len(available_candidates) == 1:
+        return available_candidates[0]
+
+    return None
+
+
+def resolve_external_craftsman(
+    craft_activity: CraftActivity,
+    external_craftsman_id: int | None,
+) -> ExternalCraftsman:
+    candidates = available_external_craftsmen(
+        craft_activity.id
+    )
+
+    if external_craftsman_id is not None:
+        selected_candidate = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.id
+                == external_craftsman_id
+            ),
+            None,
+        )
+
+        if selected_candidate is None:
+            raise ValueError(
+                "Der ausgewählte externe "
+                "Handwerker ist für dieses "
+                "Gewerk nicht verfügbar."
+            )
+
+        return selected_candidate
+
+    automatic_candidate = (
+        automatic_external_craftsman(
+            craft_activity,
+            candidates,
+        )
+    )
+
+    if automatic_candidate is not None:
+        return automatic_candidate
+
+    if not candidates:
+        raise ValueError(
+            "Für dieses Gewerk ist kein "
+            "freigeschalteter externer "
+            "Handwerker verfügbar."
+        )
+
+    raise ValueError(
+        "Für dieses Gewerk sind mehrere "
+        "externe Handwerker verfügbar. "
+        "Bitte einen bevorzugten Handwerker "
+        "hinterlegen oder manuell auswählen."
+    )
 
 
 def sync_external_craftsmen_from_wowiport(

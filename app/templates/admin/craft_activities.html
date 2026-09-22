@@ -88,6 +88,9 @@
           </th>
           <th>Gewerk</th>
           <th>Code</th>
+          <th style="min-width: 260px;">
+            Bevorzugt extern
+          </th>
           <th>Wowiport-ID</th>
           <th>Wowiport-Status</th>
           <th class="text-end">
@@ -123,6 +126,26 @@
 
           <td>
             {{ item.code or "–" }}
+          </td>
+
+          <td>
+            <select
+              class="form-select form-select-sm"
+              name="preferred_external_craftsman_id_{{ item.id }}"
+            >
+              <option value="">
+                Kein bevorzugter Handwerker
+              </option>
+
+              {% for craftsman in external_craftsman_options_by_craft_id.get(item.id, []) %}
+              <option
+                value="{{ craftsman.id }}"
+                {% if item.preferred_external_craftsman_id == craftsman.id %}selected{% endif %}
+              >
+                {{ craftsman.display_name }}
+              </option>
+              {% endfor %}
+            </select>
           </td>
 
           <td>
@@ -162,7 +185,7 @@
       class="btn btn-primary"
       type="submit"
     >
-      Freigaben speichern
+      Einstellungen speichern
     </button>
   </div>
 </form>
