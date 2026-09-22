@@ -5,10 +5,7 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy import func
 from sqlalchemy.orm import joinedload
-
-from .extensions import db
 from .models import (
     TimeEntry,
     User,
@@ -92,6 +89,10 @@ def work_time_rows(
     user_ids = [item.id for item in user_items]
 
     recorded_by_day = {}
+    entries_by_user = {
+        user_id: []
+        for user_id in user_ids
+    }
     assignments_by_user = {
         user_id: []
         for user_id in user_ids
@@ -99,31 +100,42 @@ def work_time_rows(
     overrides_by_day = {}
 
     if user_ids and start_date <= end_date:
-        recorded_rows = (
-            db.session.query(
-                TimeEntry.user_id,
-                TimeEntry.service_date,
-                func.sum(TimeEntry.minutes),
+        time_entries = (
+            TimeEntry.query
+            .options(
+                joinedload(
+                    TimeEntry.commission
+                ),
+                joinedload(
+                    TimeEntry.task_template
+                ),
             )
             .filter(
                 TimeEntry.user_id.in_(user_ids),
                 TimeEntry.service_date >= start_date,
                 TimeEntry.service_date <= end_date,
             )
-            .group_by(
-                TimeEntry.user_id,
-                TimeEntry.service_date,
+            .order_by(
+                TimeEntry.user_id.asc(),
+                TimeEntry.service_date.desc(),
+                TimeEntry.created_at.desc(),
+                TimeEntry.id.desc(),
             )
             .all()
         )
 
-        recorded_by_day = {
-            (user_id, service_date): int(
-                minutes or 0
+        for entry in time_entries:
+            entries_by_user[
+                entry.user_id
+            ].append(entry)
+            day_key = (
+                entry.user_id,
+                entry.service_date,
             )
-            for user_id, service_date, minutes
-            in recorded_rows
-        }
+            recorded_by_day[day_key] = (
+                recorded_by_day.get(day_key, 0)
+                + int(entry.minutes or 0)
+            )
 
         assignments = (
             UserWorkTimeProfileAssignment.query
@@ -281,6 +293,10 @@ def work_time_rows(
         result.append({
             "user": user,
             "days": day_rows,
+            "entries": entries_by_user.get(
+                user.id,
+                [],
+            ),
             "expected_minutes": expected_total,
             "recorded_minutes": recorded_total,
             "difference_minutes": difference_total,
