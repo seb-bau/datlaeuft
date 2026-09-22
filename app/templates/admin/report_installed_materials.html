@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Verbaute Materialien{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">
+  Verbaute Materialien
+</h1>
+
+{% include "admin/_report_period_filter.html" %}
+
+<div class="alert alert-info">
+  Berücksichtigt werden als verbaut gekennzeichnete
+  Lagerentnahmen. Stornierte Buchungen werden nicht
+  mitgezählt.
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">
+          Materialbuchungen
+        </div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.booking_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Aufträge</div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.commission_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Handwerker</div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.user_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Artikel</div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.item_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-striped datatable align-middle">
+        <thead>
+          <tr>
+            <th>Artikelgruppe</th>
+            <th>Artikelart</th>
+            <th>Artikelnummer</th>
+            <th>Artikel</th>
+            <th>Menge</th>
+            <th>Buchungen</th>
+            <th>Aufträge</th>
+            <th>Handwerker</th>
+            <th>Seriennummern</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.group_name }}</td>
+            <td>{{ row.type_name }}</td>
+            <td>{{ row.item_number }}</td>
+            <td class="fw-semibold">
+              {{ row.item_name }}
+            </td>
+            <td
+              data-order="{{ row.quantity }}"
+              class="text-nowrap"
+            >
+              {{ ("%g"|format(row.quantity)).replace(".", ",") }}
+              {{ row.unit }}
+            </td>
+            <td>{{ row.booking_count }}</td>
+            <td>{{ row.commission_count }}</td>
+            <td>{{ row.user_count }}</td>
+            <td>{{ row.serial_number_count }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td
+              colspan="9"
+              class="text-center text-muted py-4"
+            >
+              Im ausgewählten Zeitraum wurde kein
+              Material verbaut.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,159 @@
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-lg-3 col-md-4">
+        <label
+          class="form-label"
+          for="reportPeriodMode"
+        >
+          Zeitraum
+        </label>
+        <select
+          class="form-select"
+          id="reportPeriodMode"
+          name="period_mode"
+        >
+          <option
+            value="month"
+            {% if period.mode == 'month' %}selected{% endif %}
+          >
+            Monat
+          </option>
+          <option
+            value="months"
+            {% if period.mode == 'months' %}selected{% endif %}
+          >
+            Mehrere Monate
+          </option>
+          <option
+            value="year"
+            {% if period.mode == 'year' %}selected{% endif %}
+          >
+            Jahr
+          </option>
+        </select>
+      </div>
+
+      <div
+        class="col-lg-3 col-md-4 report-period-fields"
+        data-period-mode="month"
+      >
+        <label class="form-label" for="reportMonth">
+          Monat
+        </label>
+        <input
+          class="form-control"
+          id="reportMonth"
+          type="month"
+          name="month"
+          value="{{ period.month_value }}"
+        >
+      </div>
+
+      <div
+        class="col-lg-2 col-md-4 report-period-fields"
+        data-period-mode="months"
+      >
+        <label
+          class="form-label"
+          for="reportStartMonth"
+        >
+          Von
+        </label>
+        <input
+          class="form-control"
+          id="reportStartMonth"
+          type="month"
+          name="start_month"
+          value="{{ period.start_month_value }}"
+        >
+      </div>
+
+      <div
+        class="col-lg-2 col-md-4 report-period-fields"
+        data-period-mode="months"
+      >
+        <label
+          class="form-label"
+          for="reportEndMonth"
+        >
+          Bis
+        </label>
+        <input
+          class="form-control"
+          id="reportEndMonth"
+          type="month"
+          name="end_month"
+          value="{{ period.end_month_value }}"
+        >
+      </div>
+
+      <div
+        class="col-lg-3 col-md-4 report-period-fields"
+        data-period-mode="year"
+      >
+        <label class="form-label" for="reportYear">
+          Jahr
+        </label>
+        <input
+          class="form-control"
+          id="reportYear"
+          type="number"
+          name="year"
+          min="1900"
+          max="9998"
+          value="{{ period.year_value }}"
+        >
+      </div>
+
+      <div class="col-lg-2 col-md-4 d-grid">
+        <button class="btn btn-primary" type="submit">
+          Auswerten
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="alert alert-light border mb-4">
+  Ausgewerteter Zeitraum:
+  <strong>{{ period.label }}</strong>
+  · {{ period.start_date.strftime('%d.%m.%Y') }}
+  bis {{ period.end_date.strftime('%d.%m.%Y') }}
+</div>
+
+<script>
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+      const modeSelect =
+        document.getElementById(
+          "reportPeriodMode"
+        );
+      const fieldGroups = Array.from(
+        document.querySelectorAll(
+          ".report-period-fields"
+        )
+      );
+
+      function updatePeriodFields() {
+        const selectedMode =
+          modeSelect.value;
+
+        fieldGroups.forEach((fieldGroup) => {
+          fieldGroup.classList.toggle(
+            "d-none",
+            fieldGroup.dataset.periodMode
+              !== selectedMode
+          );
+        });
+      }
+
+      modeSelect.addEventListener(
+        "change",
+        updatePeriodFields
+      );
+      updatePeriodFields();
+    }
+  );
+</script>

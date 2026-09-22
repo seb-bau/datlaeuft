@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% macro duration(minutes) -%}
+  {{ "%d:%02d"|format(minutes // 60, minutes % 60) }} Std.
+{%- endmacro %}
+
+{% block title %}Genutzte Leistungspositionen{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">
+  Genutzte Leistungspositionen
+</h1>
+
+{% include "admin/_report_period_filter.html" %}
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">
+          Leistungspositionen
+        </div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.position_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">
+          Zeitbuchungen
+        </div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.booking_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">
+          Aufträge
+        </div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.commission_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">
+          Erfasste Zeit
+        </div>
+        <div class="fs-3 fw-semibold">
+          {{ duration(summary.total_minutes) }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-striped datatable align-middle">
+        <thead>
+          <tr>
+            <th>Gewerk</th>
+            <th>Code</th>
+            <th>Leistungsposition</th>
+            <th>Freie Erfassung</th>
+            <th>Buchungen</th>
+            <th>Aufträge</th>
+            <th>Handwerker</th>
+            <th>Gesamtzeit</th>
+            <th>Ø Dauer</th>
+            <th>SOLL je Buchung</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.craft_name }}</td>
+            <td>{{ row.code }}</td>
+            <td class="fw-semibold">
+              {{ row.title }}
+            </td>
+            <td>
+              {% if row.free_time_enabled %}
+              <span class="badge text-bg-info">Ja</span>
+              {% else %}
+              <span class="text-muted">Nein</span>
+              {% endif %}
+            </td>
+            <td>{{ row.booking_count }}</td>
+            <td>{{ row.commission_count }}</td>
+            <td>{{ row.user_count }}</td>
+            <td
+              data-order="{{ row.total_minutes }}"
+              class="text-nowrap"
+            >
+              {{ duration(row.total_minutes) }}
+            </td>
+            <td
+              data-order="{{ row.average_minutes }}"
+              class="text-nowrap"
+            >
+              {{ duration(row.average_minutes) }}
+            </td>
+            <td
+              data-order="{{ row.suggested_minutes }}"
+              class="text-nowrap"
+            >
+              {{ duration(row.suggested_minutes) }}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td
+              colspan="10"
+              class="text-center text-muted py-4"
+            >
+              Im ausgewählten Zeitraum wurden keine
+              Leistungspositionen verwendet.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

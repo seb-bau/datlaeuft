@@ -44,6 +44,9 @@
     or request.path.startswith('/admin/performance-reviews')
     or request.path.startswith('/admin/work-time-reports')
   ) %}
+  {% set is_reports_section =
+    request.path.startswith('/admin/reports')
+  %}
   {% set is_safety_section = request.path.startswith('/admin/safety-inspections') %}
   {% set is_inventory_section = (
     request.path == '/admin/inventory'
@@ -69,6 +72,8 @@
   {% set current_section_label = 'Dashboard' %}
   {% if is_order_section %}
     {% set current_section_label = 'Auftragswesen' %}
+  {% elif is_reports_section %}
+    {% set current_section_label = 'Auswertungen' %}
   {% elif is_safety_section %}
     {% set current_section_label = 'Verkehrssicherung' %}
   {% elif is_inventory_section %}
@@ -199,6 +204,62 @@
                 ) }}
 
               {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+                {% if can_access_foreman %}
+        <div class="sidebar-group">
+          <button
+            class="sidebar-group-toggle{% if is_reports_section %} active{% else %} collapsed{% endif %}"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#navReports"
+            aria-expanded="{{ 'true' if is_reports_section else 'false' }}"
+            aria-controls="navReports"
+          >
+            <span class="sidebar-group-label">
+              <span
+                class="sidebar-link-icon"
+                aria-hidden="true"
+              >
+                <i class="bi bi-bar-chart-line"></i>
+              </span>
+              <span>Auswertungen</span>
+            </span>
+            <i
+              class="bi bi-chevron-down sidebar-chevron"
+              aria-hidden="true"
+            ></i>
+          </button>
+
+          <div
+            class="collapse sidebar-subnav{% if is_reports_section %} show{% endif %}"
+            id="navReports"
+            data-bs-parent="#appNavigation"
+          >
+            <div class="sidebar-subnav-inner">
+              {{ sidebar_link(
+                'admin.report_service_positions',
+                'Leistungspositionen',
+                'list-check',
+                request.path == '/admin/reports/service-positions'
+              ) }}
+
+              {{ sidebar_link(
+                'admin.report_commissions_by_craftsman',
+                'Aufträge pro Handwerker',
+                'people',
+                request.path == '/admin/reports/commissions-by-craftsman'
+              ) }}
+
+              {{ sidebar_link(
+                'admin.report_installed_materials',
+                'Verbaute Materialien',
+                'box-seam',
+                request.path == '/admin/reports/installed-materials'
+              ) }}
             </div>
           </div>
         </div>

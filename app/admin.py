@@ -213,6 +213,14 @@ from .performance_review_service import (
     review_performance_scope,
 )
 
+from .reporting_service import (
+    ReportPeriod,
+    build_craftsman_commission_report,
+    build_installed_material_report,
+    build_service_position_report,
+    resolve_reporting_period,
+)
+
 admin_bp = Blueprint("admin", __name__)
 
 WORK_TIME_WEEKDAYS = (
@@ -7668,6 +7676,75 @@ def redirect_work_time_report() -> Any:
                 "",
             ),
         )
+    )
+
+
+def selected_reporting_period() -> ReportPeriod:
+    try:
+        return resolve_reporting_period(
+            request.args
+        )
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return resolve_reporting_period({})
+
+
+@admin_bp.get(
+    "/admin/reports/service-positions"
+)
+@foreman_required
+def report_service_positions() -> Any:
+    period = selected_reporting_period()
+    report = build_service_position_report(
+        period
+    )
+
+    return render_template(
+        "admin/report_service_positions.html",
+        period=period,
+        rows=report["rows"],
+        summary=report["summary"],
+    )
+
+
+@admin_bp.get(
+    "/admin/reports/commissions-by-craftsman"
+)
+@foreman_required
+def report_commissions_by_craftsman() -> Any:
+    period = selected_reporting_period()
+    report = (
+        build_craftsman_commission_report(
+            period
+        )
+    )
+
+    return render_template(
+        (
+            "admin/"
+            "report_commissions_by_craftsman.html"
+        ),
+        period=period,
+        rows=report["rows"],
+        summary=report["summary"],
+    )
+
+
+@admin_bp.get(
+    "/admin/reports/installed-materials"
+)
+@foreman_required
+def report_installed_materials() -> Any:
+    period = selected_reporting_period()
+    report = build_installed_material_report(
+        period
+    )
+
+    return render_template(
+        "admin/report_installed_materials.html",
+        period=period,
+        rows=report["rows"],
+        summary=report["summary"],
     )
 
 

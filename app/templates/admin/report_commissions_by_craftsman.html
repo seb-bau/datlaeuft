@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Aufträge pro Handwerker{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">
+  Aufträge pro Handwerker
+</h1>
+
+{% include "admin/_report_period_filter.html" %}
+
+<div class="alert alert-info">
+  Maßgeblich ist das Ausführungsdatum des Auftrags.
+  Fehlt es, werden nacheinander Freigabe-, Erfassungs-
+  und Synchronisierungsdatum verwendet.
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Aufträge</div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.commission_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Handwerker</div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.craftsman_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">Aktiv</div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.active_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small">
+          Abgeschlossen
+        </div>
+        <div class="fs-3 fw-semibold">
+          {{ summary.completed_count }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-striped datatable align-middle">
+        <thead>
+          <tr>
+            <th>Handwerker</th>
+            <th>Gesamt</th>
+            <th>Aktiv</th>
+            <th>In Prüfung</th>
+            <th>Abgeschlossen</th>
+            <th>Erfolgreich</th>
+            <th>Nicht erfolgreich</th>
+            <th>Priorität</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td class="fw-semibold">
+              {{ row.user_name }}
+            </td>
+            <td>{{ row.commission_count }}</td>
+            <td>{{ row.active_count }}</td>
+            <td>{{ row.review_count }}</td>
+            <td>{{ row.completed_count }}</td>
+            <td>{{ row.successful_count }}</td>
+            <td>{{ row.unsuccessful_count }}</td>
+            <td>{{ row.priority_count }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td
+              colspan="8"
+              class="text-center text-muted py-4"
+            >
+              Im ausgewählten Zeitraum wurden keine
+              Aufträge gefunden.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
