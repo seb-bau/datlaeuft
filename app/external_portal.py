@@ -860,22 +860,26 @@ def external_commission_photo_or_404(
         return photo
 
     object_photo_matches = (
-        photo.commission_id is None
-        and photo.source == MEDIA_SOURCE
-        and (
-            (
-                photo.external_entity_name
-                == "Building"
-                and photo.external_entity_id
-                == commission.building_erp_id
+            photo.commission_id is None
+            and photo.source == MEDIA_SOURCE
+            and (
+                    (
+                            commission.building_erp_id
+                            is not None
+                            and photo.external_entity_name
+                            == "Building"
+                            and photo.external_entity_id
+                            == commission.building_erp_id
+                    )
+                    or (
+                            commission.use_unit_id
+                            is not None
+                            and photo.external_entity_name
+                            == "UseUnit"
+                            and photo.external_entity_id
+                            == commission.use_unit_id
+                    )
             )
-            or (
-                photo.external_entity_name
-                == "UseUnit"
-                and photo.external_entity_id
-                == commission.use_unit_id
-            )
-        )
     )
 
     if object_photo_matches:

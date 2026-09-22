@@ -40,9 +40,6 @@ from .document_sync import sync_commission_documents
 from .push_service import enqueue_commission_push
 from .photo_service import commission_photo_path
 from .commission_priority import sync_commission_priority
-from .external_craftsman_service import (
-    sync_external_craftsmen_from_wowiport,
-)
 
 ERP_LOCAL_STATUS = {
     12: CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
@@ -2848,6 +2845,9 @@ def sync_commissions_from_wowiport_regular(
     )
     from .user_sync import (
         sync_users_from_wowiport,
+    )
+    from .external_craftsman_service import (
+        sync_external_craftsmen_from_wowiport,
     )
 
     craft_result = (

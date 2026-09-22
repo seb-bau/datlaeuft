@@ -767,88 +767,22 @@ def commission_workflow_error_response(
 )
 @jwt_required()
 def reject_commission(
-        commission_id: int,
+    commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
         commission_id,
         user,
     )
-
     db.session.refresh(
         commission,
         with_for_update=True,
     )
 
-    if not commission.is_actionable:
-        return jsonify({
-            "message": (
-                "Der Auftrag wartet noch auf eine "
-                "OPENWOWI-Auftragsnummer."
-            )
-        }), 409
+    data = request.get_json(silent=True)
 
-    if (
-            commission.local_status
-            != CommissionLocalStatus
-            .WAITING_FOR_ACCEPTANCE.value
-    ):
-        return jsonify({
-            "message": (
-                "Nur ein noch nicht angenommener "
-                "Auftrag kann abgelehnt werden."
-            )
-        }), 409
-
-    data = request.get_json(silent=True) or {}
-    reason = str(
-        data.get("reason") or ""
-    ).strip()
-
-    if not reason:
-        return jsonify({
-            "message": (
-                "Bitte einen Grund für die "
-                "Ablehnung angeben."
-            )
-        }), 400
-
-    commission.completion_successful = False
-    commission.tenant_charge_requested = False
-    commission.completion_reason = reason
-    commission.completion_submitted_by = user
-    commission.completion_submitted_at = utc_now()
-    commission.completed_at = None
-    commission.local_status = (
-        CommissionLocalStatus
-        .COMPLETION_REVIEW.value
-    )
-    commission.erp_sync_state = (
-        CommissionSyncState.PENDING.value
-    )
-    commission.erp_sync_message = None
-
-    enqueue_erp_operation(
-        commission,
-        ErpOperationType.REFUSE_COMMISSION,
-        f"commission:refused:{commission.id}",
-        actor_user_id=user.id,
-    )
-
-    audit(
-        "commission.reject",
-        "commission",
-        commission.id,
-        {
-            "reason": reason,
-        },
-    )
-
-    sync_offer_from_commission(
-        commission
-    )
-
-    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
 
     try:
         reason = reject_commission_workflow(
@@ -936,172 +870,41 @@ def commission_completion_check(
     })
 
 
-@api_bp.post("/commissions/<int:commission_id>/complete")
+@api_bp.post(
+    "/commissions/<int:commission_id>/complete"
+)
 @jwt_required()
 def complete_commission(
-        commission_id: int,
+    commission_id: int,
 ) -> Any:
     user = current_api_user()
     commission = editable_commission(
         commission_id,
         user,
     )
-
     db.session.refresh(
         commission,
         with_for_update=True,
     )
 
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
 
-    if not commission.is_actionable:
-        return jsonify(
-            {
-                "message": (
-                    "Der Auftrag wartet noch auf eine "
-                    "OPENWOWI-Auftragsnummer."
-                )
-            }
-        ), 409
+    if not isinstance(data, dict):
+        data = {}
 
     if (
-            commission.local_status
-            != CommissionLocalStatus.IN_PROGRESS.value
-    ):
-        return jsonify(
-            {
-                "message": (
-                    "Nur ein Auftrag in Bearbeitung "
-                    "kann abgeschlossen werden."
-                )
-            }
-        ), 409
-
-    if (
-            "completed" not in data
-            or not isinstance(data.get("completed"), bool)
-    ):
-        return jsonify(
-            {
-                "message": (
-                    "Bitte angeben, ob der Auftrag "
-                    "abgeschlossen werden konnte."
-                )
-            }
-        ), 400
-
-    completed = data["completed"]
-
-    confirm_missing_material = bool(
-        data.get(
-            "confirm_missing_material",
-            False,
+        "completed" not in data
+        or not isinstance(
+            data.get("completed"),
+            bool,
         )
-    )
-
-    if (
-            completed
-            and commission_requires_material_confirmation(commission)
-            and not confirm_missing_material
     ):
         return jsonify({
-            "code": (
-                "material_booking_confirmation_required"
-            ),
             "message": (
-                "Für diesen Auftrag ist eine "
-                "Materialbuchung vorgesehen. "
-                "Auftrag trotzdem abschließen?"
-            ),
-        }), 409
-
-    tenant_charge = bool(
-        data.get("tenant_charge", False)
-    )
-    reason = str(
-        data.get("reason") or ""
-    ).strip()
-
-    if not completed:
-        tenant_charge = False
-
-        if not reason:
-            return jsonify(
-                {
-                    "message": (
-                        "Bitte einen Grund angeben, "
-                        "warum der Auftrag nicht "
-                        "abgeschlossen werden konnte."
-                    )
-                }
-            ), 400
-
-    commission.completion_successful = completed
-    commission.tenant_charge_requested = (
-        tenant_charge
-    )
-    commission.completion_reason = (
-            reason or None
-    )
-    commission.completion_submitted_by = user
-    commission.completion_submitted_at = (
-        utc_now()
-    )
-    commission.erp_sync_state = (
-        CommissionSyncState.PENDING.value
-    )
-    commission.erp_sync_message = None
-
-    if not completed:
-        commission.local_status = (
-            CommissionLocalStatus.COMPLETION_REVIEW.value
-        )
-        commission.completed_at = None
-
-        enqueue_erp_operation(
-            commission,
-            ErpOperationType.CANCEL_COMMISSION,
-            f"commission:canceled:{commission.id}",
-            actor_user_id=user.id,
-        )
-    elif tenant_charge:
-        commission.local_status = (
-            CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
-        )
-        commission.completed_at = utc_now()
-
-        enqueue_erp_operation(
-            commission,
-            ErpOperationType.AWAIT_INVOICE,
-            f"commission:await-invoice:{commission.id}",
-            actor_user_id=user.id,
-        )
-    else:
-        commission.local_status = (
-            CommissionLocalStatus.DONE.value
-        )
-        commission.completed_at = utc_now()
-
-        enqueue_erp_operation(
-            commission,
-            ErpOperationType.COMPLETE_COMMISSION,
-            f"commission:done:{commission.id}",
-            actor_user_id=user.id,
-        )
-
-    audit(
-        "commission.complete",
-        "commission",
-        commission.id,
-        {
-            "completed": completed,
-            "tenant_charge": tenant_charge,
-            "reason": reason or None,
-        },
-    )
-    sync_offer_from_commission(
-        commission
-    )
+                "Bitte angeben, ob der Auftrag "
+                "abgeschlossen werden konnte."
+            )
+        }), 400
 
     completed = data["completed"]
     tenant_charge = bool(
@@ -2943,8 +2746,11 @@ def commission_time_entries(commission_id: int) -> Any:
     commission = viewable_commission(commission_id, user)
     query = TimeEntry.query.filter_by(commission_id=commission.id)
 
-    if not can_view_colleague_commissions(user):
-        query = query.filter_by(user_id=user.id)
+    query = query.filter(
+        TimeEntry.user_id.in_(
+            viewable_commission_user_ids(user)
+        )
+    )
 
     entries = query.order_by(
         TimeEntry.service_date.desc(),
