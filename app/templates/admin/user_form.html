@@ -297,9 +297,11 @@
       </div>
     </div>
 
-        <div class="col-12">
+    <div class="col-12">
       <hr>
-              <div class="col-12">
+    </div>
+
+    <div class="col-12">
       <h2 class="h5">
         Auftragssichtbarkeit in der App
       </h2>
@@ -319,9 +321,7 @@
         <div class="row g-2">
           {% for candidate in commission_visibility_users %}
           <div class="col-md-6">
-            <label
-              class="d-flex align-items-start gap-2 rounded p-2"
-            >
+            <label class="d-flex align-items-start gap-2 rounded p-2">
               <input
                 class="form-check-input mt-1"
                 type="checkbox"
@@ -337,8 +337,7 @@
                   {{ candidate.display_name }}
                 </span>
                 <span class="d-block small text-muted">
-                  ERP-Handwerker-ID
-                  {{ candidate.craftsman_erp_id }}
+                  ERP-Handwerker-ID {{ candidate.craftsman_erp_id }}
                 </span>
               </span>
             </label>
@@ -347,16 +346,12 @@
         </div>
       </div>
       {% else %}
-      <div class="alert alert-info mb-0">
-        Es sind keine weiteren aktiven Handwerker
-        vorhanden.
-      </div>
+      <div class="alert alert-info mb-0">Es sind keine weiteren aktiven Handwerker vorhanden.</div>
       {% endif %}
     </div>
 
     <div class="col-12">
       <hr>
-    </div>
     </div>
 
     <div class="col-12">

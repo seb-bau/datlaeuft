@@ -2762,6 +2762,7 @@ def user_edit(user_id: int) -> Any:
             selected_jurisdiction_person_ids
         ),
         **user_work_time_profile_context(item),
+        **user_commission_visibility_context(item),
     )
 
 
