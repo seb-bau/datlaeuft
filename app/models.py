@@ -238,6 +238,26 @@ user_craft_activity = db.Table(
     db.Column("craft_activity_id", db.ForeignKey("craft_activity.id"), primary_key=True),
 )
 
+external_craftsman_craft_activity = db.Table(
+    "external_craftsman_craft_activity",
+    db.Column(
+        "external_craftsman_id",
+        db.ForeignKey(
+            "external_craftsman.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    ),
+    db.Column(
+        "craft_activity_id",
+        db.ForeignKey(
+            "craft_activity.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    ),
+)
+
 user_commission_visibility = db.Table(
     "user_commission_visibility",
     db.Column(
@@ -420,6 +440,14 @@ class CraftActivity(db.Model):
         back_populates="craft_activities",
     )
 
+    external_craftsmen: Mapped[
+        list["ExternalCraftsman"]
+    ] = relationship(
+        "ExternalCraftsman",
+        secondary=external_craftsman_craft_activity,
+        back_populates="craft_activities",
+    )
+
     service_positions: Mapped[list["TimeTaskTemplate"]] = relationship(back_populates="craft_activity")
     department_mapping: Mapped[
         "CraftActivityDepartmentMapping | None"
@@ -428,6 +456,127 @@ class CraftActivity(db.Model):
         cascade="all, delete-orphan",
         uselist=False,
     )
+
+
+class ExternalCraftsman(db.Model):
+    __tablename__ = "external_craftsman"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    craftsman_erp_id: Mapped[int] = mapped_column(
+        db.Integer,
+        unique=True,
+        nullable=False,
+    )
+    display_name: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+    )
+    email: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    username: Mapped[str | None] = mapped_column(
+        db.String(120),
+        unique=True,
+    )
+    password_hash: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
+    portal_enabled: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+        index=True,
+    )
+    wowi_active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    failed_login_count: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    invited_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    craft_activities: Mapped[
+        list["CraftActivity"]
+    ] = relationship(
+        "CraftActivity",
+        secondary=external_craftsman_craft_activity,
+        back_populates="external_craftsmen",
+    )
+    access_tokens: Mapped[
+        list["ExternalCraftsmanAccessToken"]
+    ] = relationship(
+        back_populates="external_craftsman",
+        cascade="all, delete-orphan",
+    )
+    assignment_mails: Mapped[
+        list["ExternalCommissionAssignmentMail"]
+    ] = relationship(
+        back_populates="external_craftsman",
+        cascade="all, delete-orphan",
+    )
+    completion_submissions: Mapped[
+        list["Commission"]
+    ] = relationship(
+        foreign_keys=(
+            "Commission."
+            "completion_submitted_by_external_craftsman_id"
+        ),
+        back_populates=(
+            "completion_submitted_by_external_craftsman"
+        ),
+    )
+
+    def set_password(
+        self,
+        password: str | None,
+    ) -> None:
+        self.password_hash = (
+            generate_password_hash(password)
+            if password
+            else None
+        )
+
+    def check_password(
+        self,
+        password: str,
+    ) -> bool:
+        if not self.password_hash:
+            return False
+
+        return check_password_hash(
+            self.password_hash,
+            password,
+        )
 
 
 class User(UserMixin, db.Model):
@@ -599,6 +748,65 @@ class User(UserMixin, db.Model):
         if not self.password_hash:
             return False
         return check_password_hash(self.password_hash, password)
+
+
+class ExternalCraftsmanAccessToken(db.Model):
+    __tablename__ = "external_craftsman_access_token"
+    __table_args__ = (
+        db.Index(
+            "ix_external_access_token_craftsman",
+            "external_craftsman_id",
+        ),
+        db.Index(
+            "ix_external_access_token_expires",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    external_craftsman_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "external_craftsman.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey(
+            "user_account.id",
+            ondelete="SET NULL",
+        )
+    )
+    purpose: Mapped[str] = mapped_column(
+        db.String(40),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(
+        db.String(64),
+        unique=True,
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        nullable=False,
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    external_craftsman: Mapped[
+        ExternalCraftsman
+    ] = relationship(
+        back_populates="access_tokens"
+    )
+    created_by: Mapped[User | None] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
 
 
 class WorkTimeProfile(db.Model):
@@ -1000,7 +1208,22 @@ class Commission(db.Model):
         db.ForeignKey("user_account.id"),
         index=True,
     )
+    completion_submitted_by_external_craftsman_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey(
+            "external_craftsman.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
     completion_submitted_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    external_assignment_version: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     synced_at: Mapped[datetime] = mapped_column(
         db.DateTime(timezone=True),
@@ -1045,6 +1268,14 @@ class Commission(db.Model):
     completion_submitted_by: Mapped[User | None] = relationship(
         foreign_keys=[completion_submitted_by_user_id],
     )
+    completion_submitted_by_external_craftsman: Mapped[
+        ExternalCraftsman | None
+    ] = relationship(
+        foreign_keys=[
+            completion_submitted_by_external_craftsman_id
+        ],
+        back_populates="completion_submissions",
+    )
     positions: Mapped[list["CommissionPosition"]] = relationship(
         back_populates="commission",
         cascade="all, delete-orphan",
@@ -1076,6 +1307,12 @@ class Commission(db.Model):
     push_deliveries: Mapped[list["PushDelivery"]] = relationship(
         back_populates="commission",
     )
+    external_assignment_mails: Mapped[
+        list["ExternalCommissionAssignmentMail"]
+    ] = relationship(
+        back_populates="commission",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def is_actionable(self) -> bool:
@@ -1097,6 +1334,105 @@ class Commission(db.Model):
         if self.positions:
             return self.positions[0].display_text
         return "Ausstehender Auftrag"
+
+    @property
+    def completion_submitted_by_name(
+        self,
+    ) -> str | None:
+        if self.completion_submitted_by is not None:
+            return self.completion_submitted_by.display_name
+
+        if (
+            self.completion_submitted_by_external_craftsman
+            is not None
+        ):
+            return (
+                self
+                .completion_submitted_by_external_craftsman
+                .display_name
+            )
+
+        return None
+
+
+class ExternalCommissionAssignmentMail(db.Model):
+    __tablename__ = "external_commission_assignment_mail"
+    __table_args__ = (
+        UniqueConstraint(
+            "commission_id",
+            "assignment_version",
+            name="uq_external_assignment_mail_version",
+        ),
+        db.Index(
+            "ix_external_assignment_mail_state",
+            "state",
+            "available_at",
+        ),
+        db.Index(
+            "ix_external_assignment_mail_craftsman",
+            "external_craftsman_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    commission_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "commission.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    external_craftsman_id: Mapped[int] = mapped_column(
+        db.ForeignKey(
+            "external_craftsman.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    assignment_version: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        db.String(30),
+        default="pending",
+        server_default="pending",
+        nullable=False,
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    available_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+    locked_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    last_error: Mapped[str | None] = mapped_column(
+        db.Text
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    commission: Mapped[Commission] = relationship(
+        back_populates="external_assignment_mails"
+    )
+    external_craftsman: Mapped[
+        ExternalCraftsman
+    ] = relationship(
+        back_populates="assignment_mails"
+    )
 
 
 class CommissionTicketLink(db.Model):
@@ -6091,6 +6427,15 @@ class AuditLog(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     actor_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
+    actor_external_craftsman_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey(
+            "external_craftsman.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
     action: Mapped[str] = mapped_column(db.String(120), nullable=False, index=True)
     entity_type: Mapped[str | None] = mapped_column(db.String(120), index=True)
     entity_id: Mapped[str | None] = mapped_column(db.String(120), index=True)
@@ -6101,6 +6446,9 @@ class AuditLog(db.Model):
                                                  index=True)
 
     actor: Mapped[User | None] = relationship()
+    external_actor: Mapped[
+        ExternalCraftsman | None
+    ] = relationship()
 
 
 class ApiTokenBlocklist(db.Model):

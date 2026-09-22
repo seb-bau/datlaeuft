@@ -1,0 +1,77 @@
+{% extends "external_portal/base.html" %}
+{% block title %}Aufträge · WattNu Auftragnehmerportal{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+  <div>
+    <h1 class="h2 mb-1">Ihre Aufträge</h1>
+    <p class="text-body-secondary mb-0">
+      {{ external_craftsman.display_name }}
+    </p>
+  </div>
+  <div class="btn-group" role="group" aria-label="Auftragsstatus">
+    <a class="btn btn-{{ 'primary' if scope == 'aktiv' else 'outline-primary' }}" href="{{ url_for('external_portal.commissions', status='aktiv') }}">Aktiv</a>
+    <a class="btn btn-{{ 'primary' if scope == 'abgeschlossen' else 'outline-primary' }}" href="{{ url_for('external_portal.commissions', status='abgeschlossen') }}">Abgeschlossen</a>
+    <a class="btn btn-{{ 'primary' if scope == 'alle' else 'outline-primary' }}" href="{{ url_for('external_portal.commissions', status='alle') }}">Alle</a>
+  </div>
+</div>
+
+{% if items %}
+<div class="row g-3">
+  {% for item in items %}
+  <div class="col-12">
+    <a class="portal-order-card card shadow-sm text-decoration-none" href="{{ url_for('external_portal.commission_detail', public_id=item.public_id) }}">
+      <div class="card-body p-4">
+        <div class="d-flex flex-column flex-md-row justify-content-between gap-3">
+          <div class="flex-grow-1">
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+              <span class="badge text-bg-primary">
+                {{ external_status_labels.get(item.local_status, item.local_status) }}
+              </span>
+              {% if item.is_high_priority %}
+              <span class="badge text-bg-danger">Priorität</span>
+              {% endif %}
+              <span class="text-body-secondary small">
+                {{ item.erp_idnum or item.code or item.id }}
+              </span>
+            </div>
+            <h2 class="h5 text-body mb-2">
+              {{ item.display_title }}
+            </h2>
+            <p class="text-body-secondary mb-0">
+              <i class="bi bi-geo-alt me-1"></i>
+              {{ item.apartment_address or "Keine Adresse hinterlegt" }}
+              {% if item.apartment_location %}
+                · {{ item.apartment_location }}
+              {% endif %}
+            </p>
+          </div>
+          <div class="portal-order-date text-md-end">
+            {% if item.execution_from %}
+            <span class="small text-body-secondary d-block">
+              Ausführung
+            </span>
+            <strong class="text-body">
+              {{ item.execution_from.strftime("%d.%m.%Y %H:%M") }}
+            </strong>
+            {% else %}
+            <span class="text-body-secondary">Kein Termin</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-clipboard-check display-5 text-body-secondary"></i>
+    <h2 class="h5 mt-3">Keine Aufträge vorhanden</h2>
+    <p class="text-body-secondary mb-0">
+      Für den gewählten Status wurden keine Aufträge gefunden.
+    </p>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

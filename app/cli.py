@@ -603,6 +603,8 @@ def register_cli(app: Flask) -> None:
             f"Webhooks={result['webhooks']} "
             f"ERP-Aufgaben={result['outbox']} "
             f"Vorgangsinfos={result['process_infos']} "
+            f"Auftragnehmer-Mails="
+            f"{result['external_assignment_emails']} "
             f"Push-Zustellungen={result['push']}"
         )
 

@@ -42,6 +42,7 @@ class UserSyncResult:
 
 def sync_users_from_wowiport(
     service: WowiportService | None = None,
+    craftsman_rows: list[Any] | None = None,
 ) -> UserSyncResult:
     service = service or WowiportService()
     result = UserSyncResult()
@@ -64,9 +65,13 @@ def sync_users_from_wowiport(
         dict[str, dict[int, str]] | None
     ) = None
 
-    for row in (
-        service.get_craftsmen_for_user_sync()
-    ):
+    rows = (
+        craftsman_rows
+        if craftsman_rows is not None
+        else service.get_craftsmen_for_user_sync()
+    )
+
+    for row in rows:
         result.seen += 1
 
         craftsman_erp_id = _as_int(
@@ -82,17 +87,14 @@ def sync_users_from_wowiport(
             result.skipped_conflict += 1
             continue
 
-        email = _extract_allowed_email(
-            row,
-            allowed_domains,
-        )
+        email = extract_craftsman_email(row, allowed_domains)
 
         if email is None:
             result.skipped_domain += 1
             continue
 
         craft_activity_ids = (
-            _extract_craft_activity_ids(row)
+            extract_craft_activity_ids(row)
         )
 
         if not craft_activity_ids:
@@ -199,11 +201,9 @@ def sync_users_from_wowiport(
 
         if not identity_managed_by_entra:
             user.email = email
-            user.display_name = (
-                _extract_display_name(
-                    row,
-                    email,
-                )
+            user.display_name = extract_craftsman_display_name(
+                row,
+                email,
             )
             user.wowiport_managed = True
             user.is_active_flag = True
@@ -324,9 +324,22 @@ def _configured_email_domains() -> set[str]:
     }
 
 
-def _extract_allowed_email(
+def extract_craftsman_erp_id(
     row: Any,
-    allowed_domains: set[str],
+) -> int | None:
+    return _as_int(
+        _value(
+            row,
+            "Id",
+            "id",
+            "id_",
+        )
+    )
+
+
+def extract_craftsman_email(
+    row: Any,
+    allowed_domains: set[str] | None = None,
 ) -> str | None:
     person = _value(
         row,
@@ -411,13 +424,16 @@ def _extract_allowed_email(
             .rstrip(".")
         )
 
-        if domain in allowed_domains:
+        if (
+            allowed_domains is None
+            or domain in allowed_domains
+        ):
             return normalized_email
 
     return None
 
 
-def _extract_craft_activity_ids(
+def extract_craft_activity_ids(
     row: Any,
 ) -> set[int]:
     result = set()
@@ -465,7 +481,7 @@ def _craftsman_accessibilities(
     )
 
 
-def _extract_display_name(
+def extract_craftsman_display_name(
     row: Any,
     fallback: str,
 ) -> str:
@@ -731,10 +747,7 @@ def _responsible_person_candidates_by_email(
             )
             continue
 
-        email = _extract_allowed_email(
-            row,
-            allowed_domains,
-        )
+        email = extract_craftsman_email(row, allowed_domains)
 
         if email is None:
             continue
@@ -744,7 +757,7 @@ def _responsible_person_candidates_by_email(
             fallback_name,
         ) in people.items():
             person_name = (
-                _extract_display_name(
+                extract_craftsman_display_name(
                     row,
                     fallback_name or email,
                 )

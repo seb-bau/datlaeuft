@@ -1119,7 +1119,7 @@ def send_commission_status_email(
     *,
     event_name: str,
     reason: str,
-    submitted_by: User,
+    submitted_by_name: str,
 ) -> None:
     recipients = commission_notification_emails(
         [commission]
@@ -1200,7 +1200,7 @@ def send_commission_status_email(
                 ),
                 (
                     "Handwerker: "
-                    f"{submitted_by.display_name}"
+                    f"{submitted_by_name}"
                 ),
                 "",
                 "Leistungspositionen:",

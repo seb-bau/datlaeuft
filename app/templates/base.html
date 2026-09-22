@@ -67,6 +67,7 @@
     or request.path.startswith('/admin/time-templates')
     or request.path.startswith('/admin/appointment-windows')
     or request.path.startswith('/admin/work-time-profiles')
+    or request.path.startswith('/admin/external-craftsmen')
   ) %}
 
   {% set current_section_label = 'Dashboard' %}
@@ -418,6 +419,13 @@
                   'Benutzer',
                   'people',
                   request.path.startswith('/admin/users')
+                ) }}
+
+              {{ sidebar_link(
+                  'admin.external_craftsmen',
+                  'Externe Handwerker',
+                  'person-badge',
+                  request.path.startswith('/admin/external-craftsmen')
                 ) }}
 
               {{ sidebar_link(

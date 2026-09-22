@@ -106,6 +106,13 @@ from .process_info_service import (
     send_commission_status_email,
 )
 
+from .commission_workflow_service import (
+    CommissionWorkflowError,
+    accept_commission as accept_commission_workflow,
+    complete_commission as complete_commission_workflow,
+    reject_commission as reject_commission_workflow,
+)
+
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 CANCELLATION_NOTE_PREFIX = "Storno zu Buchung #"
 
@@ -715,34 +722,44 @@ def commission_contacts(commission_id: int) -> Any:
 @jwt_required()
 def start_commission(commission_id: int) -> Any:
     user = current_api_user()
-    commission = editable_commission(commission_id, user)
-
-    if not commission.is_actionable:
-        return jsonify({
-            "message": "Der Auftrag wartet noch auf eine OPENWOWI-Auftragsnummer."
-        }), 409
-
-    if commission.local_status != CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value:
-        return jsonify({
-            "message": "Der Auftrag kann in diesem Status nicht gestartet werden."
-        }), 409
-
-    commission.local_status = CommissionLocalStatus.IN_PROGRESS.value
-    commission.erp_sync_state = CommissionSyncState.PENDING.value
-
-    enqueue_erp_operation(
+    commission = editable_commission(
+        commission_id,
+        user,
+    )
+    db.session.refresh(
         commission,
-        ErpOperationType.ACCEPT_COMMISSION,
-        f"commission:accepted:{commission.id}",
-        actor_user_id=user.id,
+        with_for_update=True,
     )
 
-    audit("commission.start", "commission", commission.id)
+    try:
+        accept_commission_workflow(
+            commission,
+            user=user,
+        )
+    except CommissionWorkflowError as exc:
+        db.session.rollback()
+        return commission_workflow_error_response(
+            exc
+        )
+
     db.session.commit()
 
     return jsonify({
         "item": serialize_commission(commission),
     }), 202
+
+
+def commission_workflow_error_response(
+    error: CommissionWorkflowError,
+) -> tuple[Any, int]:
+    payload = {
+        "message": error.message,
+    }
+
+    if error.code:
+        payload["code"] = error.code
+
+    return jsonify(payload), error.status_code
 
 
 @api_bp.post(
@@ -831,13 +848,27 @@ def reject_commission(
         commission
     )
 
+    data = request.get_json(silent=True) or {}
+
+    try:
+        reason = reject_commission_workflow(
+            commission,
+            str(data.get("reason") or ""),
+            user=user,
+        )
+    except CommissionWorkflowError as exc:
+        db.session.rollback()
+        return commission_workflow_error_response(
+            exc
+        )
+
     db.session.commit()
 
     send_commission_status_notification(
         commission,
         event_name="Auftrag abgelehnt",
         reason=reason,
-        submitted_by=user,
+        submitted_by_name=user.display_name,
     )
 
     return jsonify({
@@ -849,18 +880,18 @@ def reject_commission(
 
 
 def send_commission_status_notification(
-        commission: Commission,
-        *,
-        event_name: str,
-        reason: str,
-        submitted_by: User,
+    commission: Commission,
+    *,
+    event_name: str,
+    reason: str,
+    submitted_by_name: str,
 ) -> None:
     try:
         send_commission_status_email(
             commission,
             event_name=event_name,
             reason=reason,
-            submitted_by=submitted_by,
+            submitted_by_name=submitted_by_name,
         )
         db.session.commit()
     except Exception:
@@ -1072,6 +1103,33 @@ def complete_commission(
         commission
     )
 
+    completed = data["completed"]
+    tenant_charge = bool(
+        data.get("tenant_charge", False)
+    )
+
+    try:
+        reason = complete_commission_workflow(
+            commission,
+            completed=completed,
+            reason=str(
+                data.get("reason") or ""
+            ),
+            tenant_charge=tenant_charge,
+            confirm_missing_material=bool(
+                data.get(
+                    "confirm_missing_material",
+                    False,
+                )
+            ),
+            user=user,
+        )
+    except CommissionWorkflowError as exc:
+        db.session.rollback()
+        return commission_workflow_error_response(
+            exc
+        )
+
     db.session.commit()
 
     if not completed:
@@ -1081,17 +1139,15 @@ def complete_commission(
                 "Auftrag nicht erfolgreich abgeschlossen"
             ),
             reason=reason,
-            submitted_by=user,
+            submitted_by_name=user.display_name,
         )
 
-    return jsonify(
-        {
-            "item": serialize_commission(
-                commission,
-                viewer=user,
-            )
-        }
-    ), 202
+    return jsonify({
+        "item": serialize_commission(
+            commission,
+            viewer=user,
+        )
+    }), 202
 
 
 @api_bp.get("/appointment-windows")

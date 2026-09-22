@@ -26,7 +26,7 @@ from .safety_inspection_api import (
 from .safety_inspection_protocol_admin import (
     safety_inspection_protocol_admin_bp,
 )
-
+from .external_portal import external_portal_bp
 
 # Worker starten: flask datlaeuft-worker --poll-seconds 10
 # fällige Aufgaben: flask datlaeuft-process-erp-work
@@ -62,6 +62,7 @@ def create_app() -> Flask:
     cors.init_app(app, resources={r"/api/*": {"origins": cors_origins()}})
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(external_portal_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(
         safety_inspection_admin_bp

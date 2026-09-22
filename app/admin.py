@@ -119,6 +119,14 @@ from .models import (
     UserWorkTimeProfileAssignment,
     WorkTimeProfile,
     WorkTimeTargetOverride,
+    ExternalCraftsman,
+    ExternalCraftsmanAccessToken,
+)
+from .external_craftsman_service import (
+    create_invitation_token,
+    default_external_username,
+    send_external_invitation_email,
+    sync_external_craftsmen_from_wowiport,
 )
 from .ticket_service import (
     analyze_ticket_mirror,
@@ -219,6 +227,11 @@ from .reporting_service import (
     build_installed_material_report,
     build_service_position_report,
     resolve_reporting_period,
+)
+
+from .catalog import (
+    sync_catalogs_from_wowiport,
+    sync_craft_activities_from_wowiport,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -10683,4 +10696,289 @@ def invoice_cancel(
             "admin.invoice_edit",
             invoice_id=invoice_id,
         )
+    )
+
+
+@admin_bp.get("/admin/external-craftsmen")
+@admin_required
+def external_craftsmen() -> Any:
+    items = (
+        ExternalCraftsman.query
+        .order_by(
+            ExternalCraftsman.display_name.asc(),
+            ExternalCraftsman.craftsman_erp_id.asc(),
+        )
+        .all()
+    )
+    internal_craftsman_erp_ids = {
+        row[0]
+        for row in db.session.query(
+            User.craftsman_erp_id
+        )
+        .filter(
+            User.craftsman_erp_id.is_not(None),
+            User.is_active_flag.is_(True),
+        )
+        .all()
+    }
+
+    return render_template(
+        "admin/external_craftsmen.html",
+        items=items,
+        internal_craftsman_erp_ids=(
+            internal_craftsman_erp_ids
+        ),
+    )
+
+
+@admin_bp.post(
+    "/admin/external-craftsmen/sync"
+)
+@admin_required
+def external_craftsmen_sync() -> Any:
+    try:
+        service = WowiportService()
+        sync_craft_activities_from_wowiport(
+            service
+        )
+        db.session.flush()
+        rows = service.get_craftsmen_for_user_sync()
+        result = (
+            sync_external_craftsmen_from_wowiport(
+                rows
+            )
+        )
+        audit(
+            "external_craftsman.sync",
+            "external_craftsman",
+            metadata={
+                "seen": result.seen,
+                "created": result.created,
+                "updated": result.updated,
+                "deactivated": result.deactivated,
+            },
+        )
+        db.session.commit()
+        flash(
+            (
+                f"{result.seen} Handwerker geprüft, "
+                f"{result.created} neu, "
+                f"{result.updated} aktualisiert und "
+                f"{result.deactivated} deaktiviert."
+            ),
+            "success",
+        )
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception(
+            "external_craftsman_sync_failed"
+        )
+        flash(
+            f"Wowiport-Aktualisierung fehlgeschlagen: {exc}",
+            "danger",
+        )
+
+    return redirect(
+        url_for("admin.external_craftsmen")
+    )
+
+
+@admin_bp.post(
+    "/admin/external-craftsmen/"
+    "<int:craftsman_id>/enable"
+)
+@admin_required
+def external_craftsman_enable(
+    craftsman_id: int,
+) -> Any:
+    craftsman = db.get_or_404(
+        ExternalCraftsman,
+        craftsman_id,
+    )
+
+    if not craftsman.wowi_active:
+        flash(
+            "Der Handwerker ist in Wowiport nicht aktiv.",
+            "danger",
+        )
+        return redirect(
+            url_for("admin.external_craftsmen")
+        )
+
+    if not craftsman.email:
+        flash(
+            "Für den Handwerker ist keine E-Mail-Adresse hinterlegt.",
+            "danger",
+        )
+        return redirect(
+            url_for("admin.external_craftsmen")
+        )
+
+    internal_user = User.query.filter_by(
+        craftsman_erp_id=(
+            craftsman.craftsman_erp_id
+        ),
+        is_active_flag=True,
+    ).first()
+
+    if internal_user is not None:
+        flash(
+            "Für diesen Handwerker besteht bereits ein interner Benutzerzugang.",
+            "danger",
+        )
+        return redirect(
+            url_for("admin.external_craftsmen")
+        )
+
+    craftsman.portal_enabled = True
+    craftsman.username = (
+        craftsman.username
+        or default_external_username(craftsman)
+    ).casefold()
+    raw_token = create_invitation_token(
+        craftsman,
+        current_user.id,
+    )
+    audit(
+        "external_craftsman.enable",
+        "external_craftsman",
+        craftsman.id,
+    )
+    db.session.commit()
+
+    try:
+        send_external_invitation_email(
+            craftsman,
+            raw_token,
+        )
+        craftsman.invited_at = utc_now()
+        db.session.commit()
+        flash(
+            "Der Zugang wurde freigeschaltet und die Einladung versendet.",
+            "success",
+        )
+    except Exception as exc:
+        current_app.logger.exception(
+            "external_craftsman_invitation_failed "
+            "craftsman_id=%s",
+            craftsman.id,
+        )
+        flash(
+            (
+                "Der Zugang wurde freigeschaltet, die Einladung "
+                f"konnte aber nicht versendet werden: {exc}"
+            ),
+            "danger",
+        )
+
+    return redirect(
+        url_for("admin.external_craftsmen")
+    )
+
+
+@admin_bp.post(
+    "/admin/external-craftsmen/"
+    "<int:craftsman_id>/invite"
+)
+@admin_required
+def external_craftsman_invite(
+    craftsman_id: int,
+) -> Any:
+    craftsman = db.get_or_404(
+        ExternalCraftsman,
+        craftsman_id,
+    )
+
+    if (
+        not craftsman.portal_enabled
+        or not craftsman.wowi_active
+        or not craftsman.email
+    ):
+        flash(
+            "Für diesen Handwerker kann keine Einladung versendet werden.",
+            "danger",
+        )
+        return redirect(
+            url_for("admin.external_craftsmen")
+        )
+
+    raw_token = create_invitation_token(
+        craftsman,
+        current_user.id,
+    )
+    db.session.commit()
+
+    try:
+        send_external_invitation_email(
+            craftsman,
+            raw_token,
+        )
+        craftsman.invited_at = utc_now()
+        audit(
+            "external_craftsman.invite",
+            "external_craftsman",
+            craftsman.id,
+        )
+        db.session.commit()
+        flash(
+            "Die Einladung wurde versendet.",
+            "success",
+        )
+    except Exception as exc:
+        current_app.logger.exception(
+            "external_craftsman_invitation_failed "
+            "craftsman_id=%s",
+            craftsman.id,
+        )
+        flash(
+            f"Die Einladung konnte nicht versendet werden: {exc}",
+            "danger",
+        )
+
+    return redirect(
+        url_for("admin.external_craftsmen")
+    )
+
+
+@admin_bp.post(
+    "/admin/external-craftsmen/"
+    "<int:craftsman_id>/disable"
+)
+@admin_required
+def external_craftsman_disable(
+    craftsman_id: int,
+) -> Any:
+    craftsman = db.get_or_404(
+        ExternalCraftsman,
+        craftsman_id,
+    )
+    now = utc_now()
+    craftsman.portal_enabled = False
+    craftsman.set_password(None)
+    craftsman.failed_login_count = 0
+    craftsman.locked_until = None
+
+    ExternalCraftsmanAccessToken.query.filter(
+        ExternalCraftsmanAccessToken.external_craftsman_id
+        == craftsman.id,
+        ExternalCraftsmanAccessToken.used_at.is_(None),
+    ).update(
+        {
+            ExternalCraftsmanAccessToken.used_at: now,
+        },
+        synchronize_session=False,
+    )
+
+    audit(
+        "external_craftsman.disable",
+        "external_craftsman",
+        craftsman.id,
+    )
+    db.session.commit()
+    flash(
+        "Der Portalzugang wurde gesperrt.",
+        "success",
+    )
+    return redirect(
+        url_for("admin.external_craftsmen")
     )

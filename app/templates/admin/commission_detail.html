@@ -444,7 +444,7 @@
 
       <dt class="col-md-3">Gemeldet von</dt>
       <dd class="col-md-9">
-        {{ item.completion_submitted_by.display_name if item.completion_submitted_by else "–" }}
+        {{ item.completion_submitted_by_name or "–" }}
       </dd>
 
       <dt class="col-md-3">Gemeldet am</dt>

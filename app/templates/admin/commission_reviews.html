@@ -136,7 +136,7 @@
             <td>{{ item.completion_reason or "" }}</td>
 
             <td>
-              {{ item.completion_submitted_by.display_name if item.completion_submitted_by else "" }}
+              {{ item.completion_submitted_by_name or "–" }}
             </td>
 
             <td

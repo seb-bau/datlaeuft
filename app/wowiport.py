@@ -29,6 +29,7 @@ from .models import (
     PushEventType,
     ErpOperationType,
     ErpOutboxOperation,
+    ExternalCraftsman,
 )
 from .settings import SettingKeys, settings
 from .utils import (
@@ -39,6 +40,9 @@ from .document_sync import sync_commission_documents
 from .push_service import enqueue_commission_push
 from .photo_service import commission_photo_path
 from .commission_priority import sync_commission_priority
+from .external_craftsman_service import (
+    sync_external_craftsmen_from_wowiport,
+)
 
 ERP_LOCAL_STATUS = {
     12: CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
@@ -2853,9 +2857,16 @@ def sync_commissions_from_wowiport_regular(
     )
     db.session.flush()
 
-    user_result = (
-        sync_users_from_wowiport(
-            service
+    craftsman_rows = (
+        service.get_craftsmen_for_user_sync()
+    )
+    user_result = sync_users_from_wowiport(
+        service,
+        craftsman_rows=craftsman_rows,
+    )
+    external_craftsman_result = (
+        sync_external_craftsmen_from_wowiport(
+            craftsman_rows
         )
     )
     db.session.flush()
@@ -2876,9 +2887,11 @@ def sync_commissions_from_wowiport_regular(
         current_business_year_range()
     )
 
-    craftsman_erp_ids = {
+    internal_craftsman_erp_ids = {
         int(row[0])
-        for row in db.session.query(User.craftsman_erp_id)
+        for row in db.session.query(
+            User.craftsman_erp_id
+        )
         .filter(
             User.is_active_flag.is_(True),
             User.craftsman_erp_id.isnot(None),
@@ -2886,6 +2899,22 @@ def sync_commissions_from_wowiport_regular(
         .distinct()
         .all()
     }
+    external_craftsman_erp_ids = {
+        int(row[0])
+        for row in db.session.query(
+            ExternalCraftsman.craftsman_erp_id
+        )
+        .filter(
+            ExternalCraftsman.portal_enabled.is_(True),
+            ExternalCraftsman.wowi_active.is_(True),
+        )
+        .distinct()
+        .all()
+    }
+    craftsman_erp_ids = (
+        internal_craftsman_erp_ids
+        | external_craftsman_erp_ids
+    )
 
     result = {
         "craftsmen": len(craftsman_erp_ids),
@@ -2950,6 +2979,14 @@ def sync_commissions_from_wowiport_regular(
             service_position_result
             .service_positions_deactivated
         ),
+        "external_craftsmen_seen":
+            external_craftsman_result.seen,
+        "external_craftsmen_created":
+            external_craftsman_result.created,
+        "external_craftsmen_updated":
+            external_craftsman_result.updated,
+        "external_craftsmen_deactivated":
+            external_craftsman_result.deactivated,
     }
 
     if not visible_status_ids or not allowed_type_ids:
@@ -3296,6 +3333,12 @@ def upsert_commission(
     erp_id = int(_read_first(payload, "id_", "id", "Id"))
     commission = Commission.query.filter_by(erp_id=erp_id).one_or_none()
 
+    previous_craftsman_erp_id = (
+        commission.craftsman_erp_id
+        if commission is not None
+        else None
+    )
+
     if commission is None:
         commission = Commission(
             erp_id=erp_id,
@@ -3385,6 +3428,14 @@ def upsert_commission(
         "code",
         "Code",
     )
+    if previous_craftsman_erp_id != craftsman_erp_id:
+        commission.external_assignment_version = (
+            int(
+                commission.external_assignment_version
+                or 0
+            )
+            + 1
+        )
     commission.craftsman_erp_id = craftsman_erp_id
     commission.user = user
     commission.damage_location = _read_first(

@@ -14,8 +14,10 @@ def audit(
     entity_type: str | None = None,
     entity_id: str | int | None = None,
     metadata: dict[str, Any] | None = None,
+    *,
+    actor_user_id: int | None = None,
+    actor_external_craftsman_id: int | None = None,
 ) -> None:
-    actor_user_id = None
     ip_address = None
     user_agent = None
 
@@ -27,25 +29,42 @@ def audit(
         user_agent = request.headers.get(
             "User-Agent"
         )
-
         api_user = getattr(
             g,
             "api_user",
             None,
         )
 
-        if api_user is not None:
-            actor_user_id = api_user.id
-        elif getattr(
-            current_user,
-            "is_authenticated",
-            False,
+        if (
+            actor_user_id is None
+            and actor_external_craftsman_id is None
         ):
-            actor_user_id = current_user.id
+            if api_user is not None:
+                actor_user_id = api_user.id
+            elif getattr(
+                current_user,
+                "is_authenticated",
+                False,
+            ):
+                actor_user_id = current_user.id
+            else:
+                external_craftsman = getattr(
+                    g,
+                    "external_craftsman",
+                    None,
+                )
+
+                if external_craftsman is not None:
+                    actor_external_craftsman_id = (
+                        external_craftsman.id
+                    )
 
     db.session.add(
         AuditLog(
             actor_user_id=actor_user_id,
+            actor_external_craftsman_id=(
+                actor_external_craftsman_id
+            ),
             action=action,
             entity_type=entity_type,
             entity_id=(

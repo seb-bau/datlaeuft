@@ -1,0 +1,26 @@
+{% extends "external_portal/base.html" %}
+{% block title %}Anmelden · WattNu Auftragnehmerportal{% endblock %}
+{% block content %}
+<div class="portal-auth-card card shadow-sm">
+  <div class="card-body p-4 p-md-5">
+    <h1 class="h3 mb-2">Anmelden</h1>
+    <p class="text-body-secondary mb-4">
+      Melden Sie sich mit dem Benutzernamen aus Ihrer Einladung an.
+    </p>
+    <form method="post" autocomplete="on">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label" for="username">Benutzername</label>
+        <input class="form-control form-control-lg" id="username" name="username" autocomplete="username" required autofocus>
+      </div>
+      <div class="mb-4">
+        <label class="form-label" for="password">Kennwort</label>
+        <input class="form-control form-control-lg" id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary btn-lg w-100" type="submit">
+        Anmelden
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

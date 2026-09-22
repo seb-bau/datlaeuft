@@ -32,6 +32,15 @@ def load_user(user_id: str) -> User | None:
     return db.session.get(User, int(user_id))
 
 
+def clear_external_craftsman_session() -> None:
+    session.pop("external_craftsman_id", None)
+    session.pop(
+        "external_craftsman_authenticated_at",
+        None,
+    )
+    session.pop("external_next", None)
+
+
 def admin_required(view: F) -> F:
     @wraps(view)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -172,6 +181,7 @@ def login() -> Any:
         user = User.query.filter_by(email=email).one_or_none()
         if user and user.check_password(password) and user.is_active:
             user.last_login_at = utc_now()
+            clear_external_craftsman_session()
             login_user(user)
             audit("auth.password_login", "user", user.id)
             db.session.commit()
@@ -230,6 +240,7 @@ def microsoft_callback() -> Any:
         flash("Der Microsoft-Benutzer ist nicht freigeschaltet.", "danger")
         return redirect(url_for("auth.login"))
     user.last_login_at = utc_now()
+    clear_external_craftsman_session()
     login_user(user)
     audit("auth.microsoft_login", "user", user.id, {"oid": user.entra_oid})
     db.session.commit()
@@ -322,6 +333,7 @@ def generic_oidc_callback() -> Any:
         return redirect(url_for("auth.login"))
 
     user.last_login_at = utc_now()
+    clear_external_craftsman_session()
     login_user(user)
     audit(
         "auth.generic_oidc_login",

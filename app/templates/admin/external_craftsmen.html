@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Externe Handwerker{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Externe Handwerker</h1>
+    <p class="text-muted mb-0">
+      Wählen Sie aus, welche Wowiport-Handwerker das Auftragnehmerportal verwenden dürfen.
+    </p>
+  </div>
+  <form method="post" action="{{ url_for('admin.external_craftsmen_sync') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-primary" type="submit">
+      <i class="bi bi-arrow-repeat me-1"></i>
+      Aus Wowiport aktualisieren
+    </button>
+  </form>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-striped datatable align-middle">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>E-Mail</th>
+            <th>Gewerke</th>
+            <th>Benutzername</th>
+            <th>Status</th>
+            <th data-filter="false"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td>
+              <strong>{{ item.display_name }}</strong>
+              <div class="small text-muted">
+                Wowiport-ID {{ item.craftsman_erp_id }}
+              </div>
+            </td>
+            <td>{{ item.email or "–" }}</td>
+            <td>
+              {% if item.craft_activities %}
+              <div class="d-flex flex-wrap gap-1">
+                {% for activity in item.craft_activities|sort(attribute="name") %}
+                <span class="badge text-bg-light border">
+                  {{ activity.name }}
+                </span>
+                {% endfor %}
+              </div>
+              {% else %}
+              <span class="text-muted">Keine Gewerke</span>
+              {% endif %}
+            </td>
+            <td>{{ item.username or "–" }}</td>
+            <td>
+              {% if item.craftsman_erp_id in internal_craftsman_erp_ids %}
+              <span class="badge text-bg-secondary">
+                Interner Benutzer
+              </span>
+              {% elif not item.wowi_active %}
+              <span class="badge text-bg-secondary">
+                Nicht mehr aktiv
+              </span>
+              {% elif item.portal_enabled and item.password_hash %}
+              <span class="badge text-bg-success">
+                Zugang aktiv
+              </span>
+              {% elif item.portal_enabled %}
+              <span class="badge text-bg-warning">
+                Einladung offen
+              </span>
+              {% else %}
+              <span class="badge text-bg-light border">
+                Nicht freigeschaltet
+              </span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <div class="d-flex flex-wrap justify-content-end gap-2">
+                {% if item.portal_enabled %}
+                <form method="post" action="{{ url_for('admin.external_craftsman_invite', craftsman_id=item.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button
+                    class="btn btn-sm btn-outline-primary"
+                    type="submit"
+                    {% if not item.email or not item.wowi_active %}disabled{% endif %}
+                  >
+                    Einladung erneut senden
+                  </button>
+                </form>
+                <form method="post" action="{{ url_for('admin.external_craftsman_disable', craftsman_id=item.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">
+                    Zugang sperren
+                  </button>
+                </form>
+                {% else %}
+                <form method="post" action="{{ url_for('admin.external_craftsman_enable', craftsman_id=item.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button
+                    class="btn btn-sm btn-primary"
+                    type="submit"
+                    {% if not item.email or not item.wowi_active or item.craftsman_erp_id in internal_craftsman_erp_ids %}disabled{% endif %}
+                  >
+                    Freischalten und einladen
+                  </button>
+                </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if not items %}
+    <div class="text-center text-muted py-4">
+      Noch keine Wowiport-Handwerker importiert.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

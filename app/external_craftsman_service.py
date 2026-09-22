@@ -1,0 +1,595 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
+from hashlib import sha256
+import secrets
+from typing import Any
+
+from flask import current_app
+from sqlalchemy import and_
+from sqlalchemy.exc import IntegrityError
+
+from .extensions import db
+from .mail_service import send_email
+from .models import (
+    Commission,
+    CommissionLocalStatus,
+    CraftActivity,
+    ExternalCommissionAssignmentMail,
+    ExternalCraftsman,
+    ExternalCraftsmanAccessToken,
+    utc_now,
+)
+from .settings import SettingKeys, settings
+from .user_sync import (
+    extract_craft_activity_ids,
+    extract_craftsman_display_name,
+    extract_craftsman_email,
+    extract_craftsman_erp_id,
+)
+
+
+@dataclass
+class ExternalCraftsmanSyncResult:
+    seen: int = 0
+    created: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    deactivated: int = 0
+    skipped: int = 0
+
+
+def sync_external_craftsmen_from_wowiport(
+    rows: list[Any],
+) -> ExternalCraftsmanSyncResult:
+    result = ExternalCraftsmanSyncResult()
+    now = utc_now()
+    seen_erp_ids: set[int] = set()
+    craft_activities_by_erp_id = {
+        activity.erp_id: activity
+        for activity in CraftActivity.query.filter(
+            CraftActivity.erp_id.is_not(None)
+        ).all()
+    }
+
+    for row in rows:
+        result.seen += 1
+        craftsman_erp_id = extract_craftsman_erp_id(
+            row
+        )
+
+        if craftsman_erp_id is None:
+            result.skipped += 1
+            continue
+
+        seen_erp_ids.add(craftsman_erp_id)
+        item = ExternalCraftsman.query.filter_by(
+            craftsman_erp_id=craftsman_erp_id
+        ).one_or_none()
+        created = item is None
+
+        if item is None:
+            item = ExternalCraftsman(
+                craftsman_erp_id=craftsman_erp_id,
+                display_name=(
+                    f"Handwerker {craftsman_erp_id}"
+                ),
+                wowi_active=True,
+            )
+            db.session.add(item)
+
+        previous_values = (
+            item.display_name,
+            item.email,
+            item.wowi_active,
+            frozenset(
+                activity.id
+                for activity in item.craft_activities
+            ),
+        )
+        email = extract_craftsman_email(row)
+        activity_ids = extract_craft_activity_ids(
+            row
+        )
+        item.display_name = (
+            extract_craftsman_display_name(
+                row,
+                email
+                or f"Handwerker {craftsman_erp_id}",
+            )
+        )
+        item.email = email
+        item.wowi_active = True
+        item.last_synced_at = now
+        item.craft_activities = [
+            craft_activities_by_erp_id[erp_id]
+            for erp_id in sorted(activity_ids)
+            if erp_id in craft_activities_by_erp_id
+        ]
+        current_values = (
+            item.display_name,
+            item.email,
+            item.wowi_active,
+            frozenset(
+                activity.id
+                for activity in item.craft_activities
+            ),
+        )
+
+        if created:
+            result.created += 1
+        elif previous_values != current_values:
+            result.updated += 1
+        else:
+            result.unchanged += 1
+
+    if seen_erp_ids:
+        missing_query = ExternalCraftsman.query.filter(
+            ExternalCraftsman.wowi_active.is_(True),
+            ExternalCraftsman.craftsman_erp_id.notin_(
+                seen_erp_ids
+            ),
+        )
+
+        for item in missing_query.all():
+            item.wowi_active = False
+            item.last_synced_at = now
+            result.deactivated += 1
+
+    return result
+
+
+def default_external_username(
+    craftsman: ExternalCraftsman,
+) -> str:
+    return f"handwerker-{craftsman.craftsman_erp_id}"
+
+
+def create_invitation_token(
+    craftsman: ExternalCraftsman,
+    created_by_user_id: int,
+) -> str:
+    now = utc_now()
+    ExternalCraftsmanAccessToken.query.filter(
+        ExternalCraftsmanAccessToken.external_craftsman_id
+        == craftsman.id,
+        ExternalCraftsmanAccessToken.purpose
+        == "invitation",
+        ExternalCraftsmanAccessToken.used_at.is_(None),
+    ).update(
+        {
+            ExternalCraftsmanAccessToken.used_at: now,
+        },
+        synchronize_session=False,
+    )
+
+    raw_token = secrets.token_urlsafe(32)
+    db.session.add(
+        ExternalCraftsmanAccessToken(
+            external_craftsman=craftsman,
+            created_by_user_id=created_by_user_id,
+            purpose="invitation",
+            token_hash=hash_external_token(raw_token),
+            expires_at=now + timedelta(hours=48),
+        )
+    )
+    return raw_token
+
+
+def hash_external_token(raw_token: str) -> str:
+    return sha256(
+        raw_token.encode("utf-8")
+    ).hexdigest()
+
+
+def external_token_is_current(
+    token: ExternalCraftsmanAccessToken,
+) -> bool:
+    return (
+        token.used_at is None
+        and as_utc(token.expires_at) > utc_now()
+        and token.purpose == "invitation"
+    )
+
+
+def as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(timezone.utc)
+
+
+def validate_external_password(
+    password: str,
+) -> str | None:
+    if len(password) < 12:
+        return (
+            "Das Kennwort muss mindestens 12 Zeichen "
+            "lang sein."
+        )
+
+    if len(password) > 128:
+        return (
+            "Das Kennwort darf höchstens 128 Zeichen "
+            "lang sein."
+        )
+
+    return None
+
+
+def external_mail_configuration(
+) -> tuple[str, str, int, str]:
+    public_base_url = settings.get(
+        SettingKeys.PUBLIC_BASE_URL
+    ).strip().rstrip("/")
+    smtp_host = settings.get(
+        SettingKeys.SMTP_HOST
+    ).strip()
+    smtp_port = settings.get(
+        SettingKeys.SMTP_PORT
+    )
+    smtp_sender = settings.get(
+        SettingKeys.SMTP_SENDER
+    ).strip()
+
+    if not public_base_url:
+        raise RuntimeError(
+            "Es ist keine öffentliche Basis-URL konfiguriert."
+        )
+
+    if not smtp_host or not smtp_sender:
+        raise RuntimeError(
+            "SMTP-Server oder Absenderadresse fehlen."
+        )
+
+    return (
+        public_base_url,
+        smtp_host,
+        smtp_port,
+        smtp_sender,
+    )
+
+
+def send_external_invitation_email(
+    craftsman: ExternalCraftsman,
+    raw_token: str,
+) -> None:
+    if not craftsman.email:
+        raise RuntimeError(
+            "Für den Handwerker ist keine E-Mail-Adresse hinterlegt."
+        )
+
+    (
+        public_base_url,
+        smtp_host,
+        smtp_port,
+        smtp_sender,
+    ) = external_mail_configuration()
+    invitation_url = (
+        f"{public_base_url}/auftragnehmer/einladung/"
+        f"{raw_token}"
+    )
+
+    message = EmailMessage()
+    message["From"] = smtp_sender
+    message["To"] = craftsman.email
+    message["Subject"] = (
+        "Einladung zum WattNu-Auftragnehmerportal"
+    )
+    message.set_content(
+        "\n".join(
+            (
+                f"Guten Tag {craftsman.display_name},",
+                "",
+                (
+                    "für Sie wurde ein Zugang zum "
+                    "WattNu-Auftragnehmerportal eingerichtet."
+                ),
+                "",
+                f"Benutzername: {craftsman.username}",
+                "",
+                (
+                    "Über den folgenden Link vergeben Sie "
+                    "Ihr persönliches Kennwort:"
+                ),
+                invitation_url,
+                "",
+                "Der Link ist 48 Stunden gültig.",
+            )
+        )
+    )
+    send_email(
+        message,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+    )
+
+
+def ensure_external_assignment_mails(
+    limit: int = 200,
+) -> int:
+    rows = (
+        db.session.query(
+            Commission,
+            ExternalCraftsman,
+        )
+        .join(
+            ExternalCraftsman,
+            ExternalCraftsman.craftsman_erp_id
+            == Commission.craftsman_erp_id,
+        )
+        .outerjoin(
+            ExternalCommissionAssignmentMail,
+            and_(
+                ExternalCommissionAssignmentMail.commission_id
+                == Commission.id,
+                ExternalCommissionAssignmentMail.assignment_version
+                == Commission.external_assignment_version,
+            ),
+        )
+        .filter(
+            ExternalCraftsman.portal_enabled.is_(True),
+            ExternalCraftsman.wowi_active.is_(True),
+            ExternalCraftsman.email.is_not(None),
+            Commission.deleted_at.is_(None),
+            Commission.local_status.in_(
+                (
+                    CommissionLocalStatus.OPEN.value,
+                    CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
+                    CommissionLocalStatus.IN_PROGRESS.value,
+                )
+            ),
+            ExternalCommissionAssignmentMail.id.is_(None),
+        )
+        .order_by(Commission.id.asc())
+        .limit(limit)
+        .all()
+    )
+
+    for commission, craftsman in rows:
+        db.session.add(
+            ExternalCommissionAssignmentMail(
+                commission=commission,
+                external_craftsman=craftsman,
+                assignment_version=(
+                    commission.external_assignment_version
+                ),
+                state="pending",
+                available_at=utc_now(),
+            )
+        )
+
+    return len(rows)
+
+
+def process_external_assignment_mail_batch(
+    limit: int = 20,
+) -> int:
+    now = utc_now()
+    ExternalCommissionAssignmentMail.query.filter(
+        ExternalCommissionAssignmentMail.state
+        == "sending",
+        ExternalCommissionAssignmentMail.locked_at
+        < now - timedelta(minutes=15),
+    ).update(
+        {
+            ExternalCommissionAssignmentMail.state:
+                "failed",
+            ExternalCommissionAssignmentMail.available_at:
+                now,
+            ExternalCommissionAssignmentMail.locked_at:
+                None,
+        },
+        synchronize_session=False,
+    )
+
+    try:
+        ensure_external_assignment_mails()
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+
+    processed = 0
+
+    while processed < limit:
+        mail_id = claim_external_assignment_mail()
+
+        if mail_id is None:
+            break
+
+        try:
+            execute_external_assignment_mail(mail_id)
+        except Exception as exc:
+            fail_external_assignment_mail(
+                mail_id,
+                exc,
+            )
+
+        processed += 1
+
+    return processed
+
+
+def claim_external_assignment_mail() -> int | None:
+    item = (
+        ExternalCommissionAssignmentMail.query
+        .filter(
+            ExternalCommissionAssignmentMail.state.in_(
+                ("pending", "failed")
+            ),
+            ExternalCommissionAssignmentMail.available_at
+            <= utc_now(),
+        )
+        .order_by(
+            ExternalCommissionAssignmentMail.available_at.asc(),
+            ExternalCommissionAssignmentMail.id.asc(),
+        )
+        .with_for_update(skip_locked=True)
+        .first()
+    )
+
+    if item is None:
+        db.session.rollback()
+        return None
+
+    item.state = "sending"
+    item.locked_at = utc_now()
+    item.attempt_count += 1
+    item_id = item.id
+    db.session.commit()
+    return item_id
+
+
+def execute_external_assignment_mail(
+    mail_id: int,
+) -> None:
+    item = db.session.get(
+        ExternalCommissionAssignmentMail,
+        mail_id,
+    )
+
+    if item is None:
+        return
+
+    commission = item.commission
+    craftsman = item.external_craftsman
+    assignment_is_current = (
+        commission.craftsman_erp_id
+        == craftsman.craftsman_erp_id
+        and commission.external_assignment_version
+        == item.assignment_version
+    )
+    access_is_current = (
+        craftsman.portal_enabled
+        and craftsman.wowi_active
+        and bool(craftsman.email)
+    )
+
+    if not assignment_is_current or not access_is_current:
+        item.state = "discarded"
+        item.locked_at = None
+        item.last_error = None
+        db.session.commit()
+        return
+
+    send_external_assignment_email(item)
+    item.state = "sent"
+    item.sent_at = utc_now()
+    item.locked_at = None
+    item.last_error = None
+    db.session.commit()
+
+
+def fail_external_assignment_mail(
+    mail_id: int,
+    error: Exception,
+) -> None:
+    db.session.rollback()
+    item = db.session.get(
+        ExternalCommissionAssignmentMail,
+        mail_id,
+    )
+
+    if item is None:
+        return
+
+    delay_seconds = min(
+        60 * (2 ** max(item.attempt_count - 1, 0)),
+        3600,
+    )
+    item.state = "failed"
+    item.available_at = (
+        utc_now()
+        + timedelta(seconds=delay_seconds)
+    )
+    item.locked_at = None
+    item.last_error = str(error)[:4000]
+    db.session.commit()
+
+    current_app.logger.exception(
+        "external_assignment_email_failed mail_id=%s",
+        mail_id,
+    )
+
+
+def send_external_assignment_email(
+    item: ExternalCommissionAssignmentMail,
+) -> None:
+    commission = item.commission
+    craftsman = item.external_craftsman
+    (
+        public_base_url,
+        smtp_host,
+        smtp_port,
+        smtp_sender,
+    ) = external_mail_configuration()
+    commission_url = (
+        f"{public_base_url}/auftragnehmer/auftraege/"
+        f"{commission.public_id}"
+    )
+    order_number = (
+        commission.erp_idnum
+        or commission.code
+        or str(commission.id)
+    )
+    position_lines = [
+        (
+            f"{index}. {position.display_text}"
+            f" · Menge {position.units:g}"
+        )
+        for index, position in enumerate(
+            commission.positions,
+            start=1,
+        )
+    ]
+
+    message = EmailMessage()
+    message["From"] = smtp_sender
+    message["To"] = craftsman.email
+    message["Subject"] = (
+        f"Neuer Auftrag: {order_number}"
+    )
+    message.set_content(
+        "\n".join(
+            (
+                f"Guten Tag {craftsman.display_name},",
+                "",
+                "Ihnen wurde ein Auftrag zugewiesen.",
+                "",
+                f"Auftrag: {order_number}",
+                f"Titel: {commission.display_title}",
+                (
+                    "Beschreibung: "
+                    f"{commission.description or '-'}"
+                ),
+                (
+                    "Schadensort: "
+                    f"{commission.damage_location or '-'}"
+                ),
+                (
+                    "Adresse: "
+                    f"{commission.apartment_address or '-'}"
+                ),
+                (
+                    "Lage: "
+                    f"{commission.apartment_location or '-'}"
+                ),
+                "",
+                "Leistungspositionen:",
+                *(
+                    position_lines
+                    or ["Keine Leistungspositionen vorhanden"]
+                ),
+                "",
+                "Auftrag im Portal öffnen:",
+                commission_url,
+            )
+        )
+    )
+    send_email(
+        message,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+    )

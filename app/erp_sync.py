@@ -38,6 +38,10 @@ from .process_info_service import (
 )
 from .ticket_service import sync_ticket_mirror
 
+from .external_craftsman_service import (
+    process_external_assignment_mail_batch,
+)
+
 
 def enqueue_erp_operation(
     commission: Commission,
@@ -161,12 +165,17 @@ def process_due_work(
     process_info_count = (
         process_process_info_work()
     )
+    external_assignment_email_count = (
+        process_external_assignment_mail_batch()
+    )
     push_count = process_push_batch(push_limit)
     return {
         "webhooks": webhook_count,
         "outbox": outbox_count,
         "process_infos": process_info_count,
         "push": push_count,
+        "external_assignment_emails":
+            external_assignment_email_count,
     }
 
 
@@ -528,7 +537,6 @@ def fail_outbox_operation(
             )
             photo.erp_sync_message = message
 
-
     operation.state = ErpOutboxState.FAILED.value
     operation.available_at = utc_now() + timedelta(seconds=delay_seconds)
     operation.locked_at = None
@@ -775,5 +783,6 @@ def run_worker(
                 and result["outbox"] == 0
                 and result["process_infos"] == 0
                 and result["push"] == 0
+                and result["external_assignment_emails"] == 0
         ):
             sleep(poll_seconds)
