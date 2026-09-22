@@ -49,6 +49,7 @@ from .models import (
     CommissionAttachment,
     InventoryItemGroup,
     InventoryItemType,
+    WorkTimeProfile,
 )
 from .offer_service import (
     sync_offer_from_commission,
@@ -60,6 +61,9 @@ from .appointment_service import (
 from .photo_service import (
     commission_photo_path,
     store_commission_photo,
+)
+from .work_time_service import (
+    work_time_day_row,
 )
 from .inventory_service import (
     book_inventory_movement,
@@ -2678,6 +2682,159 @@ def time_tasks_search() -> Any:
     return jsonify({"items": [serialize_time_task(item) for item in items]})
 
 
+@api_bp.get("/my-time")
+@jwt_required()
+def my_time() -> Any:
+    user = current_api_user()
+    selected_date = api_date_value(
+        request.args.get(
+            "date",
+            date.today().isoformat(),
+        ),
+        "Das ausgewählte Datum ist ungültig.",
+    )
+    day_row = work_time_day_row(
+        user,
+        selected_date,
+    )
+    entries = (
+        TimeEntry.query
+        .filter_by(
+            user_id=user.id,
+            service_date=selected_date,
+        )
+        .order_by(
+            TimeEntry.created_at.desc(),
+            TimeEntry.id.desc(),
+        )
+        .all()
+    )
+    is_future = selected_date > date.today()
+
+    return jsonify({
+        "date": selected_date.isoformat(),
+        "expected_minutes": day_row[
+            "expected_minutes"
+        ],
+        "recorded_minutes": day_row[
+            "recorded_minutes"
+        ],
+        "difference_minutes": (
+            None
+            if is_future
+            else day_row["difference_minutes"]
+        ),
+        "status": (
+            "not_evaluated"
+            if is_future
+            else day_row["status"]
+        ),
+        "profile": (
+            serialize_work_time_profile(
+                day_row["profile"]
+            )
+            if day_row["profile"] is not None
+            else None
+        ),
+        "target_override": (
+            {
+                "target_minutes": (
+                    day_row["override"].target_minutes
+                ),
+                "reason": day_row["override"].reason,
+            }
+            if day_row["override"] is not None
+            else None
+        ),
+        "items": [
+            serialize_time_entry(
+                item,
+                viewer=user,
+            )
+            for item in entries
+        ],
+    })
+
+
+@api_bp.get("/free-time-tasks")
+@jwt_required()
+def free_time_tasks() -> Any:
+    current_api_user()
+    items = (
+        TimeTaskTemplate.query
+        .filter(
+            TimeTaskTemplate.active.is_(True),
+            TimeTaskTemplate
+            .free_time_enabled
+            .is_(True),
+        )
+        .order_by(
+            TimeTaskTemplate.title.asc(),
+            TimeTaskTemplate.code.asc(),
+        )
+        .all()
+    )
+
+    return jsonify({
+        "items": [
+            serialize_time_task(item)
+            for item in items
+        ]
+    })
+
+
+@api_bp.post("/my-time/free")
+@jwt_required()
+def add_free_time_entry() -> Any:
+    user = current_api_user()
+    values = free_time_values_from_payload(
+        request.get_json(silent=True) or {}
+    )
+    entry = TimeEntry(
+        commission=None,
+        user=user,
+        task_template=values["task"],
+        service_date=values["service_date"],
+        minutes=values["minutes"],
+        work_minutes=values["minutes"],
+        waiting_minutes=0,
+        material_minutes=0,
+        travel_minutes=0,
+        documentation_minutes=0,
+        extra_minutes=0,
+        note=values["note"],
+        deviation_minutes=0,
+        deviation_percent=0,
+        review_status=TimeReviewStatus.OK.value,
+        review_level=ReviewLevel.GREEN.value,
+    )
+    db.session.add(entry)
+    db.session.flush()
+
+    audit(
+        "time.free.create",
+        "time_entry",
+        entry.id,
+        {
+            "task_template_id": (
+                entry.task_template_id
+            ),
+            "service_date": (
+                entry.service_date.isoformat()
+            ),
+            "minutes": entry.minutes,
+        },
+    )
+    db.session.commit()
+
+    return jsonify({
+        "item": serialize_time_entry(
+            entry,
+            viewer=user,
+        )
+    }), 201
+
+
 @api_bp.get("/commissions/<int:commission_id>/time")
 @jwt_required()
 def commission_time_entries(commission_id: int) -> Any:
@@ -3177,6 +3334,94 @@ def time_entry_values_from_payload(data: dict[str, Any], user: User) -> dict[str
         "deviation_reason": data.get("deviation_reason"),
         "note": data.get("note"),
         "service_date": service_date,
+    }
+
+
+def api_date_value(
+    raw_value: Any,
+    error_message: str,
+) -> date:
+    try:
+        return date.fromisoformat(
+            str(raw_value or "").strip()
+        )
+    except ValueError:
+        abort(
+            400,
+            description=error_message,
+        )
+
+
+def free_time_values_from_payload(
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        task_template_id = int(
+            data.get("task_template_id")
+        )
+        minutes = int(data.get("minutes"))
+    except (TypeError, ValueError):
+        abort(
+            400,
+            description=(
+                "Leistungsposition und Minuten "
+                "müssen angegeben werden."
+            ),
+        )
+
+    task = (
+        TimeTaskTemplate.query
+        .filter(
+            TimeTaskTemplate.id
+            == task_template_id,
+            TimeTaskTemplate.active.is_(True),
+            TimeTaskTemplate
+            .free_time_enabled
+            .is_(True),
+        )
+        .one_or_none()
+    )
+
+    if task is None:
+        abort(
+            400,
+            description=(
+                "Die Leistungsposition ist nicht für "
+                "freie Zeiten freigegeben."
+            ),
+        )
+
+    if not 1 <= minutes <= 1440:
+        abort(
+            400,
+            description=(
+                "Die Zeit muss zwischen 1 und 1440 "
+                "Minuten liegen."
+            ),
+        )
+
+    service_date = api_date_value(
+        data.get("service_date"),
+        "Das Leistungsdatum ist ungültig.",
+    )
+    note = str(
+        data.get("note") or ""
+    ).strip()
+
+    return {
+        "task": task,
+        "service_date": service_date,
+        "minutes": minutes,
+        "note": note or None,
+    }
+
+
+def serialize_work_time_profile(
+    item: WorkTimeProfile,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "name": item.name,
     }
 
 
@@ -3844,6 +4089,7 @@ def serialize_time_task(
             for material in item.expected_materials
         ],
         "review_when_shorter": item.review_when_shorter,
+        "free_time_enabled": item.free_time_enabled,
     }
 
 
@@ -3884,21 +4130,62 @@ def serialize_craft_activity(item: CraftActivity) -> dict[str, Any]:
     }
 
 
-def serialize_time_entry(item: TimeEntry, viewer: User | None = None) -> dict[str, Any]:
+def serialize_time_entry(
+    item: TimeEntry,
+    viewer: User | None = None,
+) -> dict[str, Any]:
     can_edit = False
+
     if viewer is not None:
-        can_edit = can_edit_commission(item.commission, viewer) and can_edit_time_entry(item, viewer)
+        can_edit = (
+            can_edit_time_entry(item, viewer)
+            and (
+                item.commission is None
+                or can_edit_commission(
+                    item.commission,
+                    viewer,
+                )
+            )
+        )
+
+    commission = item.commission
+
     return {
         "id": item.id,
         "commission_id": item.commission_id,
+        "commission": (
+            {
+                "id": commission.id,
+                "number": str(
+                    commission.erp_idnum
+                    or commission.code
+                    or commission.id
+                ),
+                "title": (
+                    commission.title
+                    or "Auftrag"
+                ),
+            }
+            if commission is not None
+            else None
+        ),
+        "is_free_time": commission is None,
         "user": serialize_user(item.user),
-        "task_template": serialize_time_task(item.task_template) if item.task_template else None,
+        "task_template": (
+            serialize_time_task(
+                item.task_template
+            )
+            if item.task_template
+            else None
+        ),
         "minutes": item.minutes,
         "work_minutes": item.work_minutes,
         "waiting_minutes": item.waiting_minutes,
         "material_minutes": item.material_minutes,
         "travel_minutes": item.travel_minutes,
-        "documentation_minutes": item.documentation_minutes,
+        "documentation_minutes": (
+            item.documentation_minutes
+        ),
         "extra_minutes": item.extra_minutes,
         "deviation_reason": item.deviation_reason,
         "note": item.note,
@@ -3906,9 +4193,7 @@ def serialize_time_entry(item: TimeEntry, viewer: User | None = None) -> dict[st
         "deviation_percent": item.deviation_percent,
         "review_status": item.review_status,
         "review_level": item.review_level,
-        "service_date": (
-            item.service_date.isoformat()
-        ),
+        "service_date": item.service_date.isoformat(),
         "created_at": iso_datetime(item.created_at),
         "can_edit": can_edit,
     }

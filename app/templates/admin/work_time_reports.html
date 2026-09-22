@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% macro duration(minutes) -%}
+  {% if minutes is none %}
+    –
+  {% else %}
+    {{ "%d:%02d"|format((minutes|abs) // 60, (minutes|abs) % 60) }} Std.
+  {% endif %}
+{%- endmacro %}
+{% block title %}Arbeitszeitauswertung{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Arbeitszeitauswertung</h1>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Zeitraum</label>
+        <select class="form-select" name="period">
+          <option value="day" {% if period == 'day' %}selected{% endif %}>Tag</option>
+          <option value="week" {% if period == 'week' %}selected{% endif %}>Woche</option>
+          <option value="month" {% if period == 'month' %}selected{% endif %}>Monat</option>
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">Bezugsdatum</label>
+        <input
+          class="form-control"
+          type="date"
+          name="anchor"
+          value="{{ anchor_date.isoformat() }}"
+        >
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Handwerker</label>
+        <select class="form-select" name="user_id">
+          <option value="">Alle Handwerker</option>
+          {% for user in user_choices %}
+          <option
+            value="{{ user.id }}"
+            {% if selected_user_id == user.id|string %}selected{% endif %}
+          >
+            {{ user.display_name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-primary" type="submit">
+          Auswerten
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="alert alert-light border mb-4">
+  Zeitraum:
+  {{ period_start.strftime('%d.%m.%Y') }}
+  bis {{ period_end.strftime('%d.%m.%Y') }}.
+  {% if evaluation_end < period_end and evaluation_end >= period_start %}
+  Das SOLL wird nur bis einschließlich
+  {{ evaluation_end.strftime('%d.%m.%Y') }}
+  berücksichtigt.
+  {% elif evaluation_end < period_start %}
+  Der Zeitraum liegt in der Zukunft und wird noch nicht bewertet.
+  {% endif %}
+</div>
+
+{% for row in rows %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <strong>{{ row.user.display_name }}</strong>
+
+    {% if row.status == 'not_evaluated' %}
+    <span class="badge text-bg-secondary">Noch nicht bewertet</span>
+    {% elif row.status == 'complete' %}
+    <span class="badge text-bg-success">SOLL erfüllt</span>
+    {% elif row.status == 'missing_profile' %}
+    <span class="badge text-bg-warning">Profil unvollständig</span>
+    {% else %}
+    <span class="badge text-bg-danger">Stunden fehlen</span>
+    {% endif %}
+  </div>
+
+  <div class="card-body">
+    <div class="row g-3 mb-4">
+      <div class="col-md-4">
+        <div class="border rounded p-3">
+          <div class="text-muted small">SOLL</div>
+          <div class="fs-4 fw-semibold">
+            {{ duration(row.expected_minutes) }}
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="border rounded p-3">
+          <div class="text-muted small">Erfasst</div>
+          <div class="fs-4 fw-semibold">
+            {{ duration(row.recorded_minutes) }}
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="border rounded p-3">
+          <div class="text-muted small">Differenz</div>
+          <div class="fs-4 fw-semibold">
+            {% if row.difference_minutes is none %}
+              –
+            {% else %}
+              {{ '+' if row.difference_minutes >= 0 else '−' }}
+              {{ duration(row.difference_minutes) }}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if row.missing_profile_days %}
+    <div class="alert alert-warning">
+      Für {{ row.missing_profile_days }} ausgewertete Tage
+      ist kein Arbeitszeitprofil hinterlegt.
+    </div>
+    {% endif %}
+
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Tag</th>
+            <th>Profil</th>
+            <th>SOLL</th>
+            <th>Erfasst</th>
+            <th>Differenz</th>
+            <th>Status</th>
+            <th>Abweichung</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for day in row.days %}
+          <tr>
+            <td>{{ day.date.strftime('%d.%m.%Y') }}</td>
+            <td>
+              {{ day.profile.name if day.profile else 'Kein Profil' }}
+              {% if day.override %}
+              <div class="small text-primary">
+                {{ day.override.reason }}
+              </div>
+              {% endif %}
+            </td>
+            <td>{{ duration(day.expected_minutes) }}</td>
+            <td>{{ duration(day.recorded_minutes) }}</td>
+            <td>
+              {% if day.difference_minutes is not none %}
+                {{ '+' if day.difference_minutes >= 0 else '−' }}
+                {{ duration(day.difference_minutes) }}
+              {% else %}
+                –
+              {% endif %}
+            </td>
+            <td>
+              {% if day.status == 'complete' %}
+              <span class="badge text-bg-success">Erfüllt</span>
+              {% elif day.status == 'missing_profile' %}
+              <span class="badge text-bg-warning">Kein Profil</span>
+              {% else %}
+              <span class="badge text-bg-danger">Offen</span>
+              {% endif %}
+            </td>
+            <td style="min-width: 310px;">
+              <form
+                method="post"
+                action="{{ url_for('admin.work_time_override_save') }}"
+                class="row g-2"
+              >
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="user_id" value="{{ row.user.id }}">
+                <input type="hidden" name="work_date" value="{{ day.date.isoformat() }}">
+                <input type="hidden" name="period" value="{{ period }}">
+                <input type="hidden" name="anchor" value="{{ anchor_date.isoformat() }}">
+                <input type="hidden" name="report_user_id" value="{{ selected_user_id }}">
+
+                <div class="col-4">
+                  <input
+                    class="form-control form-control-sm"
+                    type="number"
+                    min="0"
+                    max="1440"
+                    step="15"
+                    name="target_minutes"
+                    value="{{ day.override.target_minutes if day.override else '' }}"
+                    placeholder="Minuten"
+                    aria-label="Abweichende SOLL-Minuten"
+                  >
+                </div>
+                <div class="col">
+                  <input
+                    class="form-control form-control-sm"
+                    name="reason"
+                    value="{{ day.override.reason if day.override else '' }}"
+                    placeholder="Grund, z. B. Urlaub"
+                    aria-label="Grund"
+                  >
+                </div>
+                <div class="col-auto">
+                  <button
+                    class="btn btn-sm btn-outline-primary"
+                    type="submit"
+                    name="action"
+                    value="save"
+                    title="Abweichung speichern"
+                  >
+                    <i class="bi bi-check-lg" aria-hidden="true"></i>
+                  </button>
+                  {% if day.override %}
+                  <button
+                    class="btn btn-sm btn-outline-danger"
+                    type="submit"
+                    name="action"
+                    value="delete"
+                    title="Abweichung entfernen"
+                  >
+                    <i class="bi bi-trash" aria-hidden="true"></i>
+                  </button>
+                  {% endif %}
+                </div>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7" class="text-center text-muted py-4">
+              Für diesen zukünftigen Zeitraum liegt noch keine Bewertung vor.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+  Keine Handwerker für die Auswertung gefunden.
+</div>
+{% endfor %}
+{% endblock %}

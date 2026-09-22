@@ -489,6 +489,9 @@ def performance_review_rows() -> list[dict]:
             db.session.query(
                 TimeEntry.commission_id
             )
+            .filter(
+                TimeEntry.commission_id.isnot(None)
+            )
             .distinct()
             .all()
         )

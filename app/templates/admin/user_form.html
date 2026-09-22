@@ -22,7 +22,72 @@
       <input class="form-control" type="number" name="craftsman_erp_id" value="{{ item.craftsman_erp_id or '' }}">
     </div>
 
-        <div class="col-md-6">
+    <div class="col-md-6">
+      <label class="form-label">Arbeitszeitprofil</label>
+      <select
+        class="form-select"
+        name="work_time_profile_id"
+        {% if item.craftsman_erp_id %}required{% endif %}
+      >
+        <option value="">Kein Arbeitszeitprofil</option>
+        {% for profile in work_time_profiles %}
+        <option
+          value="{{ profile.id }}"
+          {% if current_work_time_assignment and current_work_time_assignment.profile_id == profile.id %}selected{% endif %}
+        >
+          {{ profile.name }}{% if not profile.active %} · inaktiv{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+      <div class="form-text">
+        Für Benutzer mit ERP-Handwerker-ID ist ein Profil erforderlich.
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">Profil gültig ab</label>
+      <input
+        class="form-control"
+        type="date"
+        name="work_time_profile_effective_from"
+        value="{{ work_time_effective_date }}"
+      >
+      <div class="form-text">
+        Änderungen werden historisiert und verändern frühere Auswertungen nicht.
+      </div>
+    </div>
+
+    {% if work_time_assignments %}
+    <div class="col-12">
+      <details>
+        <summary class="fw-semibold">
+          Bisherige Profilzuordnungen
+        </summary>
+        <div class="table-responsive mt-3">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>Gültig ab</th>
+                <th>Profil</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for assignment in work_time_assignments %}
+              <tr>
+                <td>
+                  {{ assignment.effective_from.strftime('%d.%m.%Y') }}
+                </td>
+                <td>{{ assignment.profile.name }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+    {% endif %}
+
+    <div class="col-md-6">
       <label class="form-label">ERP-Personen-ID</label>
       <input class="form-control" value="{{ item.person_erp_id or '' }}" readonly>
     </div>

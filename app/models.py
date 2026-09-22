@@ -489,6 +489,22 @@ class User(UserMixin, db.Model):
     inventory_movements: Mapped[list["InventoryMovement"]] = relationship(back_populates="user",
                                                                           foreign_keys="InventoryMovement.user_id")
     time_entries: Mapped[list["TimeEntry"]] = relationship(back_populates="user", foreign_keys="TimeEntry.user_id")
+    work_time_profile_assignments: Mapped[
+        list["UserWorkTimeProfileAssignment"]
+    ] = relationship(
+        foreign_keys=(
+            "UserWorkTimeProfileAssignment.user_id"
+        ),
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    work_time_target_overrides: Mapped[
+        list["WorkTimeTargetOverride"]
+    ] = relationship(
+        foreign_keys="WorkTimeTargetOverride.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     craft_activities: Mapped[list["CraftActivity"]] = relationship(
         "CraftActivity",
         secondary=user_craft_activity,
@@ -520,6 +536,214 @@ class User(UserMixin, db.Model):
         if not self.password_hash:
             return False
         return check_password_hash(self.password_hash, password)
+
+
+class WorkTimeProfile(db.Model):
+    __tablename__ = "work_time_profile"
+    __table_args__ = (
+        db.CheckConstraint(
+            "monday_minutes BETWEEN 0 AND 1440 "
+            "AND tuesday_minutes BETWEEN 0 AND 1440 "
+            "AND wednesday_minutes BETWEEN 0 AND 1440 "
+            "AND thursday_minutes BETWEEN 0 AND 1440 "
+            "AND friday_minutes BETWEEN 0 AND 1440 "
+            "AND saturday_minutes BETWEEN 0 AND 1440 "
+            "AND sunday_minutes BETWEEN 0 AND 1440",
+            name="ck_work_time_profile_daily_minutes",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(
+        db.String(255),
+        unique=True,
+        nullable=False,
+    )
+    monday_minutes: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    tuesday_minutes: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    wednesday_minutes: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    thursday_minutes: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    friday_minutes: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    saturday_minutes: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    sunday_minutes: Mapped[int] = mapped_column(
+        db.Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    assignments: Mapped[
+        list["UserWorkTimeProfileAssignment"]
+    ] = relationship(back_populates="profile")
+
+    def minutes_for_weekday(
+        self,
+        weekday: int,
+    ) -> int:
+        return (
+            self.monday_minutes,
+            self.tuesday_minutes,
+            self.wednesday_minutes,
+            self.thursday_minutes,
+            self.friday_minutes,
+            self.saturday_minutes,
+            self.sunday_minutes,
+        )[weekday]
+
+    @property
+    def weekly_minutes(self) -> int:
+        return sum(
+            self.minutes_for_weekday(weekday)
+            for weekday in range(7)
+        )
+
+
+class UserWorkTimeProfileAssignment(db.Model):
+    __tablename__ = (
+        "user_work_time_profile_assignment"
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "effective_from",
+            name=(
+                "uq_user_work_time_profile_"
+                "assignment_date"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    profile_id: Mapped[int] = mapped_column(
+        db.ForeignKey("work_time_profile.id"),
+        nullable=False,
+        index=True,
+    )
+    effective_from: Mapped[date] = mapped_column(
+        db.Date,
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+        )
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship(
+        foreign_keys=[user_id],
+        back_populates="work_time_profile_assignments",
+    )
+    profile: Mapped[WorkTimeProfile] = relationship(
+        back_populates="assignments"
+    )
+    created_by: Mapped[User | None] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
+
+
+class WorkTimeTargetOverride(db.Model):
+    __tablename__ = "work_time_target_override"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "work_date",
+            name="uq_work_time_target_override_user_date",
+        ),
+        db.CheckConstraint(
+            "target_minutes BETWEEN 0 AND 1440",
+            name="ck_work_time_target_override_minutes",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("user_account.id"),
+        nullable=False,
+        index=True,
+    )
+    work_date: Mapped[date] = mapped_column(
+        db.Date,
+        nullable=False,
+        index=True,
+    )
+    target_minutes: Mapped[int] = mapped_column(
+        db.Integer,
+        nullable=False,
+    )
+    reason: Mapped[str] = mapped_column(
+        db.String(255),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[int | None] = (
+        mapped_column(
+            db.ForeignKey("user_account.id"),
+        )
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship(
+        foreign_keys=[user_id],
+        back_populates="work_time_target_overrides",
+    )
+    created_by: Mapped[User | None] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
 
 
 class UserJurisdictionPersonMapping(db.Model):
@@ -2636,6 +2860,12 @@ class TimeTaskTemplate(db.Model):
         server_default=false(),
         nullable=False,
     )
+    free_time_enabled: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
     craft_activity_id: Mapped[int | None] = mapped_column(db.ForeignKey("craft_activity.id"), index=True)
     erp_service_catalogue_id: Mapped[int | None] = mapped_column(db.Integer, unique=True, index=True)
     erp_idnum: Mapped[str | None] = mapped_column(db.String(120), index=True)
@@ -2728,7 +2958,11 @@ class TimeEntry(db.Model):
     __tablename__ = "time_entry"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    commission_id: Mapped[int] = mapped_column(db.ForeignKey("commission.id"), nullable=False, index=True)
+    commission_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("commission.id"),
+        nullable=True,
+        index=True,
+    )
     user_id: Mapped[int] = mapped_column(db.ForeignKey("user_account.id"), nullable=False, index=True)
     task_template_id: Mapped[int | None] = mapped_column(db.ForeignKey("time_task_template.id"), index=True)
     started_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
@@ -2758,7 +2992,9 @@ class TimeEntry(db.Model):
     reviewed_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
-    commission: Mapped[Commission] = relationship(back_populates="time_entries")
+    commission: Mapped[Commission | None] = relationship(
+        back_populates="time_entries"
+    )
     user: Mapped[User] = relationship(foreign_keys=[user_id], back_populates="time_entries")
     task_template: Mapped[TimeTaskTemplate | None] = relationship()
     reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_user_id])

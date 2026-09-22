@@ -42,6 +42,7 @@
     or request.path.startswith('/admin/tickets')
     or request.path.startswith('/admin/invoices')
     or request.path.startswith('/admin/performance-reviews')
+    or request.path.startswith('/admin/work-time-reports')
   ) %}
   {% set is_safety_section = request.path.startswith('/admin/safety-inspections') %}
   {% set is_inventory_section = (
@@ -62,6 +63,7 @@
     or request.path.startswith('/admin/inventory-classifications')
     or request.path.startswith('/admin/time-templates')
     or request.path.startswith('/admin/appointment-windows')
+    or request.path.startswith('/admin/work-time-profiles')
   ) %}
 
   {% set current_section_label = 'Dashboard' %}
@@ -180,6 +182,13 @@
                   'Zeit- und Materialprüfung',
                   'clipboard-check',
                   request.path.startswith('/admin/performance-reviews')
+                ) }}
+
+              {{ sidebar_link(
+                  'admin.work_time_reports',
+                  'Arbeitszeiten',
+                  'clock-history',
+                  request.path.startswith('/admin/work-time-reports')
                 ) }}
 
                 {{ sidebar_link(
@@ -348,6 +357,13 @@
                   'Benutzer',
                   'people',
                   request.path.startswith('/admin/users')
+                ) }}
+
+              {{ sidebar_link(
+                  'admin.work_time_profiles',
+                  'Arbeitszeitprofile',
+                  'calendar-week',
+                  request.path.startswith('/admin/work-time-profiles')
                 ) }}
 
                 {{ sidebar_link(

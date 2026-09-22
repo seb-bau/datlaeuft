@@ -116,12 +116,20 @@ from .models import (
     TicketAiAssignmentRule,
     InventoryItemGroup,
     InventoryItemType,
+    UserWorkTimeProfileAssignment,
+    WorkTimeProfile,
+    WorkTimeTargetOverride,
 )
 from .ticket_service import (
     analyze_ticket_mirror,
     ticket_license_agreement_local_id,
     mark_ticket_analyses_stale,
     ticket_analysis_input_hash,
+)
+from .work_time_service import (
+    current_work_time_assignment,
+    work_time_period_bounds,
+    work_time_rows,
 )
 from .offer_archive import (
     OfferArchiveError,
@@ -206,6 +214,17 @@ from .performance_review_service import (
 )
 
 admin_bp = Blueprint("admin", __name__)
+
+WORK_TIME_WEEKDAYS = (
+    ("monday", "Montag"),
+    ("tuesday", "Dienstag"),
+    ("wednesday", "Mittwoch"),
+    ("thursday", "Donnerstag"),
+    ("friday", "Freitag"),
+    ("saturday", "Samstag"),
+    ("sunday", "Sonntag"),
+)
+
 INVOICE_TIME_TYPES = (
     {
         "key": "work_minutes",
@@ -2560,25 +2579,46 @@ def user_create() -> Any:
     )
 
     if request.method == "POST":
-        db.session.add(item)
-        save_user_form(item)
-        save_user_craft_activities(item)
-        db.session.flush()
-        audit("user.create", "user", item.id)
-        db.session.commit()
-        flash("Benutzer gespeichert.", "success")
-        return redirect(
-            url_for(
-                "admin.user_edit",
-                user_id=item.id,
+        try:
+            db.session.add(item)
+            save_user_form(item)
+            save_user_craft_activities(item)
+            db.session.flush()
+            save_user_work_time_profile_assignment(item)
+            db.session.flush()
+            audit("user.create", "user", item.id)
+            db.session.commit()
+        except (ValueError, IntegrityError) as exc:
+            db.session.rollback()
+            flash(
+                (
+                    str(exc)
+                    if isinstance(exc, ValueError)
+                    else (
+                        "Der Benutzer konnte nicht "
+                        "gespeichert werden."
+                    )
+                ),
+                "danger",
             )
-        )
+        else:
+            flash(
+                "Benutzer gespeichert.",
+                "success",
+            )
+            return redirect(
+                url_for(
+                    "admin.user_edit",
+                    user_id=item.id,
+                )
+            )
 
     return render_template(
         "admin/user_form.html",
         item=item,
         craft_activities=craft_activities,
         selected_craft_activities=[],
+        **user_work_time_profile_context(item),
     )
 
 
@@ -2605,6 +2645,8 @@ def user_edit(user_id: int) -> Any:
         try:
             save_user_form(item)
             save_user_craft_activities(item)
+            db.session.flush()
+            save_user_work_time_profile_assignment(item)
             mapping_ids = (
                 save_user_jurisdiction_person_mappings(
                     item
@@ -2696,6 +2738,7 @@ def user_edit(user_id: int) -> Any:
         selected_jurisdiction_person_ids=(
             selected_jurisdiction_person_ids
         ),
+        **user_work_time_profile_context(item),
     )
 
 
@@ -7300,6 +7343,310 @@ def inventory_qr(item_id: int) -> Response:
     return Response(buffer.getvalue(), mimetype="image/png")
 
 
+@admin_bp.route(
+    "/admin/work-time-profiles",
+    methods=["GET", "POST"],
+)
+@admin_required
+def work_time_profiles() -> Any:
+    raw_item_id = request.values.get(
+        "profile_id",
+        "",
+    ).strip()
+    item = (
+        db.get_or_404(
+            WorkTimeProfile,
+            int(raw_item_id),
+        )
+        if raw_item_id.isdigit()
+        else WorkTimeProfile()
+    )
+
+    if request.method == "POST":
+        try:
+            save_work_time_profile_form(item)
+
+            if item.id is None:
+                db.session.add(item)
+
+            db.session.flush()
+            audit(
+                (
+                    "work_time_profile.update"
+                    if raw_item_id
+                    else "work_time_profile.create"
+                ),
+                "work_time_profile",
+                item.id,
+            )
+            db.session.commit()
+        except (ValueError, IntegrityError) as exc:
+            db.session.rollback()
+            flash(
+                (
+                    str(exc)
+                    if isinstance(exc, ValueError)
+                    else (
+                        "Ein Arbeitszeitprofil mit "
+                        "diesem Namen existiert bereits."
+                    )
+                ),
+                "danger",
+            )
+        else:
+            flash(
+                "Arbeitszeitprofil gespeichert.",
+                "success",
+            )
+            return redirect(
+                url_for(
+                    "admin.work_time_profiles"
+                )
+            )
+
+    items = (
+        WorkTimeProfile.query
+        .order_by(
+            WorkTimeProfile.active.desc(),
+            WorkTimeProfile.name.asc(),
+        )
+        .all()
+    )
+
+    return render_template(
+        "admin/work_time_profiles.html",
+        item=item,
+        items=items,
+        weekdays=WORK_TIME_WEEKDAYS,
+    )
+
+
+@admin_bp.get("/admin/work-time-reports")
+@foreman_required
+def work_time_reports() -> Any:
+    period = request.args.get(
+        "period",
+        "day",
+    ).strip()
+
+    if period not in {
+        "day",
+        "week",
+        "month",
+    }:
+        period = "day"
+
+    anchor_text = request.args.get(
+        "anchor",
+        date.today().isoformat(),
+    ).strip()
+
+    try:
+        anchor_date = date.fromisoformat(
+            anchor_text
+        )
+    except ValueError:
+        anchor_date = date.today()
+
+    selected_user_id = request.args.get(
+        "user_id",
+        "",
+    ).strip()
+    user_choices = (
+        User.query
+        .filter(
+            User.is_active_flag.is_(True),
+            User.craftsman_erp_id.isnot(None),
+        )
+        .order_by(User.display_name.asc())
+        .all()
+    )
+    selected_users = user_choices
+
+    if selected_user_id.isdigit():
+        selected_users = [
+            item
+            for item in user_choices
+            if item.id == int(selected_user_id)
+        ]
+
+    period_start, period_end = (
+        work_time_period_bounds(
+            period,
+            anchor_date,
+        )
+    )
+    evaluation_end = min(
+        period_end,
+        date.today(),
+    )
+    rows = work_time_rows(
+        selected_users,
+        period_start,
+        evaluation_end,
+    )
+
+    return render_template(
+        "admin/work_time_reports.html",
+        rows=rows,
+        user_choices=user_choices,
+        selected_user_id=selected_user_id,
+        period=period,
+        anchor_date=anchor_date,
+        period_start=period_start,
+        period_end=period_end,
+        evaluation_end=evaluation_end,
+    )
+
+
+@admin_bp.post("/admin/work-time-overrides")
+@foreman_required
+def work_time_override_save() -> Any:
+    raw_user_id = request.form.get(
+        "user_id",
+        "",
+    ).strip()
+
+    if not raw_user_id.isdigit():
+        abort(400)
+
+    user = db.get_or_404(
+        User,
+        int(raw_user_id),
+    )
+
+    if user.craftsman_erp_id is None:
+        abort(400)
+
+    try:
+        work_date = date.fromisoformat(
+            request.form.get(
+                "work_date",
+                "",
+            ).strip()
+        )
+    except ValueError:
+        flash(
+            "Das Datum ist ungültig.",
+            "danger",
+        )
+        return redirect_work_time_report()
+
+    item = (
+        WorkTimeTargetOverride.query
+        .filter_by(
+            user_id=user.id,
+            work_date=work_date,
+        )
+        .one_or_none()
+    )
+    action = request.form.get(
+        "action",
+        "save",
+    )
+
+    if action == "delete":
+        if item is not None:
+            audit(
+                "work_time_override.delete",
+                "work_time_target_override",
+                item.id,
+            )
+            db.session.delete(item)
+            db.session.commit()
+
+        flash(
+            "Tagesabweichung entfernt.",
+            "success",
+        )
+        return redirect_work_time_report()
+
+    raw_target_minutes = request.form.get(
+        "target_minutes",
+        "",
+    ).strip()
+    reason = request.form.get(
+        "reason",
+        "",
+    ).strip()
+
+    try:
+        target_minutes = int(
+            raw_target_minutes
+        )
+    except ValueError:
+        flash(
+            "Die abweichende SOLL-Zeit ist ungültig.",
+            "danger",
+        )
+        return redirect_work_time_report()
+
+    if not 0 <= target_minutes <= 1440:
+        flash(
+            "Die SOLL-Zeit muss zwischen 0 und "
+            "1440 Minuten liegen.",
+            "danger",
+        )
+        return redirect_work_time_report()
+
+    if not reason:
+        flash(
+            "Bitte einen Grund für die Abweichung angeben.",
+            "danger",
+        )
+        return redirect_work_time_report()
+
+    if item is None:
+        item = WorkTimeTargetOverride(
+            user=user,
+            work_date=work_date,
+        )
+        db.session.add(item)
+
+    item.target_minutes = target_minutes
+    item.reason = reason
+    item.created_by_user_id = current_user.id
+    db.session.flush()
+
+    audit(
+        "work_time_override.save",
+        "work_time_target_override",
+        item.id,
+        {
+            "user_id": user.id,
+            "work_date": work_date.isoformat(),
+            "target_minutes": target_minutes,
+        },
+    )
+    db.session.commit()
+
+    flash(
+        "Tagesabweichung gespeichert.",
+        "success",
+    )
+    return redirect_work_time_report()
+
+
+def redirect_work_time_report() -> Any:
+    return redirect(
+        url_for(
+            "admin.work_time_reports",
+            period=request.form.get(
+                "period",
+                "day",
+            ),
+            anchor=request.form.get(
+                "anchor",
+                date.today().isoformat(),
+            ),
+            user_id=request.form.get(
+                "report_user_id",
+                "",
+            ),
+        )
+    )
+
+
 @admin_bp.route("/admin/time-templates", methods=["GET", "POST"])
 @foreman_required
 def time_templates() -> Any:
@@ -7702,6 +8049,207 @@ def service_catalog_sync() -> Any:
     return redirect(
         url_for("admin.time_templates")
     )
+
+
+def save_work_time_profile_form(
+    item: WorkTimeProfile,
+) -> None:
+    name = request.form.get(
+        "name",
+        "",
+    ).strip()
+
+    if not name:
+        raise ValueError(
+            "Bitte einen Namen für das Profil angeben."
+        )
+
+    item.name = name
+    item.active = "active" in request.form
+
+    for field_name, label in WORK_TIME_WEEKDAYS:
+        setattr(
+            item,
+            f"{field_name}_minutes",
+            parse_work_time_value(
+                request.form.get(
+                    f"{field_name}_time",
+                    "00:00",
+                ),
+                label,
+            ),
+        )
+
+
+def parse_work_time_value(
+    raw_value: str,
+    label: str,
+) -> int:
+    parts = raw_value.strip().split(":")
+
+    if len(parts) != 2:
+        raise ValueError(
+            f"Die SOLL-Zeit für {label} ist ungültig."
+        )
+
+    try:
+        hours = int(parts[0])
+        minutes = int(parts[1])
+    except ValueError as exc:
+        raise ValueError(
+            f"Die SOLL-Zeit für {label} ist ungültig."
+        ) from exc
+
+    total_minutes = hours * 60 + minutes
+
+    if (
+        hours < 0
+        or minutes < 0
+        or minutes > 59
+        or total_minutes > 1440
+    ):
+        raise ValueError(
+            f"Die SOLL-Zeit für {label} ist ungültig."
+        )
+
+    return total_minutes
+
+
+def save_user_work_time_profile_assignment(
+    item: User,
+) -> None:
+    if item.craftsman_erp_id is None:
+        return
+
+    raw_profile_id = request.form.get(
+        "work_time_profile_id",
+        "",
+    ).strip()
+
+    if not raw_profile_id.isdigit():
+        raise ValueError(
+            "Für einen Handwerker muss ein "
+            "Arbeitszeitprofil ausgewählt werden."
+        )
+
+    profile = db.session.get(
+        WorkTimeProfile,
+        int(raw_profile_id),
+    )
+
+    if profile is None:
+        raise ValueError(
+            "Das ausgewählte Arbeitszeitprofil ist "
+            "nicht verfügbar."
+        )
+
+    try:
+        effective_from = date.fromisoformat(
+            request.form.get(
+                "work_time_profile_effective_from",
+                date.today().isoformat(),
+            )
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Das Startdatum des Arbeitszeitprofils "
+            "ist ungültig."
+        ) from exc
+
+    exact_assignment = (
+        UserWorkTimeProfileAssignment.query
+        .filter_by(
+            user_id=item.id,
+            effective_from=effective_from,
+        )
+        .one_or_none()
+    )
+    existing_assignment = (
+        current_work_time_assignment(
+            item.id,
+            effective_from,
+        )
+    )
+
+    if (
+        existing_assignment is not None
+        and existing_assignment.profile_id
+        == profile.id
+    ):
+        return
+
+    if (
+        exact_assignment is not None
+        and exact_assignment.profile_id
+        == profile.id
+    ):
+        return
+
+    if not profile.active:
+        raise ValueError(
+            "Das ausgewählte Arbeitszeitprofil ist "
+            "nicht aktiv."
+        )
+
+    if exact_assignment is not None:
+        exact_assignment.profile = profile
+        exact_assignment.created_by_user_id = (
+            current_user.id
+        )
+        return
+
+    db.session.add(
+        UserWorkTimeProfileAssignment(
+            user=item,
+            profile=profile,
+            effective_from=effective_from,
+            created_by_user_id=current_user.id,
+        )
+    )
+
+
+def user_work_time_profile_context(
+    item: User,
+) -> dict[str, Any]:
+    assignments = []
+    current_assignment = None
+
+    if item.id is not None:
+        assignments = (
+            UserWorkTimeProfileAssignment.query
+            .filter_by(user_id=item.id)
+            .order_by(
+                UserWorkTimeProfileAssignment
+                .effective_from
+                .desc(),
+                UserWorkTimeProfileAssignment.id.desc(),
+            )
+            .all()
+        )
+        current_assignment = (
+            current_work_time_assignment(
+                item.id,
+                date.today(),
+            )
+        )
+
+    return {
+        "work_time_profiles": (
+            WorkTimeProfile.query
+            .order_by(
+                WorkTimeProfile.active.desc(),
+                WorkTimeProfile.name.asc(),
+            )
+            .all()
+        ),
+        "current_work_time_assignment": (
+            current_assignment
+        ),
+        "work_time_assignments": assignments,
+        "work_time_effective_date": (
+            date.today().isoformat()
+        ),
+    }
 
 
 def save_user_form(item: User) -> None:
@@ -9012,6 +9560,10 @@ def save_time_template_form(item: TimeTaskTemplate) -> None:
             in request.form
     )
     item.active = "active" in request.form
+    item.free_time_enabled = (
+        "free_time_enabled"
+        in request.form
+    )
 
     raw_craft_activity_id = request.form.get("craft_activity_id", "").strip()
     item.craft_activity_id = int(raw_craft_activity_id) if raw_craft_activity_id else None
