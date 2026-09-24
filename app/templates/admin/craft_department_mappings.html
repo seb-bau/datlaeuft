@@ -33,6 +33,8 @@
 {% if not departments %}
 <div class="alert alert-warning">
   Es sind noch keine Wowiport-Abteilungen synchronisiert.
+  Interne Gewerke können noch nicht zugeordnet werden.
+  Externe Standardvergaben können trotzdem gespeichert werden.
 </div>
 {% endif %}
 
@@ -125,7 +127,6 @@
     <button
       class="btn btn-primary"
       type="submit"
-      {% if not departments %}disabled{% endif %}
     >
       Zuordnungen speichern
     </button>

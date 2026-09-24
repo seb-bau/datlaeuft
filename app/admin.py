@@ -3599,23 +3599,20 @@ def commission_create() -> Any:
                 }
             ]
 
+            available_craftsman_user_ids = {
+                user.id
+                for user in craftsman_users
+            }
+
             if (
                 source_ticket.ai_state
                 == TicketAiState.READY.value
                 and source_ticket.ai_assigned_user_id
-                in {
-                    user.id
-                    for user in craftsman_users
-                }
+                in available_craftsman_user_ids
             ):
                 form_values["craftsman_user_id"] = (
                     source_ticket.ai_assigned_user_id
                 )
-
-            if (
-                    source_ticket.ai_assignment_mode
-                    == TicketAiAssignmentMode.FORCE.value
-            ):
                 form_values["assignment_type"] = (
                     CommissionAssignmentType
                     .INTERNAL.value
@@ -3762,13 +3759,15 @@ def commission_create() -> Any:
             selected_object = None
 
         if (
-            form_data.get(
-                "assignment_type",
-                "internal",
-            ) == "internal"
-            and source_ticket is not None
-            and source_ticket.ai_assignment_mode
-            == TicketAiAssignmentMode.FORCE.value
+                form_data.get(
+                    "assignment_type",
+                    "internal",
+                ) == "internal"
+                and source_ticket is not None
+                and source_ticket.ai_assignment_mode
+                == TicketAiAssignmentMode.FORCE.value
+                and source_ticket.ai_assigned_user_id
+                is not None
         ):
             if (
                     source_ticket.ai_state
@@ -3782,15 +3781,6 @@ def commission_create() -> Any:
                     "Die verbindliche KI-Zuweisung "
                     "ist veraltet. Das Ticket muss "
                     "erneut analysiert werden."
-                )
-
-            if (
-                    source_ticket.ai_assigned_user_id
-                    is None
-            ):
-                raise ValueError(
-                    "Die verbindliche KI-Zuweisung "
-                    "enthält keinen Handwerker."
                 )
 
             form_data["craftsman_user_id"] = (
