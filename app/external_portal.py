@@ -50,13 +50,18 @@ from .models import (
     CommissionPhoto,
     ExternalCraftsman,
     ExternalCraftsmanAccessToken,
+    ProcessInfo,
     utc_now,
 )
 from .photo_service import commission_photo_path
 from .process_info_service import (
+    create_external_outgoing_info,
     send_commission_status_email,
+    sync_process_infos,
+    write_outgoing_info,
 )
 from .wowiport import WowiportService
+from uuid import uuid4
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -535,6 +540,8 @@ def commission_detail(public_id: str) -> Any:
         public_id
     )
     contact_items: list[dict[str, Any]] = []
+    infos: list[ProcessInfo] = []
+    info_sync_error = None
 
     if commission.erp_id is not None:
         try:
@@ -550,6 +557,46 @@ def commission_detail(public_id: str) -> Any:
                 "commission_id=%s",
                 commission.id,
             )
+
+    if (
+        commission.crafts_process_erp_id
+        is not None
+    ):
+        try:
+            sync_process_infos(
+                commission.crafts_process_erp_id,
+                notify=True,
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            info_sync_error = (
+                "Die Zusatzinformationen konnten "
+                "momentan nicht aktualisiert werden."
+            )
+            current_app.logger.exception(
+                "external_process_info_sync_failed "
+                "commission_id=%s process_erp_id=%s",
+                commission.id,
+                commission.crafts_process_erp_id,
+            )
+
+        infos = (
+            ProcessInfo.query
+            .filter(
+                ProcessInfo.process_erp_id
+                == commission.crafts_process_erp_id,
+                ProcessInfo.state != "deleted",
+            )
+            .order_by(
+                ProcessInfo.erp_date
+                .is_(None)
+                .asc(),
+                ProcessInfo.erp_date.asc(),
+                ProcessInfo.created_at.asc(),
+            )
+            .all()
+        )
 
     attachments = (
         CommissionAttachment.query
@@ -573,6 +620,174 @@ def commission_detail(public_id: str) -> Any:
         photos=external_commission_photos(
             commission
         ),
+        infos=infos,
+        info_sync_error=info_sync_error,
+        info_request_id=str(uuid4()),
+    )
+
+
+@external_portal_bp.post(
+    "/auftraege/<string:public_id>/informationen"
+)
+@external_craftsman_required
+def commission_info_create(
+    public_id: str,
+) -> Any:
+    craftsman = current_external_craftsman()
+    commission = external_commission_or_404(
+        public_id
+    )
+    ensure_external_assignment(
+        commission,
+        craftsman,
+    )
+
+    try:
+        info = create_external_outgoing_info(
+            commission=commission,
+            external_craftsman=craftsman,
+            request_id=str(
+                request.form.get(
+                    "request_id"
+                )
+                or ""
+            ),
+            body=str(
+                request.form.get("body")
+                or ""
+            ),
+        )
+
+        if info.state != "synced":
+            info = write_outgoing_info(
+                info.id
+            )
+
+        audit(
+            "external.process_info.create",
+            "process_info",
+            info.id,
+            {
+                "commission_id": commission.id,
+                "process_erp_id": (
+                    info.process_erp_id
+                ),
+            },
+            actor_external_craftsman_id=(
+                craftsman.id
+            ),
+        )
+        db.session.commit()
+        flash(
+            "Die Zusatzinformation wurde übermittelt.",
+            "success",
+        )
+
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "external_process_info_create_failed "
+            "commission_id=%s",
+            commission.id,
+        )
+        flash(
+            "Die Zusatzinformation konnte nicht "
+            "übertragen werden. Sie können die "
+            "Übertragung erneut versuchen.",
+            "danger",
+        )
+
+    target_url = url_for(
+        "external_portal.commission_detail",
+        public_id=public_id,
+    )
+
+    return redirect(
+        f"{target_url}#zusatzinformationen"
+    )
+
+
+@external_portal_bp.post(
+    "/auftraege/<string:public_id>/"
+    "informationen/<string:info_id>/erneut-senden"
+)
+@external_craftsman_required
+def commission_info_retry(
+    public_id: str,
+    info_id: str,
+) -> Any:
+    craftsman = current_external_craftsman()
+    commission = external_commission_or_404(
+        public_id
+    )
+    ensure_external_assignment(
+        commission,
+        craftsman,
+    )
+
+    info = ProcessInfo.query.filter(
+        ProcessInfo.id == info_id,
+        ProcessInfo.process_erp_id
+        == commission.crafts_process_erp_id,
+        ProcessInfo.sender_external_craftsman_id
+        == craftsman.id,
+        ProcessInfo.state != "deleted",
+    ).one_or_none()
+
+    if info is None:
+        abort(404)
+
+    try:
+        if info.state != "synced":
+            write_outgoing_info(
+                info.id
+            )
+
+        audit(
+            "external.process_info.retry",
+            "process_info",
+            info.id,
+            {
+                "commission_id": commission.id,
+                "process_erp_id": (
+                    info.process_erp_id
+                ),
+            },
+            actor_external_craftsman_id=(
+                craftsman.id
+            ),
+        )
+        db.session.commit()
+        flash(
+            "Die Zusatzinformation wurde übermittelt.",
+            "success",
+        )
+
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "external_process_info_retry_failed "
+            "commission_id=%s info_id=%s",
+            commission.id,
+            info.id,
+        )
+        flash(
+            "Die Zusatzinformation konnte erneut "
+            "nicht übertragen werden.",
+            "danger",
+        )
+
+    target_url = url_for(
+        "external_portal.commission_detail",
+        public_id=public_id,
+    )
+
+    return redirect(
+        f"{target_url}#zusatzinformationen"
     )
 
 

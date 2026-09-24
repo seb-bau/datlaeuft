@@ -16,6 +16,7 @@ from .models import (
     Commission,
     CommissionLocalStatus,
     CommissionSource,
+    ExternalCraftsman,
     ProcessInfo,
     ProcessInfoRead,
     ProcessInfoThread,
@@ -113,6 +114,62 @@ def process_users(
         if user.id not in seen:
             result.append((user, commission))
             seen.add(user.id)
+
+    return result
+
+
+def process_external_craftsmen(
+    process_erp_id: int,
+) -> list[
+    tuple[ExternalCraftsman, Commission]
+]:
+    rows = (
+        db.session.query(
+            ExternalCraftsman,
+            Commission,
+        )
+        .join(
+            Commission,
+            Commission.craftsman_erp_id
+            == ExternalCraftsman.craftsman_erp_id,
+        )
+        .filter(
+            Commission.crafts_process_erp_id
+            == process_erp_id,
+            Commission.deleted_at.is_(None),
+            Commission.local_status
+            != CommissionLocalStatus.DELETED.value,
+            ExternalCraftsman.portal_enabled.is_(True),
+            ExternalCraftsman.wowi_active.is_(True),
+            ExternalCraftsman.email.is_not(None),
+        )
+        .order_by(
+            ExternalCraftsman.id.asc(),
+            Commission.id.asc(),
+        )
+        .all()
+    )
+
+    result: list[
+        tuple[ExternalCraftsman, Commission]
+    ] = []
+    seen: set[int] = set()
+
+    for craftsman, commission in rows:
+        email = str(
+            craftsman.email or ""
+        ).strip()
+
+        if craftsman.id in seen or not email:
+            continue
+
+        result.append(
+            (
+                craftsman,
+                commission,
+            )
+        )
+        seen.add(craftsman.id)
 
     return result
 
@@ -303,6 +360,13 @@ def sync_process_infos(
     recipients = process_users(
         process_erp_id
     )
+    external_recipients = (
+        process_external_craftsmen(
+            process_erp_id
+        )
+        if should_notify
+        else []
+    )
 
     if should_notify:
         from .push_service import (
@@ -311,10 +375,17 @@ def sync_process_infos(
 
         for item in changed_items:
             if (
-                item.direction
-                != OFFICE_DIRECTION
+                    item.direction
+                    != OFFICE_DIRECTION
             ):
                 continue
+
+            if external_recipients:
+                item.mail_state = "pending"
+                item.mail_attempt_count = 0
+                item.mail_available_at = utc_now()
+                item.mail_recipients = None
+                item.last_error = None
 
             for user, commission in recipients:
                 enqueue_process_info_push(
@@ -328,8 +399,8 @@ def sync_process_infos(
     else:
         for item in changed_items:
             if (
-                item.direction
-                != OFFICE_DIRECTION
+                    item.direction
+                    != OFFICE_DIRECTION
             ):
                 continue
 
@@ -348,6 +419,59 @@ def create_outgoing_info(
     request_id: str,
     body: str,
 ) -> ProcessInfo:
+    return _create_outgoing_info(
+        commission=commission,
+        request_id=request_id,
+        body=body,
+        sender_user_id=user.id,
+        sender_external_craftsman_id=None,
+        author_name=user.display_name,
+        origin_name="WattNu",
+    )
+
+
+def create_external_outgoing_info(
+    commission: Commission,
+    external_craftsman: ExternalCraftsman,
+    request_id: str,
+    body: str,
+) -> ProcessInfo:
+    if (
+        commission.craftsman_erp_id
+        != external_craftsman.craftsman_erp_id
+    ):
+        raise ValueError(
+            "Der Auftrag ist diesem "
+            "Handwerker nicht zugeordnet."
+        )
+
+    return _create_outgoing_info(
+        commission=commission,
+        request_id=request_id,
+        body=body,
+        sender_user_id=None,
+        sender_external_craftsman_id=(
+            external_craftsman.id
+        ),
+        author_name=(
+            external_craftsman.display_name
+        ),
+        origin_name=(
+            "WattNu-Auftragnehmerportal"
+        ),
+    )
+
+
+def _create_outgoing_info(
+    commission: Commission,
+    request_id: str,
+    body: str,
+    *,
+    sender_user_id: int | None,
+    sender_external_craftsman_id: int | None,
+    author_name: str,
+    origin_name: str,
+) -> ProcessInfo:
     process_erp_id = (
         commission.crafts_process_erp_id
     )
@@ -356,6 +480,15 @@ def create_outgoing_info(
         raise ValueError(
             "Der Auftrag ist keinem "
             "Wowiport-Vorgang zugeordnet."
+        )
+
+    if (
+        sender_user_id is None
+    ) == (
+        sender_external_craftsman_id is None
+    ):
+        raise ValueError(
+            "Der Absender ist nicht eindeutig."
         )
 
     normalized_id = normalize_request_id(
@@ -375,7 +508,12 @@ def create_outgoing_info(
             existing.process_erp_id
             != process_erp_id
             or existing.sender_user_id
-            != user.id
+            != sender_user_id
+            or (
+                existing
+                .sender_external_craftsman_id
+                != sender_external_craftsman_id
+            )
             or existing.body
             != normalized_body
         ):
@@ -387,18 +525,21 @@ def create_outgoing_info(
         return existing
 
     erp_body = (
-        f"{user.display_name} (WattNu):\n"
+        f"{author_name} ({origin_name}):\n"
         f"{normalized_body}"
     )
 
     item = ProcessInfo(
         id=normalized_id,
         process_erp_id=process_erp_id,
-        sender_user_id=user.id,
+        sender_user_id=sender_user_id,
+        sender_external_craftsman_id=(
+            sender_external_craftsman_id
+        ),
         direction=CRAFTSMAN_DIRECTION,
         body=normalized_body,
         erp_body=erp_body,
-        author_name=user.display_name,
+        author_name=author_name,
         state="pending",
         mail_state="not_required",
     )
@@ -887,8 +1028,12 @@ def process_one_info_email() -> int:
 
     item = (
         ProcessInfo.query.filter(
-            ProcessInfo.direction
-            == CRAFTSMAN_DIRECTION,
+            ProcessInfo.direction.in_(
+                (
+                    CRAFTSMAN_DIRECTION,
+                    OFFICE_DIRECTION,
+                )
+            ),
             ProcessInfo.state == "synced",
             ProcessInfo.mail_state.in_(
                 ("pending", "failed")
@@ -919,23 +1064,56 @@ def process_one_info_email() -> int:
 
     db.session.commit()
 
+    recipients: list[str] = []
+
     try:
-        recipients = (
-            _responsible_official_emails(
-                item.process_erp_id
-            )
-        )
-
-        if not recipients:
-            raise RuntimeError(
-                "Für den Vorgang wurde "
-                "keine E-Mail-Adresse gefunden."
+        if (
+            item.direction
+            == CRAFTSMAN_DIRECTION
+        ):
+            recipients = (
+                _responsible_official_emails(
+                    item.process_erp_id
+                )
             )
 
-        _send_process_info_email(
-            item,
-            recipients,
-        )
+            if not recipients:
+                raise RuntimeError(
+                    "Für den Vorgang wurde "
+                    "keine E-Mail-Adresse gefunden."
+                )
+
+            _send_process_info_email(
+                item,
+                recipients,
+            )
+        else:
+            external_recipients = (
+                process_external_craftsmen(
+                    item.process_erp_id
+                )
+            )
+
+            if not external_recipients:
+                item.mail_state = "not_required"
+                item.mail_recipients = []
+                item.mail_available_at = None
+                item.last_error = None
+                item.updated_at = utc_now()
+                db.session.commit()
+                return 1
+
+            for craftsman, commission in (
+                external_recipients
+            ):
+                _send_external_process_info_email(
+                    info=item,
+                    craftsman=craftsman,
+                    commission=commission,
+                )
+                recipients.append(
+                    str(craftsman.email).strip()
+                )
 
     except Exception as exc:
         db.session.rollback()
@@ -974,7 +1152,9 @@ def process_one_info_email() -> int:
         return 1
 
     item.mail_state = "sent"
-    item.mail_recipients = recipients
+    item.mail_recipients = sorted(
+        set(recipients)
+    )
     item.mail_available_at = None
     item.last_error = None
     item.updated_at = utc_now()
@@ -1289,6 +1469,103 @@ def _send_process_info_email(
                 ),
                 "",
                 info.body,
+            )
+        )
+    )
+
+    send_email(
+        message,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+    )
+
+
+def _send_external_process_info_email(
+    info: ProcessInfo,
+    craftsman: ExternalCraftsman,
+    commission: Commission,
+) -> None:
+    from .external_craftsman_service import (
+        external_mail_configuration,
+    )
+
+    email = str(
+        craftsman.email or ""
+    ).strip()
+
+    if not email:
+        raise RuntimeError(
+            "Für den externen Handwerker ist "
+            "keine E-Mail-Adresse hinterlegt."
+        )
+
+    Address(addr_spec=email)
+
+    (
+        public_base_url,
+        smtp_host,
+        smtp_port,
+        smtp_sender,
+    ) = external_mail_configuration()
+
+    commission_url = (
+        f"{public_base_url}/auftragnehmer/"
+        f"auftraege/{commission.public_id}"
+    )
+    order_number = (
+        commission.erp_idnum
+        or commission.code
+        or str(commission.id)
+    )
+
+    message = EmailMessage()
+    message["From"] = smtp_sender
+    message["To"] = email
+    message["Subject"] = (
+        "Neue Zusatzinformation zu Auftrag "
+        f"{order_number}"
+    )
+
+    sender_domain = (
+        smtp_sender.rsplit("@", 1)[1]
+        if "@" in smtp_sender
+        else "datlaeuft.local"
+    )
+    message["Message-ID"] = (
+        f"<external-process-info-{info.id}-"
+        f"{craftsman.id}@{sender_domain}>"
+    )
+
+    message.set_content(
+        "\n".join(
+            (
+                (
+                    f"Guten Tag "
+                    f"{craftsman.display_name},"
+                ),
+                "",
+                (
+                    "zu Ihrem Auftrag wurde eine "
+                    "neue Zusatzinformation erfasst."
+                ),
+                "",
+                f"Auftrag: {order_number}",
+                (
+                    "Titel: "
+                    f"{commission.display_title}"
+                ),
+                (
+                    "Absender: "
+                    f"{info.author_name or 'Sachbearbeitung'}"
+                ),
+                "",
+                info.body,
+                "",
+                (
+                    "Den vollständigen Verlauf "
+                    "finden Sie hier:"
+                ),
+                commission_url,
             )
         )
     )

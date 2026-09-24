@@ -1861,6 +1861,15 @@ class ProcessInfo(db.Model):
         db.ForeignKey("user_account.id"),
         index=True,
     )
+    sender_external_craftsman_id: Mapped[
+        int | None
+    ] = mapped_column(
+        db.ForeignKey(
+            "external_craftsman.id",
+            ondelete="SET NULL",
+        ),
+        index=True,
+    )
     direction: Mapped[str] = mapped_column(
         db.String(20),
         nullable=False,
@@ -1930,8 +1939,14 @@ class ProcessInfo(db.Model):
         onupdate=utc_now,
         nullable=False,
     )
-
     sender_user: Mapped[User | None] = relationship()
+    sender_external_craftsman: Mapped[
+        ExternalCraftsman | None
+    ] = relationship(
+        foreign_keys=[
+            sender_external_craftsman_id
+        ]
+    )
 
 
 class ProcessInfoRead(db.Model):
