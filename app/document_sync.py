@@ -14,6 +14,7 @@ from .models import (
     CommissionAttachment,
     CommissionPhoto,
     CommissionSyncState,
+    CommissionTicketLink,
     utc_now,
 )
 from .settings import SettingKeys, settings
@@ -105,20 +106,41 @@ def _ticket_sources(
     commission: Commission,
     service: WowiportService,
 ) -> tuple[list[tuple[str, int]], bool]:
+    local_ticket_ids = (
+        CommissionTicketLink.query
+        .with_entities(
+            CommissionTicketLink.ticket_erp_id
+        )
+        .filter(
+            CommissionTicketLink.commission_id
+            == commission.id
+        )
+        .all()
+    )
+
+    sources = [
+        (
+            "Ticket",
+            int(ticket_erp_id),
+        )
+        for ticket_erp_id, in local_ticket_ids
+    ]
+
     if commission.erp_id is None:
-        return [], True
+        return list(dict.fromkeys(sources)), True
 
     try:
         rows = service.get_commission_ticket_rows(
             commission.erp_id
         )
     except Exception as exc:
+        if sources:
+            return list(dict.fromkeys(sources)), False
+
         raise RuntimeError(
             "Die Ticket-Zuordnungen konnten nicht "
             f"gelesen werden: {exc}"
         ) from exc
-
-    sources: list[tuple[str, int]] = []
 
     for row in rows:
         ticket_id = _integer(
