@@ -49,6 +49,24 @@ ERP_LOCAL_STATUS = {
     11: CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
 }
 
+CRAFTS_PROCESS_SHORT_DESCRIPTION_MAX_LENGTH = 100
+
+
+def _crafts_process_short_description(
+    commission: Commission,
+) -> str:
+    value = str(
+        commission.title
+        or commission.description
+        or "Auftrag aus DatLäuft"
+    ).strip()
+
+    return (
+        value
+        or "Auftrag aus DatLäuft"
+    )[:CRAFTS_PROCESS_SHORT_DESCRIPTION_MAX_LENGTH]
+
+
 ERP_OPERATION_STATUS = {
     ErpOperationType.ACCEPT_COMMISSION.value: (7, "Accepted"),
     ErpOperationType.REFUSE_COMMISSION.value: (10, "Canceled"),
@@ -1406,10 +1424,10 @@ class WowiportService:
             or getattr(commission, "license_agreement_id", None),
         )
         short_description = (
-                commission.title
-                or commission.description
-                or "Auftrag aus DatLäuft"
-        )[:255]
+            _crafts_process_short_description(
+                commission
+            )
+        )
 
         process_from = (
                 commission.recording_date
@@ -1802,7 +1820,11 @@ class WowiportService:
             execution_from=execution_from,
             execution_to=execution_to,
             positions=position_payloads,
-            short_description_crafts_process=commission.title,
+            short_description_crafts_process=(
+                _crafts_process_short_description(
+                    commission
+                )
+            ),
         )
 
         identity = self._identity_from_rows(
