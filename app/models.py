@@ -1140,6 +1140,13 @@ class Commission(db.Model):
         nullable=False,
         index=True,
     )
+    assignment_type: Mapped[str] = mapped_column(
+        db.String(20),
+        default=CommissionAssignmentType.INTERNAL.value,
+        server_default=CommissionAssignmentType.INTERNAL.value,
+        nullable=False,
+        index=True,
+    )
     commission_type_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
     crafts_process_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
     company_code_erp_id: Mapped[int | None] = mapped_column(

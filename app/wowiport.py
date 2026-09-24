@@ -30,6 +30,7 @@ from .models import (
     ErpOperationType,
     ErpOutboxOperation,
     ExternalCraftsman,
+    CommissionAssignmentType,
 )
 from .settings import SettingKeys, settings
 from .utils import (
@@ -3408,11 +3409,33 @@ def upsert_commission(
     )
 
     user = None
+    known_internal_user = None
+    external_craftsman = None
+
     if craftsman_erp_id is not None:
         user = User.query.filter_by(
             craftsman_erp_id=craftsman_erp_id,
             is_active_flag=True,
         ).one_or_none()
+        known_internal_user = user
+
+        if known_internal_user is None:
+            known_internal_user = (
+                User.query
+                .filter_by(
+                    craftsman_erp_id=craftsman_erp_id,
+                )
+                .first()
+            )
+
+        if known_internal_user is None:
+            external_craftsman = (
+                ExternalCraftsman.query
+                .filter_by(
+                    craftsman_erp_id=craftsman_erp_id,
+                )
+                .one_or_none()
+            )
 
     commission.erp_id = erp_id
     commission.erp_idnum = _read_first(
@@ -3460,6 +3483,22 @@ def upsert_commission(
         )
     commission.craftsman_erp_id = craftsman_erp_id
     commission.user = user
+    if known_internal_user is not None:
+        commission.assignment_type = (
+            CommissionAssignmentType.INTERNAL.value
+        )
+    elif external_craftsman is not None:
+        commission.assignment_type = (
+            CommissionAssignmentType.EXTERNAL.value
+        )
+    elif (
+        previous_craftsman_erp_id
+        != craftsman_erp_id
+        or not commission.assignment_type
+    ):
+        commission.assignment_type = (
+            CommissionAssignmentType.INTERNAL.value
+        )
     commission.damage_location = _read_first(
         payload,
         "damage_location",

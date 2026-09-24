@@ -6427,12 +6427,27 @@ def selected_invoice_commission_ids(
 @admin_bp.get("/admin/commissions")
 @foreman_required
 def commissions() -> Any:
-    view_mode = request.args.get(
-        "view",
-        "active",
-    ).strip()
+    view_mode = str(
+        request.args.get("view")
+        or "active"
+    ).strip().casefold()
+    assignment_type = str(
+        request.args.get("assignment_type")
+        or "all"
+    ).strip().casefold()
 
-    query = Commission.query
+    allowed_assignment_types = {
+        "all",
+        CommissionAssignmentType.INTERNAL.value,
+        CommissionAssignmentType.EXTERNAL.value,
+    }
+
+    if assignment_type not in allowed_assignment_types:
+        assignment_type = "all"
+
+    query = Commission.query.options(
+        selectinload(Commission.user)
+    )
 
     if view_mode == "done":
         query = query.filter(
@@ -6460,14 +6475,56 @@ def commissions() -> Any:
             ]),
         )
 
+    if assignment_type != "all":
+        query = query.filter(
+            Commission.assignment_type
+            == assignment_type
+        )
+
     items = query.order_by(
         Commission.synced_at.desc()
     ).all()
+
+    external_craftsman_ids = {
+        item.craftsman_erp_id
+        for item in items
+        if (
+            item.assignment_type
+            == CommissionAssignmentType.EXTERNAL.value
+            and item.craftsman_erp_id is not None
+        )
+    }
+    external_craftsmen_by_erp_id: dict[
+        int,
+        ExternalCraftsman,
+    ] = {}
+
+    if external_craftsman_ids:
+        external_craftsmen_by_erp_id = {
+            craftsman.craftsman_erp_id: craftsman
+            for craftsman in (
+                ExternalCraftsman.query
+                .filter(
+                    ExternalCraftsman
+                    .craftsman_erp_id
+                    .in_(
+                        sorted(
+                            external_craftsman_ids
+                        )
+                    )
+                )
+                .all()
+            )
+        }
 
     return render_template(
         "admin/commissions.html",
         items=items,
         view_mode=view_mode,
+        assignment_type=assignment_type,
+        external_craftsmen_by_erp_id=(
+            external_craftsmen_by_erp_id
+        ),
     )
 
 

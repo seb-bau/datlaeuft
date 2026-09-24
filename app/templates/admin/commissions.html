@@ -1,28 +1,71 @@
 {% extends "base.html" %}
 {% block title %}Aufträge{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center gap-3 mb-4">
+<div
+  class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"
+>
   <h1 class="h3 mb-0">Aufträge</h1>
 
-  <div class="d-flex align-items-center gap-2">
-    <form method="get">
+  <div class="d-flex flex-wrap align-items-center gap-2">
+    <form
+      method="get"
+      class="d-flex flex-wrap align-items-center gap-2"
+    >
       <select
         class="form-select form-select-sm"
         name="view"
         onchange="this.form.submit()"
         aria-label="Auftragsansicht"
       >
-        <option value="active" {% if view_mode == "active" %}selected{% endif %}>
+        <option
+          value="active"
+          {% if view_mode == "active" %}selected{% endif %}
+        >
           Aktive Aufträge
         </option>
-        <option value="done" {% if view_mode == "done" %}selected{% endif %}>
+        <option
+          value="done"
+          {% if view_mode == "done" %}selected{% endif %}
+        >
           Erledigte Aufträge
         </option>
-        <option value="deleted" {% if view_mode == "deleted" %}selected{% endif %}>
+        <option
+          value="deleted"
+          {% if view_mode == "deleted" %}selected{% endif %}
+        >
           Gelöschte Aufträge
         </option>
-        <option value="all" {% if view_mode == "all" %}selected{% endif %}>
+        <option
+          value="all"
+          {% if view_mode == "all" %}selected{% endif %}
+        >
           Alle Aufträge
+        </option>
+      </select>
+
+      <select
+        class="form-select form-select-sm"
+        name="assignment_type"
+        onchange="this.form.submit()"
+        aria-label="Vergabeart"
+      >
+        <option
+          value="all"
+          {% if assignment_type == "all" %}selected{% endif %}
+        >
+          Intern und extern
+        </option>
+        <option
+          value="internal"
+          {% if assignment_type == "internal" %}selected{% endif %}
+        >
+          Intern
+        </option>
+        <option
+          value="external"
+          {% if assignment_type == "external" %}selected{% endif %}
+        >
+          Extern
         </option>
       </select>
     </form>
@@ -47,7 +90,7 @@
           <th>Lage</th>
           <th>Mieter</th>
           <th>Status</th>
-          <th>Monteur</th>
+          <th>Handwerker</th>
           <th>Ausführung</th>
           <th>Lokal</th>
           <th></th>
@@ -72,7 +115,41 @@
           <td>{{ item.apartment_location or "" }}</td>
           <td>{{ item.tenant_name or "" }}</td>
           <td>{{ item.status_code or item.status_id or "" }}</td>
-          <td>{{ item.user.display_name if item.user else item.craftsman_erp_id or "" }}</td>
+          <td>
+            {% if item.assignment_type == "external" %}
+              {% set external_craftsman = external_craftsmen_by_erp_id.get(item.craftsman_erp_id) %}
+              <div class="d-flex flex-wrap align-items-center gap-2">
+                <span>
+                  {% if external_craftsman %}
+                    {{ external_craftsman.display_name }}
+                  {% else %}
+                    Unbekannter externer Handwerker
+                  {% endif %}
+                </span>
+
+                <span
+                  class="badge rounded-pill text-bg-info"
+                  title="Extern vergeben"
+                >
+                  Extern
+                </span>
+
+                {% if not external_craftsman and item.craftsman_erp_id %}
+                <span class="small text-body-secondary">
+                  ID {{ item.craftsman_erp_id }}
+                </span>
+                {% endif %}
+              </div>
+            {% elif item.user %}
+              {{ item.user.display_name }}
+            {% elif item.craftsman_erp_id %}
+              Handwerker-ID {{ item.craftsman_erp_id }}
+            {% else %}
+              <span class="text-body-secondary">
+                Nicht zugewiesen
+              </span>
+            {% endif %}
+          </td>
           <td>{{ item.execution_from.strftime("%d.%m.%Y") if item.execution_from else "" }}</td>
           <td>{{ item.local_status }}</td>
           <td class="text-end">
