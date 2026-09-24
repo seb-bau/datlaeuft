@@ -148,15 +148,6 @@
             data-bs-parent="#appNavigation"
           >
             <div class="sidebar-subnav-inner">
-              {% if can_access_offers %}
-                {{ sidebar_link(
-                  'admin.offers',
-                  'Angebote',
-                  'file-earmark-text',
-                  request.path.startswith('/admin/offers')
-                ) }}
-              {% endif %}
-
               {% if can_access_foreman %}
                 {{ sidebar_link(
                   'admin.commissions',
@@ -170,6 +161,15 @@
                   'Tickets',
                   'ticket-perforated',
                   request.path.startswith('/admin/tickets')
+                ) }}
+              {% endif %}
+
+              {% if can_access_offers %}
+                {{ sidebar_link(
+                  'admin.offers',
+                  'Angebote',
+                  'file-earmark-text',
+                  request.path.startswith('/admin/offers')
                 ) }}
               {% endif %}
 
