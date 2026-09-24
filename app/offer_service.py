@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from flask import current_app
 from decimal import (
     Decimal,
     InvalidOperation,
     ROUND_HALF_UP,
 )
+from typing import Any
 import re
 
+from flask import current_app
 from sqlalchemy import select
 
 from .audit import audit
 from .extensions import db
 from .models import (
+    Commission,
+    CommissionAssignmentType,
+    CommissionLocalStatus,
+    InvoiceStatus,
     Offer,
+    OfferCraftFallback,
     OfferPosition,
     OfferPositionSource,
     OfferStatus,
@@ -22,17 +28,6 @@ from .models import (
     User,
     WowiCompanyCode,
     utc_now,
-    Commission,
-    CommissionSource,
-    OfferCraftFallback,
-    InvoiceStatus,
-    CommissionLocalStatus,
-    Commission,
-    CommissionAssignmentType,
-    CommissionSource,
-)
-from .commission_service import (
-    create_pending_commission,
 )
 from .offer_document import (
     OfferDocumentResult,
@@ -868,14 +863,12 @@ def cancel_offer(
     item.canceled_at = utc_now()
 
 
-def accept_offer(
+def offer_commission_draft_data(
     item: Offer,
-    user: User,
-) -> Commission:
+) -> dict[str, Any]:
     if (
         item.status
-        != OfferStatus
-        .AWAITING_RESPONSE.value
+        != OfferStatus.AWAITING_RESPONSE.value
     ):
         raise ValueError(
             "Nur ein Angebot mit dem Status "
@@ -916,8 +909,7 @@ def accept_offer(
 
     commission_type_id = int(
         settings.get(
-            SettingKeys
-            .OFFER_COMMISSION_TYPE_ID
+            SettingKeys.OFFER_COMMISSION_TYPE_ID
         )
         or 0
     )
@@ -937,7 +929,7 @@ def accept_offer(
         )
         .one_or_none()
     )
-    commission_positions = []
+    position_rows = []
 
     for index, position in enumerate(
         item.positions
@@ -960,7 +952,10 @@ def accept_offer(
             position.source_type
             == OfferPositionSource.FREE.value
         ):
-            if fallback is None:
+            if (
+                fallback is None
+                or fallback.task_template is None
+            ):
                 raise ValueError(
                     "Für das ausgewählte Gewerk "
                     "ist keine Leistungsposition "
@@ -978,8 +973,16 @@ def accept_offer(
                 f"{index + 1} ist ungültig."
             )
 
+        craft_activity = (
+            task_template.craft_activity
+        )
+
         if (
             not task_template.active
+            or craft_activity is None
+            or not craft_activity.active
+            or not craft_activity.app_enabled
+            or craft_activity.erp_id is None
             or (
                 task_template.craft_activity_id
                 != item.craft_activity_id
@@ -996,21 +999,17 @@ def accept_offer(
                 "gewählte Gewerk nicht verfügbar."
             )
 
-        commission_positions.append(
+        position_rows.append(
             {
                 "service_catalog_id": (
                     task_template
                     .erp_service_catalogue_id
                 ),
-                "code": task_template.code,
                 "commission_text": (
                     position.description
                 ),
                 "internal_description": (
-                    position.details
-                ),
-                "description": (
-                    position.details
+                    position.details or ""
                 ),
                 "units": float(
                     position.quantity
@@ -1018,7 +1017,7 @@ def accept_offer(
             }
         )
 
-    if not commission_positions:
+    if not position_rows:
         raise ValueError(
             "Das Angebot besitzt keine Positionen."
         )
@@ -1027,22 +1026,28 @@ def accept_offer(
         CommissionAssignmentType.EXTERNAL.value
         if (
             item.craft_activity is not None
-            and item.craft_activity.default_assignment_type
+            and item.craft_activity
+            .default_assignment_type
             == CommissionAssignmentType.EXTERNAL.value
         )
         else CommissionAssignmentType.INTERNAL.value
     )
 
-    commission = create_pending_commission(
-        data={
+    return {
+        "form_values": {
             "commission_type_id": (
                 commission_type_id
             ),
-            "object_type": item.object_type,
-            "object_id": item.object_id,
-            "company_code_code": (
-                item.company_code_code
+            "craft_activity_id": (
+                item.craft_activity_id
             ),
+            "assignment_type": (
+                assignment_type
+            ),
+            "company_code_erp_id": (
+                item.company_code_erp_id
+            ),
+            "priority": "normal",
             "title": (
                 item.title
                 or (
@@ -1051,30 +1056,28 @@ def accept_offer(
                 )
             ),
             "damage_location": (
-                item.object_location
+                item.object_location or ""
             ),
             "contact_person": (
-                item.recipient_name
-            ),
-            "positions": commission_positions,
-            "craft_activity_id": (
-                item.craft_activity_id
-            ),
-            "assignment_type": (
-                assignment_type
+                item.recipient_name or ""
             ),
         },
-        created_by_user=user,
-        source=CommissionSource.WEB,
-    )
+        "position_rows": position_rows,
+    }
+
+
+def accept_offer(
+    item: Offer,
+    commission: Commission,
+    user: User,
+) -> None:
+    offer_commission_draft_data(item)
 
     item.commission = commission
     item.status = OfferStatus.IN_PROGRESS.value
     item.status_note = None
     item.accepted_by_user_id = user.id
     item.accepted_at = utc_now()
-
-    return commission
 
 
 def sync_offer_from_commission(

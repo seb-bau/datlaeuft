@@ -1,8 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Neues Angebot{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-  <h1 class="h3 mb-0">Neues Angebot</h1>
+<div
+  class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"
+>
+  <div>
+    <h1 class="h3 mb-1">Neues Angebot</h1>
+    <div class="text-body-secondary">
+      Grundlage für den Angebotsentwurf auswählen
+    </div>
+  </div>
 
   <a
     class="btn btn-outline-secondary"
@@ -12,27 +19,37 @@
   </a>
 </div>
 
-<div class="card shadow-sm">
-  <div class="card-body">
-    <form method="post">
+<div class="row justify-content-center">
+  <div class="col-xl-8">
+    <form method="post" class="card shadow-sm">
       <input
         type="hidden"
         name="csrf_token"
         value="{{ csrf_token() }}"
       >
 
-      <div class="mb-3">
-        <label class="form-label">
-          Buchwerk
+      <div class="card-header fw-semibold">
+        Buchwerk
+      </div>
+
+      <div class="card-body">
+        <label
+          class="form-label fw-semibold"
+          for="companyCode"
+        >
+          Buchwerk auswählen
         </label>
+
         <select
           class="form-select"
+          id="companyCode"
           name="company_code_id"
           required
         >
           <option value="">
             Bitte auswählen
           </option>
+
           {% for company_code in company_codes %}
           <option value="{{ company_code.id }}">
             {{ company_code.code }}
@@ -41,19 +58,25 @@
           </option>
           {% endfor %}
         </select>
+
+        <div class="alert alert-secondary mb-0 mt-3">
+          Das Buchwerk legt Nummernkreis,
+          Absenderdaten und Abrechnungsvorgaben fest.
+          Es kann nach dem Anlegen des Entwurfs nicht
+          mehr geändert werden.
+        </div>
       </div>
 
-      <div class="alert alert-secondary">
-        Das Buchwerk kann nach dem Anlegen des
-        Entwurfs nicht mehr geändert werden.
-      </div>
-
-      <button
-        class="btn btn-primary"
-        type="submit"
+      <div
+        class="card-footer d-flex justify-content-end"
       >
-        Entwurf anlegen
-      </button>
+        <button
+          class="btn btn-primary"
+          type="submit"
+        >
+          Entwurf anlegen
+        </button>
+      </div>
     </form>
   </div>
 </div>

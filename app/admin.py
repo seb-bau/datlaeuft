@@ -205,6 +205,7 @@ from .offer_service import (
     cancel_offer,
     copy_offer_to_draft,
     create_offer_draft,
+    offer_commission_draft_data,
     reject_offer,
     release_offer,
     replace_offer_positions,
@@ -3504,7 +3505,9 @@ def commission_create() -> Any:
     position_selection_source = None
 
     source_ticket = None
+    source_offer = None
     form_values = request.form
+
     source_ticket_id = (
         request.form.get(
             "source_ticket_id",
@@ -3516,6 +3519,104 @@ def commission_create() -> Any:
             type=int,
         )
     )
+
+    source_offer_id = (
+        request.form.get(
+            "source_offer_id",
+            type=int,
+        )
+        if request.method == "POST"
+        else request.args.get(
+            "offer_id",
+            type=int,
+        )
+    )
+
+    if (
+            source_ticket_id is not None
+            and source_offer_id is not None
+    ):
+        flash(
+            "Ein Auftrag kann nicht gleichzeitig "
+            "aus einem Ticket und einem Angebot "
+            "erstellt werden.",
+            "danger",
+        )
+        return redirect(
+            url_for("admin.commissions")
+        )
+
+    if source_offer_id is not None:
+        source_offer_query = (
+            Offer.query
+            .filter(
+                Offer.id == source_offer_id
+            )
+        )
+
+        if request.method == "POST":
+            source_offer_query = (
+                source_offer_query
+                .with_for_update()
+            )
+
+        source_offer = (
+            source_offer_query.one_or_none()
+        )
+
+        if source_offer is None:
+            flash(
+                "Das Angebot wurde nicht gefunden.",
+                "danger",
+            )
+            return redirect(
+                url_for("admin.offers")
+            )
+
+        try:
+            offer_draft = (
+                offer_commission_draft_data(
+                    source_offer
+                )
+            )
+
+            if request.method == "GET":
+                form_values = (
+                    offer_draft["form_values"]
+                )
+                position_rows = (
+                    offer_draft["position_rows"]
+                )
+                selected_object = (
+                    get_commission_object_choice(
+                        source_offer.object_type,
+                        source_offer.object_id,
+                    )
+                )
+
+                service_positions.sort(
+                    key=lambda service_position: (
+                        service_position
+                        .craft_activity_id
+                        != source_offer
+                        .craft_activity_id,
+                        service_position
+                        .title.casefold(),
+                    )
+                )
+
+        except ValueError as exc:
+            db.session.rollback()
+            flash(
+                str(exc),
+                "danger",
+            )
+            return redirect(
+                url_for(
+                    "admin.offer_edit",
+                    offer_id=source_offer.id,
+                )
+            )
 
     if source_ticket_id is not None:
         source_ticket_query = (
@@ -3818,6 +3919,35 @@ def commission_create() -> Any:
                     )
                 )
 
+            if source_offer is not None:
+                accept_offer(
+                    source_offer,
+                    commission,
+                    current_user,
+                )
+
+                audit(
+                    "offer.accept",
+                    "offer",
+                    source_offer.id,
+                    {
+                        "commission_id": (
+                            commission.id
+                        ),
+                        "craftsman_user_id": (
+                            commission.user_id
+                        ),
+                        "craftsman_erp_id": (
+                            commission
+                            .craftsman_erp_id
+                        ),
+                        "assignment_type": (
+                            commission
+                            .assignment_type
+                        ),
+                    },
+                )
+
             photo_upload = request.files.get(
                 "photo"
             )
@@ -3854,6 +3984,11 @@ def commission_create() -> Any:
                         if source_ticket is not None
                         else None
                     ),
+                    "source_offer_id": (
+                        source_offer.id
+                        if source_offer is not None
+                        else None
+                    ),
                 },
 
             )
@@ -3868,6 +4003,22 @@ def commission_create() -> Any:
 
             db.session.commit()
 
+            if source_offer is not None:
+                flash(
+                    "Die Annahme wurde erfasst. "
+                    "Der Auftrag wurde angelegt und "
+                    "zur Übertragung an Wowiport "
+                    "eingeplant.",
+                    "success",
+                )
+
+                return redirect(
+                    url_for(
+                        "admin.offer_edit",
+                        offer_id=source_offer.id,
+                    )
+                )
+
             flash(
                 "Der Auftrag wurde erfasst und "
                 "zur Übertragung an Wowiport "
@@ -3878,7 +4029,6 @@ def commission_create() -> Any:
             return redirect(
                 url_for("admin.commissions")
             )
-
 
         except (RuntimeError, ValueError) as exc:
             db.session.rollback()
@@ -3908,6 +4058,7 @@ def commission_create() -> Any:
             default_commission_type_id
         ),
         external_craftsmen=external_craftsmen,
+        source_offer=source_offer,
     )
 
 
@@ -4780,7 +4931,7 @@ def offer_cancel(
     )
 
 
-@admin_bp.post(
+@admin_bp.get(
     "/admin/offers/<int:offer_id>/accept"
 )
 @offer_required
@@ -4793,44 +4944,12 @@ def offer_accept(
     )
 
     try:
-        commission = accept_offer(
-            item,
-            current_user,
-        )
-
-        enqueue_commission_push(
-            commission=commission,
-            event_type=(
-                PushEventType.NEW_COMMISSION
-            ),
-            user=commission.user,
-        )
-
-        audit(
-            "offer.accept",
-            "offer",
-            item.id,
-            {
-                "commission_id": (
-                    commission.id
-                ),
-                "craftsman_user_id": (
-                    commission.user_id
-                ),
-                "craftsman_erp_id": (
-                    commission.craftsman_erp_id
-                ),
-            },
-        )
-        db.session.commit()
-
+        offer_commission_draft_data(item)
     except ValueError as exc:
-        db.session.rollback()
         flash(
             str(exc),
             "danger",
         )
-
         return redirect(
             url_for(
                 "admin.offer_edit",
@@ -4838,17 +4957,9 @@ def offer_accept(
             )
         )
 
-    flash(
-        "Die Annahme wurde erfasst. "
-        "Der Auftrag wurde angelegt und "
-        "zur Übertragung an Wowiport "
-        "eingeplant.",
-        "success",
-    )
-
     return redirect(
         url_for(
-            "admin.offer_edit",
+            "admin.commission_create",
             offer_id=item.id,
         )
     )
@@ -10583,22 +10694,45 @@ def read_commission_form() -> dict[str, Any]:
     service_catalog_ids = request.form.getlist(
         "position_service_catalog_id"
     )
+    position_units = request.form.getlist(
+        "position_units"
+    )
+    position_internal_descriptions = (
+        request.form.getlist(
+            "position_internal_description"
+        )
+    )
 
     position_count = max(
         len(position_texts),
         len(service_catalog_ids),
+        len(position_units),
+        len(position_internal_descriptions),
         1,
     )
 
     positions = []
 
-    for position_index in range(position_count):
+    for position_index in range(
+        position_count
+    ):
         commission_text = list_value(
             position_texts,
             position_index,
         )
         service_catalog_id = list_value(
             service_catalog_ids,
+            position_index,
+        )
+        units = (
+            list_value(
+                position_units,
+                position_index,
+            )
+            or "1"
+        )
+        internal_description = list_value(
+            position_internal_descriptions,
             position_index,
         )
 
@@ -10612,10 +10746,20 @@ def read_commission_form() -> dict[str, Any]:
 
         positions.append(
             {
-                "commission_text": commission_text,
-                "description": commission_text,
-                "units": 1.0,
-                "service_catalog_id": service_catalog_id,
+                "commission_text": (
+                    commission_text
+                ),
+                "internal_description": (
+                    internal_description
+                ),
+                "description": (
+                    internal_description
+                    or commission_text
+                ),
+                "units": units,
+                "service_catalog_id": (
+                    service_catalog_id
+                ),
             }
         )
 
@@ -10641,8 +10785,10 @@ def read_commission_form() -> dict[str, Any]:
         "department_id": request.form.get(
             "department_id"
         ),
-        "responsible_official_repair_id": request.form.get(
-            "responsible_official_repair_id"
+        "responsible_official_repair_id": (
+            request.form.get(
+                "responsible_official_repair_id"
+            )
         ),
         "use_unit_idnum": request.form.get(
             "use_unit_idnum"
@@ -10650,8 +10796,19 @@ def read_commission_form() -> dict[str, Any]:
         "building_idnum": request.form.get(
             "building_idnum"
         ),
-        "license_agreement_idnum": request.form.get(
-            "license_agreement_idnum"
+        "license_agreement_idnum": (
+            request.form.get(
+                "license_agreement_idnum"
+            )
+        ),
+        "title": request.form.get(
+            "title"
+        ),
+        "damage_location": request.form.get(
+            "damage_location"
+        ),
+        "contact_person": request.form.get(
+            "contact_person"
         ),
         "execution_from": request.form.get(
             "execution_from"
@@ -10664,8 +10821,10 @@ def read_commission_form() -> dict[str, Any]:
             "assignment_type",
             "internal",
         ),
-        "external_craftsman_id": request.form.get(
-            "external_craftsman_id"
+        "external_craftsman_id": (
+            request.form.get(
+                "external_craftsman_id"
+            )
         ),
         "craftsman_user_id": request.form.get(
             "craftsman_user_id"

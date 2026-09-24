@@ -1,19 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Angebot{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-start mb-4">
+<div
+  class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"
+>
   <div>
-    <h1 class="h3 mb-1">
-      {{ item.offer_number or ("Entwurf " ~ item.id) }}
-    </h1>
-    <div class="text-muted">
-      {{ item.company_code_code }}
-      ·
-      {{ status_labels.get(item.status, item.status) }}
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+      <h1 class="h3 mb-0">
+        {{ item.offer_number or ("Entwurf " ~ item.id) }}
+      </h1>
+      <span class="badge rounded-pill text-bg-secondary">
+        {{ status_labels.get(item.status, item.status) }}
+      </span>
+    </div>
+    <div class="text-body-secondary">
+      Buchwerk {{ item.company_code_code }}
     </div>
   </div>
 
-  <div class="d-flex gap-2">
+  <div class="d-flex flex-wrap gap-2">
     {% if item.document_filename %}
     <a
       class="btn btn-outline-primary"
@@ -46,7 +51,7 @@
 
 {% if not editable and item.document_filename %}
 <div class="card shadow-sm mb-4">
-  <div class="card-header">
+  <div class="card-header fw-semibold">
     Dokument und Archiv
   </div>
 
@@ -162,10 +167,10 @@
   >
 
   <fieldset {% if not editable %}disabled{% endif %}>
-    <div class="row g-4">
-      <div class="col-lg-7">
-        <div class="card shadow-sm mb-4">
-          <div class="card-header">
+    <div class="row g-4 align-items-stretch">
+      <div class="col-xl-7 d-flex flex-column gap-4">
+        <div class="card shadow-sm">
+          <div class="card-header fw-semibold">
             Objekt und Empfänger
           </div>
 
@@ -385,7 +390,7 @@
         </div>
 
         <div class="card shadow-sm">
-          <div class="card-header">
+          <div class="card-header fw-semibold">
             Angebotstexte
           </div>
           <div class="card-body">
@@ -414,9 +419,9 @@
         </div>
       </div>
 
-      <div class="col-lg-5">
-        <div class="card shadow-sm mb-4">
-          <div class="card-header">
+      <div class="col-xl-5 d-flex flex-column gap-4">
+        <div class="card shadow-sm">
+          <div class="card-header fw-semibold">
             Angebotsdaten
           </div>
           <div class="card-body row g-3">
@@ -492,8 +497,8 @@
         </div>
 
         {% if item.commission %}
-        <div class="card shadow-sm mb-4">
-          <div class="card-header">
+        <div class="card shadow-sm">
+          <div class="card-header fw-semibold">
             Zugeordneter Auftrag
           </div>
           <div class="card-body">
@@ -507,57 +512,48 @@
         </div>
         {% endif %}
 
-          {% if item.invoice %}
-<div class="card shadow-sm mb-4">
-  <div class="card-header">
-    Zugeordnete Rechnung
-  </div>
+        {% if item.invoice %}
+        <div class="card shadow-sm">
+          <div class="card-header fw-semibold">
+            Zugeordnete Rechnung
+          </div>
 
-  <div class="card-body">
-    <a href="{{ url_for(
-      'admin.invoice_edit',
-      invoice_id=item.invoice.id
-    ) }}">
-      {{
-        item.invoice.invoice_number
-        or ("Entwurf " ~ item.invoice.id)
-      }}
-    </a>
+          <div class="card-body">
+            <a href="{{ url_for(
+              'admin.invoice_edit',
+              invoice_id=item.invoice.id
+            ) }}">
+              {{
+                item.invoice.invoice_number
+                or ("Entwurf " ~ item.invoice.id)
+              }}
+            </a>
 
-    <div class="small text-muted mt-1">
-      {% if item.invoice.status == "draft" %}
-        Rechnungsentwurf
-      {% elif item.invoice.status == "finalized" %}
-        Festgeschrieben
-      {% elif item.invoice.status == "canceled" %}
-        Storniert
-      {% else %}
-        {{ item.invoice.status }}
-      {% endif %}
-    </div>
-  </div>
-</div>
-{% endif %}
-
-        {% if editable %}
-        <div class="text-end">
-          <button
-            class="btn btn-primary"
-            type="submit"
-          >
-            Entwurf speichern
-          </button>
+            <div class="small text-muted mt-1">
+              {% if item.invoice.status == "draft" %}
+                Rechnungsentwurf
+              {% elif item.invoice.status == "finalized" %}
+                Festgeschrieben
+              {% elif item.invoice.status == "canceled" %}
+                Storniert
+              {% else %}
+                {{ item.invoice.status }}
+              {% endif %}
+            </div>
+          </div>
         </div>
         {% endif %}
       </div>
     </div>
 
     <div class="card shadow-sm mt-4">
-      <div class="card-header d-flex justify-content-between align-items-center">
+      <div
+        class="card-header d-flex flex-wrap justify-content-between align-items-center gap-3 fw-semibold"
+      >
         <span>Angebotspositionen</span>
 
         {% if editable %}
-        <div class="d-flex gap-2">
+        <div class="d-flex flex-wrap gap-2">
           <select
             class="form-select form-select-sm"
             id="cataloguePosition"
@@ -736,57 +732,75 @@
 </form>
 
 {% if editable %}
-<div class="d-flex justify-content-between mt-4">
-  <form
-    method="post"
-    action="{{ url_for(
-      'admin.offer_delete',
-      offer_id=item.id
-    ) }}"
-    onsubmit="return confirm('Angebotsentwurf wirklich löschen?')"
-  >
-    <input
-      type="hidden"
-      name="csrf_token"
-      value="{{ csrf_token() }}"
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <div
+      class="d-flex flex-wrap justify-content-between align-items-center gap-3"
     >
-    <button
-      class="btn btn-outline-danger"
-      type="submit"
-    >
-      Entwurf löschen
-    </button>
-  </form>
+      <form
+        method="post"
+        action="{{ url_for(
+          'admin.offer_delete',
+          offer_id=item.id
+        ) }}"
+        onsubmit="return confirm('Angebotsentwurf wirklich löschen?')"
+      >
+        <input
+          type="hidden"
+          name="csrf_token"
+          value="{{ csrf_token() }}"
+        >
+        <button
+          class="btn btn-outline-danger"
+          type="submit"
+        >
+          Entwurf löschen
+        </button>
+      </form>
 
-  <form
-    method="post"
-    action="{{ url_for(
-      'admin.offer_release',
-      offer_id=item.id
-    ) }}"
-    id="offerReleaseForm"
-  >
-    <input
-      type="hidden"
-      name="csrf_token"
-      value="{{ csrf_token() }}"
-    >
-    <button
-      class="btn btn-danger"
-      type="submit"
-    >
-      Angebot freigeben
-    </button>
-  </form>
+      <div class="d-flex flex-wrap gap-2">
+        <button
+          class="btn btn-outline-primary"
+          type="submit"
+          form="offerDraftForm"
+        >
+          Entwurf speichern
+        </button>
+
+        <form
+          method="post"
+          action="{{ url_for(
+            'admin.offer_release',
+            offer_id=item.id
+          ) }}"
+          id="offerReleaseForm"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+          <button
+            class="btn btn-primary"
+            type="submit"
+          >
+            Angebot freigeben
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
 </div>
 {% else %}
 <div class="card shadow-sm mt-4">
-  <div class="card-header">
+  <div class="card-header fw-semibold">
     Angebotsaktionen
   </div>
 
   <div class="card-body">
-    <div class="d-flex flex-wrap gap-2">
+    <div
+      class="d-flex flex-wrap justify-content-between align-items-center gap-3"
+    >
       <form
         method="post"
         action="{{ url_for(
@@ -808,28 +822,15 @@
       </form>
 
       {% if item.status == "awaiting_response" %}
-      <form
-        method="post"
-        action="{{ url_for(
+      <a
+        class="btn btn-success"
+        href="{{ url_for(
           'admin.offer_accept',
           offer_id=item.id
         ) }}"
-        onsubmit="return confirm(
-          'Annahme erfassen und Auftrag anlegen?'
-        )"
       >
-        <input
-          type="hidden"
-          name="csrf_token"
-          value="{{ csrf_token() }}"
-        >
-        <button
-          class="btn btn-success"
-          type="submit"
-        >
-          Annahme erfassen und Auftrag anlegen
-        </button>
-      </form>
+        Auftrag vorbereiten
+      </a>
       {% endif %}
     </div>
 
@@ -840,6 +841,7 @@
     <div class="row g-4 mt-2">
       <div class="col-lg-6">
         <form
+          class="border rounded p-3 h-100 d-flex flex-column"
           method="post"
           action="{{ url_for(
             'admin.offer_reject',
@@ -852,18 +854,26 @@
             value="{{ csrf_token() }}"
           >
 
-          <label class="form-label">
+          <h2 class="h6 mb-1">
+            Angebot ablehnen
+          </h2>
+          <p class="small text-body-secondary mb-3">
+            Erfasst die Rückmeldung des Empfängers am Angebot.
+          </p>
+
+          <label class="form-label" for="offerRejectionReason">
             Ablehnungsgrund
           </label>
           <textarea
-            class="form-control mb-2"
+            class="form-control mb-3"
+            id="offerRejectionReason"
             name="reason"
             rows="2"
             required
           ></textarea>
 
           <button
-            class="btn btn-outline-warning"
+            class="btn btn-outline-warning mt-auto align-self-start"
             type="submit"
           >
             Als abgelehnt markieren
@@ -873,6 +883,7 @@
 
       <div class="col-lg-6">
         <form
+          class="border rounded p-3 h-100 d-flex flex-column"
           method="post"
           action="{{ url_for(
             'admin.offer_cancel',
@@ -888,18 +899,26 @@
             value="{{ csrf_token() }}"
           >
 
-          <label class="form-label">
+          <h2 class="h6 mb-1">
+            Angebot stornieren
+          </h2>
+          <p class="small text-body-secondary mb-3">
+            Beendet das Angebot aus einem internen Grund.
+          </p>
+
+          <label class="form-label" for="offerCancellationReason">
             Stornierungsgrund
           </label>
           <textarea
-            class="form-control mb-2"
+            class="form-control mb-3"
+            id="offerCancellationReason"
             name="reason"
             rows="2"
             required
           ></textarea>
 
           <button
-            class="btn btn-outline-danger"
+            class="btn btn-outline-danger mt-auto align-self-start"
             type="submit"
           >
             Angebot stornieren
