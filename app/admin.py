@@ -3758,7 +3758,8 @@ def commission_create() -> Any:
         ):
             selected_object = None
 
-        if (
+        try:
+            if (
                 form_data.get(
                     "assignment_type",
                     "internal",
@@ -3768,30 +3769,29 @@ def commission_create() -> Any:
                 == TicketAiAssignmentMode.FORCE.value
                 and source_ticket.ai_assigned_user_id
                 is not None
-        ):
-            if (
+            ):
+                if (
                     source_ticket.ai_state
                     != TicketAiState.READY.value
                     or source_ticket.ai_input_hash
                     != ticket_analysis_input_hash(
-                source_ticket
-            )
-            ):
-                raise ValueError(
-                    "Die verbindliche KI-Zuweisung "
-                    "ist veraltet. Das Ticket muss "
-                    "erneut analysiert werden."
+                        source_ticket
+                    )
+                ):
+                    raise ValueError(
+                        "Die verbindliche KI-Zuweisung "
+                        "ist veraltet. Das Ticket muss "
+                        "erneut analysiert werden."
+                    )
+
+                form_data["craftsman_user_id"] = (
+                    source_ticket.ai_assigned_user_id
+                )
+                form_values = request.form.to_dict()
+                form_values["craftsman_user_id"] = (
+                    source_ticket.ai_assigned_user_id
                 )
 
-            form_data["craftsman_user_id"] = (
-                source_ticket.ai_assigned_user_id
-            )
-            form_values = request.form.to_dict()
-            form_values["craftsman_user_id"] = (
-                source_ticket.ai_assigned_user_id
-            )
-
-        try:
             commission = create_pending_commission(
                 data=form_data,
                 created_by_user=current_user,
