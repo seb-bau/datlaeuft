@@ -2,6 +2,7 @@
 {% block title %}Auftrag erfassen{% endblock %}
 {% block content %}
 {% set selected_assignment_type = 'external' if form_values.get('assignment_type') == 'external' else 'internal' %}
+{% set has_automatic_source = (source_ticket or source_offer) and request.method == "GET" %}
 <div
   class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"
 >
@@ -288,7 +289,7 @@
             id="objectSummary"
             class="border rounded bg-body-tertiary px-3 py-2 small h-100 d-flex align-items-center justify-content-center text-center"
             data-required-display="true"
-            data-automatic-value="{% if source_ticket and request.method == 'GET' and selected_object %}{{ selected_object.get('object_id', '') }}{% endif %}"
+            data-automatic-value="{% if has_automatic_source and selected_object %}{{ selected_object.get('object_id', '') }}{% endif %}"
           >
             <div class="text-muted">
               Noch kein Objekt ausgewählt.
@@ -313,7 +314,7 @@
           class="form-select form-select-sm"
           id="commissionType"
           name="commission_type_id"
-          data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ form_values.get('commission_type_id', '') }}{% endif %}"
+          data-automatic-value="{% if has_automatic_source %}{{ form_values.get('commission_type_id', '') }}{% endif %}"
           required
         >
           <option value="">
@@ -342,7 +343,7 @@
           class="form-select form-select-sm"
           id="commissionPriority"
           name="priority"
-          data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ form_values.get('priority', '') }}{% endif %}"
+          data-automatic-value="{% if has_automatic_source %}{{ form_values.get('priority', '') }}{% endif %}"
           required
         >
           <option
@@ -411,7 +412,7 @@
           class="form-select form-select-sm"
           id="craftActivity"
           name="craft_activity_id"
-          data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ form_values.get('craft_activity_id', '') }}{% endif %}"
+          data-automatic-value="{% if has_automatic_source %}{{ form_values.get('craft_activity_id', '') }}{% endif %}"
           required
         >
           <option value="">
@@ -444,7 +445,7 @@
               <select
                 class="form-select form-select-sm"
                 name="position_service_catalog_id"
-                data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ position.get('service_catalog_id', '') }}{% endif %}"
+                data-automatic-value="{% if has_automatic_source %}{{ position.get('service_catalog_id', '') }}{% endif %}"
                 required
                 {% if not form_values.get('craft_activity_id') %}disabled{% endif %}
               >
@@ -475,7 +476,7 @@
                 class="form-control form-control-sm"
                 name="position_text"
                 value="{{ position.get('commission_text', '') }}"
-                data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ position.get('commission_text', '') }}{% endif %}"
+                data-automatic-value="{% if has_automatic_source %}{{ position.get('commission_text', '') }}{% endif %}"
                 required
               >
               <input
@@ -522,7 +523,7 @@
           class="form-select form-select-sm"
           id="craftsmanUser"
           name="craftsman_user_id"
-          data-automatic-value="{% if source_ticket and request.method == 'GET' %}{{ form_values.get('craftsman_user_id', '') }}{% endif %}"
+          data-automatic-value="{% if has_automatic_source %}{{ form_values.get('craftsman_user_id', '') }}{% endif %}"
           {% if selected_assignment_type == 'internal' %}required{% else %}disabled{% endif %}
         >
           <option value="">

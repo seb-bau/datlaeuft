@@ -29,6 +29,8 @@ from flask_login import current_user, login_required
 from .audit import audit
 from .auth import (
     admin_required,
+    commission_creation_required,
+    commission_planning_required,
     foreman_required,
     invoice_required,
     offer_required,
@@ -3397,7 +3399,7 @@ def preferred_commission_type_id(
     "/admin/commissions/new",
     methods=["GET", "POST"],
 )
-@foreman_required
+@commission_creation_required
 def commission_create() -> Any:
     service_positions = (
         commission_service_positions()
@@ -4065,7 +4067,7 @@ def commission_create() -> Any:
 @admin_bp.get(
     "/admin/commissions/assignment-preview"
 )
-@foreman_required
+@commission_planning_required
 def commission_assignment_preview() -> Any:
     assignment_type = str(
         request.args.get(
@@ -4289,7 +4291,7 @@ def commission_assignment_preview() -> Any:
 @admin_bp.get(
     "/admin/commission-objects/search"
 )
-@foreman_required
+@commission_planning_required
 def commission_object_search() -> Any:
     search_text = request.args.get(
         "q",

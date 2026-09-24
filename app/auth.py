@@ -63,6 +63,75 @@ def foreman_required(view: F) -> F:
     return wrapped
 
 
+def commission_planning_required(view: F) -> F:
+    @wraps(view)
+    def wrapped(
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if not current_user.is_authenticated:
+            return redirect(
+                url_for(
+                    "auth.login",
+                    next=request.full_path,
+                )
+            )
+
+        if not (
+            current_user.is_admin
+            or current_user.is_foreman
+            or current_user.can_manage_offers
+        ):
+            abort(403)
+
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def commission_creation_required(view: F) -> F:
+    @wraps(view)
+    def wrapped(
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if not current_user.is_authenticated:
+            return redirect(
+                url_for(
+                    "auth.login",
+                    next=request.full_path,
+                )
+            )
+
+        source_offer_id = (
+            request.form.get(
+                "source_offer_id",
+                type=int,
+            )
+            if request.method == "POST"
+            else request.args.get(
+                "offer_id",
+                type=int,
+            )
+        )
+
+        if source_offer_id is not None:
+            if not (
+                current_user.is_admin
+                or current_user.can_manage_offers
+            ):
+                abort(403)
+        elif not (
+            current_user.is_admin
+            or current_user.is_foreman
+        ):
+            abort(403)
+
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 def invoice_required(view: F) -> F:
     @wraps(view)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
