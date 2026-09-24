@@ -2529,6 +2529,41 @@ def craft_department_mappings() -> Any:
         selected_assignment_types = {}
 
         for craft_activity in craft_activities:
+            assignment_type = str(
+                request.form.get(
+                    (
+                        "default_assignment_type_"
+                        f"{craft_activity.id}"
+                    ),
+                    (
+                            craft_activity
+                            .default_assignment_type
+                            or CommissionAssignmentType
+                            .INTERNAL.value
+                    ),
+                )
+            ).strip().casefold()
+
+            if (
+                    assignment_type
+                    not in allowed_assignment_types
+            ):
+                flash(
+                    "Die ausgewählte Standardvergabe "
+                    "ist ungültig.",
+                    "danger",
+                )
+                return redirect(
+                    url_for(
+                        "admin."
+                        "craft_department_mappings"
+                    )
+                )
+
+            selected_assignment_types[
+                craft_activity.id
+            ] = assignment_type
+
             raw_value = request.form.get(
                 (
                     "department_"
@@ -2556,41 +2591,6 @@ def craft_department_mappings() -> Any:
                         "craft_department_mappings"
                     )
                 )
-
-            assignment_type = str(
-                request.form.get(
-                    (
-                        "default_assignment_type_"
-                        f"{craft_activity.id}"
-                    ),
-                    (
-                        craft_activity
-                        .default_assignment_type
-                        or CommissionAssignmentType
-                        .INTERNAL.value
-                    ),
-                )
-            ).strip().casefold()
-
-            if (
-                assignment_type
-                not in allowed_assignment_types
-            ):
-                flash(
-                    "Die ausgewählte Standardvergabe "
-                    "ist ungültig.",
-                    "danger",
-                )
-                return redirect(
-                    url_for(
-                        "admin."
-                        "craft_department_mappings"
-                    )
-                )
-
-            selected_assignment_types[
-                craft_activity.id
-            ] = assignment_type
 
             department = departments_by_id.get(
                 department_id
