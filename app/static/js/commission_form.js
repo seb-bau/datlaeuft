@@ -132,6 +132,33 @@ document.addEventListener("DOMContentLoaded", () => {
         );
     }
 
+    function applyCraftAssignmentDefault() {
+        if (assignmentLocked) {
+            return;
+        }
+
+        const selectedOption =
+            craftActivity.selectedOptions[0];
+        const configuredAssignmentType = String(
+            selectedOption?.dataset
+                .defaultAssignmentType
+            || "internal"
+        );
+        const assignmentType = (
+            configuredAssignmentType === "external"
+                ? "external"
+                : "internal"
+        );
+        const assignmentInput =
+            assignmentTypeInputs.find((input) => {
+                return input.value === assignmentType;
+            });
+
+        if (assignmentInput) {
+            assignmentInput.checked = true;
+        }
+    }
+
     function fieldValue(field) {
         return String(field.value || "").trim();
     }
@@ -1146,44 +1173,51 @@ document.addEventListener("DOMContentLoaded", () => {
                         );
 
                     if (!craftsmanUserId) {
-                        throw new Error(
-                            "Für diese Kombination "
-                            + "wurde kein Handwerker "
-                            + "ermittelt."
+                        clearAutomaticValue(
+                            craftsmanUser
                         );
-                    }
+                        setAssignmentStatus(
+                            payload.message
+                            || (
+                                "Kein Handwerker "
+                                + "automatisch ermittelt. "
+                                + "Bitte manuell "
+                                + "auswählen."
+                            )
+                        );
+                    } else {
+                        const hasCraftsmanOption =
+                            Array.from(
+                                craftsmanUser.options
+                            ).some((option) => {
+                                return (
+                                    option.value
+                                    === craftsmanUserId
+                                );
+                            });
 
-                    const hasCraftsmanOption =
-                        Array.from(
-                            craftsmanUser.options
-                        ).some((option) => {
-                            return (
-                                option.value
-                                === craftsmanUserId
+                        if (!hasCraftsmanOption) {
+                            throw new Error(
+                                "Der automatisch "
+                                + "ermittelte Handwerker "
+                                + "ist nicht in der "
+                                + "Auswahlliste verfügbar."
                             );
-                        });
+                        }
 
-                    if (!hasCraftsmanOption) {
-                        throw new Error(
-                            "Der automatisch "
-                            + "ermittelte Handwerker "
-                            + "ist nicht in der "
-                            + "Auswahlliste verfügbar."
+                        applyAutomaticValue(
+                            craftsmanUser,
+                            craftsmanUserId
+                        );
+
+                        setAssignmentStatus(
+                            "Automatischer Vorschlag: "
+                            + payload.craftsman_name
+                            + " · Buchwerk "
+                            + payload
+                                .company_code_code
                         );
                     }
-
-                    applyAutomaticValue(
-                        craftsmanUser,
-                        craftsmanUserId
-                    );
-
-                    setAssignmentStatus(
-                        "Automatischer Vorschlag: "
-                        + payload.craftsman_name
-                        + " · Buchwerk "
-                        + payload
-                            .company_code_code
-                    );
                 } else {
                     clearAutomaticValue(
                         craftsmanUser,
@@ -1396,11 +1430,13 @@ document.addEventListener("DOMContentLoaded", () => {
     craftActivity.addEventListener(
         "change",
         () => {
+            applyCraftAssignmentDefault();
             filterServicePositions();
             updateCommissionTypeOptions();
             filterExternalCraftsmen({
                 force: true
             });
+            updateAssignmentControls();
             updateAssignmentPreview({
                 forceCraftsman: true
             });

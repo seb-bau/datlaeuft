@@ -39,6 +39,11 @@ class CommissionSource(str, Enum):
     IOS = "ios"
 
 
+class CommissionAssignmentType(str, Enum):
+    INTERNAL = "internal"
+    EXTERNAL = "external"
+
+
 class CommissionSyncState(str, Enum):
     PENDING = "pending"
     SYNCED = "synced"
@@ -430,6 +435,12 @@ class CraftActivity(db.Model):
         db.Boolean,
         default=False,
         server_default=false(),
+        nullable=False,
+    )
+    default_assignment_type: Mapped[str] = mapped_column(
+        db.String(20),
+        default=CommissionAssignmentType.INTERNAL.value,
+        server_default=CommissionAssignmentType.INTERNAL.value,
         nullable=False,
     )
     synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))

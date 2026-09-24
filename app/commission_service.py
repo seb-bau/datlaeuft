@@ -418,22 +418,35 @@ def create_pending_commission(
                 "Leistungsposition nicht zulässig."
             )
 
+    requested_user_id = (
+        optional_int(
+            data.get("craftsman_user_id"),
+            "Handwerker",
+        )
+        if (
+            allow_assignment_override
+            and assignment_type == "internal"
+        )
+        else None
+    )
+
     assignment = resolve_commission_assignment(
         service_positions,
         object_context,
         require_user=(
-                assignment_type == "internal"
+            assignment_type == "internal"
+            and requested_user_id is None
         ),
     )
 
     if (
-            selected_craft_activity_id is not None
-            and any(
-        service_position.craft_activity_id
-        != selected_craft_activity_id
-        for service_position
-        in service_positions
-    )
+        selected_craft_activity_id is not None
+        and any(
+            service_position.craft_activity_id
+            != selected_craft_activity_id
+            for service_position
+            in service_positions
+        )
     ):
         raise ValueError(
             "Mindestens eine Leistungsposition "
@@ -463,25 +476,8 @@ def create_pending_commission(
             .craftsman_erp_id
         )
     else:
-        assigned_user = assignment.user
-
-        if assigned_user is None:
-            raise ValueError(
-                "Es konnte kein interner "
-                "Handwerker ermittelt werden."
-            )
-
-        requested_user_id = (
-            optional_int(
-                data.get("craftsman_user_id"),
-                "Handwerker",
-            )
-            if allow_assignment_override
-            else None
-        )
-
         if requested_user_id is not None:
-            selected_user = (
+            assigned_user = (
                 User.query
                 .filter(
                     User.id
@@ -495,13 +491,19 @@ def create_pending_commission(
                 .one_or_none()
             )
 
-            if selected_user is None:
+            if assigned_user is None:
                 raise ValueError(
                     "Der ausgewählte Handwerker "
                     "ist nicht verfügbar."
                 )
+        else:
+            assigned_user = assignment.user
 
-            assigned_user = selected_user
+            if assigned_user is None:
+                raise ValueError(
+                    "Es konnte kein interner "
+                    "Handwerker ermittelt werden."
+                )
 
         commission.user = assigned_user
         commission.craftsman_erp_id = (

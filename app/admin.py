@@ -121,6 +121,7 @@ from .models import (
     WorkTimeTargetOverride,
     ExternalCraftsman,
     ExternalCraftsmanAccessToken,
+    CommissionAssignmentType,
 )
 from .external_craftsman_service import (
     automatic_external_craftsman,
@@ -2514,12 +2515,18 @@ def craft_department_mappings() -> Any:
         )
     }
 
+    allowed_assignment_types = {
+        item.value
+        for item in CommissionAssignmentType
+    }
+
     if request.method == "POST":
         departments_by_id = {
             item.id: item
             for item in departments
         }
         selected_departments = {}
+        selected_assignment_types = {}
 
         for craft_activity in craft_activities:
             raw_value = request.form.get(
@@ -2550,6 +2557,41 @@ def craft_department_mappings() -> Any:
                     )
                 )
 
+            assignment_type = str(
+                request.form.get(
+                    (
+                        "default_assignment_type_"
+                        f"{craft_activity.id}"
+                    ),
+                    (
+                        craft_activity
+                        .default_assignment_type
+                        or CommissionAssignmentType
+                        .INTERNAL.value
+                    ),
+                )
+            ).strip().casefold()
+
+            if (
+                assignment_type
+                not in allowed_assignment_types
+            ):
+                flash(
+                    "Die ausgewählte Standardvergabe "
+                    "ist ungültig.",
+                    "danger",
+                )
+                return redirect(
+                    url_for(
+                        "admin."
+                        "craft_department_mappings"
+                    )
+                )
+
+            selected_assignment_types[
+                craft_activity.id
+            ] = assignment_type
+
             department = departments_by_id.get(
                 department_id
             )
@@ -2572,6 +2614,11 @@ def craft_department_mappings() -> Any:
             ] = department
 
         for craft_activity in craft_activities:
+            craft_activity.default_assignment_type = (
+                selected_assignment_types[
+                    craft_activity.id
+                ]
+            )
             mapping = mappings.get(
                 craft_activity.id
             )
@@ -3516,12 +3563,28 @@ def commission_create() -> Any:
                 ),
             }
 
-            if (
-                source_ticket.ai_craft_activity_id
-                in craft_activity_by_id
-            ):
+            selected_craft_activity = (
+                craft_activity_by_id.get(
+                    source_ticket
+                    .ai_craft_activity_id
+                )
+            )
+
+            if selected_craft_activity is not None:
                 form_values["craft_activity_id"] = (
-                    source_ticket.ai_craft_activity_id
+                    selected_craft_activity.id
+                )
+                form_values["assignment_type"] = (
+                    CommissionAssignmentType
+                    .EXTERNAL.value
+                    if (
+                        selected_craft_activity
+                        .default_assignment_type
+                        == CommissionAssignmentType
+                        .EXTERNAL.value
+                    )
+                    else CommissionAssignmentType
+                    .INTERNAL.value
                 )
             position_rows = [
                 {
@@ -3546,6 +3609,15 @@ def commission_create() -> Any:
             ):
                 form_values["craftsman_user_id"] = (
                     source_ticket.ai_assigned_user_id
+                )
+
+            if (
+                    source_ticket.ai_assignment_mode
+                    == TicketAiAssignmentMode.FORCE.value
+            ):
+                form_values["assignment_type"] = (
+                    CommissionAssignmentType
+                    .INTERNAL.value
                 )
 
             license_agreement_id = (
@@ -3958,13 +4030,36 @@ def commission_assignment_preview() -> Any:
                 "nicht verfügbar."
             )
 
-        assignment = resolve_commission_assignment(
-            [service_position],
-            object_context,
-            require_user=(
-                assignment_type == "internal"
-            ),
-        )
+        automatic_assignment_message = None
+
+        if assignment_type == "internal":
+            try:
+                assignment = (
+                    resolve_commission_assignment(
+                        [service_position],
+                        object_context,
+                        require_user=True,
+                    )
+                )
+            except ValueError as exc:
+                assignment = (
+                    resolve_commission_assignment(
+                        [service_position],
+                        object_context,
+                        require_user=False,
+                    )
+                )
+                automatic_assignment_message = str(
+                    exc
+                )
+        else:
+            assignment = (
+                resolve_commission_assignment(
+                    [service_position],
+                    object_context,
+                    require_user=False,
+                )
+            )
 
         if assignment_type == "external":
             candidates = (
@@ -3996,25 +4091,19 @@ def commission_assignment_preview() -> Any:
                     "external_craftsman_id": (
                         automatic_candidate.id
                         if automatic_candidate
-                        is not None
+                           is not None
                         else None
                     ),
                     "external_craftsman_name": (
                         automatic_candidate
                         .display_name
                         if automatic_candidate
-                        is not None
+                           is not None
                         else None
                     ),
                 }
             )
-        else:
-            if assignment.user is None:
-                raise ValueError(
-                    "Es konnte kein interner "
-                    "Handwerker ermittelt werden."
-                )
-
+        elif assignment.user is not None:
             payload.update(
                 {
                     "craftsman_user_id": (
@@ -4029,6 +4118,21 @@ def commission_assignment_preview() -> Any:
                         .display_name
                     ),
                 }
+            )
+        else:
+            payload["message"] = (
+                (
+                        automatic_assignment_message
+                        + " Bitte wählen Sie den "
+                          "Handwerker manuell aus."
+                )
+                if automatic_assignment_message
+                else (
+                    "Es konnte kein interner "
+                    "Handwerker automatisch "
+                    "ermittelt werden. Bitte wählen "
+                    "Sie ihn manuell aus."
+                )
             )
 
     except ValueError as exc:
