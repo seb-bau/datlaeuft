@@ -1564,9 +1564,31 @@ def resolve_commission_assignment(
     )
 
 
-def commission_creation_tasks():
+def commission_service_positions():
     return (
         TimeTaskTemplate.query
+        .filter(
+            TimeTaskTemplate.active.is_(True),
+            TimeTaskTemplate
+            .erp_service_catalogue_id
+            .isnot(None),
+            TimeTaskTemplate
+            .craft_activity_id
+            .isnot(None),
+            TimeTaskTemplate.craft_activity.has(
+                CraftActivity.active.is_(True)
+                & CraftActivity.app_enabled.is_(
+                    True
+                )
+                & CraftActivity.erp_id.isnot(None)
+            ),
+        )
+    )
+
+
+def commission_creation_tasks():
+    return (
+        commission_service_positions()
         .join(
             CraftActivityDepartmentMapping,
             (
@@ -1584,19 +1606,6 @@ def commission_creation_tasks():
             ),
         )
         .filter(
-            TimeTaskTemplate.active.is_(True),
-            (
-                TimeTaskTemplate
-                .erp_service_catalogue_id
-                .isnot(None)
-            ),
-            TimeTaskTemplate.craft_activity.has(
-                CraftActivity.active.is_(True)
-                & CraftActivity.app_enabled.is_(
-                    True
-                )
-                & CraftActivity.erp_id.isnot(None)
-            ),
             WowiDepartment.active.is_(True),
         )
     )

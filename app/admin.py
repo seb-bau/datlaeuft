@@ -45,6 +45,7 @@ from .object_directory import (
     resolve_commission_object,
     search_commission_objects,
     sync_object_directory,
+    commission_service_positions,
 )
 from sqlalchemy import (
     and_,
@@ -871,7 +872,7 @@ def ticket_settings() -> Any:
     )
 
     service_positions = (
-        commission_creation_tasks()
+        commission_service_positions()
         .order_by(
             TimeTaskTemplate.title.asc(),
             TimeTaskTemplate.code.asc(),
@@ -1292,7 +1293,7 @@ def ticket_assignment_rule_save() -> Any:
 
         if target_task_template_id is not None:
             target_task_template = (
-                commission_creation_tasks()
+                commission_service_positions()
                 .filter(
                     TimeTaskTemplate.id
                     == target_task_template_id
@@ -3398,7 +3399,7 @@ def preferred_commission_type_id(
 @foreman_required
 def commission_create() -> Any:
     service_positions = (
-        commission_creation_tasks()
+        commission_service_positions()
         .join(
             CraftActivity,
             TimeTaskTemplate.craft_activity_id
@@ -4013,7 +4014,7 @@ def commission_assignment_preview() -> Any:
 
     try:
         service_position = (
-            commission_creation_tasks()
+            commission_service_positions()
             .filter(
                 TimeTaskTemplate.craft_activity_id
                 == craft_activity_id
@@ -4030,41 +4031,20 @@ def commission_assignment_preview() -> Any:
                 "nicht verfügbar."
             )
 
-        automatic_assignment_message = None
+        craft_activity = (
+            service_position.craft_activity
+        )
 
-        if assignment_type == "internal":
-            try:
-                assignment = (
-                    resolve_commission_assignment(
-                        [service_position],
-                        object_context,
-                        require_user=True,
-                    )
-                )
-            except ValueError as exc:
-                assignment = (
-                    resolve_commission_assignment(
-                        [service_position],
-                        object_context,
-                        require_user=False,
-                    )
-                )
-                automatic_assignment_message = str(
-                    exc
-                )
-        else:
-            assignment = (
-                resolve_commission_assignment(
-                    [service_position],
-                    object_context,
-                    require_user=False,
-                )
+        if craft_activity is None:
+            raise ValueError(
+                "Der Leistungsposition ist kein "
+                "Gewerk zugeordnet."
             )
 
         if assignment_type == "external":
             candidates = (
                 available_external_craftsmen(
-                    assignment.craft_activity.id
+                    craft_activity.id
                 )
             )
 
@@ -4077,7 +4057,7 @@ def commission_assignment_preview() -> Any:
 
             automatic_candidate = (
                 automatic_external_craftsman(
-                    assignment.craft_activity,
+                    craft_activity,
                     candidates,
                 )
             )
@@ -4103,37 +4083,60 @@ def commission_assignment_preview() -> Any:
                     ),
                 }
             )
-        elif assignment.user is not None:
-            payload.update(
-                {
-                    "craftsman_user_id": (
-                        assignment.user.id
-                    ),
-                    "craftsman_erp_id": (
-                        assignment.user
-                        .craftsman_erp_id
-                    ),
-                    "craftsman_name": (
-                        assignment.user
-                        .display_name
-                    ),
-                }
-            )
         else:
-            payload["message"] = (
-                (
-                        automatic_assignment_message
-                        + " Bitte wählen Sie den "
-                          "Handwerker manuell aus."
+            automatic_assignment_message = None
+
+            try:
+                assignment = (
+                    resolve_commission_assignment(
+                        [service_position],
+                        object_context,
+                        require_user=True,
+                    )
                 )
-                if automatic_assignment_message
-                else (
-                    "Es konnte kein interner "
-                    "Handwerker automatisch "
-                    "ermittelt werden. Bitte wählen "
-                    "Sie ihn manuell aus."
+            except ValueError as exc:
+                assignment = (
+                    resolve_commission_assignment(
+                        [service_position],
+                        object_context,
+                        require_user=False,
+                    )
                 )
-            )
+                automatic_assignment_message = str(
+                    exc
+                )
+
+            if assignment.user is not None:
+                payload.update(
+                    {
+                        "craftsman_user_id": (
+                            assignment.user.id
+                        ),
+                        "craftsman_erp_id": (
+                            assignment.user
+                            .craftsman_erp_id
+                        ),
+                        "craftsman_name": (
+                            assignment.user
+                            .display_name
+                        ),
+                    }
+                )
+            else:
+                payload["message"] = (
+                    (
+                            automatic_assignment_message
+                            + " Bitte wählen Sie den "
+                              "Handwerker manuell aus."
+                    )
+                    if automatic_assignment_message
+                    else (
+                        "Es konnte kein interner "
+                        "Handwerker automatisch "
+                        "ermittelt werden. Bitte "
+                        "wählen Sie ihn manuell aus."
+                    )
+                )
 
     except ValueError as exc:
         payload["message"] = str(exc)

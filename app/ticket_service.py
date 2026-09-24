@@ -16,7 +16,7 @@ from .models import (
     utc_now, TimeTaskTemplate,
 )
 from .object_directory import (
-    commission_creation_tasks,
+    commission_service_positions,
 )
 from .openai_service import (
     TICKET_ANALYSIS_PROMPT_VERSION,
@@ -339,7 +339,7 @@ def ticket_analysis_configuration() -> dict[
         for item in crafts
     }
     service_positions = (
-        commission_creation_tasks()
+        commission_service_positions()
         .filter(
             TimeTaskTemplate.craft_activity_id.in_(
                 craft_ids

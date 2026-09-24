@@ -418,6 +418,40 @@ def create_pending_commission(
                 "Leistungsposition nicht zulässig."
             )
 
+    craft_activity_ids = {
+        service_position.craft_activity_id
+        for service_position in service_positions
+    }
+
+    if len(craft_activity_ids) != 1:
+        raise ValueError(
+            "Alle Positionen eines Auftrags müssen "
+            "demselben Gewerk angehören."
+        )
+
+    craft_activity_id = next(
+        iter(craft_activity_ids)
+    )
+    craft_activity = (
+        service_positions[0].craft_activity
+    )
+
+    if craft_activity is None:
+        raise ValueError(
+            "Der Leistungsposition ist kein "
+            "Gewerk zugeordnet."
+        )
+
+    if (
+        selected_craft_activity_id is not None
+        and selected_craft_activity_id
+        != craft_activity_id
+    ):
+        raise ValueError(
+            "Mindestens eine Leistungsposition "
+            "gehört nicht zum ausgewählten Gewerk."
+        )
+
     requested_user_id = (
         optional_int(
             data.get("craftsman_user_id"),
@@ -429,29 +463,6 @@ def create_pending_commission(
         )
         else None
     )
-
-    assignment = resolve_commission_assignment(
-        service_positions,
-        object_context,
-        require_user=(
-            assignment_type == "internal"
-            and requested_user_id is None
-        ),
-    )
-
-    if (
-        selected_craft_activity_id is not None
-        and any(
-            service_position.craft_activity_id
-            != selected_craft_activity_id
-            for service_position
-            in service_positions
-        )
-    ):
-        raise ValueError(
-            "Mindestens eine Leistungsposition "
-            "gehört nicht zum ausgewählten Gewerk."
-        )
 
     if assignment_type == "external":
         requested_external_craftsman_id = (
@@ -466,16 +477,29 @@ def create_pending_commission(
         )
         external_craftsman = (
             resolve_external_craftsman(
-                assignment.craft_activity,
+                craft_activity,
                 requested_external_craftsman_id,
             )
         )
+
         commission.user = None
         commission.craftsman_erp_id = (
             external_craftsman
             .craftsman_erp_id
         )
+        commission.department_erp_id = None
+        commission.responsible_official_repair_erp_id = (
+            None
+        )
     else:
+        assignment = resolve_commission_assignment(
+            service_positions,
+            object_context,
+            require_user=(
+                requested_user_id is None
+            ),
+        )
+
         if requested_user_id is not None:
             assigned_user = (
                 User.query
@@ -509,13 +533,12 @@ def create_pending_commission(
         commission.craftsman_erp_id = (
             assigned_user.craftsman_erp_id
         )
-
-    commission.department_erp_id = (
-        assignment.department.erp_id
-    )
-    commission.responsible_official_repair_erp_id = (
-        assignment.responsible_official_erp_id
-    )
+        commission.department_erp_id = (
+            assignment.department.erp_id
+        )
+        commission.responsible_official_repair_erp_id = (
+            assignment.responsible_official_erp_id
+        )
 
     if len(commission.positions) > 1:
         commission.title = "Mehrere Positionen"
