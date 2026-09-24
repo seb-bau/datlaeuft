@@ -1,0 +1,471 @@
+{% extends "base.html" %}
+{% block title %}Lagerartikel bearbeiten{% endblock %}
+{% block content %}
+<div
+  class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"
+>
+  <div>
+    <h1 class="h3 mb-1">
+      {{ item.name }}
+    </h1>
+    <div class="text-body-secondary">
+      Lagerartikel {{ item.item_number }}
+    </div>
+  </div>
+
+  <div class="d-flex flex-wrap gap-2">
+    <a
+      class="btn btn-outline-primary"
+      href="{{ url_for(
+        'admin.inventory_item',
+        item_id=item.id
+      ) }}"
+    >
+      Bestand anzeigen
+    </a>
+
+    <a
+      class="btn btn-outline-secondary"
+      href="{{ url_for(
+        'admin.inventory_items'
+      ) }}"
+    >
+      Zurück zu Lagerartikeln
+    </a>
+  </div>
+</div>
+
+<div class="row g-4 align-items-start">
+  <div class="col-xl-5">
+    <form
+      method="post"
+      class="card shadow-sm"
+    >
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+
+      <div class="card-header fw-semibold">
+        Artikelstammdaten
+      </div>
+
+      <div class="card-body">
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="itemNumber"
+          >
+            Artikelnummer
+          </label>
+          <input
+            class="form-control"
+            id="itemNumber"
+            name="item_number"
+            value="{{ item.item_number }}"
+            required
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="itemName"
+          >
+            Name
+          </label>
+          <input
+            class="form-control"
+            id="itemName"
+            name="name"
+            value="{{ item.name }}"
+            required
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="itemType"
+          >
+            Artikelart
+          </label>
+          <select
+            class="form-select"
+            id="itemType"
+            name="item_type_id"
+          >
+            <option value="">
+              Noch nicht klassifiziert
+            </option>
+
+            {% for item_type in item_types %}
+            <option
+              value="{{ item_type.id }}"
+              {% if item.item_type_id == item_type.id %}selected{% endif %}
+            >
+              {{ item_type.group.name }}
+              ·
+              {{ item_type.name }}
+              {% if not item_type.active %}
+                · inaktiv
+              {% endif %}
+            </option>
+            {% endfor %}
+          </select>
+
+          <div class="form-text">
+            Die Einheit wird von der Artikelart übernommen.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="itemUnit"
+          >
+            Einheit
+          </label>
+          <input
+            class="form-control"
+            id="itemUnit"
+            name="unit"
+            value="{{ item.unit }}"
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="itemEan"
+          >
+            EAN
+          </label>
+          <input
+            class="form-control"
+            id="itemEan"
+            name="ean"
+            value="{{ item.ean or '' }}"
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="itemReorderLevel"
+          >
+            Mindestbestand
+          </label>
+          <input
+            class="form-control"
+            id="itemReorderLevel"
+            type="number"
+            step="0.01"
+            name="reorder_level"
+            value="{{ item.reorder_level }}"
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="itemBillingBasePriceNet"
+          >
+            Netto-Verkaufspreis
+          </label>
+          <input
+            class="form-control"
+            id="itemBillingBasePriceNet"
+            name="billing_base_price_net"
+            inputmode="decimal"
+            value="{{ item.billing_base_price_net if item.billing_base_price_net is not none else '' }}"
+          >
+          <div class="form-text">
+            Grundlage für Rechnungsvorschläge
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="itemBillingVatRate"
+          >
+            Umsatzsteuer in Prozent
+          </label>
+          <input
+            class="form-control"
+            id="itemBillingVatRate"
+            name="billing_vat_rate"
+            inputmode="decimal"
+            value="{{ item.billing_vat_rate if item.billing_vat_rate is not none else '' }}"
+            placeholder="Standard der Rechnung"
+          >
+        </div>
+
+        <div class="form-check">
+          <input
+            class="form-check-input"
+            id="itemActive"
+            type="checkbox"
+            name="active"
+            {% if item.active %}checked{% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="itemActive"
+          >
+            Aktiv
+          </label>
+        </div>
+      </div>
+
+      <div class="card-footer text-end">
+        <button
+          class="btn btn-primary"
+          type="submit"
+        >
+          Speichern
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-xl-7">
+    <div class="card shadow-sm mb-4">
+      <div
+        class="card-body d-flex flex-wrap gap-4 align-items-center"
+      >
+        <img
+          src="{{ url_for(
+            'admin.inventory_qr',
+            item_id=item.id
+          ) }}"
+          alt="QR-Code für {{ item.name }}"
+          width="140"
+          height="140"
+        >
+
+        <div>
+          <div class="text-muted">
+            QR-Inhalt
+          </div>
+          <code>{{ item.qr_code_payload }}</code>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-header fw-semibold">
+        Zusätzliche scanbare Codes
+      </div>
+
+      <div class="card-body">
+        {% if not barcodes %}
+        <div class="text-muted mb-3">
+          Es sind noch keine zusätzlichen Codes vorhanden.
+        </div>
+        {% endif %}
+
+        {% for barcode in barcodes %}
+        <form
+          method="post"
+          action="{{ url_for(
+            'admin.inventory_barcode_update',
+            item_id=item.id,
+            barcode_id=barcode.id
+          ) }}"
+          class="row g-2 align-items-end border-bottom pb-3 mb-3"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <div class="col-lg-4">
+            <label
+              class="form-label"
+              for="barcodeCode{{ barcode.id }}"
+            >
+              Code
+            </label>
+            <input
+              class="form-control form-control-sm"
+              id="barcodeCode{{ barcode.id }}"
+              name="code"
+              value="{{ barcode.code }}"
+              required
+            >
+          </div>
+
+          <div class="col-lg-2">
+            <label
+              class="form-label"
+              for="barcodeKind{{ barcode.id }}"
+            >
+              Art
+            </label>
+            <select
+              class="form-select form-select-sm"
+              id="barcodeKind{{ barcode.id }}"
+              name="kind"
+            >
+              {% for kind_value, kind_label in barcode_kinds %}
+              <option
+                value="{{ kind_value }}"
+                {% if barcode.kind == kind_value %}selected{% endif %}
+              >
+                {{ kind_label }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-lg-3">
+            <label
+              class="form-label"
+              for="barcodeDescription{{ barcode.id }}"
+            >
+              Beschreibung
+            </label>
+            <input
+              class="form-control form-control-sm"
+              id="barcodeDescription{{ barcode.id }}"
+              name="description"
+              value="{{ barcode.description or '' }}"
+              placeholder="z. B. Hersteller-EAN"
+            >
+          </div>
+
+          <div class="col-lg-1">
+            <div class="form-check mb-2">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                name="active"
+                id="barcodeActive{{ barcode.id }}"
+                {% if barcode.active %}checked{% endif %}
+              >
+              <label
+                class="form-check-label"
+                for="barcodeActive{{ barcode.id }}"
+              >
+                Aktiv
+              </label>
+            </div>
+          </div>
+
+          <div class="col-lg-2">
+            <div class="d-flex gap-2">
+              <button
+                class="btn btn-sm btn-outline-primary flex-grow-1"
+                type="submit"
+              >
+                Speichern
+              </button>
+
+              <button
+                class="btn btn-sm btn-outline-danger"
+                type="submit"
+                formaction="{{ url_for(
+                  'admin.inventory_barcode_delete',
+                  item_id=item.id,
+                  barcode_id=barcode.id
+                ) }}"
+                formmethod="post"
+                formnovalidate
+                onclick="return confirm(
+                  'Diesen scanbaren Code wirklich entfernen?'
+                )"
+                title="Code entfernen"
+                aria-label="Code entfernen"
+              >
+                <i
+                  class="bi bi-trash"
+                  aria-hidden="true"
+                ></i>
+              </button>
+            </div>
+          </div>
+        </form>
+        {% endfor %}
+
+        <form
+          method="post"
+          action="{{ url_for(
+            'admin.inventory_barcode_create',
+            item_id=item.id
+          ) }}"
+          class="row g-2 align-items-end"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+
+          <div class="col-lg-4">
+            <label
+              class="form-label"
+              for="newBarcodeCode"
+            >
+              Neuer Code
+            </label>
+            <input
+              class="form-control form-control-sm"
+              id="newBarcodeCode"
+              name="code"
+              required
+            >
+          </div>
+
+          <div class="col-lg-2">
+            <label
+              class="form-label"
+              for="newBarcodeKind"
+            >
+              Art
+            </label>
+            <select
+              class="form-select form-select-sm"
+              id="newBarcodeKind"
+              name="kind"
+            >
+              {% for kind_value, kind_label in barcode_kinds %}
+              <option value="{{ kind_value }}">
+                {{ kind_label }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-lg-4">
+            <label
+              class="form-label"
+              for="newBarcodeDescription"
+            >
+              Beschreibung
+            </label>
+            <input
+              class="form-control form-control-sm"
+              id="newBarcodeDescription"
+              name="description"
+              placeholder="z. B. Modell oder Hersteller"
+            >
+          </div>
+
+          <div class="col-lg-2">
+            <button
+              class="btn btn-sm btn-primary w-100"
+              type="submit"
+            >
+              Hinzufügen
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

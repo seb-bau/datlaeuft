@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Lagerartikel{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <h1 class="h3 mb-1">Lagerartikel</h1>
+  <div class="text-body-secondary">
+    Artikelstammdaten anlegen und bearbeiten
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-4">
+    <form method="post" class="card shadow-sm">
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+
+      <div class="card-header fw-semibold">
+        Artikel anlegen
+      </div>
+
+      <div class="card-body">
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="newItemNumber"
+          >
+            Artikelnummer
+          </label>
+          <input
+            class="form-control"
+            id="newItemNumber"
+            name="item_number"
+            required
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="newItemName"
+          >
+            Name
+          </label>
+          <input
+            class="form-control"
+            id="newItemName"
+            name="name"
+            required
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="newItemType"
+          >
+            Artikelart
+          </label>
+          <select
+            class="form-select"
+            id="newItemType"
+            name="item_type_id"
+          >
+            <option value="">
+              Noch nicht klassifiziert
+            </option>
+            {% for item_type in item_types %}
+            <option value="{{ item_type.id }}">
+              {{ item_type.group.name }}
+              ·
+              {{ item_type.name }}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            Bei einer Artikelart wird deren Einheit übernommen.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="newItemUnit"
+          >
+            Einheit
+          </label>
+          <input
+            class="form-control"
+            id="newItemUnit"
+            name="unit"
+            value="Stk"
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="newItemEan"
+          >
+            EAN
+          </label>
+          <input
+            class="form-control"
+            id="newItemEan"
+            name="ean"
+          >
+        </div>
+
+        <div class="mb-3">
+          <label
+            class="form-label"
+            for="newItemReorderLevel"
+          >
+            Mindestbestand
+          </label>
+          <input
+            class="form-control"
+            id="newItemReorderLevel"
+            type="number"
+            step="0.01"
+            name="reorder_level"
+            value="0"
+          >
+        </div>
+
+        <div class="form-check">
+          <input
+            class="form-check-input"
+            id="newItemActive"
+            type="checkbox"
+            name="active"
+            checked
+          >
+          <label
+            class="form-check-label"
+            for="newItemActive"
+          >
+            Aktiv
+          </label>
+        </div>
+      </div>
+
+      <div class="card-footer text-end">
+        <button
+          class="btn btn-primary"
+          type="submit"
+        >
+          Artikel anlegen
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-xl-8">
+    <div class="card shadow-sm">
+      <div class="card-header fw-semibold">
+        Vorhandene Lagerartikel
+      </div>
+
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-striped datatable align-middle">
+            <thead>
+              <tr>
+                <th>Artikelnummer</th>
+                <th>Name</th>
+                <th>Artikelgruppe</th>
+                <th>Artikelart</th>
+                <th>Einheit</th>
+                <th>EAN</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {% for item in items %}
+              <tr>
+                <td>{{ item.item_number }}</td>
+                <td>{{ item.name }}</td>
+                <td>
+                  {{ item.item_type.group.name if item.item_type else "" }}
+                </td>
+                <td>
+                  {{ item.item_type.name if item.item_type else "" }}
+                </td>
+                <td>{{ item.unit }}</td>
+                <td>{{ item.ean or "" }}</td>
+                <td>
+                  {% if item.active %}
+                  <span class="badge text-bg-success">
+                    Aktiv
+                  </span>
+                  {% else %}
+                  <span class="badge text-bg-secondary">
+                    Inaktiv
+                  </span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a
+                    class="btn btn-sm btn-outline-primary"
+                    href="{{ url_for(
+                      'admin.inventory_item_edit',
+                      item_id=item.id
+                    ) }}"
+                  >
+                    Bearbeiten
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -48,9 +48,17 @@
     request.path.startswith('/admin/reports')
   %}
   {% set is_safety_section = request.path.startswith('/admin/safety-inspections') %}
-  {% set is_inventory_section = (
+  {% set is_inventory_stock_section = (
     request.path == '/admin/inventory'
     or request.path.startswith('/admin/inventory/')
+  ) %}
+  {% set is_inventory_items_section = (
+    request.path == '/admin/inventory-items'
+    or request.path.startswith('/admin/inventory-items/')
+  ) %}
+  {% set is_inventory_section = (
+    is_inventory_stock_section
+    or is_inventory_items_section
   ) %}
   {% set is_administration_section = (
     request.path.startswith('/admin/users')
@@ -370,12 +378,19 @@
             data-bs-parent="#appNavigation"
           >
             <div class="sidebar-subnav-inner">
-              {{ sidebar_link(
-                'admin.inventory',
-                'Lagerbestand',
-                'boxes',
-                is_inventory_section
-              ) }}
+            {{ sidebar_link(
+              'admin.inventory',
+              'Lagerbestand',
+              'boxes',
+              is_inventory_stock_section
+            ) }}
+
+            {{ sidebar_link(
+              'admin.inventory_items',
+              'Lagerartikel',
+              'box-seam',
+              is_inventory_items_section
+            ) }}
             </div>
           </div>
         </div>

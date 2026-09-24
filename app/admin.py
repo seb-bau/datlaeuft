@@ -7342,19 +7342,89 @@ def inventory_classifications() -> Any:
     )
 
 
-@admin_bp.route("/admin/inventory", methods=["GET", "POST"])
+@admin_bp.get("/admin/inventory")
 @foreman_required
 def inventory() -> Any:
+    items = (
+        InventoryItem.query
+        .order_by(
+            InventoryItem.name.asc()
+        )
+        .all()
+    )
+
+    return render_template(
+        "admin/inventory.html",
+        items=items,
+    )
+
+
+@admin_bp.route(
+    "/admin/inventory-items",
+    methods=["GET", "POST"],
+)
+@foreman_required
+def inventory_items() -> Any:
     if request.method == "POST":
         item = InventoryItem()
-        save_inventory_form(item)
-        db.session.add(item)
-        db.session.flush()
-        audit("inventory.create", "inventory_item", item.id)
-        db.session.commit()
-        flash("Artikel gespeichert.", "success")
-        return redirect(url_for("admin.inventory"))
-    items = InventoryItem.query.order_by(InventoryItem.name.asc()).all()
+
+        try:
+            save_inventory_form(item)
+            db.session.add(item)
+            db.session.flush()
+
+            audit(
+                "inventory.create",
+                "inventory_item",
+                item.id,
+            )
+
+            db.session.commit()
+
+        except (
+            ValueError,
+            IntegrityError,
+        ) as exc:
+            db.session.rollback()
+
+            flash(
+                (
+                    str(exc)
+                    if isinstance(exc, ValueError)
+                    else (
+                        "Artikelnummer oder EAN "
+                        "ist bereits vergeben."
+                    )
+                ),
+                "danger",
+            )
+
+            return redirect(
+                url_for(
+                    "admin.inventory_items"
+                )
+            )
+
+        flash(
+            "Artikel gespeichert.",
+            "success",
+        )
+
+        return redirect(
+            url_for(
+                "admin.inventory_item_edit",
+                item_id=item.id,
+            )
+        )
+
+    items = (
+        InventoryItem.query
+        .order_by(
+            InventoryItem.active.desc(),
+            InventoryItem.name.asc(),
+        )
+        .all()
+    )
 
     item_types = (
         InventoryItemType.query
@@ -7375,9 +7445,108 @@ def inventory() -> Any:
     )
 
     return render_template(
-        "admin/inventory.html",
+        "admin/inventory_items.html",
         items=items,
         item_types=item_types,
+    )
+
+
+@admin_bp.route(
+    "/admin/inventory-items/<int:item_id>",
+    methods=["GET", "POST"],
+)
+@foreman_required
+def inventory_item_edit(
+    item_id: int,
+) -> Any:
+    item = db.get_or_404(
+        InventoryItem,
+        item_id,
+    )
+
+    if request.method == "POST":
+        try:
+            save_inventory_form(item)
+
+            audit(
+                "inventory.update",
+                "inventory_item",
+                item.id,
+            )
+
+            db.session.commit()
+
+        except (
+            ValueError,
+            IntegrityError,
+        ) as exc:
+            db.session.rollback()
+
+            flash(
+                (
+                    str(exc)
+                    if isinstance(exc, ValueError)
+                    else (
+                        "Artikelnummer oder EAN "
+                        "ist bereits vergeben."
+                    )
+                ),
+                "danger",
+            )
+
+        else:
+            flash(
+                "Artikel gespeichert.",
+                "success",
+            )
+
+        return redirect(
+            url_for(
+                "admin.inventory_item_edit",
+                item_id=item.id,
+            )
+        )
+
+    barcodes = (
+        InventoryItemBarcode.query
+        .filter_by(
+            item_id=item.id
+        )
+        .order_by(
+            InventoryItemBarcode.active.desc(),
+            InventoryItemBarcode.kind.asc(),
+            InventoryItemBarcode.code.asc(),
+        )
+        .all()
+    )
+
+    barcode_kinds = [
+        ("ean", "EAN"),
+        ("qr", "QR-Code"),
+        ("other", "Sonstiger Code"),
+    ]
+
+    item_types = (
+        InventoryItemType.query
+        .join(
+            InventoryItemGroup,
+            InventoryItemType.group_id
+            == InventoryItemGroup.id,
+        )
+        .order_by(
+            InventoryItemGroup.name.asc(),
+            InventoryItemType.active.desc(),
+            InventoryItemType.name.asc(),
+        )
+        .all()
+    )
+
+    return render_template(
+        "admin/inventory_item_edit.html",
+        item=item,
+        item_types=item_types,
+        barcodes=barcodes,
+        barcode_kinds=barcode_kinds,
     )
 
 
@@ -7395,87 +7564,85 @@ def inventory_item(
     )
 
     if request.method == "POST":
-        if request.form.get("form_name") == "movement":
-            try:
-                movement = InventoryMovement(
-                    item=item,
-                    user=current_user,
-                    movement_type=request.form.get(
-                        "movement_type",
-                        InventoryMovementType.STORED.value,
-                    ),
-                    quantity=float(
-                        request.form.get(
-                            "quantity",
-                            0,
-                        )
-                    ),
-                    serial_number=(
-                            request.form.get(
-                                "serial_number",
-                                "",
-                            ).strip()
-                            or None
-                    ),
-                    note=(
-                            request.form.get(
-                                "note",
-                                "",
-                            ).strip()
-                            or None
-                    ),
-                )
+        if (
+            request.form.get("form_name")
+            != "movement"
+        ):
+            abort(400)
 
-                apply_inventory_movement(
-                    item,
-                    movement,
-                )
-
-                audit(
-                    "inventory.movement",
-                    "inventory_item",
-                    item.id,
-                    {
-                        "movement_type": movement.movement_type,
-                        "quantity": movement.quantity,
-                        "source_location_id": (
-                            movement.source_location_id
-                        ),
-                        "target_location_id": (
-                            movement.target_location_id
-                        ),
-                    },
-                )
-
-            except (TypeError, ValueError) as exc:
-                db.session.rollback()
-
-                flash(
-                    str(exc),
-                    "danger",
-                )
-
-                return redirect(
-                    url_for(
-                        "admin.inventory_item",
-                        item_id=item.id,
+        try:
+            movement = InventoryMovement(
+                item=item,
+                user=current_user,
+                movement_type=request.form.get(
+                    "movement_type",
+                    InventoryMovementType.STORED.value,
+                ),
+                quantity=float(
+                    request.form.get(
+                        "quantity",
+                        0,
                     )
-                )
-
-        else:
-            save_inventory_form(item)
-
-            audit(
-                "inventory.update",
-                "inventory_item",
-                item.id,
+                ),
+                serial_number=(
+                    request.form.get(
+                        "serial_number",
+                        "",
+                    ).strip()
+                    or None
+                ),
+                note=(
+                    request.form.get(
+                        "note",
+                        "",
+                    ).strip()
+                    or None
+                ),
             )
 
-        db.session.commit()
-        flash(
-            "Artikel gespeichert.",
-            "success",
-        )
+            apply_inventory_movement(
+                item,
+                movement,
+            )
+
+            audit(
+                "inventory.movement",
+                "inventory_item",
+                item.id,
+                {
+                    "movement_type": (
+                        movement.movement_type
+                    ),
+                    "quantity": (
+                        movement.quantity
+                    ),
+                    "source_location_id": (
+                        movement.source_location_id
+                    ),
+                    "target_location_id": (
+                        movement.target_location_id
+                    ),
+                },
+            )
+
+            db.session.commit()
+
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            db.session.rollback()
+
+            flash(
+                str(exc),
+                "danger",
+            )
+
+        else:
+            flash(
+                "Bestandsbuchung gespeichert.",
+                "success",
+            )
 
         return redirect(
             url_for(
@@ -7486,29 +7653,14 @@ def inventory_item(
 
     movements = (
         InventoryMovement.query
-        .filter_by(item_id=item.id)
+        .filter_by(
+            item_id=item.id
+        )
         .order_by(
             InventoryMovement.occurred_at.desc()
         )
         .all()
     )
-
-    barcodes = (
-        InventoryItemBarcode.query
-        .filter_by(item_id=item.id)
-        .order_by(
-            InventoryItemBarcode.active.desc(),
-            InventoryItemBarcode.kind.asc(),
-            InventoryItemBarcode.code.asc(),
-        )
-        .all()
-    )
-
-    barcode_kinds = [
-        ("ean", "EAN"),
-        ("qr", "QR-Code"),
-        ("other", "Sonstiger Code"),
-    ]
 
     locations = (
         InventoryLocation.query
@@ -7539,44 +7691,40 @@ def inventory_item(
     ]
 
     movement_type_labels = {
-        InventoryMovementType.WITHDRAWAL.value: "Entnahme",
-        InventoryMovementType.STORED.value: "Eingelagert",
-        InventoryMovementType.ORDERED.value: "Bestellt",
-        InventoryMovementType.CORRECTION.value: "Korrektur",
-        InventoryMovementType.CANCELLATION.value: "Storno",
-        InventoryMovementType.TRANSFER.value: "Umbuchung",
+        InventoryMovementType.WITHDRAWAL.value: (
+            "Entnahme"
+        ),
+        InventoryMovementType.STORED.value: (
+            "Eingelagert"
+        ),
+        InventoryMovementType.ORDERED.value: (
+            "Bestellt"
+        ),
+        InventoryMovementType.CORRECTION.value: (
+            "Korrektur"
+        ),
+        InventoryMovementType.CANCELLATION.value: (
+            "Storno"
+        ),
+        InventoryMovementType.TRANSFER.value: (
+            "Umbuchung"
+        ),
     }
-
-    item_types = (
-        InventoryItemType.query
-        .join(
-            InventoryItemGroup,
-            InventoryItemType.group_id
-            == InventoryItemGroup.id,
-        )
-        .order_by(
-            InventoryItemGroup.name.asc(),
-            InventoryItemType.name.asc(),
-        )
-        .all()
-    )
 
     return render_template(
         "admin/inventory_item.html",
         item=item,
         movements=movements,
-        movement_types=InventoryMovementType,
-        barcodes=barcodes,
-        barcode_kinds=barcode_kinds,
         locations=locations,
         location_stocks=location_stocks,
-        movement_type_labels=movement_type_labels,
-        item_types=item_types,
+        movement_type_labels=(
+            movement_type_labels
+        ),
     )
 
 
 @admin_bp.post(
-    "/admin/inventory/<int:item_id>/barcodes"
+    "/admin/inventory-items/<int:item_id>/barcodes"
 )
 @foreman_required
 def inventory_barcode_create(
@@ -7613,7 +7761,7 @@ def inventory_barcode_create(
 
         return redirect(
             url_for(
-                "admin.inventory_item",
+                "admin.inventory_item_edit",
                 item_id=item.id,
             )
         )
@@ -7636,7 +7784,7 @@ def inventory_barcode_create(
 
         return redirect(
             url_for(
-                "admin.inventory_item",
+                "admin.inventory_item_edit",
                 item_id=item.id,
             )
         )
@@ -7672,14 +7820,15 @@ def inventory_barcode_create(
 
     return redirect(
         url_for(
-            "admin.inventory_item",
+            "admin.inventory_item_edit",
             item_id=item.id,
         )
     )
 
 
 @admin_bp.post(
-    "/admin/inventory/<int:item_id>/barcodes/<int:barcode_id>"
+    "/admin/inventory-items/<int:item_id>/barcodes/"
+    "<int:barcode_id>"
 )
 @foreman_required
 def inventory_barcode_update(
@@ -7729,7 +7878,7 @@ def inventory_barcode_update(
 
         return redirect(
             url_for(
-                "admin.inventory_item",
+                "admin.inventory_item_edit",
                 item_id=item.id,
             )
         )
@@ -7753,7 +7902,7 @@ def inventory_barcode_update(
 
         return redirect(
             url_for(
-                "admin.inventory_item",
+                "admin.inventory_item_edit",
                 item_id=item.id,
             )
         )
@@ -7786,14 +7935,14 @@ def inventory_barcode_update(
 
     return redirect(
         url_for(
-            "admin.inventory_item",
+            "admin.inventory_item_edit",
             item_id=item.id,
         )
     )
 
 
 @admin_bp.post(
-    "/admin/inventory/<int:item_id>/barcodes/"
+    "/admin/inventory-items/<int:item_id>/barcodes/"
     "<int:barcode_id>/delete"
 )
 @foreman_required
@@ -7839,7 +7988,7 @@ def inventory_barcode_delete(
 
     return redirect(
         url_for(
-            "admin.inventory_item",
+            "admin.inventory_item_edit",
             item_id=item.id,
         )
     )
