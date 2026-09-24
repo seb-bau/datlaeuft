@@ -27,6 +27,9 @@ from .models import (
     OfferCraftFallback,
     InvoiceStatus,
     CommissionLocalStatus,
+    Commission,
+    CommissionAssignmentType,
+    CommissionSource,
 )
 from .commission_service import (
     create_pending_commission,
@@ -1020,6 +1023,16 @@ def accept_offer(
             "Das Angebot besitzt keine Positionen."
         )
 
+    assignment_type = (
+        CommissionAssignmentType.EXTERNAL.value
+        if (
+            item.craft_activity is not None
+            and item.craft_activity.default_assignment_type
+            == CommissionAssignmentType.EXTERNAL.value
+        )
+        else CommissionAssignmentType.INTERNAL.value
+    )
+
     commission = create_pending_commission(
         data={
             "commission_type_id": (
@@ -1044,6 +1057,12 @@ def accept_offer(
                 item.recipient_name
             ),
             "positions": commission_positions,
+            "craft_activity_id": (
+                item.craft_activity_id
+            ),
+            "assignment_type": (
+                assignment_type
+            ),
         },
         created_by_user=user,
         source=CommissionSource.WEB,
