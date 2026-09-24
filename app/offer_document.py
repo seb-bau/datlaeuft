@@ -463,7 +463,9 @@ def create_offer_document(
         / f"angebot-{offer_number}.pdf"
     )
 
-    with TemporaryDirectory() as directory:
+    with TemporaryDirectory(
+            dir=target_directory
+    ) as directory:
         temporary_directory = Path(directory)
         content_path = (
             temporary_directory
