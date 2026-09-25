@@ -3837,13 +3837,14 @@ def serialize_inventory_stock(
 
 def serialize_inventory_item_group(
         item: InventoryItemGroup,
+        serial_number_required: bool = False,
 ) -> dict[str, Any]:
     return {
         "id": item.id,
         "code": item.code,
         "name": item.name,
         "serial_number_required": (
-            item.serial_number_required
+            serial_number_required
         ),
         "active": item.active,
     }
@@ -3857,10 +3858,16 @@ def serialize_inventory_item_type(
         "code": item.code,
         "name": item.name,
         "unit": item.unit,
+        "serial_number_required": (
+            item.serial_number_required
+        ),
         "active": item.active,
         "group": (
             serialize_inventory_item_group(
-                item.group
+                item.group,
+                serial_number_required=(
+                    item.serial_number_required
+                ),
             )
         ),
     }

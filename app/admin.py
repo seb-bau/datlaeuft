@@ -10156,10 +10156,6 @@ def save_inventory_group_form(
 
     item_group.code = code
     item_group.name = name
-    item_group.serial_number_required = (
-        "serial_number_required"
-        in request.form
-    )
     item_group.active = (
         "active"
         in request.form
@@ -10228,6 +10224,10 @@ def save_inventory_type_form(
     item_type.code = code
     item_type.name = name
     item_type.unit = unit
+    item_type.serial_number_required = (
+        "serial_number_required"
+        in request.form
+    )
     item_type.group = item_group
     item_type.active = (
         "active"

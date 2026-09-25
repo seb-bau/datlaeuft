@@ -46,20 +46,6 @@
             required
           >
         </div>
-        <div class="form-check mb-3">
-          <input
-            class="form-check-input"
-            type="checkbox"
-            name="serial_number_required"
-            id="newGroupSerialNumberRequired"
-          >
-          <label
-            class="form-check-label"
-            for="newGroupSerialNumberRequired"
-          >
-            Seriennummer bei Entnahme erforderlich
-          </label>
-        </div>
         <div class="form-check">
           <input
             class="form-check-input"
@@ -140,6 +126,20 @@
             required
           >
         </div>
+        <div class="form-check mb-3">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="serial_number_required"
+            id="newTypeSerialNumberRequired"
+          >
+          <label
+            class="form-check-label"
+            for="newTypeSerialNumberRequired"
+          >
+            Seriennummer bei Entnahme erforderlich
+          </label>
+        </div>
         <div class="form-check">
           <input
             class="form-check-input"
@@ -199,7 +199,7 @@
           required
         >
       </div>
-      <div class="col-lg-3">
+      <div class="col-lg-6">
         <label class="form-label">Bezeichnung</label>
         <input
           class="form-control"
@@ -207,23 +207,6 @@
           value="{{ group.name }}"
           required
         >
-      </div>
-      <div class="col-lg-3">
-        <div class="form-check mb-2">
-          <input
-            class="form-check-input"
-            type="checkbox"
-            name="serial_number_required"
-            id="groupSerial{{ group.id }}"
-            {% if group.serial_number_required %}checked{% endif %}
-          >
-          <label
-            class="form-check-label"
-            for="groupSerial{{ group.id }}"
-          >
-            Seriennummer erforderlich
-          </label>
-        </div>
       </div>
       <div class="col-lg-2">
         <div class="form-check mb-2">
@@ -284,7 +267,7 @@
         name="entity_id"
         value="{{ item_type.id }}"
       >
-      <div class="col-lg-3">
+      <div class="col-lg-2">
         <label class="form-label">Artikelgruppe</label>
         <select
           class="form-select"
@@ -310,7 +293,7 @@
           required
         >
       </div>
-      <div class="col-lg-3">
+      <div class="col-lg-2">
         <label class="form-label">Bezeichnung</label>
         <input
           class="form-control"
@@ -327,6 +310,23 @@
           value="{{ item_type.unit }}"
           required
         >
+      </div>
+      <div class="col-lg-2">
+        <div class="form-check mb-2">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="serial_number_required"
+            id="typeSerial{{ item_type.id }}"
+            {% if item_type.serial_number_required %}checked{% endif %}
+          >
+          <label
+            class="form-check-label"
+            for="typeSerial{{ item_type.id }}"
+          >
+            Seriennummer erforderlich
+          </label>
+        </div>
       </div>
       <div class="col-lg-1">
         <div class="form-check mb-2">

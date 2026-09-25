@@ -3079,12 +3079,6 @@ class InventoryItemGroup(db.Model):
         nullable=False,
         index=True,
     )
-    serial_number_required: Mapped[bool] = mapped_column(
-        db.Boolean,
-        default=False,
-        server_default=false(),
-        nullable=False,
-    )
     active: Mapped[bool] = mapped_column(
         db.Boolean,
         default=True,
@@ -3136,6 +3130,12 @@ class InventoryItemType(db.Model):
         db.String(40),
         default="Stk",
         server_default="Stk",
+        nullable=False,
+    )
+    serial_number_required: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
         nullable=False,
     )
     active: Mapped[bool] = mapped_column(
@@ -3218,8 +3218,7 @@ class InventoryItem(db.Model):
     def serial_number_required(self) -> bool:
         return bool(
             self.item_type
-            and self.item_type.group
-            and self.item_type.group.serial_number_required
+            and self.item_type.serial_number_required
         )
 
 
