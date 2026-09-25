@@ -354,6 +354,22 @@ class SettingKeys:
         "Terminvereinbarung",
     )
 
+    APPOINTMENT_CUSTOM_TIMES_ENABLED = SettingDefinition[bool](
+        "appointments.custom_times_enabled",
+        SettingValueType.BOOL,
+        False,
+        "Konkrete Uhrzeiten in der App erlauben",
+        "Terminvereinbarung",
+    )
+
+    APPOINTMENT_CUSTOM_TIME_DURATION_MINUTES = SettingDefinition[int](
+        "appointments.custom_time_duration_minutes",
+        SettingValueType.INT,
+        60,
+        "Kalenderdauer bei konkreten Uhrzeiten in Minuten",
+        "Terminvereinbarung",
+    )
+
     APPOINTMENT_LINK_VALID_DAYS = SettingDefinition[int](
         "appointments.link_valid_days",
         SettingValueType.INT,
@@ -665,16 +681,50 @@ class SettingsService:
         row.group = definition.group
         row.is_secret = definition.secret
 
-    def set_from_form(self, definition: SettingDefinition[Any], raw_value: str | None) -> None:
+    def set_from_form(
+        self,
+        definition: SettingDefinition[Any],
+        raw_value: str | None,
+    ) -> None:
         if (
-            definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key
+            definition.key
+            == SettingKeys.SMTP_DEBUG_RECIPIENT.key
             and raw_value is None
         ):
             return
+
         if definition.secret and not raw_value:
             return
-        value = self._deserialize(raw_value or "", definition.value_type)
-        self.set(definition, value)
+
+        try:
+            value = self._deserialize(
+                raw_value or "",
+                definition.value_type,
+            )
+        except (TypeError, ValueError) as exc:
+            if (
+                definition.key
+                == SettingKeys.APPOINTMENT_CUSTOM_TIME_DURATION_MINUTES.key
+            ):
+                raise ValueError(
+                    "Die Kalenderdauer muss eine positive ganze Zahl sein."
+                ) from exc
+
+            raise
+
+        if (
+            definition.key
+            == SettingKeys.APPOINTMENT_CUSTOM_TIME_DURATION_MINUTES.key
+            and value < 1
+        ):
+            raise ValueError(
+                "Die Kalenderdauer muss mindestens eine Minute betragen."
+            )
+
+        self.set(
+            definition,
+            value,
+        )
 
     def ensure_defaults(self) -> None:
         for definition in all_definitions():

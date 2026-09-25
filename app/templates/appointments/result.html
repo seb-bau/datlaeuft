@@ -27,12 +27,20 @@
 
         {% if accepted_proposal %}
         <p class="lead mt-4">
+          {% if accepted_proposal.window_id is none %}
+          Terminbeginn:
+          {{ accepted_proposal.proposed_date.strftime("%d.%m.%Y") }}
+          um
+          {{ accepted_proposal.start_time.strftime("%H:%M") }}
+          Uhr
+          {% else %}
           {{ accepted_proposal.proposed_date.strftime("%d.%m.%Y") }}
           von
           {{ accepted_proposal.start_time.strftime("%H:%M") }}
           bis
           {{ accepted_proposal.end_time.strftime("%H:%M") }}
           Uhr
+          {% endif %}
         </p>
         {% endif %}
 

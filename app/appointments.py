@@ -316,12 +316,22 @@ def appointment_response(
             },
         )
 
-        message_detail = (
-            f"{appointment_from:%d.%m.%Y}, "
-            f"{appointment_from:%H:%M}–{appointment_to:%H:%M} Uhr"
-        )
+        if proposal.window_id is None:
+            message_detail = (
+                f"{appointment_from:%d.%m.%Y}, "
+                f"Beginn {appointment_from:%H:%M} Uhr"
+            )
+        else:
+            message_detail = (
+                f"{appointment_from:%d.%m.%Y}, "
+                f"{appointment_from:%H:%M}–"
+                f"{appointment_to:%H:%M} Uhr"
+            )
+
         if tenant_comment:
-            message_detail += f" · Kommentar: {tenant_comment}"
+            message_detail += (
+                f" · Kommentar: {tenant_comment}"
+            )
 
         enqueue_commission_push(
             commission=commission,

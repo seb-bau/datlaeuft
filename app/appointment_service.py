@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import parseaddr
 from hashlib import sha256
@@ -132,17 +132,41 @@ def create_appointment_request(
             "Es müssen zwischen 1 und 12 Terminvorschläge angegeben werden."
         )
 
+    custom_times_enabled = settings.get(
+        SettingKeys.APPOINTMENT_CUSTOM_TIMES_ENABLED
+    )
+    custom_duration_minutes = settings.get(
+        SettingKeys.APPOINTMENT_CUSTOM_TIME_DURATION_MINUTES
+    )
+
+    if custom_duration_minutes < 1:
+        raise ValueError(
+            "Die Dauer konkreter Termine muss mindestens eine Minute betragen."
+        )
+
+    appointment_zone = appointment_timezone()
+    current_datetime = datetime.now(
+        appointment_zone
+    )
+
     parsed_rows: list[
-        tuple[date, AppointmentWindow]
+        tuple[
+            date,
+            time,
+            time,
+            AppointmentWindow | None,
+            str,
+        ]
     ] = []
 
     seen_values: set[
-        tuple[date, int]
+        tuple[
+            date,
+            time,
+            time,
+        ]
     ] = set()
-
-    today = datetime.now(
-        appointment_timezone()
-    ).date()
+    proposal_mode: str | None = None
 
     for row in proposal_rows:
         if not isinstance(row, dict):
@@ -154,39 +178,152 @@ def create_appointment_request(
             proposed_date = date.fromisoformat(
                 str(row.get("date") or "")
             )
-            window_id = int(
-                row.get("window_id")
-            )
-        except (TypeError, ValueError) as exc:
+        except ValueError as exc:
             raise ValueError(
-                "Datum oder Zeitfenster eines Vorschlags ist ungültig."
+                "Das Datum eines Vorschlags ist ungültig."
             ) from exc
 
-        if proposed_date < today:
-            raise ValueError(
-                "Terminvorschläge dürfen nicht in der Vergangenheit liegen."
-            )
-
-        window = (
-            AppointmentWindow.query
-            .filter(
-                AppointmentWindow.id
-                == window_id,
-                AppointmentWindow.active.is_(
-                    True
-                ),
-            )
-            .one_or_none()
+        raw_window_id = row.get(
+            "window_id"
+        )
+        has_window = bool(
+            raw_window_id is not None
+            and str(raw_window_id).strip()
         )
 
-        if window is None:
+        current_mode = (
+            "window"
+            if has_window
+            else "custom"
+        )
+
+        if (
+            proposal_mode is not None
+            and proposal_mode != current_mode
+        ):
             raise ValueError(
-                "Ein ausgewähltes Zeitfenster ist nicht mehr verfügbar."
+                "Zeitprofile und konkrete Uhrzeiten dürfen nicht in einer Nachricht gemischt werden."
+            )
+
+        proposal_mode = current_mode
+
+        if has_window:
+            try:
+                window_id = int(
+                    raw_window_id
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Das Zeitfenster eines Vorschlags ist ungültig."
+                ) from exc
+
+            window = (
+                AppointmentWindow.query
+                .filter(
+                    AppointmentWindow.id
+                    == window_id,
+                    AppointmentWindow.active.is_(
+                        True
+                    ),
+                )
+                .one_or_none()
+            )
+
+            if window is None:
+                raise ValueError(
+                    "Ein ausgewähltes Zeitfenster ist nicht mehr verfügbar."
+                )
+
+            proposed_start_time = (
+                window.start_time
+            )
+            proposed_end_time = (
+                window.end_time
+            )
+            window_name = window.name
+
+        else:
+            if not custom_times_enabled:
+                raise ValueError(
+                    "Konkrete Uhrzeiten sind derzeit nicht freigeschaltet."
+                )
+
+            raw_start_time = str(
+                row.get("start_time")
+                or ""
+            ).strip()
+
+            try:
+                proposed_start_time = (
+                    datetime.strptime(
+                        raw_start_time,
+                        "%H:%M",
+                    ).time()
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "Die Beginnzeit eines Vorschlags ist ungültig."
+                ) from exc
+
+            proposed_end_datetime = (
+                datetime.combine(
+                    proposed_date,
+                    proposed_start_time,
+                    tzinfo=appointment_zone,
+                )
+                + timedelta(
+                    minutes=(
+                        custom_duration_minutes
+                    )
+                )
+            )
+
+            if (
+                proposed_end_datetime.date()
+                != proposed_date
+            ):
+                raise ValueError(
+                    "Die konfigurierte Kalenderdauer darf nicht bis in den Folgetag reichen."
+                )
+
+            proposed_end_time = (
+                proposed_end_datetime.time()
+                .replace(
+                    second=0,
+                    microsecond=0,
+                )
+            )
+            window = None
+            window_name = "Konkrete Uhrzeit"
+
+        proposed_start_datetime = (
+            datetime.combine(
+                proposed_date,
+                proposed_start_time,
+                tzinfo=appointment_zone,
+            )
+        )
+
+        if (
+            proposed_start_datetime
+            <= current_datetime
+        ):
+            raise ValueError(
+                "Terminvorschläge müssen in der Zukunft liegen."
+            )
+
+        if (
+            proposed_end_time
+            <= proposed_start_time
+        ):
+            raise ValueError(
+                "Das Ende eines Terminvorschlags muss nach dem Beginn liegen."
             )
 
         unique_value = (
             proposed_date,
-            window.id,
+            proposed_start_time,
+            proposed_end_time,
         )
 
         if unique_value in seen_values:
@@ -198,7 +335,10 @@ def create_appointment_request(
         parsed_rows.append(
             (
                 proposed_date,
+                proposed_start_time,
+                proposed_end_time,
                 window,
+                window_name,
             )
         )
 
@@ -206,6 +346,14 @@ def create_appointment_request(
         raise ValueError(
             "Es ist kein gültiger Terminvorschlag vorhanden."
         )
+
+    parsed_rows.sort(
+        key=lambda row: (
+            row[0],
+            row[1],
+            row[2],
+        )
+    )
 
     valid_days = max(
         settings.get(
@@ -234,14 +382,20 @@ def create_appointment_request(
         ),
     )
 
-    for proposed_date, window in parsed_rows:
+    for (
+        proposed_date,
+        proposed_start_time,
+        proposed_end_time,
+        window,
+        window_name,
+    ) in parsed_rows:
         appointment_request.proposals.append(
             CommissionAppointmentProposal(
                 proposed_date=proposed_date,
                 window=window,
-                start_time=window.start_time,
-                end_time=window.end_time,
-                window_name=window.name,
+                start_time=proposed_start_time,
+                end_time=proposed_end_time,
+                window_name=window_name,
                 accepted=False,
             )
         )
@@ -258,6 +412,13 @@ def format_proposal(
     weekday = GERMAN_WEEKDAYS[
         proposal.proposed_date.weekday()
     ]
+
+    if proposal.window_id is None:
+        return (
+            f"{weekday}, "
+            f"{proposal.proposed_date.strftime('%d.%m.%Y')}, "
+            f"Beginn {proposal.start_time.strftime('%H:%M')} Uhr"
+        )
 
     return (
         f"{weekday}, "
@@ -502,10 +663,27 @@ def send_appointment_confirmation_email(
 
     plain_details = "\n".join(details)
     html_details = "<br>".join(escape(value) for value in details)
-    calendar_hint = (
-        "Öffnen Sie die Kalenderdatei im Anhang, "
-        "um den Termin in Ihren Kalender zu übernehmen."
-    )
+    if accepted_proposal.window_id is None:
+        calendar_duration_minutes = max(
+            int(
+                (
+                    appointment_to
+                    - appointment_from
+                ).total_seconds()
+                // 60
+            ),
+            1,
+        )
+        calendar_hint = (
+            "Die Kalenderdatei reserviert ab dem Terminbeginn "
+            f"{calendar_duration_minutes} Minuten. "
+            "Die tatsächliche Arbeitsdauer kann davon abweichen."
+        )
+    else:
+        calendar_hint = (
+            "Öffnen Sie die Kalenderdatei im Anhang, "
+            "um den Termin in Ihren Kalender zu übernehmen."
+        )
 
     message = EmailMessage()
     message["Subject"] = f"Terminbestätigung – Auftrag {order_number}"

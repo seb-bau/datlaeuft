@@ -975,7 +975,18 @@ def appointment_windows() -> Any:
         "items": [
             serialize_appointment_window(item)
             for item in items
-        ]
+        ],
+        "custom_times_enabled": bool(
+            settings.get(
+                SettingKeys.APPOINTMENT_CUSTOM_TIMES_ENABLED
+            )
+        ),
+        "custom_time_duration_minutes": max(
+            settings.get(
+                SettingKeys.APPOINTMENT_CUSTOM_TIME_DURATION_MINUTES
+            ),
+            1,
+        ),
     })
 
 

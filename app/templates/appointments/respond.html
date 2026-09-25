@@ -65,12 +65,19 @@
                   {{ proposal.proposed_date.strftime("%d.%m.%Y") }}
                 </strong>
                 <br>
+
+                {% if proposal.window_id is none %}
+                Beginn:
+                {{ proposal.start_time.strftime("%H:%M") }}
+                Uhr
+                {% else %}
                 {{ proposal.start_time.strftime("%H:%M") }}
                 bis
                 {{ proposal.end_time.strftime("%H:%M") }}
                 Uhr
                 ·
                 {{ proposal.window_name }}
+                {% endif %}
               </span>
             </label>
             {% endfor %}
