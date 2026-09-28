@@ -3040,7 +3040,7 @@ def _issue_token(user: User, action: str) -> Any:
             "is_foreman": user.is_foreman,
         },
     )
-    audit(action, "user", user.id)
+    audit(action, "user", user.id, actor_user_id=user.id)
     db.session.commit()
     return jsonify({"access_token": access_token, "user": serialize_user(user)})
 

@@ -3,6 +3,9 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from io import BytesIO
 from typing import Any
 import json
@@ -26,7 +29,7 @@ from .safety_inspection_service import (
 )
 from flask_login import current_user, login_required
 
-from .audit import audit
+from .audit import audit, audit_diff, audit_snapshot
 from .auth import (
     admin_required,
     commission_creation_required,
@@ -516,7 +519,12 @@ def settings_page() -> Any:
                     definition,
                     request.form.get(definition.key),
                 )
-            audit("settings.update")
+            for definition in all_definitions():
+                settings.set_from_form(
+                    definition,
+                    request.form.get(definition.key),
+                )
+            db.session.commit()
             db.session.commit()
         except ValueError as exc:
             db.session.rollback()
@@ -531,6 +539,199 @@ def settings_page() -> Any:
         "admin/settings.html",
         groups=grouped_definitions(),
         settings=settings,
+    )
+
+
+@admin_bp.get("/admin/audit")
+@admin_required
+def audit_log_page() -> Any:
+    filter_names = (
+        "area",
+        "action",
+        "actor",
+        "entity_type",
+        "entity_id",
+        "date_from",
+        "date_to",
+    )
+    filters = {
+        name: request.args.get(name, "").strip()
+        for name in filter_names
+    }
+
+    actions = [
+        value
+        for (value,) in (
+            db.session.query(AuditLog.action)
+            .distinct()
+            .order_by(AuditLog.action)
+            .all()
+        )
+    ]
+    areas = sorted({
+        "user" if action.startswith("users.") else action.split(".", 1)[0]
+        for action in actions
+    })
+    entity_types = [
+        value
+        for (value,) in (
+            db.session.query(AuditLog.entity_type)
+            .filter(AuditLog.entity_type.is_not(None))
+            .distinct()
+            .order_by(AuditLog.entity_type)
+            .all()
+        )
+    ]
+
+    query = AuditLog.query.options(
+        selectinload(AuditLog.actor),
+        selectinload(AuditLog.external_actor),
+    )
+
+    if filters["area"]:
+        if filters["area"] not in areas:
+            abort(400)
+        prefixes = (
+            ("user.", "users.")
+            if filters["area"] == "user"
+            else (f"{filters['area']}.",)
+        )
+        query = query.filter(or_(*(
+            AuditLog.action.startswith(prefix, autoescape=True)
+            for prefix in prefixes
+        )))
+
+    if filters["action"]:
+        query = query.filter(AuditLog.action == filters["action"])
+
+    actor_filter = filters["actor"]
+    if actor_filter == "system":
+        query = query.filter(
+            AuditLog.actor_user_id.is_(None),
+            AuditLog.actor_external_craftsman_id.is_(None),
+        )
+    elif actor_filter:
+        actor_type, separator, actor_id = actor_filter.partition(":")
+        if not separator or actor_type not in {"u", "e"} or not actor_id.isdigit():
+            abort(400)
+        if actor_type == "u":
+            query = query.filter(AuditLog.actor_user_id == int(actor_id))
+        else:
+            query = query.filter(
+                AuditLog.actor_external_craftsman_id == int(actor_id)
+            )
+
+    if filters["entity_type"]:
+        query = query.filter(
+            AuditLog.entity_type == filters["entity_type"]
+        )
+    if filters["entity_id"]:
+        query = query.filter(
+            AuditLog.entity_id == filters["entity_id"]
+        )
+
+    def start_in_utc(value: date) -> datetime:
+        local_start = datetime.combine(
+            value,
+            time.min,
+            tzinfo=ZoneInfo("Europe/Berlin"),
+        )
+        return local_start.astimezone(timezone.utc)
+
+    try:
+        if filters["date_from"]:
+            query = query.filter(
+                AuditLog.created_at >= start_in_utc(
+                    date.fromisoformat(filters["date_from"])
+                )
+            )
+        if filters["date_to"]:
+            next_day = date.fromisoformat(filters["date_to"]) + timedelta(days=1)
+            query = query.filter(
+                AuditLog.created_at < start_in_utc(next_day)
+            )
+    except ValueError:
+        abort(400)
+
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    pagination = (
+        query.order_by(
+            AuditLog.created_at.desc(),
+            AuditLog.id.desc(),
+        )
+        .paginate(page=page, per_page=50, error_out=False)
+    )
+
+    def format_time(value: datetime) -> str:
+        utc_value = (
+            value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        )
+        return utc_value.astimezone(
+            ZoneInfo("Europe/Berlin")
+        ).strftime("%d.%m.%Y %H:%M")
+
+    area_labels = {
+        "appointment": "Termine",
+        "auth": "Anmeldung",
+        "commission": "Aufträge",
+        "company_code": "Buchwerke",
+        "craft_activities": "Gewerke",
+        "craft_department_mappings": "Gewerk-Zuständigkeiten",
+        "erp": "ERP",
+        "external": "Externes Portal",
+        "external_craftsman": "Externe Handwerker",
+        "inventory": "Lager",
+        "invoice": "Rechnungen",
+        "invoice_billing_rules": "Abrechnungssätze",
+        "object_directory": "Objektverzeichnis",
+        "offer": "Angebote",
+        "performance": "Leistungsprüfung",
+        "safety_inspection": "Verkehrssicherung",
+        "service_catalog": "Leistungskatalog",
+        "service_position": "Leistungspositionen",
+        "settings": "Einstellungen",
+        "ticket": "Tickets",
+        "time": "Zeiterfassung",
+        "user": "Benutzer",
+        "webhook": "Webhooks",
+        "work_time_override": "Arbeitszeiten",
+    }
+    action_labels = {
+        "inventory.create": "Lagerartikel angelegt",
+        "inventory.update": "Lagerartikel geändert",
+        "settings.update": "Einstellung geändert",
+        "user.create": "Benutzer angelegt",
+        "user.update": "Benutzer geändert",
+    }
+    entity_labels = {
+        "app_setting": "Einstellung",
+        "inventory_item": "Lagerartikel",
+        "user": "Benutzer",
+    }
+
+    return render_template(
+        "admin/audit_log.html",
+        entries=pagination.items,
+        filters=filters,
+        actions=actions,
+        areas=areas,
+        entity_types=entity_types,
+        users=User.query.order_by(User.display_name).all(),
+        external_actors=ExternalCraftsman.query.order_by(
+            ExternalCraftsman.display_name
+        ).all(),
+        area_labels=area_labels,
+        action_labels=action_labels,
+        entity_labels=entity_labels,
+        format_time=format_time,
+        previous_url=(
+            url_for("admin.audit_log_page", **filters, page=pagination.prev_num)
+            if pagination.has_prev else None
+        ),
+        next_url=(
+            url_for("admin.audit_log_page", **filters, page=pagination.next_num)
+            if pagination.has_next else None
+        ),
     )
 
 
@@ -7373,10 +7574,12 @@ def inventory_items() -> Any:
             db.session.add(item)
             db.session.flush()
 
-            audit(
+            audit_diff(
                 "inventory.create",
                 "inventory_item",
                 item.id,
+                {},
+                audit_snapshot(item, "inventory_item"),
             )
 
             db.session.commit()
@@ -7466,12 +7669,16 @@ def inventory_item_edit(
 
     if request.method == "POST":
         try:
+            before = audit_snapshot(item, "inventory_item")
             save_inventory_form(item)
+            db.session.flush()
 
-            audit(
+            audit_diff(
                 "inventory.update",
                 "inventory_item",
                 item.id,
+                before,
+                audit_snapshot(item, "inventory_item"),
             )
 
             db.session.commit()

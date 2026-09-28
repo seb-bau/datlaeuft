@@ -6,8 +6,10 @@ from flask import g, has_request_context, request
 from flask_login import current_user
 
 from .extensions import db
-from .models import AuditLog
+from decimal import Decimal
+from enum import Enum
 
+from .models import AuditLog, ExternalCraftsman, User
 
 def audit(
     action: str,
@@ -59,6 +61,26 @@ def audit(
                         external_craftsman.id
                     )
 
+    record_metadata = dict(metadata or {})
+
+    if actor_user_id is not None:
+        actor = db.session.get(User, actor_user_id)
+        record_metadata["actor_label"] = (
+            actor.display_name if actor else f"Benutzer #{actor_user_id}"
+        )
+    elif actor_external_craftsman_id is not None:
+        actor = db.session.get(
+            ExternalCraftsman,
+            actor_external_craftsman_id,
+        )
+        record_metadata["actor_label"] = (
+            actor.display_name
+            if actor
+            else f"Externer Handwerker #{actor_external_craftsman_id}"
+        )
+    else:
+        record_metadata["actor_label"] = "System"
+
     db.session.add(
         AuditLog(
             actor_user_id=actor_user_id,
@@ -72,8 +94,66 @@ def audit(
                 if entity_id is not None
                 else None
             ),
-            metadata_json=metadata,
+            metadata_json=record_metadata,
             ip_address=ip_address,
             user_agent=user_agent,
         )
     )
+
+
+AUDIT_FIELDS = {
+    "inventory_item": (
+        "item_number",
+        "name",
+        "item_type_id",
+        "unit",
+        "ean",
+        "reorder_level",
+        "billing_base_price_net",
+        "billing_vat_rate",
+        "active",
+    ),
+}
+
+
+def audit_snapshot(entity: Any, entity_type: str) -> dict[str, Any]:
+    fields = AUDIT_FIELDS[entity_type]
+    return {field: getattr(entity, field) for field in fields}
+
+
+def audit_value(value: Any) -> str | int | float | bool | None:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Decimal):
+        return str(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError(f"Nicht freigegebener Audit-Wert: {type(value).__name__}")
+
+
+def audit_diff(
+    action: str,
+    entity_type: str,
+    entity_id: str | int,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> None:
+    changes = {}
+
+    for field in AUDIT_FIELDS[entity_type]:
+        old_value = before.get(field)
+        new_value = after.get(field)
+
+        if old_value != new_value:
+            changes[field] = {
+                "old": audit_value(old_value),
+                "new": audit_value(new_value),
+            }
+
+    if changes:
+        audit(
+            action,
+            entity_type,
+            entity_id,
+            metadata={"changes": changes},
+        )
