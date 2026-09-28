@@ -10,7 +10,6 @@ from .extensions import db
 from .models import AppSetting, SettingValueType
 from email.errors import HeaderParseError
 from email.headerregistry import Address
-from .audit import audit
 
 T = TypeVar("T")
 
@@ -671,59 +670,16 @@ class SettingsService:
     def set(self, definition: SettingDefinition[T], value: T) -> None:
         if definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key:
             value = cast(T, validate_debug_email_address(cast(str, value)))
-
         row = AppSetting.query.filter_by(key=definition.key).one_or_none()
-        old_text = row.value_text if row is not None else None
-        new_text = self._serialize(value, definition.value_type)
-
-        old_value = (
-            self._deserialize(old_text, definition.value_type)
-            if old_text is not None
-            else None
-        )
-        new_value = self._deserialize(new_text, definition.value_type)
-        changed = old_text is None or old_value != new_value
-
         if row is None:
-            row = AppSetting(
-                key=definition.key,
-                value_type=definition.value_type.value,
-                label=definition.label,
-                group=definition.group,
-                is_secret=definition.secret,
-            )
+            row = AppSetting(key=definition.key, value_type=definition.value_type.value, label=definition.label,
+                             group=definition.group, is_secret=definition.secret)
             db.session.add(row)
-
-        row.value_text = new_text
+        row.value_text = self._serialize(value, definition.value_type)
         row.value_type = definition.value_type.value
         row.label = definition.label
         row.group = definition.group
         row.is_secret = definition.secret
-
-        if changed:
-            db.session.flush()
-            redacted = (
-                    definition.secret
-                    or definition.value_type
-                    in {SettingValueType.SECRET, SettingValueType.JSON}
-            )
-            change = (
-                {"redacted": True}
-                if redacted
-                else {"old": old_value, "new": new_value}
-            )
-
-            audit(
-                "settings.update",
-                "app_setting",
-                row.id,
-                metadata={
-                    "key": definition.key,
-                    "label": definition.label,
-                    "group": definition.group,
-                    "changes": {"value": change},
-                },
-            )
 
     def set_from_form(
         self,

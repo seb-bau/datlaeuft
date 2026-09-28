@@ -69,7 +69,6 @@
     or request.path.startswith('/admin/invoice-billing-rules')
     or request.path.startswith('/admin/offer-settings')
     or request.path.startswith('/admin/settings')
-    or request.path.startswith('/admin/audit')
     or request.path.startswith('/admin/sync-health')
     or request.path.startswith('/admin/inventory-locations')
     or request.path.startswith('/admin/inventory-classifications')
@@ -536,13 +535,6 @@
                   'Einstellungen',
                   'gear',
                   request.path.startswith('/admin/settings')
-                ) }}
-
-                {{ sidebar_link(
-                  'admin.audit_log_page',
-                  'Änderungsprotokoll',
-                  'journal-text',
-                  request.path.startswith('/admin/audit')
                 ) }}
 
                 {{ sidebar_link(
