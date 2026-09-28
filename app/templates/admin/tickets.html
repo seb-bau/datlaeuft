@@ -22,6 +22,7 @@
       name="state"
       value="{{ selected_state }}"
     >
+    <input type="hidden" name="owner" value="{{ selected_owner }}">
     <input
       class="form-control"
       type="search"
@@ -45,6 +46,24 @@ nicht vollständig konfiguriert. Die benötigten
 Einstellungen findest du unter Einstellungen.
 </div>
 {% endif %}
+<div class="d-flex gap-2 mb-3">
+  <a
+    class="btn {{ 'btn-primary' if selected_owner == 'mine' else 'btn-outline-primary' }}"
+    href="{{ url_for('admin.tickets', owner='mine', state=selected_state, q=search_text) }}"
+  >Meine Tickets</a>
+  <a
+    class="btn {{ 'btn-primary' if selected_owner == 'all' else 'btn-outline-primary' }}"
+    href="{{ url_for('admin.tickets', owner='all', state=selected_state, q=search_text) }}"
+  >Alle Tickets</a>
+</div>
+
+{% if selected_owner == "mine" and not owner_mapping_available %}
+<div class="alert alert-info">
+  Für dein Benutzerkonto konnte keine Wowiport-Sachbearbeiter-ID
+  aus den bestehenden Zuordnungen ermittelt werden.
+</div>
+{% endif %}
+
 
 <ul class="nav nav-pills mb-4">
   {% for value, label in [

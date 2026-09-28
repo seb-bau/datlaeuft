@@ -164,12 +164,13 @@
                   request.path.startswith('/admin/commissions')
                 ) }}
 
-                {{ sidebar_link(
+                href="{{ url_for(
                   'admin.tickets',
-                  'Tickets',
-                  'ticket-perforated',
-                  request.path.startswith('/admin/tickets')
-                ) }}
+                  page=page_number,
+                  state=selected_state,
+                  q=search_text,
+                  owner=selected_owner
+                ) }}"
               {% endif %}
 
               {% if can_access_offers %}

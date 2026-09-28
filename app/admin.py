@@ -3050,6 +3050,65 @@ def save_web_commission_photo(
     return photo, False
 
 
+def ticket_owner_erp_ids(user: User) -> set[int]:
+    person_ids = {
+        mapping.jurisdiction_person_erp_id
+        for mapping in user.jurisdiction_person_mappings
+        if mapping.active
+    }
+
+    if user.person_erp_id is not None:
+        manual_mapping = (
+            UserJurisdictionPersonMapping.query
+            .filter_by(
+                jurisdiction_person_erp_id=user.person_erp_id,
+                active=True,
+            )
+            .one_or_none()
+        )
+        if manual_mapping is None or manual_mapping.user_id == user.id:
+            person_ids.add(user.person_erp_id)
+
+    if not person_ids:
+        return set()
+
+    jurisdiction_ids = db.session.execute(
+        select(
+            WowiEconomicUnitJurisdiction.responsible_official_erp_id
+        )
+        .join(
+            WowiEconomicUnit,
+            WowiEconomicUnit.id
+            == WowiEconomicUnitJurisdiction.economic_unit_id,
+        )
+        .where(
+            WowiEconomicUnit.active.is_(True),
+            WowiEconomicUnit.universal_responsibility.is_(False),
+            WowiEconomicUnitJurisdiction.active.is_(True),
+            WowiEconomicUnitJurisdiction.responsible_person_erp_id.in_(
+                person_ids
+            ),
+        )
+    ).scalars().all()
+
+    universal_ids = db.session.execute(
+        select(WowiEconomicUnit.universal_responsible_official_erp_id)
+        .where(
+            WowiEconomicUnit.active.is_(True),
+            WowiEconomicUnit.universal_responsibility.is_(True),
+            WowiEconomicUnit.universal_responsible_person_erp_id.in_(
+                person_ids
+            ),
+        )
+    ).scalars().all()
+
+    return {
+        official_id
+        for official_id in (*jurisdiction_ids, *universal_ids)
+        if official_id is not None
+    }
+
+
 @admin_bp.get("/admin/tickets")
 @foreman_required
 def tickets() -> Any:
@@ -3057,6 +3116,9 @@ def tickets() -> Any:
         "state",
         TicketMirrorState.NEW.value,
     )
+    selected_owner = request.args.get("owner", "mine")
+    if selected_owner not in {"mine", "all"}:
+        selected_owner = "mine"
     search_text = request.args.get(
         "q",
         "",
@@ -3081,6 +3143,17 @@ def tickets() -> Any:
             TicketMirror.deleted_at.is_(None)
         )
     )
+
+    owner_ids = (
+        ticket_owner_erp_ids(current_user)
+        if selected_owner == "mine"
+        else set()
+    )
+
+    if selected_owner == "mine":
+        query = query.filter(
+            TicketMirror.assigned_user_erp_id.in_(owner_ids)
+        )
 
     valid_states = {
         item.value
@@ -3145,6 +3218,8 @@ def tickets() -> Any:
         selected_state=selected_state,
         search_text=search_text,
         openai_configured=openai_configured,
+        selected_owner=selected_owner,
+        owner_mapping_available=bool(owner_ids),
     )
 
 
