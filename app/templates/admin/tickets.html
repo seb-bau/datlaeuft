@@ -1,6 +1,34 @@
 {% extends "base.html" %}
 {% block title %}Tickets{% endblock %}
 
+{% block head %}
+<style>
+  .ticket-card-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(8.5rem, 22vw, 13.5rem);
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .ticket-card-content {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .ticket-card-actions {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: .5rem;
+  }
+
+  .ticket-card-actions .btn {
+    width: 100%;
+    white-space: normal;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div
   class="d-flex flex-wrap justify-content-between
