@@ -835,6 +835,14 @@ document.addEventListener("DOMContentLoaded", () => {
                     === preferredId;
             })
             || (
+                !force && currentIsCandidate
+                    ? candidates.find((option) => {
+                        return option.value
+                            === externalCraftsman.value;
+                    })
+                    : null
+            )
+            || (
                 candidates.length === 1
                     ? candidates[0]
                     : null

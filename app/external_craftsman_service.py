@@ -117,8 +117,8 @@ def automatic_external_craftsman(
         if preferred_candidate is not None:
             return preferred_candidate
 
-    if len(available_candidates) == 1:
-        return available_candidates[0]
+    if available_candidates:
+        return secrets.choice(available_candidates)
 
     return None
 
@@ -151,16 +151,6 @@ def resolve_external_craftsman(
 
         return selected_candidate
 
-    automatic_candidate = (
-        automatic_external_craftsman(
-            craft_activity,
-            candidates,
-        )
-    )
-
-    if automatic_candidate is not None:
-        return automatic_candidate
-
     if not candidates:
         raise ValueError(
             "Für dieses Gewerk ist kein "
@@ -168,12 +158,18 @@ def resolve_external_craftsman(
             "Handwerker verfügbar."
         )
 
-    raise ValueError(
-        "Für dieses Gewerk sind mehrere "
-        "externe Handwerker verfügbar. "
-        "Bitte einen bevorzugten Handwerker "
-        "hinterlegen oder manuell auswählen."
+    automatic_candidate = automatic_external_craftsman(
+        craft_activity,
+        candidates,
     )
+
+    if automatic_candidate is None:
+        raise ValueError(
+            "Für dieses Gewerk konnte kein "
+            "externer Handwerker ermittelt werden."
+        )
+
+    return automatic_candidate
 
 
 def sync_external_craftsmen_from_wowiport(
