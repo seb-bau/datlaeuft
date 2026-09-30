@@ -1515,6 +1515,18 @@ class TicketAiAssignmentRule(db.Model):
         nullable=True,
         index=True,
     )
+    target_assignment_type: Mapped[str | None] = mapped_column(
+        db.String(20),
+        nullable=True,
+    )
+    target_external_craftsman_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey(
+            "external_craftsman.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
     target_craft_activity_id: Mapped[
         int | None
         ] = mapped_column(
@@ -1594,6 +1606,11 @@ class TicketAiAssignmentRule(db.Model):
     )
     updated_by: Mapped[User | None] = relationship(
         foreign_keys=[updated_by_user_id]
+    )
+    target_external_craftsman: Mapped[
+        ExternalCraftsman | None
+    ] = relationship(
+        foreign_keys=[target_external_craftsman_id]
     )
 
 

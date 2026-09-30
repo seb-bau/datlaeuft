@@ -292,26 +292,77 @@
         </div>
 
         <div class="col-lg-4">
-          <label class="form-label" for="ruleTargetUser">
-            Handwerker
+          <label class="form-label" for="ruleAssignmentType">
+            Vergabeart
           </label>
           <select
             class="form-select"
-            id="ruleTargetUser"
-            name="target_user_id"
+            id="ruleAssignmentType"
+            name="target_assignment_type"
           >
-            <option value="">Automatisch ermitteln</option>
-            {% for user in craftsman_users %}
+            <option value="">Nicht beeinflussen</option>
             <option
-              value="{{ user.id }}"
-              {% if edit_assignment_rule and edit_assignment_rule.target_user_id == user.id %}selected{% endif %}
-            >
-              {{ user.display_name }}
-              · Wowiport-ID {{ user.craftsman_erp_id }}
-            </option>
-            {% endfor %}
+              value="internal"
+              {% if edit_assignment_rule and edit_assignment_rule.target_assignment_type == 'internal' %}selected{% endif %}
+            >Intern vergeben</option>
+            <option
+              value="external"
+              {% if edit_assignment_rule and edit_assignment_rule.target_assignment_type == 'external' %}selected{% endif %}
+            >Extern vergeben</option>
           </select>
         </div>
+
+      <div
+        class="col-lg-4{% if edit_assignment_rule and edit_assignment_rule.target_assignment_type == 'external' %} d-none{% endif %}"
+        id="ruleInternalCraftsmanField"
+      >
+        <label class="form-label" for="ruleTargetUser">
+          Interner Handwerker
+        </label>
+        <select
+          class="form-select"
+          id="ruleTargetUser"
+          name="target_user_id"
+          {% if edit_assignment_rule and edit_assignment_rule.target_assignment_type == 'external' %}disabled{% endif %}
+        >
+          <option value="">Automatisch ermitteln</option>
+          {% for user in craftsman_users %}
+          <option
+            value="{{ user.id }}"
+            {% if edit_assignment_rule and edit_assignment_rule.target_user_id == user.id %}selected{% endif %}
+          >
+            {{ user.display_name }}
+            · Wowiport-ID {{ user.craftsman_erp_id }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div
+        class="col-lg-4{% if not edit_assignment_rule or edit_assignment_rule.target_assignment_type != 'external' %} d-none{% endif %}"
+        id="ruleExternalCraftsmanField"
+      >
+        <label class="form-label" for="ruleTargetExternal">
+          Externer Handwerker
+        </label>
+        <select
+          class="form-select"
+          id="ruleTargetExternal"
+          name="target_external_craftsman_id"
+          {% if not edit_assignment_rule or edit_assignment_rule.target_assignment_type != 'external' %}disabled{% endif %}
+        >
+          <option value="">Automatisch ermitteln</option>
+          {% for craftsman in external_craftsmen %}
+          <option
+            value="{{ craftsman.id }}"
+            {% if edit_assignment_rule and edit_assignment_rule.target_external_craftsman_id == craftsman.id %}selected{% endif %}
+          >
+            {{ craftsman.display_name }}
+            · Wowiport-ID {{ craftsman.craftsman_erp_id }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
 
         <div class="col-lg-4">
           <label class="form-label" for="ruleTargetTask">
@@ -393,6 +444,7 @@
             <th>Status</th>
             <th>Regel</th>
             <th>Bedingung</th>
+            <th>Vergabeart</th>
             <th>Handwerker</th>
             <th>Verhalten</th>
             <th>Priorität</th>
@@ -412,11 +464,20 @@
             <td>{{ rule.name }}</td>
             <td>{{ rule.condition_text|truncate(160) }}</td>
             <td>
-              {{ rule.target_user.display_name }}
-              <div class="small text-muted">
-                Wowiport-ID
-                {{ rule.target_user.craftsman_erp_id }}
-              </div>
+              {% if rule.target_assignment_type == 'external' %}
+                Extern
+              {% elif rule.target_assignment_type == 'internal' or rule.target_user_id %}
+                Intern
+              {% else %}
+                Nicht beeinflussen
+              {% endif %}
+            </td>
+            <td>
+              {% if rule.target_assignment_type == 'external' %}
+                {{ rule.target_external_craftsman.display_name if rule.target_external_craftsman else 'Automatisch ermitteln' }}
+              {% else %}
+                {{ rule.target_user.display_name if rule.target_user else 'Automatisch ermitteln' }}
+              {% endif %}
             </td>
             <td>
               {% if rule.enforcement_mode == 'force' %}
@@ -458,7 +519,7 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="7" class="text-muted text-center py-4">
+            <td colspan="8" class="text-muted text-center py-4">
               Noch keine KI-Zuweisungsregel vorhanden.
             </td>
           </tr>
@@ -468,4 +529,45 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const assignmentTypeSelect = document.getElementById(
+    "ruleAssignmentType"
+  );
+  const internalField = document.getElementById(
+    "ruleInternalCraftsmanField"
+  );
+  const externalField = document.getElementById(
+    "ruleExternalCraftsmanField"
+  );
+  const internalSelect = document.getElementById(
+    "ruleTargetUser"
+  );
+  const externalSelect = document.getElementById(
+    "ruleTargetExternal"
+  );
+
+  function updateCraftsmanFields() {
+    const isExternal = assignmentTypeSelect.value === "external";
+
+    internalField.classList.toggle("d-none", isExternal);
+    externalField.classList.toggle("d-none", !isExternal);
+    internalSelect.disabled = isExternal;
+    externalSelect.disabled = !isExternal;
+
+    if (isExternal) {
+      internalSelect.value = "";
+    } else {
+      externalSelect.value = "";
+    }
+  }
+
+  assignmentTypeSelect.addEventListener(
+    "change",
+    updateCraftsmanFields
+  );
+  updateCraftsmanFields();
+</script>
 {% endblock %}

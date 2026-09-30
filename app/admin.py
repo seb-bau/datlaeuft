@@ -1121,6 +1121,7 @@ def ticket_settings() -> Any:
         assignment_rules=assignment_rules,
         craftsman_users=craftsman_users,
         edit_assignment_rule=edit_assignment_rule,
+        external_craftsmen=available_external_craftsmen(),
     )
 
 
@@ -1178,6 +1179,44 @@ def ticket_assignment_rule_save() -> Any:
             "target_user_id",
             "Der Handwerker",
         )
+        target_assignment_type = (
+            request.form.get(
+                "target_assignment_type",
+                "",
+            ).strip().casefold()
+            or None
+        )
+        target_external_craftsman_id = optional_form_id(
+            "target_external_craftsman_id",
+            "Der externe Handwerker",
+        )
+
+        if target_assignment_type not in {
+            None,
+            "internal",
+            "external",
+        }:
+            raise ValueError(
+                "Die Vergabeart der Regel ist ungültig."
+            )
+
+        if (
+            target_assignment_type == "external"
+            and target_user_id is not None
+        ):
+            raise ValueError(
+                "Ein interner Handwerker passt nicht "
+                "zur externen Vergabe."
+            )
+
+        if (
+            target_assignment_type != "external"
+            and target_external_craftsman_id is not None
+        ):
+            raise ValueError(
+                "Ein externer Handwerker erfordert "
+                "die externe Vergabeart."
+            )
         target_craft_activity_id = optional_form_id(
             "target_craft_activity_id",
             "Das Gewerk",
@@ -1188,13 +1227,16 @@ def ticket_assignment_rule_save() -> Any:
         )
 
         if (
-                target_user_id is None
-                and target_craft_activity_id is None
-                and target_task_template_id is None
+            target_user_id is None
+            and target_external_craftsman_id is None
+            and target_assignment_type is None
+            and target_craft_activity_id is None
+            and target_task_template_id is None
         ):
             raise ValueError(
-                "Die Regel muss mindestens ein Gewerk, "
-                "einen Handwerker oder eine "
+                "Die Regel muss mindestens eine "
+                "Vergabeart, ein Gewerk, einen "
+                "Handwerker oder eine "
                 "Leistungsposition festlegen."
             )
 
@@ -1319,6 +1361,31 @@ def ticket_assignment_rule_save() -> Any:
                 )
         )
 
+        target_external_craftsman = None
+
+        if target_external_craftsman_id is not None:
+            available_craftsmen = available_external_craftsmen(
+                effective_craft_activity.id
+                if effective_craft_activity is not None
+                else None
+            )
+            target_external_craftsman = next(
+                (
+                    craftsman
+                    for craftsman in available_craftsmen
+                    if craftsman.id
+                    == target_external_craftsman_id
+                ),
+                None,
+            )
+
+            if target_external_craftsman is None:
+                raise ValueError(
+                    "Der ausgewählte externe "
+                    "Handwerker ist für dieses "
+                    "Gewerk nicht verfügbar."
+                )
+
         if (
                 target_craft_activity is not None
                 and target_task_template is not None
@@ -1365,6 +1432,12 @@ def ticket_assignment_rule_save() -> Any:
             if target_user is not None
             else None
         )
+        rule.target_assignment_type = target_assignment_type
+        rule.target_external_craftsman_id = (
+            target_external_craftsman.id
+            if target_external_craftsman is not None
+            else None
+        )
         rule.target_craft_activity_id = (
             target_craft_activity.id
             if target_craft_activity is not None
@@ -1389,7 +1462,6 @@ def ticket_assignment_rule_save() -> Any:
             "ticket_ai_assignment_rule",
             rule.id,
             {
-                "target_user_id": rule.target_user_id,
                 "enforcement_mode": (
                     rule.enforcement_mode
                 ),
@@ -1402,6 +1474,12 @@ def ticket_assignment_rule_save() -> Any:
                 ),
                 "target_task_template_id": (
                     rule.target_task_template_id
+                ),
+                "target_assignment_type": (
+                    rule.target_assignment_type
+                ),
+                "target_external_craftsman_id": (
+                    rule.target_external_craftsman_id
                 ),
             },
         )
@@ -1441,7 +1519,7 @@ def ticket_assignment_rule_toggle(
     )
     new_active = not rule.active
 
-    if new_active:
+    if new_active and rule.target_user_id is not None:
         target_user = rule.target_user
 
         if (
@@ -1451,7 +1529,30 @@ def ticket_assignment_rule_toggle(
         ):
             flash(
                 "Die Regel kann nicht aktiviert werden, "
-                "weil der hinterlegte Handwerker nicht "
+                "weil der interne Handwerker nicht "
+                "verfügbar ist.",
+                "danger",
+            )
+            return redirect(
+                url_for("admin.ticket_settings")
+            )
+
+    if (
+        new_active
+        and rule.target_external_craftsman_id is not None
+    ):
+        available_ids = {
+            craftsman.id
+            for craftsman in available_external_craftsmen()
+        }
+
+        if (
+            rule.target_external_craftsman_id
+            not in available_ids
+        ):
+            flash(
+                "Die Regel kann nicht aktiviert werden, "
+                "weil der externe Handwerker nicht "
                 "verfügbar ist.",
                 "danger",
             )
