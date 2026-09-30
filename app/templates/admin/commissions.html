@@ -156,7 +156,6 @@
   {% if item.erp_id %}
   <form method="post" action="{{ url_for('admin.commission_sync', commission_id=item.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn btn-sm btn-outline-secondary" type="submit">Synchronisieren</button>
   </form>
   {% else %}
   <span class="badge text-bg-warning">Übertragung ausstehend</span>
