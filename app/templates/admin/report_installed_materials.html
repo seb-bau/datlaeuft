@@ -65,7 +65,10 @@
 <div class="card shadow-sm">
   <div class="card-body">
     <div class="table-responsive">
-      <table class="table table-striped datatable align-middle">
+      <table
+        class="table table-striped datatable align-middle"
+        data-empty-message="Im ausgewählten Zeitraum wurde kein Material verbaut."
+      >
         <thead>
           <tr>
             <th>Artikelgruppe</th>
@@ -99,16 +102,6 @@
             <td>{{ row.commission_count }}</td>
             <td>{{ row.user_count }}</td>
             <td>{{ row.serial_number_count }}</td>
-          </tr>
-          {% else %}
-          <tr>
-            <td
-              colspan="9"
-              class="text-center text-muted py-4"
-            >
-              Im ausgewählten Zeitraum wurde kein
-              Material verbaut.
-            </td>
           </tr>
           {% endfor %}
         </tbody>

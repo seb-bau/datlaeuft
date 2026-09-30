@@ -133,7 +133,7 @@ document.addEventListener("DOMContentLoaded", function () {
           infoEmpty: "Keine Einträge vorhanden",
           infoFiltered: "(gefiltert aus _MAX_ Einträgen)",
           zeroRecords: "Keine passenden Einträge gefunden",
-          emptyTable: "Keine Daten vorhanden",
+          emptyTable: table.dataset.emptyMessage || "Keine Daten vorhanden",
           paginate: {
             first: "Erste",
             previous: "Zurück",
