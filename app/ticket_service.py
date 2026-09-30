@@ -269,8 +269,6 @@ def analyze_ticket_mirror(
             )
 
     ticket.ai_state = TicketAiState.READY.value
-
-    ticket.ai_state = TicketAiState.READY.value
     ticket.ai_candidate = bool(
         result.get("is_commission_candidate")
     )

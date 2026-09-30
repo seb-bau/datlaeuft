@@ -1276,7 +1276,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     || ""
                 );
 
-                if (automaticId) {
+                if (
+                    automaticId
+                    && !hasExternalAssignmentRuleValue()
+                ) {
                     applyAutomaticValue(
                         externalCraftsman,
                         automaticId
