@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any
-
+from .external_craftsman_service import (
+    available_external_craftsmen,
+)
 from .extensions import db
 from .models import (
     CraftActivity,
@@ -244,6 +246,30 @@ def analyze_ticket_mirror(
                 service_position_id = None
                 selected_service_position = None
 
+    if (
+        assignment_rule is not None
+        and assignment_rule.target_external_craftsman_id
+        is not None
+    ):
+        available_external_ids = {
+            craftsman.id
+            for craftsman in available_external_craftsmen(
+                craft_activity_id
+            )
+        } if craft_activity_id is not None else set()
+
+        if (
+            assignment_rule.target_external_craftsman_id
+            not in available_external_ids
+        ):
+            raise RuntimeError(
+                "Der externe Handwerker der "
+                "KI-Zuweisungsregel ist für das "
+                "ermittelte Gewerk nicht verfügbar."
+            )
+
+    ticket.ai_state = TicketAiState.READY.value
+
     ticket.ai_state = TicketAiState.READY.value
     ticket.ai_candidate = bool(
         result.get("is_commission_candidate")
@@ -390,22 +416,56 @@ def ticket_analysis_configuration() -> dict[
         )
 
         if (
-                target_user is None
-                and target_craft_activity is None
-                and target_task_template is None
+            rule.target_user_id is None
+            and rule.target_external_craftsman_id is None
+            and rule.target_assignment_type is None
+            and rule.target_craft_activity_id is None
+            and rule.target_task_template_id is None
         ):
             raise RuntimeError(
                 "Die aktive KI-Zuweisungsregel "
                 f"„{rule.name}“ besitzt kein Ergebnis."
             )
 
+        if rule.target_assignment_type not in {
+            None,
+            "internal",
+            "external",
+        }:
+            raise RuntimeError(
+                "Die aktive KI-Zuweisungsregel "
+                f"„{rule.name}“ hat eine ungültige "
+                "Vergabeart."
+            )
+
         if (
-                target_user is not None
-                and (
-                not target_user.is_active_flag
-                or target_user.craftsman_erp_id
-                is None
-        )
+            rule.target_assignment_type == "external"
+            and rule.target_user_id is not None
+        ):
+            raise RuntimeError(
+                f"Die KI-Zuweisungsregel „{rule.name}“ "
+                "kombiniert externe Vergabe mit einem "
+                "internen Handwerker."
+            )
+
+        if (
+            rule.target_assignment_type != "external"
+            and rule.target_external_craftsman_id
+            is not None
+        ):
+            raise RuntimeError(
+                f"Die KI-Zuweisungsregel „{rule.name}“ "
+                "kombiniert einen externen Handwerker "
+                "mit einer anderen Vergabeart."
+            )
+
+        if (
+            rule.target_user_id is not None
+            and (
+                target_user is None
+                or not target_user.is_active_flag
+                or target_user.craftsman_erp_id is None
+            )
         ):
             raise RuntimeError(
                 "Die aktive KI-Zuweisungsregel "
@@ -452,6 +512,40 @@ def ticket_analysis_configuration() -> dict[
                 f"KI-Zuweisungsregel „{rule.name}“ "
                 "passen nicht zusammen."
             )
+
+        if rule.target_assignment_type == "external":
+            effective_craft_id = (
+                rule.target_craft_activity_id
+                or (
+                    target_task_template.craft_activity_id
+                    if target_task_template is not None
+                    else None
+                )
+            )
+            available_external_ids = {
+                craftsman.id
+                for craftsman in available_external_craftsmen(
+                    effective_craft_id
+                )
+            }
+
+            if not available_external_ids:
+                raise RuntimeError(
+                    f"Für die KI-Zuweisungsregel „{rule.name}“ "
+                    "ist kein externer Handwerker verfügbar."
+                )
+
+            if (
+                rule.target_external_craftsman_id
+                is not None
+                and rule.target_external_craftsman_id
+                not in available_external_ids
+            ):
+                raise RuntimeError(
+                    f"Der externe Handwerker der "
+                    f"KI-Zuweisungsregel „{rule.name}“ "
+                    "ist nicht verfügbar."
+                )
 
         if rule.enforcement_mode not in allowed_modes:
             raise RuntimeError(
@@ -520,6 +614,12 @@ def build_ticket_analysis_input_hash(
                 "name": rule.name,
                 "condition": rule.condition_text,
                 "target_user_id": rule.target_user_id,
+                "target_assignment_type": (
+                    rule.target_assignment_type
+                ),
+                "target_external_craftsman_id": (
+                    rule.target_external_craftsman_id
+                ),
                 "target_craft_activity_id": (
                     rule.target_craft_activity_id
                 ),
@@ -599,6 +699,8 @@ def resolve_assignment_rule(
     target_signatures = {
         (
             rule.target_user_id,
+            rule.target_assignment_type,
+            rule.target_external_craftsman_id,
             rule.target_craft_activity_id,
             rule.target_task_template_id,
             rule.enforcement_mode,

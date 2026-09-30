@@ -3884,18 +3884,69 @@ def commission_create() -> Any:
             }
 
             if (
-                source_ticket.ai_state
-                == TicketAiState.READY.value
-                and source_ticket.ai_assigned_user_id
-                in available_craftsman_user_ids
+                    source_ticket.ai_state
+                    == TicketAiState.READY.value
             ):
-                form_values["craftsman_user_id"] = (
-                    source_ticket.ai_assigned_user_id
+                selected_rule = (
+                    source_ticket.ai_assignment_rule
                 )
-                form_values["assignment_type"] = (
-                    CommissionAssignmentType
-                    .INTERNAL.value
+                selected_type = (
+                    selected_rule.target_assignment_type
+                    if selected_rule is not None
+                    else None
                 )
+
+                if (
+                        selected_type is None
+                        and source_ticket.ai_assigned_user_id
+                        is not None
+                ):
+                    selected_type = "internal"
+
+                if selected_type in {
+                    "internal",
+                    "external",
+                }:
+                    form_values["assignment_type"] = (
+                        selected_type
+                    )
+
+                if (
+                        selected_type == "internal"
+                        and source_ticket.ai_assigned_user_id
+                        in available_craftsman_user_ids
+                ):
+                    form_values["craftsman_user_id"] = (
+                        source_ticket.ai_assigned_user_id
+                    )
+
+                if (
+                        selected_type == "external"
+                        and selected_rule is not None
+                        and selected_rule
+                        .target_external_craftsman_id
+                        is not None
+                ):
+                    available_external_ids = {
+                        craftsman.id
+                        for craftsman
+                        in available_external_craftsmen(
+                            source_ticket
+                            .ai_craft_activity_id
+                        )
+                    }
+
+                    if (
+                            selected_rule
+                                    .target_external_craftsman_id
+                            in available_external_ids
+                    ):
+                        form_values[
+                            "external_craftsman_id"
+                        ] = (
+                            selected_rule
+                            .target_external_craftsman_id
+                        )
 
             license_agreement_id = (
                 ticket_license_agreement_local_id(
@@ -4039,37 +4090,95 @@ def commission_create() -> Any:
 
         try:
             if (
-                form_data.get(
-                    "assignment_type",
-                    "internal",
-                ) == "internal"
-                and source_ticket is not None
-                and source_ticket.ai_assignment_mode
-                == TicketAiAssignmentMode.FORCE.value
-                and source_ticket.ai_assigned_user_id
-                is not None
+                    source_ticket is not None
+                    and source_ticket.ai_assignment_mode
+                    == TicketAiAssignmentMode.FORCE.value
             ):
+                selected_rule = (
+                    source_ticket.ai_assignment_rule
+                )
+                required_type = (
+                    selected_rule.target_assignment_type
+                    if selected_rule is not None
+                    else None
+                )
+
                 if (
-                    source_ticket.ai_state
-                    != TicketAiState.READY.value
-                    or source_ticket.ai_input_hash
-                    != ticket_analysis_input_hash(
+                        required_type is None
+                        and source_ticket.ai_assigned_user_id
+                        is not None
+                ):
+                    required_type = "internal"
+
+                if required_type is not None:
+                    if (
+                            source_ticket.ai_state
+                            != TicketAiState.READY.value
+                            or source_ticket.ai_input_hash
+                            != ticket_analysis_input_hash(
                         source_ticket
                     )
-                ):
-                    raise ValueError(
-                        "Die verbindliche KI-Zuweisung "
-                        "ist veraltet. Das Ticket muss "
-                        "erneut analysiert werden."
-                    )
+                    ):
+                        raise ValueError(
+                            "Die verbindliche KI-Zuweisung "
+                            "ist veraltet. Das Ticket muss "
+                            "erneut analysiert werden."
+                        )
 
-                form_data["craftsman_user_id"] = (
-                    source_ticket.ai_assigned_user_id
-                )
-                form_values = request.form.to_dict()
-                form_values["craftsman_user_id"] = (
-                    source_ticket.ai_assigned_user_id
-                )
+                    if (
+                            form_data.get("assignment_type")
+                            != required_type
+                    ):
+                        raise ValueError(
+                            "Die verbindliche Vergabeart "
+                            "der KI-Regel darf nicht "
+                            "geändert werden."
+                        )
+
+                    if (
+                            required_type == "internal"
+                            and source_ticket
+                            .ai_assigned_user_id
+                            is not None
+                    ):
+                        form_data[
+                            "craftsman_user_id"
+                        ] = (
+                            source_ticket
+                            .ai_assigned_user_id
+                        )
+                        form_values = (
+                            request.form.to_dict()
+                        )
+                        form_values[
+                            "craftsman_user_id"
+                        ] = (
+                            source_ticket
+                            .ai_assigned_user_id
+                        )
+
+                    if (
+                            required_type == "external"
+                            and selected_rule is not None
+                            and selected_rule
+                            .target_external_craftsman_id
+                            is not None
+                    ):
+                        form_data[
+                            "external_craftsman_id"
+                        ] = (
+                            selected_rule
+                            .target_external_craftsman_id
+                        )
+                        form_values = (
+                            request.form.to_dict()
+                        )
+                        form_values[
+                            "external_craftsman_id"
+                        ] = (
+                            selected_rule
+                            .target_external_craftsman_id
+                        )
 
             commission = create_pending_commission(
                 data=form_data,

@@ -24,12 +24,29 @@ document.addEventListener("DOMContentLoaded", () => {
         commissionForm.dataset.assignmentRuleUserId
         || ""
     );
+    const assignmentRuleExternalId = String(
+        commissionForm.dataset.assignmentRuleExternalId
+        || ""
+    );
+    const assignmentRuleType = String(
+        commissionForm.dataset.assignmentRuleType
+        || ""
+    );
     const assignmentRuleLabel = String(
         commissionForm.dataset.assignmentRuleLabel
         || ""
     );
     const assignmentLocked = (
         commissionForm.dataset.assignmentLocked
+        === "true"
+    );
+    const assignmentTypeLocked = (
+        commissionForm.dataset.assignmentTypeLocked
+        === "true"
+    );
+    const externalAssignmentLocked = (
+        commissionForm.dataset
+            .externalAssignmentLocked
         === "true"
     );
     let initialObject = null;
@@ -100,11 +117,7 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById(
             "externalCraftsman"
         );
-    const assignmentRuleHint =
-        document.getElementById(
-            "assignmentRuleHint"
-        );
-        const automaticFieldClass =
+    const automaticFieldClass =
         "field-state-automatic";
     const requiredFieldClass =
         "field-state-required";
@@ -133,7 +146,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function applyCraftAssignmentDefault() {
-        if (assignmentLocked) {
+        if (assignmentTypeLocked) {
             return;
         }
 
@@ -690,21 +703,34 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
         function hasAssignmentRuleValue() {
+            return Boolean(
+                isInternalAssignment()
+                && assignmentRuleUserId
+                && craftsmanUser.value
+                === assignmentRuleUserId
+            );
+        }
+
+        function hasExternalAssignmentRuleValue() {
         return Boolean(
-            isInternalAssignment()
-            && assignmentRuleUserId
-            && craftsmanUser.value
-            === assignmentRuleUserId
+            selectedAssignmentType() === "external"
+            && assignmentRuleExternalId
+            && externalCraftsman.value
+                === assignmentRuleExternalId
         );
     }
+
 
     function assignmentRuleStatusText(
         companyCodeValue = ""
     ) {
-        const modeText =
-            isInternalAssignmentLocked()
-                ? "Verbindliche KI-Regel"
-                : "KI-Regel";
+        const modeText = (
+            assignmentTypeLocked
+            || assignmentLocked
+            || externalAssignmentLocked
+        )
+            ? "Verbindliche KI-Regel"
+            : "KI-Regel";
         const companyText = companyCodeValue
             ? ` · Buchwerk ${companyCodeValue}`
             : "";
@@ -802,6 +828,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const automaticOption = (
             candidates.find((option) => {
                 return option.value
+                    === assignmentRuleExternalId;
+            })
+            || candidates.find((option) => {
+                return option.value
                     === preferredId;
             })
             || (
@@ -875,6 +905,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function updateAssignmentControls() {
+        if (assignmentTypeLocked) {
+            assignmentTypeInputs.forEach((input) => {
+                input.checked = (
+                    input.value === assignmentRuleType
+                );
+                input.disabled = (
+                    input.value !== assignmentRuleType
+                );
+            });
+        }
+
         const hasObject = Boolean(
             objectType.value
             && objectId.value
@@ -885,29 +926,18 @@ document.addEventListener("DOMContentLoaded", () => {
         const isInternal =
             isInternalAssignment();
 
-        internalCraftsmanField.classList
-            .toggle(
-                "d-none",
-                !isInternal
-            );
-        externalCraftsmanField.classList
-            .toggle(
-                "d-none",
-                isInternal
-            );
-
-        if (assignmentRuleHint) {
-            assignmentRuleHint.classList
-                .toggle(
-                    "d-none",
-                    !isInternal
-                );
-        }
+        internalCraftsmanField.classList.toggle(
+            "d-none",
+            !isInternal
+        );
+        externalCraftsmanField.classList.toggle(
+            "d-none",
+            isInternal
+        );
 
         companyCode.disabled = !hasObject;
         craftsmanUser.required = isInternal;
-        externalCraftsman.required =
-            !isInternal;
+        externalCraftsman.required = !isInternal;
         craftsmanUser.disabled = (
             !isInternal
             || isInternalAssignmentLocked()
@@ -916,6 +946,7 @@ document.addEventListener("DOMContentLoaded", () => {
         externalCraftsman.disabled = (
             isInternal
             || !hasCraft
+            || externalAssignmentLocked
         );
 
         updateFieldState(craftsmanUser);
@@ -1263,13 +1294,20 @@ document.addEventListener("DOMContentLoaded", () => {
                 const externalName =
                     selectedExternalCraftsmanName();
 
-                if (externalName) {
+                if (
+                    hasExternalAssignmentRuleValue()
+                ) {
+                    setAssignmentStatus(
+                        assignmentRuleStatusText(
+                            payload.company_code_code
+                        )
+                    );
+                } else if (externalName) {
                     setAssignmentStatus(
                         "Externer Auftragnehmer: "
                         + externalName
                         + " · Buchwerk "
-                        + payload
-                            .company_code_code
+                        + payload.company_code_code
                     );
                 } else {
                     setAssignmentStatus(
