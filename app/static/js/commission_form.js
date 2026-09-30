@@ -1278,7 +1278,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         allowedIds: payload
                             .external_candidate_ids
                     });
-                const automaticId = String(
+                                const automaticId = String(
                     payload
                         .external_craftsman_id
                     || ""
@@ -1286,7 +1286,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (
                     automaticId
-                    && !hasExternalAssignmentRuleValue()
+                    && !externalCraftsman.value
                 ) {
                     applyAutomaticValue(
                         externalCraftsman,
