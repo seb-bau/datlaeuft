@@ -70,7 +70,10 @@
 <div class="card shadow-sm">
   <div class="card-body">
     <div class="table-responsive">
-      <table class="table table-striped datatable align-middle">
+      <table
+        class="table table-striped datatable align-middle"
+        data-empty-message="Im ausgewählten Zeitraum wurden keine Leistungspositionen verwendet."
+      >
         <thead>
           <tr>
             <th>Gewerk</th>
@@ -120,16 +123,6 @@
               class="text-nowrap"
             >
               {{ duration(row.suggested_minutes) }}
-            </td>
-          </tr>
-          {% else %}
-          <tr>
-            <td
-              colspan="10"
-              class="text-center text-muted py-4"
-            >
-              Im ausgewählten Zeitraum wurden keine
-              Leistungspositionen verwendet.
             </td>
           </tr>
           {% endfor %}

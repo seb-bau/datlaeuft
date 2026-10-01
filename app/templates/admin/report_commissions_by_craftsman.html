@@ -65,7 +65,10 @@
 <div class="card shadow-sm">
   <div class="card-body">
     <div class="table-responsive">
-      <table class="table table-striped datatable align-middle">
+      <table
+        class="table table-striped datatable align-middle"
+        data-empty-message="Im ausgewählten Zeitraum wurden keine Aufträge gefunden."
+      >
         <thead>
           <tr>
             <th>Handwerker</th>
@@ -91,16 +94,6 @@
             <td>{{ row.successful_count }}</td>
             <td>{{ row.unsuccessful_count }}</td>
             <td>{{ row.priority_count }}</td>
-          </tr>
-          {% else %}
-          <tr>
-            <td
-              colspan="8"
-              class="text-center text-muted py-4"
-            >
-              Im ausgewählten Zeitraum wurden keine
-              Aufträge gefunden.
-            </td>
           </tr>
           {% endfor %}
         </tbody>
