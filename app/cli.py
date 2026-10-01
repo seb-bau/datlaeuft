@@ -202,31 +202,6 @@ def register_cli(app: Flask) -> None:
                 f"{state}"
             )
 
-    @app.cli.command("datlaeuft-set-commission-types")
-    @click.argument("erp_ids", nargs=-1, type=int)
-    def set_commission_types(
-        erp_ids: tuple[int, ...],
-    ) -> None:
-        selected_ids = sorted(set(erp_ids))
-
-        settings.set(
-            SettingKeys.WOWI_ALLOWED_COMMISSION_TYPE_IDS,
-            selected_ids,
-        )
-        db.session.commit()
-
-        if selected_ids:
-            selected_text = ", ".join(
-                str(erp_id)
-                for erp_id in selected_ids
-            )
-        else:
-            selected_text = "keine"
-
-        click.echo(
-            f"Ausgewählte Auftragsarten: {selected_text}"
-        )
-
     @app.cli.command("datlaeuft-sync-commission")
     @click.argument("erp_id", type=int)
     def sync_commission(erp_id: int) -> None:
