@@ -727,11 +727,9 @@ def mark_info_read(item: ProcessInfo, user_id: int) -> None:
             read_version=item.version,
             read_verified=False,
         ))
-    elif (
-        not receipt.read_verified
-        and receipt.read_version < item.version
-    ):
+    elif receipt.read_version < item.version:
         receipt.read_version = item.version
+        receipt.read_verified = False
 
 
 def mark_process_infos_read(

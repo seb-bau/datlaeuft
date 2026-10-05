@@ -184,7 +184,9 @@ def record_visible_reads(
         ProcessInfo.process_erp_id == process_id,
         ProcessInfo.id.in_(list(items)),
         ProcessInfo.direction == direction,
-        ProcessInfo.state == "synced",
+        ProcessInfo.state.in_(
+            ("pending", "failed", "uncertain", "synced")
+        ),
     ).order_by(
         ProcessInfo.id.asc()
     ).with_for_update().all()
