@@ -29,6 +29,11 @@ from .process_info_service import (
     write_outgoing_info,
 )
 from .utils import iso_datetime
+from .process_info_notifications import (
+    read_receipts,
+    record_visible_reads,
+    visible_items,
+)
 
 
 process_info_api_bp = Blueprint(
@@ -206,6 +211,20 @@ def read_commission_infos(
     data = request.get_json(
         silent=True
     )
+    if isinstance(data, dict) and "items" in data:
+        try:
+            record_visible_reads(
+                commission.crafts_process_erp_id,
+                visible_items(data),
+                "office",
+                user_id=user.id,
+            )
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            return jsonify({"message": str(exc)}), 400
+
+        return jsonify(unread_summary_for_user(user.id))
     info_ids = (
         data.get("info_ids")
         if isinstance(data, dict)
@@ -292,6 +311,7 @@ def serialize_process_info(
         "version": item.version,
         "state": item.state,
         "mail_state": item.mail_state,
+        "read_receipts": read_receipts(item),
         "is_unread": (
             is_info_unread(
                 item,

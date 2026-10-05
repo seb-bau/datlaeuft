@@ -96,6 +96,10 @@
 <section
   class="card shadow-sm mb-4"
   id="zusatzinformationen"
+  data-chat-read-url="{{ url_for('external_portal.external_info_read', public_id=item.public_id) }}"
+  data-chat-status-url="{{ url_for('external_portal.external_info_status', public_id=item.public_id) }}"
+  data-chat-read-direction="office"
+  data-chat-csrf="{{ csrf_token() }}"
 >
   <div class="card-header fw-semibold">
     Zusatzinformationen
@@ -113,6 +117,9 @@
       {% for info in infos %}
       {% set own_message = info.sender_external_craftsman_id == external_craftsman.id %}
       <article
+        data-info-id="{{ info.id }}"
+        data-info-version="{{ info.version }}"
+        data-info-direction="{{ info.direction }}"
         class="border-start border-4 rounded p-3 bg-body-tertiary {% if own_message %}border-primary ms-md-5{% else %}border-secondary me-md-5{% endif %}"
       >
         <div
@@ -137,6 +144,10 @@
 
         <div class="portal-preline">
           {{ info.body }}
+        </div>
+
+        <div class="small text-muted mt-2" data-read-receipts>
+          Lesestatus wird geladen …
         </div>
 
         {% if info.state != "synced" %}

@@ -218,7 +218,7 @@ from uuid import uuid4
 from .commission_priority import set_manual_commission_priority
 
 from .process_info_service import (
-    create_outgoing_info,
+    create_office_info,
     sync_process_infos,
     write_outgoing_info,
 )
@@ -7089,6 +7089,13 @@ def commission_detail(
         ),
         process_infos=process_infos,
         process_info_sync_error=process_info_sync_error,
+        office_users=User.query.filter(
+            User.is_active_flag.is_(True),
+            or_(
+                User.is_admin.is_(True),
+                User.is_foreman.is_(True),
+            ),
+        ).order_by(User.display_name.asc()).all(),
     )
 
 
@@ -7106,7 +7113,7 @@ def commission_info_create(
     information = None
 
     try:
-        information = create_outgoing_info(
+        information = create_office_info(
             commission=commission,
             user=current_user,
             request_id=str(uuid4()),

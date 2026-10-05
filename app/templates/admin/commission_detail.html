@@ -265,9 +265,67 @@
   </div>
 </div>
 
+<div class="card shadow-sm mb-4" id="sachbearbeitung">
+  <div class="card-header fw-semibold">Sachbearbeitung</div>
+  <div class="card-body">
+    <form
+      method="post"
+      action="{{ url_for('process_info_web.local_official', commission_id=item.id) }}"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label class="form-label" for="localOfficial">
+        Zuständiger Sachbearbeiter
+      </label>
+
+      <select
+        class="form-select mb-2"
+        id="localOfficial"
+        name="local_official_user_id"
+      >
+        <option
+          value=""
+          {% if not item.local_official_user_id %}selected{% endif %}
+        >
+          Wowiport-Zuständigkeit verwenden
+        </option>
+
+        {% if item.local_official_user_id and item.local_official_user_id not in (office_users|map(attribute="id")|list) %}
+        <option value="{{ item.local_official_user_id }}" selected>
+          {{ item.local_official.display_name if item.local_official else "Bisherige Sachbearbeitung" }}
+          (nicht verfügbar)
+        </option>
+        {% endif %}
+
+        {% for user in office_users %}
+        <option
+          value="{{ user.id }}"
+          {% if item.local_official_user_id == user.id %}selected{% endif %}
+        >
+          {{ user.display_name }}
+        </option>
+        {% endfor %}
+      </select>
+
+      <p class="form-text">
+        Die lokale Auswahl gilt für diesen Auftrag in WattNu.
+        Wowiport wird dadurch nicht geändert.
+      </p>
+
+      <button class="btn btn-primary" type="submit">
+        Sachbearbeitung speichern
+      </button>
+    </form>
+  </div>
+</div>
+
 <div
   class="card shadow-sm mb-4"
   id="zusatzinformationen"
+  data-chat-read-url="{{ url_for('process_info_web.office_chat_read', commission_id=item.id) }}"
+  data-chat-status-url="{{ url_for('process_info_web.office_chat_status', commission_id=item.id) }}"
+  data-chat-read-direction="craftsman"
+  data-chat-csrf="{{ csrf_token() }}"
 >
   <div class="card-header fw-semibold">
     Zusatzinformationen
@@ -286,7 +344,10 @@
     <div class="process-info-list mb-4">
       {% for information in process_infos %}
       <div
-        class="process-info-row{% if information.direction == 'craftsman' %} process-info-row-own{% endif %}"
+        class="process-info-row{% if information.direction == 'office' %} process-info-row-own{% endif %}"
+        data-info-id="{{ information.id }}"
+        data-info-version="{{ information.version }}"
+        data-info-direction="{{ information.direction }}"
       >
         <div class="process-info-bubble">
           <div class="small fw-semibold mb-1">
@@ -298,6 +359,10 @@
           </div>
 
           <div class="process-info-body">{{ information.body }}</div>
+
+          <div class="small text-muted mt-2" data-read-receipts>
+            Lesestatus wird geladen …
+          </div>
 
           <div class="small text-muted mt-2">
             {% if information.erp_date %}
@@ -355,9 +420,8 @@
         ></textarea>
 
         <div class="form-text">
-          Die Information wird im Wowiport-Vorgang
-          gespeichert. Der zuständige Sachbearbeiter
-          wird zusätzlich per E-Mail informiert.
+          Die Information wird im Wowiport-Vorgang gespeichert.
+          Die zugeordneten Handwerker werden benachrichtigt.
         </div>
       </div>
 

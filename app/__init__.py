@@ -27,6 +27,7 @@ from .safety_inspection_protocol_admin import (
     safety_inspection_protocol_admin_bp,
 )
 from .external_portal import external_portal_bp
+from .process_info_web import process_info_web_bp
 
 # Worker starten: flask datlaeuft-worker --poll-seconds 10
 # fällige Aufgaben: flask datlaeuft-process-erp-work
@@ -72,6 +73,7 @@ def create_app() -> Flask:
     )
     app.register_blueprint(api_bp)
     app.register_blueprint(process_info_api_bp)
+    app.register_blueprint(process_info_web_bp)
     app.register_blueprint(
         safety_inspection_api_bp
     )

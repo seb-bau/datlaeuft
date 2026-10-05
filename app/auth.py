@@ -17,7 +17,7 @@ from .entra import (
     get_entra_user_profile,
     is_entra_user_in_allowed_group,
 )
-from .models import User, utc_now
+from .models import BrowserPushSubscription, User, utc_now
 from .settings import SettingKeys, settings
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -280,6 +280,13 @@ def login() -> Any:
 @login_required
 def logout() -> Any:
     audit("auth.logout", "user", current_user.id)
+    subscription = db.session.get(
+        BrowserPushSubscription,
+        session.get("web_push_subscription_id"),
+    )
+    if subscription and subscription.user_id == current_user.id:
+        subscription.active = False
+    session.pop("web_push_subscription_id", None)
     db.session.commit()
     logout_user()
     return redirect(url_for("auth.login"))

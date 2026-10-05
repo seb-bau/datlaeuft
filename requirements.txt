@@ -24,3 +24,4 @@ dvelopdmspy
 pycountry>=26.2,<27
 PyMySQL>=1.1,<2
 icalendar>=6.3.2,<7
+pywebpush>=2,<3

@@ -1192,6 +1192,12 @@ class Commission(db.Model):
     creditor_erp_id: Mapped[int | None] = mapped_column(db.Integer)
     department_erp_id: Mapped[int | None] = mapped_column(db.Integer)
     responsible_official_repair_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    local_official_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id", ondelete="RESTRICT"), index=True,
+    )
+    local_official: Mapped[User | None] = relationship(
+        foreign_keys=[local_official_user_id],
+    )
     code: Mapped[str | None] = mapped_column(db.String(120), index=True)
     title: Mapped[str | None] = mapped_column(db.String(255))
     description: Mapped[str | None] = mapped_column(db.Text)
@@ -1989,6 +1995,9 @@ class ProcessInfoRead(db.Model):
             ondelete="CASCADE",
         ),
         primary_key=True,
+    )
+    read_verified: Mapped[bool] = mapped_column(
+        db.Boolean, default=False, server_default=false(), nullable=False,
     )
     read_version: Mapped[int] = mapped_column(
         db.Integer,
@@ -6936,3 +6945,74 @@ class WowiUseUnit(db.Model):
     ] = relationship(
         back_populates="use_unit"
     )
+
+
+class ProcessInfoExternalRead(db.Model):
+    __tablename__ = "process_info_external_read"
+
+    process_info_id: Mapped[str] = mapped_column(
+        db.ForeignKey("process_info.id", ondelete="CASCADE"), primary_key=True,
+    )
+    external_craftsman_id: Mapped[int] = mapped_column(
+        db.ForeignKey("external_craftsman.id", ondelete="CASCADE"), primary_key=True,
+    )
+    read_version: Mapped[int] = mapped_column(nullable=False)
+    read_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True), default=utc_now, nullable=False,
+    )
+
+
+class BrowserPushSubscription(db.Model):
+    __tablename__ = "browser_push_subscription"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("user_account.id", ondelete="CASCADE"), index=True,
+    )
+    endpoint_hash: Mapped[str] = mapped_column(db.String(64), unique=True)
+    subscription: Mapped[dict] = mapped_column(db.JSON, nullable=False)
+    active: Mapped[bool] = mapped_column(
+        db.Boolean, default=True, server_default=true(), nullable=False,
+    )
+
+
+class ProcessInfoDelivery(db.Model):
+    __tablename__ = "process_info_delivery"
+    __table_args__ = (
+        UniqueConstraint(
+            "process_info_id", "version", "channel", "destination_key",
+            name="uq_process_info_delivery_destination",
+        ),
+        db.Index("ix_process_info_delivery_due", "state", "available_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    process_info_id: Mapped[str] = mapped_column(
+        db.ForeignKey("process_info.id", ondelete="CASCADE"), index=True,
+    )
+    version: Mapped[int] = mapped_column(nullable=False)
+    commission_id: Mapped[int] = mapped_column(
+        db.ForeignKey("commission.id", ondelete="CASCADE"), nullable=False,
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id", ondelete="SET NULL"), index=True,
+    )
+    recipient_key: Mapped[str] = mapped_column(db.String(80), nullable=False)
+    recipient_email: Mapped[str] = mapped_column(db.String(255), nullable=False)
+    recipient_name: Mapped[str] = mapped_column(db.String(255), nullable=False)
+    channel: Mapped[str] = mapped_column(db.String(20), nullable=False)
+    destination_key: Mapped[str] = mapped_column(db.String(80), nullable=False)
+    subscription_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("browser_push_subscription.id", ondelete="CASCADE"),
+    )
+    state: Mapped[str] = mapped_column(
+        db.String(20), default="pending", server_default="pending", nullable=False,
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        default=0, server_default="0", nullable=False,
+    )
+    available_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True), default=utc_now, nullable=False,
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(db.Text)

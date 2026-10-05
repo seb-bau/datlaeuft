@@ -17,6 +17,7 @@ from flask import (
     send_file,
     session,
     url_for,
+    jsonify,
 )
 from flask_login import logout_user
 from sqlalchemy import and_, or_
@@ -1258,3 +1259,43 @@ def attachment_thumbnail(
         as_attachment=False,
         conditional=True,
     )
+
+
+from .process_info_web import chat_status
+from .process_info_notifications import (
+    record_visible_reads,
+    visible_items,
+)
+
+
+@external_portal_bp.get(
+    "/auftraege/<string:public_id>/informationen/status"
+)
+@external_craftsman_required
+def external_info_status(public_id: str) -> Any:
+    commission = external_commission_or_404(public_id)
+    return chat_status(commission.crafts_process_erp_id)
+
+
+@external_portal_bp.post(
+    "/auftraege/<string:public_id>/informationen/gelesen"
+)
+@external_craftsman_required
+def external_info_read(public_id: str) -> Any:
+    craftsman = current_external_craftsman()
+    commission = external_commission_or_404(public_id)
+    ensure_external_assignment(commission, craftsman)
+
+    try:
+        record_visible_reads(
+            commission.crafts_process_erp_id,
+            visible_items(request.get_json(silent=True)),
+            "office",
+            external_id=craftsman.id,
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"message": str(exc)}), 400
+
+    return jsonify({"message": "Lesestatus gespeichert."})

@@ -604,6 +604,26 @@ class SettingKeys:
         "Zeitlimit für KI-Analysen in Sekunden",
         "OpenAI",
     )
+    PROCESS_INFO_EMAIL_DELAY_MINUTES = SettingDefinition[int](
+        "notifications.process_info_email_delay_minutes", SettingValueType.INT, 15,
+        "E-Mail bei ungelesenen Zusatzinformationen nach Minuten", "Benachrichtigungen",
+    )
+    WEB_PUSH_ENABLED = SettingDefinition[bool](
+        "notifications.web_push_enabled", SettingValueType.BOOL, True,
+        "Desktop-Benachrichtigungen erlauben", "Benachrichtigungen",
+    )
+    WEB_PUSH_VAPID_PUBLIC_KEY = SettingDefinition[str](
+        "notifications.web_push_vapid_public_key", SettingValueType.STRING, "",
+        "Öffentlicher Web-Push-Schlüssel", "Benachrichtigungen",
+    )
+    WEB_PUSH_VAPID_PRIVATE_KEY = SettingDefinition[str](
+        "notifications.web_push_vapid_private_key", SettingValueType.SECRET, "",
+        "Privater Web-Push-Schlüssel", "Benachrichtigungen", True,
+    )
+    WEB_PUSH_VAPID_SUBJECT = SettingDefinition[str](
+        "notifications.web_push_vapid_subject", SettingValueType.STRING, "",
+        "Web-Push-Kontaktadresse mit mailto:", "Benachrichtigungen",
+    )
 
 
 def all_definitions() -> list[SettingDefinition[Any]]:
@@ -694,6 +714,20 @@ class SettingsService:
             return
 
         if definition.secret and not raw_value:
+            return
+
+        if definition.key == SettingKeys.PROCESS_INFO_EMAIL_DELAY_MINUTES.key:
+            try:
+                value = int(raw_value or "")
+            except ValueError as exc:
+                raise ValueError(
+                    "Die E-Mail-Verzögerung muss eine ganze Zahl sein."
+                ) from exc
+            if not 1 <= value <= 1440:
+                raise ValueError(
+                    "Die E-Mail-Verzögerung muss zwischen 1 und 1.440 Minuten liegen."
+                )
+            self.set(definition, value)
             return
 
         try:

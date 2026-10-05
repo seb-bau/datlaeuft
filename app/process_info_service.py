@@ -248,8 +248,10 @@ def sync_process_infos(
                     ProcessInfo.process_erp_id
                     == process_erp_id,
                     ProcessInfo.erp_note_id.is_(None),
-                    ProcessInfo.direction
-                    == CRAFTSMAN_DIRECTION,
+                    or_(
+                        ProcessInfo.sender_user_id.is_not(None),
+                        ProcessInfo.sender_external_craftsman_id.is_not(None),
+                    ),
                     ProcessInfo.erp_body == body,
                     ProcessInfo.state.in_(
                         (
@@ -276,6 +278,9 @@ def sync_process_infos(
                 item.mail_available_at = utc_now()
                 item.last_error = None
                 existing_items[note_id] = item
+                if item.direction == OFFICE_DIRECTION:
+                    from .process_info_notifications import notify_craftsmen
+                    notify_craftsmen(item)
                 continue
 
             item = ProcessInfo(
@@ -298,12 +303,34 @@ def sync_process_infos(
             item.erp_body = body
 
             if (
-                item.direction
-                == OFFICE_DIRECTION
+                    item.sender_user_id is None
+                    and item.sender_external_craftsman_id is None
             ):
                 item.body = body
+            else:
+                origin = (
+                    "WattNu-Web"
+                    if item.direction == OFFICE_DIRECTION
+                    else (
+                        "WattNu-Auftragnehmerportal"
+                        if item.sender_external_craftsman_id
+                        else "WattNu"
+                    )
+                )
+                item.body = body.removeprefix(
+                    f"{item.author_name} ({origin}):\n"
+                )
 
             item.version += 1
+
+            if (
+                    should_notify
+                    and item.direction == CRAFTSMAN_DIRECTION
+            ):
+                item.mail_state = "pending"
+                item.mail_attempt_count = 0
+                item.mail_available_at = utc_now()
+
             changed_items.append(item)
 
         item.author_name = (
@@ -413,6 +440,24 @@ def sync_process_infos(
     return len(changed_items)
 
 
+def create_office_info(
+    commission: Commission,
+    user: User,
+    request_id: str,
+    body: str,
+) -> ProcessInfo:
+    return _create_outgoing_info(
+        commission=commission,
+        request_id=request_id,
+        body=body,
+        sender_user_id=user.id,
+        sender_external_craftsman_id=None,
+        author_name=user.display_name,
+        origin_name="WattNu-Web",
+        direction=OFFICE_DIRECTION,
+    )
+
+
 def create_outgoing_info(
     commission: Commission,
     user: User,
@@ -471,15 +516,13 @@ def _create_outgoing_info(
     sender_external_craftsman_id: int | None,
     author_name: str,
     origin_name: str,
+    direction: str = CRAFTSMAN_DIRECTION,
 ) -> ProcessInfo:
-    process_erp_id = (
-        commission.crafts_process_erp_id
-    )
+    process_erp_id = commission.crafts_process_erp_id
 
     if process_erp_id is None:
         raise ValueError(
-            "Der Auftrag ist keinem "
-            "Wowiport-Vorgang zugeordnet."
+            "Der Auftrag ist keinem Wowiport-Vorgang zugeordnet."
         )
 
     if (
@@ -487,41 +530,24 @@ def _create_outgoing_info(
     ) == (
         sender_external_craftsman_id is None
     ):
-        raise ValueError(
-            "Der Absender ist nicht eindeutig."
-        )
+        raise ValueError("Der Absender ist nicht eindeutig.")
 
-    normalized_id = normalize_request_id(
-        request_id
-    )
-    normalized_body = normalize_info_body(
-        body
-    )
-
-    existing = db.session.get(
-        ProcessInfo,
-        normalized_id,
-    )
+    normalized_id = normalize_request_id(request_id)
+    normalized_body = normalize_info_body(body)
+    existing = db.session.get(ProcessInfo, normalized_id)
 
     if existing is not None:
         if (
-            existing.process_erp_id
-            != process_erp_id
-            or existing.sender_user_id
-            != sender_user_id
-            or (
-                existing
-                .sender_external_craftsman_id
-                != sender_external_craftsman_id
-            )
-            or existing.body
-            != normalized_body
+            existing.process_erp_id != process_erp_id
+            or existing.sender_user_id != sender_user_id
+            or existing.sender_external_craftsman_id
+            != sender_external_craftsman_id
+            or existing.direction != direction
+            or existing.body != normalized_body
         ):
             raise ValueError(
-                "Die Anfrage-ID wurde "
-                "bereits verwendet."
+                "Die Anfrage-ID wurde bereits verwendet."
             )
-
         return existing
 
     erp_body = (
@@ -533,10 +559,8 @@ def _create_outgoing_info(
         id=normalized_id,
         process_erp_id=process_erp_id,
         sender_user_id=sender_user_id,
-        sender_external_craftsman_id=(
-            sender_external_craftsman_id
-        ),
-        direction=CRAFTSMAN_DIRECTION,
+        sender_external_craftsman_id=sender_external_craftsman_id,
+        direction=direction,
         body=normalized_body,
         erp_body=erp_body,
         author_name=author_name,
@@ -547,7 +571,6 @@ def _create_outgoing_info(
     db.session.add(item)
     ensure_process_thread(process_erp_id)
     db.session.commit()
-
     return item
 
 
@@ -684,29 +707,31 @@ def write_outgoing_info(
     item.last_error = None
     item.updated_at = utc_now()
 
+    if item.direction == OFFICE_DIRECTION:
+        from .process_info_notifications import notify_craftsmen
+        notify_craftsmen(item)
+
     db.session.commit()
     return item
 
 
-def mark_info_read(
-    item: ProcessInfo,
-    user_id: int,
-) -> None:
+def mark_info_read(item: ProcessInfo, user_id: int) -> None:
     receipt = db.session.get(
-        ProcessInfoRead,
-        (item.id, user_id),
+        ProcessInfoRead, (item.id, user_id),
     )
 
     if receipt is None:
-        receipt = ProcessInfoRead(
+        db.session.add(ProcessInfoRead(
             process_info_id=item.id,
             user_id=user_id,
             read_version=item.version,
-        )
-        db.session.add(receipt)
-    else:
+            read_verified=False,
+        ))
+    elif (
+        not receipt.read_verified
+        and receipt.read_version < item.version
+    ):
         receipt.read_version = item.version
-        receipt.read_at = utc_now()
 
 
 def mark_process_infos_read(
@@ -1028,12 +1053,7 @@ def process_one_info_email() -> int:
 
     item = (
         ProcessInfo.query.filter(
-            ProcessInfo.direction.in_(
-                (
-                    CRAFTSMAN_DIRECTION,
-                    OFFICE_DIRECTION,
-                )
-            ),
+            ProcessInfo.direction == OFFICE_DIRECTION,
             ProcessInfo.state == "synced",
             ProcessInfo.mail_state.in_(
                 ("pending", "failed")
@@ -1164,9 +1184,12 @@ def process_one_info_email() -> int:
 
 
 def process_process_info_work() -> int:
+    from .process_info_notifications import process_office_info_work
+
     return (
         process_one_info_email()
         + sync_next_due_process()
+        + process_office_info_work()
     )
 
 
@@ -1204,84 +1227,12 @@ def bootstrap_process_infos() -> tuple[int, int]:
 def commission_notification_emails(
     commissions: list[Commission],
 ) -> list[str]:
-    service = WowiportService()
-    official_ids: set[int] = set()
-    fallback_recipients: set[str] = set()
+    from .process_info_notifications import office_recipients
 
-    for commission in commissions:
-        official_id = (
-            commission
-            .responsible_official_repair_erp_id
-        )
-
-        if (
-            official_id is None
-            and commission.erp_id is not None
-        ):
-            official_id = (
-                service
-                .get_commission_responsible_official_id(
-                    commission.erp_id
-                )
-            )
-
-            if official_id is not None:
-                commission.responsible_official_repair_erp_id = (
-                    official_id
-                )
-
-        if official_id is not None:
-            official_ids.add(official_id)
-        elif (
-            commission.source
-            == CommissionSource.WEB.value
-            and commission.created_by is not None
-        ):
-            email = (
-                commission.created_by.email
-                or ""
-            ).strip()
-
-            if email:
-                Address(addr_spec=email)
-                fallback_recipients.add(email)
-
-    recipients: set[str] = set()
-
-    for official_id in official_ids:
-        row = service.get_responsible_official(
-            official_id
-        )
-        person = _row_value(
-            row,
-            "Person",
-        )
-        communication = (
-            _row_value(
-                person,
-                "FirstEmailCommunication",
-            )
-            if isinstance(person, dict)
-            else None
-        )
-        value = (
-            _row_value(
-                communication,
-                "Content",
-            )
-            if isinstance(communication, dict)
-            else None
-        )
-
-        if value:
-            email = str(value).strip()
-            Address(addr_spec=email)
-            recipients.add(email)
-
-    if recipients:
-        return sorted(recipients)
-
-    return sorted(fallback_recipients)
+    return sorted({
+        recipient.email
+        for recipient in office_recipients(commissions)
+    })
 
 
 def _responsible_official_emails(
@@ -1448,7 +1399,7 @@ def _send_process_info_email(
         else "datlaeuft.local"
     )
     message["Message-ID"] = (
-        f"<process-info-{info.id}"
+        f"<process-info-{info.id}-v{info.version}"
         f"@{sender_domain}>"
     )
 
@@ -1532,7 +1483,7 @@ def _send_external_process_info_email(
         else "datlaeuft.local"
     )
     message["Message-ID"] = (
-        f"<external-process-info-{info.id}-"
+        f"<external-process-info-{info.id}-v{info.version}-"
         f"{craftsman.id}@{sender_domain}>"
     )
 
