@@ -992,20 +992,7 @@ class WowiportService:
         if not rows:
             return None
 
-        official = self._row_value(
-            rows[0],
-            "ResponsibleOfficialRepair",
-        )
-        raw_id = (
-            self._row_value(official, "Id")
-            if isinstance(official, dict)
-            else None
-        )
-
-        try:
-            return int(raw_id) if raw_id is not None else None
-        except (TypeError, ValueError):
-            return None
+        return _commission_responsible_official_id(rows[0])
 
     def get_responsible_official(
             self,
@@ -3391,13 +3378,6 @@ def upsert_commission(
     )
     creditor = _read_first(payload, "creditor", "Creditor")
     department = _read_first(payload, "department", "Department")
-    responsible_official = _read_first(
-        payload,
-        "responsible_official_repair",
-        "responsible_official",
-        "ResponsibleOfficialRepair",
-        "ResponsibleOfficial",
-    )
     craftsman = _read_first(payload, "craftsman", "Craftsman")
     commission_items = (
             _read_first(
@@ -3461,13 +3441,8 @@ def upsert_commission(
     commission.department_erp_id = _as_int(
         _read_first(department, "id_", "id", "Id")
     )
-    commission.responsible_official_repair_erp_id = _as_int(
-        _read_first(
-            responsible_official,
-            "id_",
-            "id",
-            "Id",
-        )
+    commission.responsible_official_repair_erp_id = (
+        _commission_responsible_official_id(payload)
     )
     commission.status_id = _as_int(
         _read_first(commission_status, "id_", "id", "Id")
@@ -3713,6 +3688,37 @@ def replace_commission_positions(
                 ),
             )
         )
+
+
+def _commission_responsible_official_id(payload: Any) -> int | None:
+    for field_name in (
+        "responsible_official_repair_id",
+        "responsibleOfficialRepairId",
+        "ResponsibleOfficialRepairId",
+        "responsible_official_id",
+        "responsibleOfficialId",
+        "ResponsibleOfficialId",
+    ):
+        official_id = _as_int(_read_first(payload, field_name))
+        if official_id is not None:
+            return official_id
+
+    for field_name in (
+        "responsible_official_repair",
+        "responsibleOfficialRepair",
+        "ResponsibleOfficialRepair",
+        "responsible_official",
+        "responsibleOfficial",
+        "ResponsibleOfficial",
+    ):
+        official = _read_first(payload, field_name)
+        official_id = _as_int(
+            _read_first(official, "id_", "id", "Id")
+        )
+        if official_id is not None:
+            return official_id
+
+    return None
 
 
 def _commission_status_id(payload: Any) -> int | None:
@@ -4069,6 +4075,9 @@ def _commission_sync_signature(
                 "id",
                 "Id",
             )
+        ),
+        "responsible_official_repair_id": (
+            _commission_responsible_official_id(payload)
         ),
         "craftsman_id": _as_int(
             _read_first(
