@@ -23,18 +23,14 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="category_id" value="{{ category_id }}">
 
-  <label class="form-label" for="keyProperty">Feld für den Erzeugungsschlüssel</label>
-  <select class="form-select mb-2" id="keyProperty" name="key_property_id" required>
-    <option value="">Bitte auswählen</option>
-    {% for field in schema.fields %}
-      {% if field.dataType == 'STRING' and not field.isMultiValue %}
-      <option value="{{ field.id }}"
-              {% if profile.key_property_id == field.id %}selected{% endif %}>
-        {{ field_name(field) }}
-      </option>
-      {% endif %}
-    {% endfor %}
+    <label class="form-label" for="keyProperty">Feld für den Erzeugungsschlüssel (optional)</label>
+  <select class="form-select mb-2" id="keyProperty" name="key_property_id">
+    <option value="" {% if not profile.key_property_id %}selected{% endif %}>Kein Erzeugungsschlüssel</option>
+    {% for field in schema.fields %}{% if field.dataType == 'STRING' and not field.isMultiValue %}
+    <option value="{{ field.id }}" {% if profile.key_property_id == field.id %}selected{% endif %}>{{ field_name(field) }}</option>
+    {% endif %}{% endfor %}
   </select>
+  <p class="text-muted">Ein ausgewähltes Feld wird automatisch mit einer eindeutigen Kennung gefüllt. Es muss für die Suche freigegeben sein und darf keiner anderen Zuordnung dienen. Ohne Schlüsselfeld wird die d.velop-ID nach erfolgreichem Upload gespeichert. Fehlt die Upload-Bestätigung, ist eine manuelle Prüfung unter „Übertragungen“ erforderlich.</p>
 
   <p class="text-muted">
     Dieses Feld wird automatisch mit einer eindeutigen Kennung gefüllt.
@@ -64,7 +60,7 @@
     <label class="form-label" for="source-{{ field.id }}">Wertquelle</label>
     <select class="form-select mb-2" id="source-{{ field.id }}"
             name="source.{{ field.id }}">
-      <option value="">Nicht zuordnen / Erzeugungsschlüssel</option>
+            <option value="">Nicht zuordnen</option>
       <option value="__text__"
               {% if mapping.get('kind') == 'text' %}selected{% endif %}>
         Fester Wert / Vorlage

@@ -143,14 +143,10 @@ def validate_profile(profile, schema):
         )
     fields = {item["id"]: item for item in schema["fields"]}
     key_field = fields.get(profile.key_property_id)
-    if (
-        not key_field
-        or key_field["dataType"] != "STRING"
-        or key_field.get("isMultiValue")
-    ):
-        raise DmsError(
-            "Für den Archivschlüssel wird ein einwertiges Textfeld benötigt."
-        )
+    if profile.key_property_id:
+        key_field = fields.get(profile.key_property_id)
+        if not key_field or key_field["dataType"] != "STRING" or key_field.get("isMultiValue"):
+            raise DmsError("Für den Archivschlüssel wird ein einwertiges Textfeld benötigt.")
     allowed = available_fields(profile.document_type)
     if set(profile.mappings) - set(fields):
         raise DmsError(
@@ -463,6 +459,11 @@ def retry_document(document, *, confirmed_absent=False):
     if not settings.get(SettingKeys.DMS_ENABLED):
         raise DmsError("Die automatische Archivierung ist deaktiviert.")
     upload_started = document.upload_started and not confirmed_absent
+    if upload_started and not (document.profile_snapshot or {}).get("key_property_id"):
+        raise DmsError(
+            "Bitte die vorhandene d.velop-ID zuordnen oder nach Prüfung bestätigen, "
+            "dass dieses PDF nicht archiviert wurde."
+        )
     values = {
         "upload_started": upload_started,
         "status": "uncertain" if upload_started else "pending",
@@ -540,6 +541,82 @@ def sync_legacy_archive_fields(document):
         entity.dms_archive_error = None
 
 
+def link_existing_document(document, remote_id):
+    remote_id = str(remote_id or "").strip()
+    if (
+        not remote_id or len(remote_id) > 80 or not remote_id.isascii()
+        or any(not (character.isalnum() or character in "-_") for character in remote_id)
+    ):
+        raise DmsError("Bitte eine gültige d.velop-Dokument-ID eingeben.")
+
+    db.session.refresh(document, with_for_update=True)
+    if (
+        document.status not in ("blocked", "uncertain")
+        or not document.upload_started or document.lock_token is not None
+        or not document.profile_snapshot
+    ):
+        raise DmsError("Für diesen Archivierungsauftrag ist keine manuelle Zuordnung möglich.")
+
+    hostname, api_key, repository = connection()
+    if (hostname, repository) != (document.hostname, document.repository_id):
+        raise DmsError("Bitte zuerst die ursprüngliche DMS-Anbindung wiederherstellen.")
+
+    client = CloudDmsClient(hostname, api_key, repository)
+    try:
+        matches = client.get_documents(doc_id=remote_id)
+    except DmsError:
+        raise
+    except Exception as exc:
+        raise DmsError("Das DMS-Dokument konnte nicht geprüft werden.") from exc
+    finally:
+        client.close()
+
+    if (
+        len(matches) != 1 or str(matches[0].id_) != remote_id
+        or document.profile_snapshot["category_id"]
+        not in (getattr(matches[0], "source_categories", None) or [])
+    ):
+        raise DmsError("Das DMS-Dokument wurde in der erwarteten Kategorie nicht gefunden.")
+
+    assigned_id = db.session.execute(
+        select(DmsDocument.id).where(
+            DmsDocument.id != document.id,
+            DmsDocument.hostname == hostname,
+            DmsDocument.repository_id == repository,
+            DmsDocument.dms_document_id == remote_id,
+        ).limit(1)
+    ).scalar_one_or_none()
+    if assigned_id is not None:
+        raise DmsError("Diese d.velop-ID ist bereits einem anderen Archivierungsauftrag zugeordnet.")
+
+    changed = db.session.execute(
+        update(DmsDocument).where(
+            DmsDocument.id == document.id,
+            DmsDocument.status.in_(("blocked", "uncertain")),
+            DmsDocument.upload_started.is_(True),
+            DmsDocument.lock_token.is_(None),
+        ).values(
+            status="archived",
+            dms_document_id=remote_id,
+            archived_at=utc_now(),
+            locked_at=None,
+            lock_token=None,
+            error=None,
+        )
+    ).rowcount
+    if changed != 1:
+        raise DmsError("Der Archivierungsauftrag wird bereits anderweitig bearbeitet.")
+
+    db.session.refresh(document)
+    sync_legacy_archive_fields(document)
+    audit(
+        "dms.document.link",
+        "dms_document",
+        document.id,
+        {"dms_document_id": remote_id},
+    )
+
+
 def process_dms_batch(limit=10):
     if not settings.get(SettingKeys.DMS_ENABLED):
         return 0
@@ -601,15 +678,20 @@ def process_claimed_document(document_id, token):
     created_in_this_attempt = False
     try:
         hostname, api_key, repository = connection()
-        if (hostname, repository) != (
-            document.hostname, document.repository_id,
-        ):
-            raise DmsError(
-                "Die DMS-Anbindung wurde geändert. "
-                "Bitte den Archivierungsauftrag prüfen."
-            )
+        if (hostname, repository) != (document.hostname, document.repository_id):
+            raise DmsError("Die DMS-Anbindung wurde geändert. Bitte den Archivierungsauftrag prüfen.")
         if not document.profile_snapshot:
             raise DmsError("Die Eigenschaftszuordnung ist unvollständig.")
+
+        snapshot = document.profile_snapshot
+        key_property_id = snapshot.get("key_property_id")
+        if document.upload_started and not key_property_id:
+            raise DmsError(
+                "Die Upload-Bestätigung fehlt. Bitte die vorhandene d.velop-ID zuordnen "
+                "oder nach Prüfung einen erneuten Upload freigeben.",
+                uncertain=True,
+            )
+
         path = document_path(document)
 
         def before_create():
@@ -623,38 +705,31 @@ def process_claimed_document(document_id, token):
             ).rowcount
             if claimed != 1:
                 db.session.rollback()
-                raise DmsError(
-                    "Der Archivierungsauftrag wird bereits "
-                    "anderweitig bearbeitet."
-                )
+                raise DmsError("Der Archivierungsauftrag wird bereits anderweitig bearbeitet.")
             db.session.commit()
             created_in_this_attempt = True
 
         client = CloudDmsClient(
-            hostname, api_key, repository, before_create=before_create,
+            hostname, api_key, repository, before_create=before_create
         )
-        snapshot = document.profile_snapshot
-        filters = client.add_property(
-            "",
-            document.context["archive_key"],
-            prop_guid=snapshot["key_property_id"],
-        )
-        matches = client.get_documents(
-            properties=filters,
-            categories=[snapshot["category_id"]],
-            limit=2,
-        )
-        if len(matches) > 1:
-            raise DmsError(
-                "Mehrere DMS-Dokumente besitzen "
-                "denselben Erzeugungsschlüssel."
+        matches = []
+        if key_property_id:
+            filters = client.add_property(
+                "", document.context["archive_key"], prop_guid=key_property_id
             )
+            matches = client.get_documents(
+                properties=filters,
+                categories=[snapshot["category_id"]],
+                limit=2,
+            )
+
+        if len(matches) > 1:
+            raise DmsError("Mehrere DMS-Dokumente besitzen denselben Erzeugungsschlüssel.")
         if matches:
             remote_id = str(matches[0].id_ or "")
         elif document.upload_started:
             raise DmsError(
-                "Die Upload-Bestätigung steht aus. "
-                "Das DMS wird erneut geprüft.",
+                "Die Upload-Bestätigung steht aus. Das DMS wird erneut geprüft.",
                 retryable=True,
                 uncertain=True,
             )
@@ -666,12 +741,14 @@ def process_claimed_document(document_id, token):
                     properties=upload_properties(document, client),
                 ) or ""
             )
+
         if not remote_id or remote_id == "unknown":
             raise DmsError(
                 "d.velop hat keine Dokument-ID bestätigt.",
                 retryable=True,
                 uncertain=True,
             )
+
         db.session.refresh(document, with_for_update=True)
         if document.lock_token == token:
             document.status = "archived"
@@ -697,25 +774,19 @@ def process_claimed_document(document_id, token):
             .where(DmsDocument.id == document_id)
             .with_for_update()
         ).scalar_one()
+
         if document.lock_token == token:
-            if (
-                created_in_this_attempt
-                and isinstance(exc, DmsError)
-                and not exc.uncertain
-            ):
+            if created_in_this_attempt and isinstance(exc, DmsError) and not exc.uncertain:
                 document.upload_started = False
-            document.status = (
-                "uncertain"
-                if document.upload_started
-                else "failed"
-                if getattr(exc, "retryable", False)
-                else "blocked"
-            )
+
+            has_key = bool((document.profile_snapshot or {}).get("key_property_id"))
+            if document.upload_started:
+                document.status = "uncertain" if has_key else "blocked"
+            else:
+                document.status = "failed" if getattr(exc, "retryable", False) else "blocked"
+
             document.available_at = utc_now() + timedelta(
-                seconds=min(
-                    3600,
-                    30 * 2 ** min(document.attempts, 7),
-                )
+                seconds=min(3600, 30 * 2 ** min(document.attempts, 7))
             )
             document.locked_at = None
             document.lock_token = None
@@ -724,6 +795,11 @@ def process_claimed_document(document_id, token):
                 if isinstance(exc, DmsError)
                 else "Unerwarteter Fehler bei der Archivierung."
             )
+            if document.upload_started and not has_key:
+                document.error = (
+                    "Die Upload-Bestätigung fehlt. Bitte die vorhandene d.velop-ID zuordnen "
+                    "oder nach Prüfung einen erneuten Upload freigeben."
+                )
             db.session.commit()
         else:
             db.session.rollback()

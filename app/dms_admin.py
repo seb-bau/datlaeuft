@@ -12,9 +12,9 @@ from .auth import admin_required, foreman_required
 from .dms_client import DmsError, normalize_hostname
 from .dms_context import DOCUMENT_TYPES, available_fields
 from .dms_service import (
-    STATUS_LABELS, connection, document_path, field_name, profile_snapshot,
-    refresh_metadata, repository_metadata, retry_document,
-    seed_profiles, validate_profile,
+    STATUS_LABELS, connection, document_path, field_name,
+    link_existing_document, profile_snapshot, refresh_metadata,
+    repository_metadata, retry_document, seed_profiles, validate_profile,
 )
 from .extensions import db
 from .models import Commission, DmsDocument, DmsProfile, SettingValueType
@@ -204,7 +204,7 @@ def profile_edit(document_type):
                     "Bitte eine eingelesene Dokumentkategorie auswählen."
                 )
             mappings = {}
-            key_property_id = request.form.get("key_property_id", "")
+            key_property_id = request.form.get("key_property_id", "").strip()
             for field in schema["fields"]:
                 property_id = field["id"]
                 if property_id == key_property_id:
@@ -332,6 +332,24 @@ def document_pdf(document_id):
         download_name=document.filename,
         as_attachment=False,
     )
+
+
+@dms_admin_bp.post("/documents/<document_id>/link")
+@admin_required
+def document_link(document_id):
+    document = db.get_or_404(DmsDocument, document_id)
+    try:
+        if request.form.get("confirmed_document") != "on":
+            raise DmsError("Bitte bestätigen, dass das DMS-Dokument zu diesem PDF gehört.")
+
+        link_existing_document(document, request.form.get("dms_document_id", ""))
+        db.session.commit()
+        flash("Vorhandene d.velop-ID zugeordnet. Das Dokument ist archiviert.", "success")
+    except DmsError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+
+    return redirect(url_for("dms_admin.documents"))
 
 
 @dms_admin_bp.post(

@@ -39,23 +39,25 @@
         </td>
         <td>{{ document.attempts }}</td>
         <td>
-          {% if document.status not in ('archived', 'processing') %}
-          <form method="post"
-                action="{{ url_for('dms_admin.document_retry', document_id=document.id) }}">
+        <td>{% if document.status not in ('archived', 'processing') %}
+          {% set has_key = document.profile_snapshot and document.profile_snapshot.get('key_property_id') %}
+          {% if document.upload_started %}
+          <form method="post" action="{{ url_for('dms_admin.document_link', document_id=document.id) }}" class="mb-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            {% if document.upload_started %}
-            <label class="form-check small">
-              <input class="form-check-input" type="checkbox" name="confirmed_absent">
-              Im ursprünglichen Repository geprüft: Diese Erzeugungskennung
-              existiert nicht. Erneuten Upload freigeben.
-            </label>
-            {% endif %}
-            <button class="btn btn-sm btn-outline-primary mt-1">
-              {{ 'DMS erneut prüfen' if document.upload_started else 'Erneut vormerken' }}
-            </button>
+            <label class="form-label small" for="dms-id-{{ document.id }}">Vorhandene d.velop-ID</label>
+            <input class="form-control form-control-sm" id="dms-id-{{ document.id }}" name="dms_document_id" maxlength="80" pattern="[A-Za-z0-9_-]+" required>
+            <label class="form-check small mt-2"><input class="form-check-input" type="checkbox" name="confirmed_document" required> Ich habe geprüft, dass das DMS-Dokument zu diesem PDF gehört.</label>
+            <button class="btn btn-sm btn-outline-success mt-1">d.velop-ID zuordnen</button>
           </form>
           {% endif %}
-        </td>
+          <form method="post" action="{{ url_for('dms_admin.document_retry', document_id=document.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if document.upload_started %}
+            <label class="form-check small"><input class="form-check-input" type="checkbox" name="confirmed_absent" {% if not has_key %}required{% endif %}> Im ursprünglichen Repository geprüft: Dieses PDF wurde nicht archiviert. Erneuten Upload freigeben.</label>
+            {% endif %}
+            <button class="btn btn-sm btn-outline-primary mt-1">{{ ('DMS erneut prüfen / Upload freigeben' if has_key else 'Erneuten Upload freigeben') if document.upload_started else 'Erneut vormerken' }}</button>
+          </form>
+        {% endif %}</td>
       </tr>
       {% else %}
       <tr><td colspan="5">Keine Archivierungsaufträge vorhanden.</td></tr>
