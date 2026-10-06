@@ -1301,6 +1301,19 @@ class Commission(db.Model):
         db.Text
     )
 
+    accepted_appointment_has_time: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+    )
+    accepted_appointment_is_manual: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
+
     user: Mapped[User | None] = relationship(
         back_populates="commissions",
         foreign_keys=[user_id],

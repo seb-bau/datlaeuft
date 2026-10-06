@@ -50,6 +50,81 @@ def appointment_timezone() -> ZoneInfo:
         ) from exc
 
 
+def parse_manual_appointment(
+    payload: dict,
+) -> tuple[datetime, bool, str | None]:
+    if not isinstance(payload, dict):
+        raise ValueError("Die Termindaten sind ungültig.")
+
+    raw_date = payload.get("date")
+    try:
+        if not isinstance(raw_date, str):
+            raise ValueError
+        appointment_date = date.fromisoformat(raw_date)
+        if appointment_date.isoformat() != raw_date:
+            raise ValueError
+    except ValueError as exc:
+        raise ValueError("Bitte ein gültiges Datum angeben.") from exc
+
+    raw_time = payload.get("time")
+    has_time = raw_time is not None and raw_time != ""
+    appointment_time = time.min
+    if has_time:
+        try:
+            if not isinstance(raw_time, str) or len(raw_time) != 5:
+                raise ValueError
+            appointment_time = time.fromisoformat(raw_time)
+            if appointment_time.strftime("%H:%M") != raw_time:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError("Bitte eine gültige Uhrzeit angeben.") from exc
+
+    comment = payload.get("comment")
+    if comment is not None and not isinstance(comment, str):
+        raise ValueError("Die Notiz ist ungültig.")
+    comment = (comment or "").strip()
+    if len(comment) > 2000:
+        raise ValueError("Die Notiz darf höchstens 2000 Zeichen enthalten.")
+
+    appointment_zone = appointment_timezone()
+    local_start = datetime.combine(
+        appointment_date, appointment_time, tzinfo=appointment_zone
+    )
+    appointment_from = local_start.astimezone(timezone.utc)
+    if has_time and appointment_from.astimezone(appointment_zone) != local_start:
+        raise ValueError("Diese Uhrzeit existiert wegen der Zeitumstellung nicht.")
+
+    return appointment_from, has_time, comment or None
+
+
+def serialize_accepted_appointment_from(
+    commission: Commission,
+) -> str | None:
+    appointment_from = commission.accepted_appointment_from
+    if appointment_from is None:
+        return None
+    if appointment_from.tzinfo is None and commission.accepted_appointment_is_manual:
+        appointment_from = appointment_from.replace(tzinfo=timezone.utc)
+    if commission.accepted_appointment_has_time:
+        return appointment_from.isoformat()
+    if appointment_from.tzinfo is None:
+        appointment_from = appointment_from.replace(tzinfo=timezone.utc)
+    return appointment_from.astimezone(appointment_timezone()).date().isoformat()
+
+
+def format_manual_appointment(commission: Commission) -> str | None:
+    if not commission.accepted_appointment_is_manual:
+        return None
+    value = serialize_accepted_appointment_from(commission)
+    if value is None:
+        return None
+    if not commission.accepted_appointment_has_time:
+        return date.fromisoformat(value).strftime("%d.%m.%Y")
+    return datetime.fromisoformat(value).astimezone(appointment_timezone()).strftime(
+        "%d.%m.%Y %H:%M Uhr"
+    )
+
+
 def normalize_email_address(
     value: str,
 ) -> str:

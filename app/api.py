@@ -51,8 +51,11 @@ from .models import (
     InventoryItemType,
     WorkTimeProfile,
 )
-from .offer_service import (
-    sync_offer_from_commission,
+from .appointment_service import (
+    create_appointment_request,
+    parse_manual_appointment,
+    serialize_accepted_appointment_from,
+    send_appointment_request_email,
 )
 from .appointment_service import (
     create_appointment_request,
@@ -1034,7 +1037,7 @@ def commission_appointment_create(
         commission_id,
         user,
     )
-
+    db.session.refresh(commission, with_for_update=True)
     if not commission.is_actionable:
         return jsonify({
             "message": (
@@ -1115,6 +1118,65 @@ def commission_appointment_create(
     }), 201
 
 
+@api_bp.post("/commissions/<int:commission_id>/appointments/accepted")
+@jwt_required()
+def commission_appointment_enter(commission_id: int) -> Any:
+    user = current_api_user()
+    commission = editable_commission(commission_id, user)
+    db.session.refresh(commission, with_for_update=True)
+    commission = editable_commission(commission_id, user)
+
+    if not commission.is_actionable:
+        return jsonify({
+            "message": "Termine können erst nach der Wowiport-Bestätigung eingetragen werden."
+        }), 409
+
+    if commission.accepted_appointment_from is not None:
+        return jsonify({
+            "message": "Der Auftrag besitzt bereits einen bestätigten Termin."
+        }), 409
+
+    try:
+        appointment_from, has_time, comment = parse_manual_appointment(
+            request.get_json(silent=True)
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"message": str(exc)}), 400
+
+    commission.accepted_appointment_from = appointment_from
+    commission.accepted_appointment_to = None
+    commission.accepted_appointment_comment = comment
+    commission.accepted_appointment_has_time = has_time
+    commission.accepted_appointment_is_manual = True
+
+    CommissionAppointmentRequest.query.filter(
+        CommissionAppointmentRequest.commission_id == commission.id,
+        CommissionAppointmentRequest.status == AppointmentRequestStatus.PENDING.value,
+    ).update(
+        {CommissionAppointmentRequest.status: AppointmentRequestStatus.SUPERSEDED.value},
+        synchronize_session=False,
+    )
+
+    audit(
+        "appointment.accepted",
+        "commission",
+        commission.id,
+        {
+            "source": "manual",
+            "appointment_from": serialize_accepted_appointment_from(commission),
+            "appointment_to": None,
+            "has_time": has_time,
+            "tenant_comment": comment,
+        },
+    )
+    db.session.commit()
+
+    return jsonify({
+        "item": serialize_commission(commission, viewer=user)
+    }), 201
+
+
 @api_bp.delete(
     "/commissions/<int:commission_id>/appointments/accepted"
 )
@@ -1127,7 +1189,7 @@ def commission_appointment_cancel(
         commission_id,
         user,
     )
-
+    db.session.refresh(commission, with_for_update=True)
     accepted_request = (
         CommissionAppointmentRequest.query
         .filter(
@@ -1169,6 +1231,8 @@ def commission_appointment_cancel(
     commission.accepted_appointment_from = None
     commission.accepted_appointment_to = None
     commission.accepted_appointment_comment = None
+    commission.accepted_appointment_has_time = True
+    commission.accepted_appointment_is_manual = False
 
     audit(
         "appointment.cancelled",
@@ -3790,8 +3854,8 @@ def serialize_commission(
             }
             for position in commission.positions
         ],
-        "accepted_appointment_from": iso_datetime(
-            commission.accepted_appointment_from
+        "accepted_appointment_from": serialize_accepted_appointment_from(
+            commission
         ),
         "accepted_appointment_to": iso_datetime(
             commission.accepted_appointment_to
@@ -3799,6 +3863,8 @@ def serialize_commission(
         "accepted_appointment_comment": (
             commission.accepted_appointment_comment
         ),
+        "accepted_appointment_has_time": commission.accepted_appointment_has_time,
+        "accepted_appointment_is_manual": commission.accepted_appointment_is_manual,
     }
 
     if viewer is not None:

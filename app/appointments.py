@@ -129,6 +129,10 @@ def appointment_response(
             accepted_proposal=None,
         ), 404
 
+    if request.method == "POST":
+        db.session.refresh(appointment_request.commission, with_for_update=True)
+        db.session.refresh(appointment_request)
+
     if (
         appointment_request.status
         == AppointmentRequestStatus.PENDING.value
@@ -273,6 +277,9 @@ def appointment_response(
         commission.accepted_appointment_comment = (
             tenant_comment
         )
+
+        commission.accepted_appointment_has_time = True
+        commission.accepted_appointment_is_manual = False
 
         appointment_request.status = (
             AppointmentRequestStatus.ACCEPTED.value

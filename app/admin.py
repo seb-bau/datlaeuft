@@ -241,6 +241,8 @@ from .catalog import (
     sync_craft_activities_from_wowiport,
 )
 
+from .appointment_service import format_manual_appointment
+
 admin_bp = Blueprint("admin", __name__)
 
 WORK_TIME_WEEKDAYS = (
@@ -7078,6 +7080,7 @@ def commission_detail(
     return render_template(
         "admin/commission_detail.html",
         item=item,
+        manual_appointment_text=format_manual_appointment(item),
         photos=photos,
         appointment_requests=appointment_requests,
         history_entries=history_entries,

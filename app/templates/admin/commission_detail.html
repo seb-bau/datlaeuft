@@ -528,9 +528,13 @@
     {% if item.accepted_appointment_from %}
     <div class="alert alert-success">
       <strong>Bestätigter Termin:</strong>
+      {% if item.accepted_appointment_is_manual %}
+      {{ manual_appointment_text }}
+      {% else %}
       {{ item.accepted_appointment_from.strftime("%d.%m.%Y %H:%M") }}
       {% if item.accepted_appointment_to %}
       bis {{ item.accepted_appointment_to.strftime("%H:%M") }} Uhr
+      {% endif %}
       {% endif %}
 
       {% if item.accepted_appointment_comment %}
