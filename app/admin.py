@@ -4525,18 +4525,10 @@ def commission_assignment_preview() -> Any:
                     )
                 )
             except ValueError as exc:
-                assignment = (
-                    resolve_commission_assignment(
-                        [service_position],
-                        object_context,
-                        require_user=False,
-                    )
-                )
-                automatic_assignment_message = str(
-                    exc
-                )
+                assignment = None
+                automatic_assignment_message = str(exc)
 
-            if assignment.user is not None:
+            if assignment is not None and assignment.user is not None:
                 payload.update(
                     {
                         "craftsman_user_id": (
@@ -9625,9 +9617,6 @@ def save_user_jurisdiction_person_mappings(
             )
 
         selected_ids.add(erp_id)
-
-    if item.craftsman_erp_id is None:
-        selected_ids.clear()
 
     candidates = jurisdiction_person_candidates()
     candidate_names = {

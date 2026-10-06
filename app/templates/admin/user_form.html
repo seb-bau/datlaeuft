@@ -359,22 +359,21 @@
         Wowiport-Zuständigkeitspersonen
       </h2>
 
-      <p class="text-muted mb-3">
-        Diese Zuordnung wird nur benötigt, wenn die
-        Personennummer aus der Wowiport-Zuständigkeit
-        von der Personennummer des Handwerkers
-        abweicht.
-      </p>
+    <p class="text-muted mb-3">
+      Diese Zuordnung wird für die automatische
+      Handwerkerermittlung und den Sachbearbeiter
+      neu angelegter Aufträge verwendet. Genau eine
+      ausgewählte Zuständigkeitsperson mit eindeutiger
+      Sachbearbeiter-ID wird als Sachbearbeiter des
+      anlegenden Benutzers an Wowiport übertragen.
+      Bei keiner oder mehreren ausgewählten Personen
+      bleibt der Auftrag ohne übergebenen Sachbearbeiter.
+    </p>
 
       {% if not item.id %}
       <div class="alert alert-info mb-0">
         Speichere den Benutzer zuerst. Danach können
         Zuständigkeitspersonen zugeordnet werden.
-      </div>
-      {% elif not item.craftsman_erp_id %}
-      <div class="alert alert-warning mb-0">
-        Die Zuordnung ist erst möglich, wenn eine
-        ERP-Handwerker-ID hinterlegt ist.
       </div>
       {% elif not jurisdiction_candidates %}
       <div class="alert alert-info mb-0">
@@ -436,12 +435,12 @@
         {% endfor %}
       </div>
 
-      <div class="form-text">
-        Eine Wowiport-Person kann nur einem
-        Handwerker zugeordnet werden. Ein Handwerker
-        kann mehrere abweichende Personennummern
-        besitzen.
-      </div>
+    <div class="form-text">
+      Eine Wowiport-Person kann nur einem Benutzer
+      zugeordnet werden. Mehrere Zuordnungen bleiben
+      für die Handwerkerermittlung möglich; dann wird
+      für neue Aufträge kein Sachbearbeiter übertragen.
+    </div>
       {% endif %}
     </div>
   </div>

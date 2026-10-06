@@ -42,7 +42,7 @@ class DepartmentAssignment:
     jurisdiction: (
         WowiEconomicUnitJurisdiction | None
     )
-    responsible_official_erp_id: int
+    responsible_official_erp_id: int | None
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ class CommissionAssignment:
     jurisdiction: (
         WowiEconomicUnitJurisdiction | None
     )
-    responsible_official_erp_id: int
+    responsible_official_erp_id: int | None
 
 
 def sync_object_directory() -> dict[str, int]:
@@ -1341,11 +1341,68 @@ def resolve_commission_object(
     )
 
 
+def resolve_commission_creator_official_id(
+    user: User | None,
+) -> int | None:
+    if user is None or user.id is None:
+        return None
+
+    mappings = (
+        UserJurisdictionPersonMapping.query
+        .filter_by(user_id=user.id, active=True)
+        .all()
+    )
+
+    if len(mappings) != 1:
+        return None
+
+    person_id = mappings[0].jurisdiction_person_erp_id
+    jurisdictions = (
+        WowiEconomicUnitJurisdiction.query
+        .join(
+            WowiEconomicUnit,
+            WowiEconomicUnit.id
+            == WowiEconomicUnitJurisdiction.economic_unit_id,
+        )
+        .filter(
+            WowiEconomicUnit.active.is_(True),
+            WowiEconomicUnit.universal_responsibility.is_(False),
+            WowiEconomicUnitJurisdiction.active.is_(True),
+            WowiEconomicUnitJurisdiction.responsible_person_erp_id
+            == person_id,
+        )
+        .all()
+    )
+    economic_units = (
+        WowiEconomicUnit.query
+        .filter(
+            WowiEconomicUnit.active.is_(True),
+            WowiEconomicUnit.universal_responsibility.is_(True),
+            WowiEconomicUnit.universal_responsible_person_erp_id
+            == person_id,
+        )
+        .all()
+    )
+    official_ids = {
+        item.responsible_official_erp_id
+        for item in jurisdictions
+        if item.responsible_official_erp_id is not None
+    }
+    official_ids.update(
+        item.universal_responsible_official_erp_id
+        for item in economic_units
+        if item.universal_responsible_official_erp_id is not None
+    )
+
+    return next(iter(official_ids)) if len(official_ids) == 1 else None
+
+
 def resolve_department_assignment(
     economic_unit: WowiEconomicUnit,
     department: WowiDepartment,
     *,
     require_user: bool = True,
+    require_responsible_official: bool = True,
 ) -> DepartmentAssignment:
     if not department.active:
         raise ValueError(
@@ -1405,7 +1462,7 @@ def resolve_department_assignment(
             .responsible_person_erp_id
         )
 
-    if responsible_official_erp_id is None:
+    if require_responsible_official and responsible_official_erp_id is None:
         raise ValueError(
             "In der Zuständigkeit fehlt der "
             "zuständige Sachbearbeiter."
@@ -1550,6 +1607,7 @@ def resolve_commission_assignment(
         object_context.economic_unit,
         mapping.department,
         require_user=require_user,
+        require_responsible_official=False,
     )
 
     return CommissionAssignment(

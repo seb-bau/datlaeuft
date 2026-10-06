@@ -281,6 +281,7 @@ class WowiportService:
                 include_commission_details=True,
                 show_null_values=True,
                 limit=1,
+                include_responsible_official_repair=True,
             )
         except TypeError as exc:
             current_app.logger.warning(
@@ -294,6 +295,7 @@ class WowiportService:
                 include_commission_details=True,
                 show_null_values=True,
                 limit=1,
+                include_responsible_official_repair=True,
             )
 
         if not commission_list:
@@ -2414,6 +2416,7 @@ class WowiportService:
             include_commission_details=True,
             show_null_values=True,
             add_args=add_args,
+            include_responsible_official_repair=True,
         )
 
 

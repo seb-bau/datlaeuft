@@ -19,6 +19,7 @@ from .models import (
 )
 from .object_directory import (
     resolve_commission_assignment,
+    resolve_commission_creator_official_id,
     resolve_commission_object,
 )
 from .external_craftsman_service import (
@@ -468,78 +469,67 @@ def create_pending_commission(
     if assignment_type == "external":
         requested_external_craftsman_id = (
             optional_int(
-                data.get(
-                    "external_craftsman_id"
-                ),
+                data.get("external_craftsman_id"),
                 "Externer Handwerker",
             )
             if allow_assignment_override
             else None
         )
-        external_craftsman = (
-            resolve_external_craftsman(
-                craft_activity,
-                requested_external_craftsman_id,
-            )
+        external_craftsman = resolve_external_craftsman(
+            craft_activity,
+            requested_external_craftsman_id,
         )
 
         commission.user = None
-        commission.craftsman_erp_id = (
-            external_craftsman
-            .craftsman_erp_id
-        )
+        commission.craftsman_erp_id = external_craftsman.craftsman_erp_id
         commission.department_erp_id = None
-        commission.responsible_official_repair_erp_id = (
-            None
-        )
     else:
-        assignment = resolve_commission_assignment(
-            service_positions,
-            object_context,
-            require_user=(
-                requested_user_id is None
-            ),
-        )
-
         if requested_user_id is not None:
             assigned_user = (
                 User.query
                 .filter(
-                    User.id
-                    == requested_user_id,
-                    User.is_active_flag.is_(
-                        True
-                    ),
-                    User.craftsman_erp_id
-                    .isnot(None),
+                    User.id == requested_user_id,
+                    User.is_active_flag.is_(True),
+                    User.craftsman_erp_id.isnot(None),
                 )
                 .one_or_none()
             )
 
             if assigned_user is None:
                 raise ValueError(
-                    "Der ausgewählte Handwerker "
-                    "ist nicht verfügbar."
+                    "Der ausgewählte Handwerker ist nicht verfügbar."
                 )
+
+            department_mapping = craft_activity.department_mapping
+            department = (
+                department_mapping.department
+                if department_mapping is not None
+                else None
+            )
+            if department is not None and not department.active:
+                department = None
         else:
+            assignment = resolve_commission_assignment(
+                service_positions,
+                object_context,
+            )
             assigned_user = assignment.user
+            department = assignment.department
 
             if assigned_user is None:
                 raise ValueError(
-                    "Es konnte kein interner "
-                    "Handwerker ermittelt werden."
+                    "Es konnte kein interner Handwerker ermittelt werden."
                 )
 
         commission.user = assigned_user
-        commission.craftsman_erp_id = (
-            assigned_user.craftsman_erp_id
-        )
+        commission.craftsman_erp_id = assigned_user.craftsman_erp_id
         commission.department_erp_id = (
-            assignment.department.erp_id
+            department.erp_id if department is not None else None
         )
-        commission.responsible_official_repair_erp_id = (
-            assignment.responsible_official_erp_id
-        )
+
+    commission.responsible_official_repair_erp_id = (
+        resolve_commission_creator_official_id(created_by_user)
+    )
 
     if len(commission.positions) > 1:
         commission.title = "Mehrere Positionen"
