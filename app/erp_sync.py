@@ -42,6 +42,7 @@ from .external_craftsman_service import (
     process_external_assignment_mail_batch,
 )
 from .tenant_notifications import process_tenant_notification_batch
+from .completion_notifications import process_completion_notification_batch
 
 
 def enqueue_erp_operation(
@@ -171,12 +172,14 @@ def process_due_work(
     )
     push_count = process_push_batch(push_limit)
     tenant_notification_count = process_tenant_notification_batch()
+    completion_notification_count = process_completion_notification_batch()
     return {
         "webhooks": webhook_count,
         "outbox": outbox_count,
         "process_infos": process_info_count,
         "push": push_count,
         "tenant_notifications": tenant_notification_count,
+        "completion_notifications": completion_notification_count,
         "external_assignment_emails":
             external_assignment_email_count,
     }
@@ -788,5 +791,6 @@ def run_worker(
                 and result["push"] == 0
                 and result["external_assignment_emails"] == 0
                 and result["tenant_notifications"] == 0
+                and result["completion_notifications"] == 0
         ):
             sleep(poll_seconds)

@@ -11279,6 +11279,7 @@ def read_commission_form() -> dict[str, Any]:
             "normal",
         ),
         "notify_tenants": request.form.get("notify_tenants"),
+        "notify_on_completion": request.form.get("notify_on_completion") == "true",
     }
 
 

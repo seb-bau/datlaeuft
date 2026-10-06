@@ -320,6 +320,24 @@
     <div class="col-12 border-top pt-3">
       <h2 class="h6 mb-0">Auftragsdaten</h2>
     </div>
+      <div class="col-md-6 d-flex align-items-center">
+        <div class="form-check">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            id="notifyOnCompletion"
+            name="notify_on_completion"
+            value="true"
+            {% if form_values.get('notify_on_completion') == 'true' %}checked{% endif %}
+          >
+          <label class="form-check-label" for="notifyOnCompletion">
+            Nach Abschluss informieren
+          </label>
+          <div class="form-text">
+            Sie erhalten eine E-Mail, sobald der Auftrag abgeschlossen wurde.
+          </div>
+        </div>
+      </div>
       <div class="col-md-6">
         <label class="form-label small fw-semibold mb-1" for="notifyTenants">
           Mitteilung an Mieter

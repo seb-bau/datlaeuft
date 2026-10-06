@@ -29,6 +29,7 @@ from .settings import SettingKeys, settings
 from .utils import parse_datetime
 from .commission_priority import parse_commission_priority
 from .tenant_notifications import resolve_tenant_notification_choice
+from .completion_notifications import resolve_completion_notification_choice
 
 
 def create_pending_commission(
@@ -38,6 +39,9 @@ def create_pending_commission(
     allow_assignment_override: bool = False,
 ) -> Commission:
     notify_tenants = resolve_tenant_notification_choice(data.get("notify_tenants"))
+    notify_on_completion = resolve_completion_notification_choice(
+        source, data.get("notify_on_completion")
+    )
 
     assignment_type = str(
         data.get("assignment_type")
@@ -212,6 +216,7 @@ def create_pending_commission(
         public_id=public_id,
         source=source.value,
         notify_tenants=notify_tenants,
+        notify_on_completion=notify_on_completion,
         assignment_type=assignment_type,
         is_high_priority=is_high_priority,
         priority_is_manual="priority" in data,

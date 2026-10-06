@@ -581,6 +581,7 @@ def register_cli(app: Flask) -> None:
             f"Auftragnehmer-Mails="
             f"{result['external_assignment_emails']} "
             f"Mieter-Mails={result['tenant_notifications']} "
+            f"Abschluss-Mails={result['completion_notifications']} "
             f"Push-Zustellungen={result['push']}"
         )
 
