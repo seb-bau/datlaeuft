@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Aufträge{% endblock %}
 {% block content %}
+<style>
+  #commissionFilters .form-select {
+    width: auto;
+    max-width: 12rem;
+    flex: 0 0 auto;
+  }
+
+  #commissionFilters .btn {
+    white-space: nowrap;
+  }
+</style>
 <div
   class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"
 >
@@ -8,8 +19,9 @@
 
   <div class="d-flex flex-wrap align-items-center gap-2">
     <form
+      id="commissionFilters"
       method="get"
-      class="d-flex flex-wrap align-items-center gap-2"
+      class="d-flex flex-wrap align-items-center gap-1"
     >
       <select
         class="form-select form-select-sm"
@@ -83,7 +95,7 @@
         </option>
         {% if official_filter not in ("all", "unassigned") and official_filter not in official_options %}
         <option value="{{ official_filter }}" selected>
-          Ausgewählte Sachbearbeitung (keine Aufträge in dieser Ansicht)
+          Auswahl ohne Aufträge
         </option>
         {% endif %}
         {% for official_key, official_name in official_choices %}
@@ -100,7 +112,7 @@
         aria-label="Bearbeitungsstand filtern"
       >
         <option value="all" {% if local_status_filter == "all" %}selected{% endif %}>
-          Alle Bearbeitungsstände
+          Alle Status
         </option>
         {% for status_key, status_label in local_status_labels.items() %}
         <option value="{{ status_key }}" {% if local_status_filter == status_key %}selected{% endif %}>
