@@ -273,6 +273,55 @@ class WowiportService:
             user_agent="datlaeuft/1.0",
         )
 
+        adapter = self.client._rest_adapter
+        original_post = adapter.post
+
+        def traced_post(endpoint, ep_params=None, data=None):
+            is_commission_create = (
+                endpoint == "CommissioningEdit/Commission/WaitForCraftsmanFeedback"
+            )
+            body = data or {}
+            if is_commission_create:
+                current_app.logger.info(
+                    "wowiport_commission_post field_present=%s ResponsibleOfficialRepairId=%s",
+                    "ResponsibleOfficialRepairId" in body,
+                    body.get("ResponsibleOfficialRepairId"),
+                )
+
+            result = original_post(endpoint=endpoint, ep_params=ep_params, data=data)
+            if is_commission_create:
+                identity = self._identity_from_rows(self._result_rows(result))
+                if identity is not None:
+                    try:
+                        snapshot = adapter.get(
+                            endpoint="CommissioningRead/Commissions",
+                            ep_params={
+                                "id": identity["id"],
+                                "includeResponsibleOfficialRepair": "true",
+                                "showNullValues": "true",
+                                "limit": 1,
+                            },
+                            force_refresh=True,
+                        )
+                        rows = self._result_rows(snapshot)
+                        current_app.logger.info(
+                            "wowiport_commission_readback erp_id=%s found=%s "
+                            "sent_official_id=%s stored_official_id=%s",
+                            identity["id"],
+                            bool(rows),
+                            body.get("ResponsibleOfficialRepairId"),
+                            _commission_responsible_official_id(rows[0]) if rows else None,
+                        )
+                    except Exception as exc:
+                        current_app.logger.warning(
+                            "wowiport_commission_readback_failed erp_id=%s error_type=%s",
+                            identity["id"],
+                            type(exc).__name__,
+                        )
+            return result
+
+        adapter.post = traced_post
+
     def get_commission(self, erp_id: int) -> wowipy.CommissioningCommission | None:
         try:
             commission_list = self.client.get_commissioning_commissions(
