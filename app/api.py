@@ -475,6 +475,9 @@ def commission_create_options() -> Any:
     return jsonify(
         {
             "can_create": can_create,
+            "notify_tenants_default": settings.get(
+                SettingKeys.COMMISSION_NOTIFY_TENANTS_DEFAULT
+            ),
             "company_codes": [
                 {
                     "id": item.erp_id,

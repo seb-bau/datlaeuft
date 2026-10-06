@@ -28,6 +28,7 @@ from .external_craftsman_service import (
 from .settings import SettingKeys, settings
 from .utils import parse_datetime
 from .commission_priority import parse_commission_priority
+from .tenant_notifications import resolve_tenant_notification_choice
 
 
 def create_pending_commission(
@@ -36,6 +37,8 @@ def create_pending_commission(
     source: CommissionSource,
     allow_assignment_override: bool = False,
 ) -> Commission:
+    notify_tenants = resolve_tenant_notification_choice(data.get("notify_tenants"))
+
     assignment_type = str(
         data.get("assignment_type")
         or "internal"
@@ -208,6 +211,7 @@ def create_pending_commission(
         sales_tax_code=sales_tax_code,
         public_id=public_id,
         source=source.value,
+        notify_tenants=notify_tenants,
         assignment_type=assignment_type,
         is_high_priority=is_high_priority,
         priority_is_manual="priority" in data,

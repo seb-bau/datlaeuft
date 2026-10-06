@@ -580,6 +580,7 @@ def register_cli(app: Flask) -> None:
             f"Vorgangsinfos={result['process_infos']} "
             f"Auftragnehmer-Mails="
             f"{result['external_assignment_emails']} "
+            f"Mieter-Mails={result['tenant_notifications']} "
             f"Push-Zustellungen={result['push']}"
         )
 

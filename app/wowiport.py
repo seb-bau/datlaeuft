@@ -3369,6 +3369,7 @@ def upsert_commission(
         commission = Commission(
             erp_id=erp_id,
             source=CommissionSource.WOWIPORT.value,
+            notify_tenants=settings.get(SettingKeys.COMMISSION_NOTIFY_TENANTS_DEFAULT),
             erp_sync_state=CommissionSyncState.SYNCED.value,
         )
         db.session.add(commission)

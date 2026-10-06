@@ -339,6 +339,13 @@ class SettingKeys:
         "Debug-E-Mail-Adresse (leer = normaler Versand)",
         "E-Mail",
     )
+    COMMISSION_NOTIFY_TENANTS_DEFAULT = SettingDefinition[bool](
+        "commissions.notify_tenants_default",
+        SettingValueType.BOOL,
+        False,
+        "Mieter bei Beauftragung standardmäßig informieren",
+        "E-Mail",
+    )
     PUBLIC_BASE_URL = SettingDefinition[str](
         "application.public_base_url",
         SettingValueType.STRING,

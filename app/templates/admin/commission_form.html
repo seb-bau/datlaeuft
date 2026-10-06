@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Auftrag erfassen{% endblock %}
 {% block content %}
+{% set notify_tenants_value = form_values.get('notify_tenants', 'true' if notify_tenants_default else 'false') %}
 {% set selected_assignment_type = 'external' if form_values.get('assignment_type') == 'external' else 'internal' %}
 {% set has_automatic_source = (source_ticket or source_offer) and request.method == "GET" %}
 {% set active_assignment_rule = source_ticket.ai_assignment_rule if source_ticket and source_ticket.ai_state == 'ready' else none %}
@@ -319,6 +320,19 @@
     <div class="col-12 border-top pt-3">
       <h2 class="h6 mb-0">Auftragsdaten</h2>
     </div>
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold mb-1" for="notifyTenants">
+          Mitteilung an Mieter
+        </label>
+        <select class="form-select form-select-sm" id="notifyTenants" name="notify_tenants" required>
+          <option value="true" {% if notify_tenants_value == 'true' %}selected{% endif %}>
+            Mieter über die Beauftragung informieren
+          </option>
+          <option value="false" {% if notify_tenants_value != 'true' %}selected{% endif %}>
+            Keine Mitteilung an Mieter
+          </option>
+        </select>
+      </div>
 
       <div class="col-md-4">
         <label

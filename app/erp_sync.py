@@ -41,6 +41,7 @@ from .ticket_service import sync_ticket_mirror
 from .external_craftsman_service import (
     process_external_assignment_mail_batch,
 )
+from .tenant_notifications import process_tenant_notification_batch
 
 
 def enqueue_erp_operation(
@@ -169,11 +170,13 @@ def process_due_work(
         process_external_assignment_mail_batch()
     )
     push_count = process_push_batch(push_limit)
+    tenant_notification_count = process_tenant_notification_batch()
     return {
         "webhooks": webhook_count,
         "outbox": outbox_count,
         "process_infos": process_info_count,
         "push": push_count,
+        "tenant_notifications": tenant_notification_count,
         "external_assignment_emails":
             external_assignment_email_count,
     }
@@ -784,5 +787,6 @@ def run_worker(
                 and result["process_infos"] == 0
                 and result["push"] == 0
                 and result["external_assignment_emails"] == 0
+                and result["tenant_notifications"] == 0
         ):
             sleep(poll_seconds)

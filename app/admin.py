@@ -4352,6 +4352,9 @@ def commission_create() -> Any:
         ),
         external_craftsmen=external_craftsmen,
         source_offer=source_offer,
+        notify_tenants_default=settings.get(
+            SettingKeys.COMMISSION_NOTIFY_TENANTS_DEFAULT
+        ),
     )
 
 
@@ -11275,6 +11278,7 @@ def read_commission_form() -> dict[str, Any]:
             "priority",
             "normal",
         ),
+        "notify_tenants": request.form.get("notify_tenants"),
     }
 
 
