@@ -8,6 +8,7 @@ from uuid import uuid4
 from flask_login import UserMixin
 from sqlalchemy import UniqueConstraint, false, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.mysql import LONGTEXT
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .extensions import db
@@ -454,7 +455,9 @@ class AppSetting(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     key: Mapped[str] = mapped_column(db.String(160), unique=True, nullable=False, index=True)
-    value_text: Mapped[str | None] = mapped_column(db.Text)
+    value_text: Mapped[str | None] = mapped_column(
+        db.Text().with_variant(LONGTEXT(), "mysql", "mariadb")
+    )
     value_type: Mapped[str] = mapped_column(db.String(30), nullable=False)
     label: Mapped[str] = mapped_column(db.String(200), nullable=False)
     group: Mapped[str] = mapped_column(db.String(80), nullable=False, index=True)
