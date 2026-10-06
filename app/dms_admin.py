@@ -23,6 +23,9 @@ from .work_report_document import (
     WorkReportDocumentError, commission_work_report_entries,
     create_work_report_pdf,
 )
+from flask import current_app
+from traceback import format_exception
+from urllib.parse import quote, quote_plus
 
 
 dms_admin_bp = Blueprint(
@@ -106,23 +109,50 @@ def connection_page():
 @dms_admin_bp.post("/metadata/refresh")
 @admin_required
 def metadata_refresh():
+    api_key = ""
     try:
+        api_key = str(settings.get(SettingKeys.DMS_API_KEY) or "").strip()
+        current_app.logger.info("dms_metadata_refresh_started")
+
         seed_profiles()
         metadata = refresh_metadata()
         db.session.commit()
+
+        current_app.logger.info(
+            "dms_metadata_refresh_completed categories=%s",
+            len(metadata["categories"]),
+        )
         flash(
             f"{len(metadata['categories'])} Dokumentkategorien eingelesen.",
             "success",
         )
-    except DmsError as exc:
+    except Exception as exc:
         db.session.rollback()
-        flash(str(exc), "danger")
-    except Exception:
-        db.session.rollback()
-        flash(
-            "Die Repository-Metadaten konnten nicht eingelesen werden.",
-            "danger",
+
+        details = "".join(
+            format_exception(type(exc), exc, exc.__traceback__)
         )
+        message = (
+            str(exc)
+            if isinstance(exc, DmsError)
+            else "Die Repository-Metadaten konnten nicht eingelesen werden."
+        )
+
+        if api_key:
+            for secret in {
+                api_key,
+                quote(api_key, safe=""),
+                quote_plus(api_key, safe=""),
+            }:
+                details = details.replace(secret, "[API-Key ausgeblendet]")
+                message = message.replace(secret, "[API-Key ausgeblendet]")
+
+        current_app.logger.error(
+            "dms_metadata_refresh_failed\n%s",
+            details,
+        )
+        flash(message, "danger")
+
     return redirect(url_for("dms_admin.connection_page"))
 
 
