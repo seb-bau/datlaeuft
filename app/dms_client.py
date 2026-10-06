@@ -58,17 +58,35 @@ class DmsTransport:
             "Origin": self.root.rstrip("/"),
         })
 
-    def request(
-        self, method, url, *, params=None, data=None, upload_file_path=None,
-    ):
-        if (
-            urlsplit(url).scheme != "https"
-            or urlsplit(url).netloc != self.hostname
+    def request(self, method, url, *, params=None, data=None, upload_file_path=None):
+        method = method.upper()
+        parsed = urlsplit(url)
+
+        if parsed.scheme != "https" or parsed.netloc != self.hostname:
+            raise DmsError(
+                "d.velop hat einen ungültigen Verweis geliefert."
+            )
+
+        allowed_uploads = {
+            urlsplit(self.url + "blob/chunk/").path,
+            urlsplit(self.url + "o2m").path,
+        }
+
+        if method != "GET" and (
+            method != "POST"
+            or parsed.path not in allowed_uploads
+            or parsed.query
+            or parsed.fragment
+            or params
         ):
-            raise DmsError("d.velop hat einen ungültigen Verweis geliefert.")
+            raise DmsError(
+                "Die DMS-Anbindung erlaubt nur Lesen "
+                "und das Anlegen neuer Dokumente."
+            )
+
         is_create = (
             method == "POST"
-            and urlsplit(url).path == urlsplit(self.url + "o2m").path
+            and parsed.path == urlsplit(self.url + "o2m").path
         )
         if is_create and self.before_create:
             self.before_create()
@@ -201,6 +219,37 @@ class CloudDmsClient(DvelopDmsPy):
         except Exception:
             self.close()
             raise
+
+    def archive_file(
+        self,
+        filepath,
+        category_id,
+        properties,
+        doc_id=None,
+        alteration_msg=None,
+    ):
+        if doc_id is not None or alteration_msg is not None:
+            raise DmsError(
+                "Bestehende DMS-Dokumente dürfen "
+                "nicht geändert oder versioniert werden."
+            )
+
+        return super().archive_file(
+            filepath,
+            category_id,
+            properties,
+        )
+
+    def update_properties(self, *args, **kwargs):
+        raise DmsError(
+            "Eigenschaften bestehender DMS-Dokumente "
+            "dürfen nicht geändert werden."
+        )
+
+    def delete_document(self, *args, **kwargs):
+        raise DmsError(
+            "DMS-Dokumente dürfen nicht gelöscht werden."
+        )
 
     def close(self):
         self._rest_adapter.session.close()

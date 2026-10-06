@@ -34,6 +34,7 @@ from .settings import (
     SettingKeys,
     settings,
 )
+from .dms_client import CloudDmsClient
 
 
 class SafetyInspectionArchiveError(
@@ -305,24 +306,16 @@ def create_archive_client() -> (
     DvelopDmsPy
 ):
     try:
-        return DvelopDmsPy(
-            hostname=(
-                required_archive_setting(
-                    SettingKeys.DMS_HOSTNAME
-                )
+        return CloudDmsClient(
+            hostname=required_archive_setting(
+                SettingKeys.DMS_HOSTNAME
             ),
-            api_key=(
-                required_archive_setting(
-                    SettingKeys.DMS_API_KEY
-                )
+            api_key=required_archive_setting(
+                SettingKeys.DMS_API_KEY
             ),
-            repository=(
-                required_archive_setting(
-                    SettingKeys.DMS_REPOSITORY
-                )
+            repository=required_archive_setting(
+                SettingKeys.DMS_REPOSITORY
             ),
-            logger=current_app.logger,
-            user_agent="datlaeuft/1.0",
         )
     except SafetyInspectionArchiveError:
         raise

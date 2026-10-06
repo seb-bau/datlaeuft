@@ -21,6 +21,7 @@ from .offer_document import (
     resolve_offer_document_path,
 )
 from .settings import SettingKeys, settings
+from .dms_client import CloudDmsClient
 
 
 class OfferArchiveError(RuntimeError):
@@ -211,12 +212,10 @@ def create_archive_client() -> DvelopDmsPy:
     )
 
     try:
-        return DvelopDmsPy(
+        return CloudDmsClient(
             hostname=hostname,
             api_key=api_key,
             repository=repository,
-            logger=current_app.logger,
-            user_agent="datlaeuft/1.0",
         )
     except Exception as exc:
         raise OfferArchiveError(
