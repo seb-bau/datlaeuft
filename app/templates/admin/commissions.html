@@ -68,6 +68,70 @@
           Extern
         </option>
       </select>
+
+            <select
+        class="form-select form-select-sm"
+        name="official"
+        onchange="this.form.submit()"
+        aria-label="Sachbearbeiter filtern"
+      >
+        <option value="all" {% if official_filter == "all" %}selected{% endif %}>
+          Alle Sachbearbeiter
+        </option>
+        <option value="unassigned" {% if official_filter == "unassigned" %}selected{% endif %}>
+          Nicht zugewiesen
+        </option>
+        {% if official_filter not in ("all", "unassigned") and official_filter not in official_options %}
+        <option value="{{ official_filter }}" selected>
+          Ausgewählte Sachbearbeitung (keine Aufträge in dieser Ansicht)
+        </option>
+        {% endif %}
+        {% for official_key, official_name in official_choices %}
+        <option value="{{ official_key }}" {% if official_filter == official_key %}selected{% endif %}>
+          {{ official_name }}
+        </option>
+        {% endfor %}
+      </select>
+
+      <select
+        class="form-select form-select-sm"
+        name="local_status"
+        onchange="this.form.submit()"
+        aria-label="Bearbeitungsstand filtern"
+      >
+        <option value="all" {% if local_status_filter == "all" %}selected{% endif %}>
+          Alle Bearbeitungsstände
+        </option>
+        {% for status_key, status_label in local_status_labels.items() %}
+        <option value="{{ status_key }}" {% if local_status_filter == status_key %}selected{% endif %}>
+          {{ status_label }}
+        </option>
+        {% endfor %}
+      </select>
+
+      <select
+        class="form-select form-select-sm"
+        name="priority"
+        onchange="this.form.submit()"
+        aria-label="Priorität filtern"
+      >
+        <option value="all" {% if priority_filter == "all" %}selected{% endif %}>
+          Alle Prioritäten
+        </option>
+        <option value="high" {% if priority_filter == "high" %}selected{% endif %}>
+          Hohe Priorität
+        </option>
+        <option value="normal" {% if priority_filter == "normal" %}selected{% endif %}>
+          Normale Priorität
+        </option>
+      </select>
+
+      <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{{ url_for('admin.commissions') }}"
+      >
+        Filter zurücksetzen
+      </a>
     </form>
 
     <a
@@ -90,9 +154,10 @@
           <th>Lage</th>
           <th>Mieter</th>
           <th>Status</th>
+          <th>Sachbearbeiter</th>
           <th>Handwerker</th>
           <th>Ausführung</th>
-          <th>Lokal</th>
+          <th>Bearbeitungsstand</th>
           <th></th>
         </tr>
       </thead>
@@ -115,6 +180,7 @@
           <td>{{ item.apartment_location or "" }}</td>
           <td>{{ item.tenant_name or "" }}</td>
           <td>{{ item.status_code or item.status_id or "" }}</td>
+          <td>{{ officials_by_commission_id[item.id][1] }}</td>
           <td>
             {% if item.assignment_type == "external" %}
               {% set external_craftsman = external_craftsmen_by_erp_id.get(item.craftsman_erp_id) %}
@@ -151,7 +217,7 @@
             {% endif %}
           </td>
           <td>{{ item.execution_from.strftime("%d.%m.%Y") if item.execution_from else "" }}</td>
-          <td>{{ item.local_status }}</td>
+          <td>{{ local_status_labels.get(item.local_status, "Unbekannt") }}</td>
           <td class="text-end">
   {% if item.erp_id %}
   <form method="post" action="{{ url_for('admin.commission_sync', commission_id=item.id) }}">

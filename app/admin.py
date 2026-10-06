@@ -6766,9 +6766,90 @@ def selected_invoice_commission_ids(
     return commission_ids
 
 
+def commission_official_labels(
+    items: list[Commission],
+) -> dict[int, tuple[str, str]]:
+    official_ids = {
+        item.responsible_official_repair_erp_id
+        for item in items
+        if item.local_official_user_id is None
+        and item.responsible_official_repair_erp_id is not None
+    }
+    official_names: dict[int, str] = {}
+
+    if official_ids:
+        rows = db.session.query(
+            WowiEconomicUnitJurisdiction.responsible_official_erp_id,
+            WowiEconomicUnitJurisdiction.responsible_name,
+        ).filter(
+            WowiEconomicUnitJurisdiction.responsible_official_erp_id.in_(
+                official_ids
+            ),
+        ).order_by(
+            WowiEconomicUnitJurisdiction.synced_at.desc(),
+            WowiEconomicUnitJurisdiction.id.asc(),
+        ).all()
+
+        for official_id, name in rows:
+            name = str(name or "").strip()
+            if name:
+                official_names.setdefault(official_id, name)
+
+    result = {}
+    for item in items:
+        if item.local_official_user_id is not None:
+            name = (
+                item.local_official.display_name
+                if item.local_official
+                else f"Benutzer-ID {item.local_official_user_id}"
+            )
+            result[item.id] = (
+                f"user:{item.local_official_user_id}",
+                f"{name} (lokal)",
+            )
+        elif item.responsible_official_repair_erp_id is not None:
+            official_id = item.responsible_official_repair_erp_id
+            name = official_names.get(
+                official_id,
+                f"Sachbearbeiter-ID {official_id}",
+            )
+            result[item.id] = (
+                f"erp:{official_id}",
+                f"{name} (Wowiport)",
+            )
+        else:
+            result[item.id] = ("unassigned", "Nicht zugewiesen")
+
+    return result
+
+
 @admin_bp.get("/admin/commissions")
 @foreman_required
 def commissions() -> Any:
+    local_status_labels = {
+        "recorded": "Erfasst",
+        "waiting_for_acceptance": "Warte auf Annahme",
+        "open": "Beauftragt",
+        "in_progress": "In Bearbeitung",
+        "completion_review": "Nicht abgeschlossen",
+        "tenant_charge_review": "Mieterbelastung",
+        "done": "Erledigt",
+        "deleted": "Gelöscht",
+    }
+    official_filter = str(
+        request.args.get("official") or "all"
+    ).strip()
+    local_status_filter = str(
+        request.args.get("local_status") or "all"
+    ).strip()
+    priority_filter = str(
+        request.args.get("priority") or "all"
+    ).strip()
+
+    if local_status_filter not in {"all", *local_status_labels}:
+        local_status_filter = "all"
+    if priority_filter not in {"all", "high", "normal"}:
+        priority_filter = "all"
     view_mode = str(
         request.args.get("view")
         or "active"
@@ -6788,7 +6869,8 @@ def commissions() -> Any:
         assignment_type = "all"
 
     query = Commission.query.options(
-        selectinload(Commission.user)
+        selectinload(Commission.user),
+        selectinload(Commission.local_official),
     )
 
     if view_mode == "done":
@@ -6826,6 +6908,30 @@ def commissions() -> Any:
     items = query.order_by(
         Commission.synced_at.desc()
     ).all()
+
+    officials_by_commission_id = commission_official_labels(items)
+    official_options = dict(officials_by_commission_id.values())
+    official_options.pop("unassigned", None)
+    official_choices = sorted(
+        official_options.items(),
+        key=lambda choice: (choice[1].casefold(), choice[0]),
+    )
+
+    if official_filter != "all":
+        items = [
+            item for item in items
+            if officials_by_commission_id[item.id][0] == official_filter
+        ]
+    if local_status_filter != "all":
+        items = [
+            item for item in items
+            if item.local_status == local_status_filter
+        ]
+    if priority_filter != "all":
+        items = [
+            item for item in items
+            if bool(item.is_high_priority) == (priority_filter == "high")
+        ]
 
     external_craftsman_ids = {
         item.craftsman_erp_id
@@ -6867,6 +6973,13 @@ def commissions() -> Any:
         external_craftsmen_by_erp_id=(
             external_craftsmen_by_erp_id
         ),
+        official_filter=official_filter,
+        official_choices=official_choices,
+        official_options=official_options,
+        officials_by_commission_id=officials_by_commission_id,
+        local_status_filter=local_status_filter,
+        local_status_labels=local_status_labels,
+        priority_filter=priority_filter,
     )
 
 
