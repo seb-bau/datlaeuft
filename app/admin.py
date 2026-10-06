@@ -1027,9 +1027,6 @@ def ticket_settings() -> Any:
                 mapping = mappings.get(
                     craft_activity.id
                 )
-                mapping = mappings.get(
-                    craft_activity.id
-                )
                 service_position = (
                     selected_positions.get(
                         craft_activity.id
