@@ -3517,15 +3517,22 @@ def upsert_commission(
         _read_first(department, "id_", "id", "Id")
     )
     incoming_official_id = _commission_responsible_official_id(payload)
-    if commission.responsible_official_repair_erp_id != incoming_official_id:
+    if incoming_official_id is not None:
+        if commission.responsible_official_repair_erp_id != incoming_official_id:
+            current_app.logger.info(
+                "commission_official_synced erp_id=%s previous_official_id=%s "
+                "responsible_official_repair_id=%s",
+                erp_id,
+                commission.responsible_official_repair_erp_id,
+                incoming_official_id,
+            )
+        commission.responsible_official_repair_erp_id = incoming_official_id
+    elif commission.responsible_official_repair_erp_id is not None:
         current_app.logger.info(
-            "commission_official_synced erp_id=%s previous_official_id=%s "
-            "responsible_official_repair_id=%s",
+            "commission_official_empty_ignored erp_id=%s kept_official_id=%s",
             erp_id,
             commission.responsible_official_repair_erp_id,
-            incoming_official_id,
         )
-    commission.responsible_official_repair_erp_id = incoming_official_id
     commission.status_id = _as_int(
         _read_first(commission_status, "id_", "id", "Id")
     )
