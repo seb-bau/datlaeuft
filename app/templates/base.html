@@ -70,6 +70,7 @@
     or request.path.startswith('/admin/offer-settings')
     or request.path.startswith('/admin/settings')
     or request.path.startswith('/admin/sync-health')
+    or request.path.startswith('/admin/dms')
     or request.path.startswith('/admin/inventory-locations')
     or request.path.startswith('/admin/inventory-classifications')
     or request.path.startswith('/admin/time-templates')
@@ -542,6 +543,25 @@
                   'Synchronisierung',
                   'arrow-repeat',
                   request.path.startswith('/admin/sync-health')
+                ) }}
+              <div class="sidebar-subnav-label">Archiv/DMS</div>
+                {{ sidebar_link(
+                  'dms_admin.connection_page',
+                  'Anbindung',
+                  'plug',
+                  request.path.startswith('/admin/dms/connection')
+                ) }}
+                {{ sidebar_link(
+                  'dms_admin.profiles',
+                  'Dokumentarten',
+                  'file-earmark-text',
+                  request.path.startswith('/admin/dms/profiles')
+                ) }}
+                {{ sidebar_link(
+                  'dms_admin.documents',
+                  'Übertragungen',
+                  'archive',
+                  request.path.startswith('/admin/dms/documents')
                 ) }}
               {% endif %}
             </div>

@@ -514,6 +514,8 @@ def settings_page() -> Any:
     if request.method == "POST":
         try:
             for definition in all_definitions():
+                if definition.key.startswith("dms."):
+                    continue
                 settings.set_from_form(
                     definition,
                     request.form.get(definition.key),
@@ -531,7 +533,18 @@ def settings_page() -> Any:
 
     return render_template(
         "admin/settings.html",
-        groups=grouped_definitions(),
+        groups={
+            group: [
+                item
+                for item in definitions
+                if not item.key.startswith("dms.")
+            ]
+            for group, definitions in grouped_definitions().items()
+            if any(
+                not item.key.startswith("dms.")
+                for item in definitions
+            )
+        },
         settings=settings,
     )
 
@@ -1636,87 +1649,25 @@ def store_offer_archive_failure(
     "/admin/offers/<int:offer_id>/archive"
 )
 @offer_required
-def offer_archive(
-    offer_id: int,
-) -> Any:
-    item = db.session.execute(
-        select(Offer)
-        .where(
-            Offer.id == offer_id
-        )
-        .with_for_update()
-    ).scalar_one_or_none()
+def offer_archive(offer_id: int) -> Any:
+    from .dms_client import DmsError
+    from .dms_service import retry_latest_document
 
-    if item is None:
-        abort(404)
-
+    db.get_or_404(Offer, offer_id)
     try:
-        result = archive_offer(
-            item,
-            current_user,
-        )
+        document = retry_latest_document("offer", offer_id)
         db.session.commit()
-
-    except OfferArchiveError as exc:
-        db.session.rollback()
-
-        store_offer_archive_failure(
-            offer_id,
-            str(exc),
-        )
-
-        current_app.logger.exception(
-            "offer_archive_failed "
-            "offer_id=%s",
-            offer_id,
-        )
-
         flash(
-            str(exc),
-            "danger",
+            "Bereits archiviert."
+            if document.status == "archived"
+            else "Archivierungsauftrag vorgemerkt.",
+            "success",
         )
-
-    except Exception:
+    except DmsError as exc:
         db.session.rollback()
-
-        store_offer_archive_failure(
-            offer_id,
-            "Unerwarteter Fehler bei der "
-            "d.velop-Archivierung.",
-        )
-
-        current_app.logger.exception(
-            "offer_archive_failed "
-            "offer_id=%s",
-            offer_id,
-        )
-
-        flash(
-            "Das Angebot konnte nicht nach "
-            "d.velop übertragen werden.",
-            "danger",
-        )
-
-    else:
-        if result.already_archived:
-            flash(
-                "Das Angebot war bereits in "
-                "d.velop archiviert. Die lokale "
-                "Zuordnung wurde aktualisiert.",
-                "success",
-            )
-        else:
-            flash(
-                "Das Angebot wurde erfolgreich "
-                "in d.velop archiviert.",
-                "success",
-            )
-
+        flash(str(exc), "danger")
     return redirect(
-        url_for(
-            "admin.offer_edit",
-            offer_id=offer_id,
-        )
+        url_for("admin.offer_edit", offer_id=offer_id)
     )
 
 
@@ -2057,6 +2008,7 @@ def invoice_document_with_work_reports(
             )
         )
     except WorkReportDocumentError as exc:
+        db.session.rollback()
         flash(
             str(exc),
             "danger",
@@ -2068,6 +2020,8 @@ def invoice_document_with_work_reports(
                 invoice_id=invoice.id,
             )
         )
+
+    db.session.commit()
 
     return send_file(
         document,
@@ -2114,6 +2068,7 @@ def invoice_commission_work_report(
             )
         }
     except WorkReportDocumentError as exc:
+        db.session.rollback()
         flash(
             str(exc),
             "danger",
@@ -2142,6 +2097,7 @@ def invoice_commission_work_report(
             scope,
         )
     except WorkReportDocumentError as exc:
+        db.session.rollback()
         flash(
             str(exc),
             "danger",
@@ -2153,6 +2109,8 @@ def invoice_commission_work_report(
                 invoice_id=invoice.id,
             )
         )
+
+    db.session.commit()
 
     return send_file(
         document,
@@ -2169,45 +2127,50 @@ def invoice_commission_work_report(
     "<int:commission_id>/work-report"
 )
 @foreman_required
-def commission_work_report(
-    commission_id: int,
-) -> Any:
-    commission = db.get_or_404(
-        Commission,
-        commission_id,
-    )
-    entries = (
-        commission_work_report_entries(
-            commission
-        )
-    )
+def commission_work_report(commission_id: int) -> Any:
+    from .dms_client import DmsError
+    from .dms_service import document_path
+    from .models import DmsDocument
 
+    commission = db.get_or_404(Commission, commission_id)
+    stored_document = (
+        DmsDocument.query
+        .filter_by(
+            entity_type="commission",
+            entity_id=commission_id,
+            document_type="work_report",
+        )
+        .filter(
+            DmsDocument.context["scope"].as_string()
+            == WORK_REPORT_SCOPE_ALL
+        )
+        .order_by(DmsDocument.created_at.desc())
+        .first()
+    )
     try:
-        document = create_work_report_pdf(
-            commission,
-            entries,
-            WORK_REPORT_SCOPE_ALL,
-        )
-    except WorkReportDocumentError as exc:
-        flash(
-            str(exc),
-            "danger",
-        )
-
+        if stored_document is not None:
+            document = document_path(stored_document)
+        else:
+            document = create_work_report_pdf(
+                commission,
+                commission_work_report_entries(commission),
+                WORK_REPORT_SCOPE_ALL,
+            )
+            db.session.commit()
+    except (WorkReportDocumentError, DmsError) as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
         return redirect(
             url_for(
                 "admin.commission_detail",
                 commission_id=commission.id,
             )
         )
-
     return send_file(
         document,
         mimetype="application/pdf",
         as_attachment=False,
-        download_name=work_report_filename(
-            commission
-        ),
+        download_name=work_report_filename(commission),
     )
 
 
@@ -2240,21 +2203,6 @@ def invoice_document_regenerate(
         flash(
             "Nur festgeschriebene Rechnungen können "
             "neu erzeugt werden.",
-            "danger",
-        )
-        return redirect(redirect_url)
-
-    if (
-        invoice.dms_archive_status
-        != InvoiceArchiveStatus.NOT_ARCHIVED.value
-        or invoice.dms_archive_key
-        or invoice.dms_document_id
-        or invoice.dms_archived_at is not None
-    ):
-        flash(
-            "Die PDF-Datei kann nach einer begonnenen "
-            "oder abgeschlossenen d.velop-Archivierung "
-            "nicht mehr neu erzeugt werden.",
             "danger",
         )
         return redirect(redirect_url)
@@ -6345,12 +6293,7 @@ def invoice_edit_context(
         ] > 0
         for values in report_counts.values()
     )
-    has_any_work_reports = any(
-        values[
-            WORK_REPORT_SCOPE_ALL
-        ] > 0
-        for values in report_counts.values()
-    )
+    has_any_work_reports = bool(report_counts)
 
     return {
         "item": item,
@@ -11476,78 +11419,25 @@ def _store_invoice_archive_failure(
 )
 @login_required
 @invoice_required
-def invoice_archive(
-    invoice_id: int,
-) -> Any:
-    invoice = db.session.execute(
-        select(Invoice)
-        .where(
-            Invoice.id == invoice_id
-        )
-        .with_for_update()
-    ).scalar_one_or_none()
+def invoice_archive(invoice_id: int) -> Any:
+    from .dms_client import DmsError
+    from .dms_service import retry_latest_document
 
-    if invoice is None:
-        abort(404)
-
+    db.get_or_404(Invoice, invoice_id)
     try:
-        result = archive_invoice(
-            invoice,
-            current_user,
-        )
+        document = retry_latest_document("invoice", invoice_id)
         db.session.commit()
-    except InvoiceArchiveError as exc:
-        db.session.rollback()
-        _store_invoice_archive_failure(
-            invoice_id,
-            str(exc),
-        )
-        current_app.logger.exception(
-            "invoice_archive_failed "
-            "invoice_id=%s",
-            invoice_id,
-        )
         flash(
-            str(exc),
-            "danger",
+            "Bereits archiviert."
+            if document.status == "archived"
+            else "Archivierungsauftrag vorgemerkt.",
+            "success",
         )
-    except Exception:
+    except DmsError as exc:
         db.session.rollback()
-        _store_invoice_archive_failure(
-            invoice_id,
-            "Unerwarteter Fehler bei der "
-            "d.velop-Archivierung.",
-        )
-        current_app.logger.exception(
-            "invoice_archive_failed "
-            "invoice_id=%s",
-            invoice_id,
-        )
-        flash(
-            "Die Rechnung konnte nicht nach "
-            "d.velop übertragen werden.",
-            "danger",
-        )
-    else:
-        if result.already_archived:
-            flash(
-                "Die Rechnung war bereits in "
-                "d.velop archiviert. Die lokale "
-                "Zuordnung wurde aktualisiert.",
-                "success",
-            )
-        else:
-            flash(
-                "Die Rechnung wurde erfolgreich "
-                "in d.velop archiviert.",
-                "success",
-            )
-
+        flash(str(exc), "danger")
     return redirect(
-        url_for(
-            "admin.invoice_edit",
-            invoice_id=invoice_id,
-        )
+        url_for("admin.invoice_edit", invoice_id=invoice_id)
     )
 
 

@@ -222,6 +222,24 @@
         <td>{{ company_code }}</td>
       </tr>
       {% endif %}
+          {% if completed_at %}
+      <tr>
+        <th>Abgeschlossen am</th>
+        <td>{{ completed_at.strftime('%d.%m.%Y %H:%M') }}</td>
+      </tr>
+      {% endif %}
+      {% if completed_by %}
+      <tr>
+        <th>Abgeschlossen durch</th>
+        <td>{{ completed_by }}</td>
+      </tr>
+      {% endif %}
+      {% if completion_reason %}
+      <tr>
+        <th>Abschlussvermerk</th>
+        <td style="white-space: pre-line">{{ completion_reason }}</td>
+      </tr>
+      {% endif %}
     </tbody>
   </table>
 
@@ -281,6 +299,10 @@
     {% endif %}
   </div>
   {% endfor %}
+
+    {% if not entries %}
+  <p>Für diesen Auftrag wurden keine Zeiten gebucht.</p>
+  {% endif %}
 
   {% if material_rows %}
   <div class="materials">

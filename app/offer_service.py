@@ -641,6 +641,7 @@ def release_offer(
 
     db.session.flush()
 
+    offer.status = OfferStatus.AWAITING_RESPONSE.value
     document_result = (
         create_offer_document(offer)
     )
@@ -650,9 +651,6 @@ def release_offer(
     )
     offer.document_sha256 = (
         document_result.pdf_sha256
-    )
-    offer.status = (
-        OfferStatus.AWAITING_RESPONSE.value
     )
     offer.released_at = utc_now()
     offer.released_by = user

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Archiv/DMS – {{ title }}{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Archiv/DMS – {{ title }}</h1>
+
+<form method="get" class="mb-3">
+  <label class="form-label" for="category">Kategorie</label>
+  <select class="form-select" name="category_id" id="category"
+          onchange="this.form.submit()">
+    <option value="">Bitte auswählen</option>
+    {% for category in categories.values()|sort(attribute='name') %}
+    <option value="{{ category.id }}"
+            {% if category.id == category_id %}selected{% endif %}>
+      {{ category.name }}
+    </option>
+    {% endfor %}
+  </select>
+  <button class="btn btn-outline-secondary mt-2">Kategoriefelder anzeigen</button>
+</form>
+
+{% if schema %}
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="category_id" value="{{ category_id }}">
+
+  <label class="form-label" for="keyProperty">Feld für den Erzeugungsschlüssel</label>
+  <select class="form-select mb-2" id="keyProperty" name="key_property_id" required>
+    <option value="">Bitte auswählen</option>
+    {% for field in schema.fields %}
+      {% if field.dataType == 'STRING' and not field.isMultiValue %}
+      <option value="{{ field.id }}"
+              {% if profile.key_property_id == field.id %}selected{% endif %}>
+        {{ field_name(field) }}
+      </option>
+      {% endif %}
+    {% endfor %}
+  </select>
+
+  <p class="text-muted">
+    Dieses Feld wird automatisch mit einer eindeutigen Kennung gefüllt.
+    Es muss für die Suche freigegeben sein und darf keiner anderen Zuordnung dienen.
+  </p>
+  <p>
+    Bei „Fester Wert / Vorlage“ sind Platzhalter wie
+    <code>{commission_number}</code> möglich.
+    Für Mehrfachwerte steht jeder Wert in einer eigenen Zeile.
+    Arrays aus Dokumentdaten werden direkt übernommen.
+  </p>
+
+  {% for field in schema.fields %}
+  {% set mapping = mappings.get(field.id, {}) %}
+  <div class="card card-body mb-3">
+    <h2 class="h6">
+      {{ field_name(field) }}
+      {{ '· Pflichtfeld' if field.required else '· Optional' }}
+    </h2>
+    <p class="small text-muted mb-2">
+      {{ {'STRING':'Text', 'NUMERIC':'Zahl', 'CURRENCY':'Betrag', 'DATE':'Datum', 'DATETIME':'Datum und Uhrzeit'}.get(field.dataType, field.dataType) }}
+      · {{ 'Mehrere Werte möglich' if field.isMultiValue else 'Ein Wert' }}
+      {% if field.dataSetId %} · Wertemenge: {{ field.dataSetId }}{% endif %}
+      {% if field.validationRegEx %} · Repository-Vorgabe: {{ field.validationRegEx }}{% endif %}
+    </p>
+
+    <label class="form-label" for="source-{{ field.id }}">Wertquelle</label>
+    <select class="form-select mb-2" id="source-{{ field.id }}"
+            name="source.{{ field.id }}">
+      <option value="">Nicht zuordnen / Erzeugungsschlüssel</option>
+      <option value="__text__"
+              {% if mapping.get('kind') == 'text' %}selected{% endif %}>
+        Fester Wert / Vorlage
+      </option>
+      {% for key, label in sources.items() %}
+      <option value="{{ key }}"
+              {% if mapping.get('kind') == 'field' and mapping.get('value') == key %}selected{% endif %}>
+        {{ label }} ({{ key }})
+      </option>
+      {% endfor %}
+    </select>
+
+    <label class="form-label" for="value-{{ field.id }}">Fester Wert / Vorlage</label>
+    <textarea class="form-control" id="value-{{ field.id }}"
+              name="value.{{ field.id }}"
+              rows="{{ 3 if field.isMultiValue else 1 }}">{{ mapping_text.get(field.id, '') if mapping.get('kind') == 'text' else '' }}</textarea>
+  </div>
+  {% endfor %}
+
+  <button class="btn btn-primary">Zuordnung speichern</button>
+  <a class="btn btn-outline-secondary" href="{{ url_for('dms_admin.profiles') }}">Zurück</a>
+</form>
+
+<details class="mt-3">
+  <summary>Verfügbare Platzhalter</summary>
+  <ul>
+    {% for key, label in sources.items() %}
+    <li><code>{{ '{' ~ key ~ '}' }}</code> – {{ label }}</li>
+    {% endfor %}
+  </ul>
+</details>
+{% else %}
+<p>Bitte die Metadaten auf der Anbindungsseite einlesen und eine Kategorie auswählen.</p>
+{% endif %}
+{% endblock %}

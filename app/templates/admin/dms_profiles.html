@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Archiv/DMS – Dokumentarten{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Archiv/DMS – Dokumentarten</h1>
+<p>Jede Dokumentart erhält eine Kategorie und eigene Eigenschaftszuordnungen.</p>
+
+<div class="table-responsive">
+  <table class="table">
+    <thead>
+      <tr><th>Dokumentart</th><th>Kategorie</th><th>Zuordnung</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ document_types[row.profile.document_type] }}</td>
+        <td>{{ row.schema.name if row.schema else 'Keine verfügbare Kategorie' }}</td>
+        <td>{{ row.error or 'Vollständig' }}</td>
+        <td>
+          <a class="btn btn-sm btn-outline-primary"
+             href="{{ url_for('dms_admin.profile_edit', document_type=row.profile.document_type) }}">
+            Bearbeiten
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

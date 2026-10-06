@@ -264,6 +264,26 @@ def complete_commission(
         actor_external_craftsman_id=actor_external_id,
     )
     sync_offer_from_commission(commission)
+
+    if completed:
+        from .work_report_document import (
+            WorkReportDocumentError,
+            commission_work_report_entries,
+            create_work_report_pdf,
+        )
+
+        try:
+            create_work_report_pdf(
+                commission,
+                commission_work_report_entries(commission),
+            )
+        except WorkReportDocumentError as exc:
+            raise CommissionWorkflowError(
+                str(exc),
+                500,
+                "work_report_creation_failed",
+            ) from exc
+
     return normalized_reason
 
 

@@ -64,6 +64,21 @@
   </div>
 
   <div class="d-flex gap-2">
+        {% if has_work_report or item.completed_at %}
+    <a class="btn btn-outline-primary"
+       href="{{ url_for('admin.commission_work_report', commission_id=item.id) }}"
+       target="_blank" rel="noopener">
+      Arbeitsnachweis öffnen
+    </a>
+    {% endif %}
+
+    {% if item.completed_at and (current_user.is_admin or current_user.is_foreman) %}
+    <form method="post"
+          action="{{ url_for('dms_admin.work_report_regenerate', commission_id=item.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-primary">Arbeitsnachweis neu erzeugen</button>
+    </form>
+    {% endif %}
     {% if item.erp_id %}
     <form
       method="post"
@@ -79,19 +94,6 @@
         name="next"
         value="{{ request.full_path }}"
       >
-          {% if has_work_report %}
-    <a
-      class="btn btn-outline-primary"
-      href="{{ url_for(
-        'admin.commission_work_report',
-        commission_id=item.id
-      ) }}"
-      target="_blank"
-      rel="noopener"
-    >
-      Arbeitsnachweis öffnen
-    </a>
-    {% endif %}
       <button
         class="btn btn-outline-primary"
         type="submit"

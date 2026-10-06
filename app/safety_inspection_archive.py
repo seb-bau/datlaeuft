@@ -939,43 +939,8 @@ def process_pending_safety_inspection_archives(
         .FAILED.value,
     }
 
-    protocol_ids = [
-        protocol_id
-        for protocol_id, in (
-            db.session.query(
-                SafetyInspectionProtocol.id
-            )
-            .join(
-                SafetyInspectionJob,
-                SafetyInspectionProtocol.job_id
-                == SafetyInspectionJob.id,
-            )
-            .join(
-                SafetyInspectionGroup,
-                SafetyInspectionJob.group_id
-                == SafetyInspectionGroup.id,
-            )
-            .filter(
-                SafetyInspectionProtocol
-                .dms_archive_status
-                .in_(archive_statuses),
-                SafetyInspectionGroup
-                .automatic_archive
-                .is_(True),
-            )
-            .order_by(
-                SafetyInspectionProtocol
-                .created_at.asc(),
-                SafetyInspectionProtocol
-                .id.asc(),
-            )
-            .limit(max(limit, 0))
-            .all()
-        )
-    ]
-
     result = {
-        "seen": len(protocol_ids),
+        "seen": 0,
         "archived": 0,
         "existing": 0,
         "failed": 0,
@@ -985,52 +950,6 @@ def process_pending_safety_inspection_archives(
         "photo_failed": 0,
         "disabled": 0,
     }
-
-    for protocol_id in protocol_ids:
-        protocol = db.session.get(
-            SafetyInspectionProtocol,
-            protocol_id,
-        )
-
-        if protocol is None:
-            continue
-
-        try:
-            archive_result = (
-                archive_safety_inspection_protocol(
-                    protocol,
-                    protocol.created_by,
-                )
-            )
-            db.session.commit()
-
-            if archive_result.already_archived:
-                result["existing"] += 1
-            else:
-                result["archived"] += 1
-
-        except Exception as exc:
-            db.session.rollback()
-
-            protocol = db.session.get(
-                SafetyInspectionProtocol,
-                protocol_id,
-            )
-
-            if protocol is not None:
-                mark_safety_inspection_archive_failure(
-                    protocol,
-                    str(exc),
-                )
-                db.session.commit()
-
-            current_app.logger.exception(
-                "safety_inspection_"
-                "archive_failed "
-                "protocol_id=%s",
-                protocol_id,
-            )
-            result["failed"] += 1
 
     photo_ids = [
         photo_id

@@ -502,6 +502,23 @@ def create_safety_inspection_protocol(
     db.session.add(protocol)
     db.session.flush()
 
+    from .dms_context import protocol_context
+    from .dms_service import register_generated_pdf
+
+    try:
+        register_generated_pdf(
+            f"safety_protocol_{job.object_level}",
+            "safety_protocol",
+            protocol.id,
+            target_path.name,
+            target_path,
+            protocol_context(protocol),
+        )
+    except (RuntimeError, OSError) as exc:
+        raise SafetyInspectionDocumentError(
+            "Der Archivierungsauftrag konnte nicht gespeichert werden."
+        ) from exc
+
     audit(
         (
             "safety_inspection."

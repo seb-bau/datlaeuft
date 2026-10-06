@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Archiv/DMS – Übertragungen{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Archiv/DMS – Übertragungen</h1>
+
+<form method="get" class="d-flex gap-2 mb-3">
+  <select class="form-select" name="status" aria-label="Status">
+    <option value="">Alle Status</option>
+    {% for key, label in status_labels.items() %}
+    <option value="{{ key }}" {% if key == status %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn btn-outline-primary">Filtern</button>
+</form>
+
+<div class="table-responsive">
+  <table class="table align-middle">
+    <thead>
+      <tr><th>Erzeugt</th><th>Dokument</th><th>Status</th><th>Versuche</th><th>Aktion</th></tr>
+    </thead>
+    <tbody>
+      {% for document in pagination.items %}
+      <tr>
+        <td>{{ document.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        <td>
+          {{ document_types.get(document.document_type, document.document_type) }}<br>
+          <a href="{{ url_for('dms_admin.document_pdf', document_id=document.id) }}"
+             target="_blank" rel="noopener">{{ document.filename }}</a><br>
+          <small>{{ document.id }}</small>
+        </td>
+        <td>
+          {{ status_labels.get(document.status, document.status) }}
+          {% if document.error %}
+          <div class="small text-danger">{{ document.error }}</div>
+          {% endif %}
+          {% if document.dms_document_id %}
+          <div class="small">DMS-ID: {{ document.dms_document_id }}</div>
+          {% endif %}
+        </td>
+        <td>{{ document.attempts }}</td>
+        <td>
+          {% if document.status not in ('archived', 'processing') %}
+          <form method="post"
+                action="{{ url_for('dms_admin.document_retry', document_id=document.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if document.upload_started %}
+            <label class="form-check small">
+              <input class="form-check-input" type="checkbox" name="confirmed_absent">
+              Im ursprünglichen Repository geprüft: Diese Erzeugungskennung
+              existiert nicht. Erneuten Upload freigeben.
+            </label>
+            {% endif %}
+            <button class="btn btn-sm btn-outline-primary mt-1">
+              {{ 'DMS erneut prüfen' if document.upload_started else 'Erneut vormerken' }}
+            </button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">Keine Archivierungsaufträge vorhanden.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<nav class="d-flex gap-2" aria-label="Seiten">
+  {% if pagination.has_prev %}
+  <a class="btn btn-outline-secondary"
+     href="{{ url_for('dms_admin.documents', page=pagination.prev_num, status=status) }}">Zurück</a>
+  {% endif %}
+  <span class="align-self-center">Seite {{ pagination.page }}</span>
+  {% if pagination.has_next %}
+  <a class="btn btn-outline-secondary"
+     href="{{ url_for('dms_admin.documents', page=pagination.next_num, status=status) }}">Weiter</a>
+  {% endif %}
+</nav>
+{% endblock %}

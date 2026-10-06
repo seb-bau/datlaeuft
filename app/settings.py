@@ -164,6 +164,20 @@ class SettingKeys:
         "Erlaubte E-Mail-Domains für Handwerker (kommagetrennt)",
         "Wowiport",
     )
+    DMS_ENABLED = SettingDefinition[bool](
+        "dms.enabled",
+        SettingValueType.BOOL,
+        False,
+        "Automatische Archivierung",
+        "d.velop",
+    )
+    DMS_METADATA = SettingDefinition[dict](
+        "dms.metadata",
+        SettingValueType.JSON,
+        {},
+        "Repository-Metadaten",
+        "d.velop",
+    )
     DMS_HOSTNAME = SettingDefinition[str](
         "dms.hostname",
         SettingValueType.STRING,

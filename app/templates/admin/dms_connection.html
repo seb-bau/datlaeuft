@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Archiv/DMS – Anbindung{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Archiv/DMS – Anbindung</h1>
+
+<div class="mb-3 d-flex gap-2">
+  <a class="btn btn-outline-primary" href="{{ url_for('dms_admin.profiles') }}">Dokumentarten</a>
+  <a class="btn btn-outline-primary" href="{{ url_for('dms_admin.documents') }}">Übertragungen</a>
+</div>
+
+<form method="post" class="card card-body mb-3">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <label class="form-label" for="hostname">d.velop Cloud Host</label>
+  <input class="form-control mb-3" id="hostname" name="hostname"
+         value="{{ hostname }}" placeholder="firma.d-velop.cloud">
+
+  <label class="form-label" for="repository">Gemeinsame Repository-ID</label>
+  <input class="form-control mb-3" id="repository" name="repository"
+         value="{{ repository }}" maxlength="80">
+
+  <label class="form-label" for="apiKey">API-Key</label>
+  <input class="form-control" type="password" id="apiKey" name="api_key"
+         autocomplete="new-password"
+         placeholder="{{ 'Gespeichert – leer lassen zum Beibehalten' if has_api_key else 'API-Key eingeben' }}">
+
+  <label class="form-check mt-2 mb-3">
+    <input class="form-check-input" type="checkbox" name="clear_api_key">
+    Gespeicherten API-Key löschen
+  </label>
+
+  <label class="form-check mb-3">
+    <input class="form-check-input" type="checkbox" name="enabled"
+           {% if enabled %}checked{% endif %}>
+    Alle neu erzeugten PDFs automatisch archivieren
+  </label>
+
+  <p class="text-muted">
+    Zuerst die Anbindung speichern, Metadaten einlesen und alle Dokumentarten
+    zuordnen. Anschließend die automatische Archivierung aktivieren.
+  </p>
+
+  <details class="mb-3">
+    <summary>Bestehende Prüffoto-Anbindung</summary>
+    <p class="text-muted mt-2">
+      Diese bisherigen Einstellungen gelten weiterhin für Originalfotos.
+      PDFs werden über die Dokumentarten zugeordnet.
+    </p>
+    {% for definition in legacy_definitions %}
+      {% if definition.value_type.value == 'bool' %}
+      <label class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" name="{{ definition.key }}"
+               {% if legacy_values[definition.key] %}checked{% endif %}>
+        {{ 'Prüffotos automatisch archivieren' if definition.key == 'dms.safety_archive_enabled' else definition.label }}
+      </label>
+      {% else %}
+      <label class="form-label" for="{{ definition.key }}">{{ definition.label }}</label>
+      <textarea class="form-control mb-2" id="{{ definition.key }}"
+                name="{{ definition.key }}"
+                rows="{{ 4 if definition.value_type.value == 'json' else 1 }}">{{ legacy_values[definition.key] }}</textarea>
+      {% endif %}
+    {% endfor %}
+  </details>
+
+  <button class="btn btn-primary align-self-start">Anbindung speichern</button>
+</form>
+
+<form method="post" action="{{ url_for('dms_admin.metadata_refresh') }}"
+      class="card card-body">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <p>
+    {{ metadata.categories|length if metadata else 0 }} Dokumentkategorien eingelesen
+    {% if metadata %}, zuletzt {{ metadata.updated_at }}{% endif %}.
+  </p>
+  <button class="btn btn-outline-primary align-self-start">
+    Verbindung prüfen und Repository-Metadaten einlesen
+  </button>
+</form>
+{% endblock %}

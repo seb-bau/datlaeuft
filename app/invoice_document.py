@@ -1421,6 +1421,23 @@ def create_invoice_document(
     pdf_bytes = pdf_path.read_bytes()
     stored_xml_bytes = xml_path.read_bytes()
 
+    from .dms_context import invoice_context
+    from .dms_service import register_generated_pdf
+
+    try:
+        register_generated_pdf(
+            "cancellation_invoice" if context["is_cancellation"] else "invoice",
+            "invoice",
+            invoice.id,
+            pdf_path.name,
+            pdf_bytes,
+            invoice_context(invoice),
+        )
+    except (RuntimeError, OSError) as exc:
+        raise InvoiceDocumentError(
+            "Der Archivierungsauftrag konnte nicht gespeichert werden."
+        ) from exc
+
     return InvoiceDocumentResult(
         pdf_storage_name=str(
             pdf_path.relative_to(

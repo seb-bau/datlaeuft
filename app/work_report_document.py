@@ -149,7 +149,7 @@ def invoice_work_report_groups(
                 if entry.id in billed_entry_ids
             ]
 
-        if entries:
+        if entries or normalized_scope == WORK_REPORT_SCOPE_ALL:
             groups.append(
                 (
                     link.commission,
@@ -341,12 +341,6 @@ def work_report_context(
     entries: list[TimeEntry],
     scope: str,
 ) -> dict:
-    if not entries:
-        raise WorkReportDocumentError(
-            "Für diesen Auftrag sind keine "
-            "Zeitnachweise vorhanden."
-        )
-
     normalized_scope = (
         normalize_work_report_scope(scope)
     )
@@ -385,6 +379,11 @@ def work_report_context(
         for entry in entries
     ]
 
+    if not service_dates:
+        service_dates = [
+            (commission.completed_at or datetime.now()).date()
+        ]
+
     material_rows = (
         work_report_material_context(
             commission
@@ -393,6 +392,9 @@ def work_report_context(
 
     return {
         "commission": commission,
+        "completed_at": commission.completed_at,
+        "completed_by": commission.completion_submitted_by_name,
+        "completion_reason": commission.completion_reason,
         "commission_number": (
             commission.erp_idnum
             or commission.code
@@ -458,6 +460,7 @@ def create_work_report_pdf(
     entries: list[TimeEntry],
     scope: str = WORK_REPORT_SCOPE_ALL,
 ) -> BytesIO:
+    scope = normalize_work_report_scope(scope)
     context = work_report_context(
         commission,
         entries,
@@ -473,15 +476,25 @@ def create_work_report_pdf(
             string=html_text,
             base_url=current_app.root_path,
         ).write_pdf()
+
+        from .dms_context import work_report_context as archive_context
+        from .dms_service import register_generated_pdf
+
+        register_generated_pdf(
+            "work_report",
+            "commission",
+            commission.id,
+            work_report_filename(commission),
+            pdf_bytes,
+            archive_context(commission, entries, scope),
+        )
     except Exception as exc:
         raise WorkReportDocumentError(
-            "Der Arbeitsnachweis konnte "
-            "nicht erzeugt werden."
+            "Der Arbeitsnachweis konnte nicht erzeugt werden."
         ) from exc
 
     result = BytesIO(pdf_bytes)
     result.seek(0)
-
     return result
 
 
@@ -558,6 +571,20 @@ def create_invoice_with_work_reports_pdf(
         result = BytesIO()
         writer.write(result)
         result.seek(0)
+
+        from .dms_context import invoice_context
+        from .dms_service import register_generated_pdf
+
+        register_generated_pdf(
+            "invoice_with_work_reports",
+            "invoice",
+            invoice.id,
+            invoice_work_reports_filename(invoice),
+            result.getvalue(),
+            invoice_context(
+                invoice, normalize_work_report_scope(scope),
+            ),
+        )
 
         return result
     except WorkReportDocumentError:

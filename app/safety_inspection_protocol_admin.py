@@ -212,93 +212,26 @@ def store_archive_failure(
     "<int:protocol_id>/archive"
 )
 @login_required
-def protocol_archive(
-    job_id: int,
-    protocol_id: int,
-) -> Any:
+def protocol_archive(job_id: int, protocol_id: int) -> Any:
+    from .dms_client import DmsError
+    from .dms_service import retry_latest_document
+
     require_safety_inspection_access()
-
-    protocol = db.session.execute(
-        select(
-            SafetyInspectionProtocol
-        )
-        .where(
-            SafetyInspectionProtocol.id
-            == protocol_id,
-            SafetyInspectionProtocol.job_id
-            == job_id,
-        )
-        .with_for_update()
-    ).scalar_one_or_none()
-
-    if protocol is None:
+    protocol = db.get_or_404(SafetyInspectionProtocol, protocol_id)
+    if protocol.job_id != job_id:
         abort(404)
-
     try:
-        result = (
-            archive_safety_inspection_protocol(
-                protocol,
-                current_user,
-            )
+        document = retry_latest_document(
+            "safety_protocol", protocol_id,
         )
         db.session.commit()
-
-    except (
-        SafetyInspectionArchiveError
-    ) as exc:
-        db.session.rollback()
-        store_archive_failure(
-            protocol_id,
-            str(exc),
-        )
-        current_app.logger.exception(
-            "safety_inspection_"
-            "archive_failed "
-            "protocol_id=%s",
-            protocol_id,
-        )
-        flash(str(exc), "danger")
-
-    except Exception:
-        db.session.rollback()
-
-        error_message = (
-            "Unerwarteter Fehler bei der "
-            "d.velop-Archivierung."
-        )
-        store_archive_failure(
-            protocol_id,
-            error_message,
-        )
-        current_app.logger.exception(
-            "safety_inspection_"
-            "archive_failed "
-            "protocol_id=%s",
-            protocol_id,
-        )
         flash(
-            "Das Prüfprotokoll konnte "
-            "nicht nach d.velop "
-            "übertragen werden.",
-            "danger",
+            "Bereits archiviert."
+            if document.status == "archived"
+            else "Archivierungsauftrag vorgemerkt.",
+            "success",
         )
-
-    else:
-        if result.already_archived:
-            flash(
-                "Das Prüfprotokoll war "
-                "bereits in d.velop "
-                "archiviert. Die lokale "
-                "Zuordnung wurde "
-                "aktualisiert.",
-                "success",
-            )
-        else:
-            flash(
-                "Das Prüfprotokoll wurde "
-                "erfolgreich in d.velop "
-                "archiviert.",
-                "success",
-            )
-
+    except DmsError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
     return job_redirect(job_id)

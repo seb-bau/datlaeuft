@@ -498,6 +498,23 @@ def create_offer_document(
 
     pdf_bytes = pdf_path.read_bytes()
 
+    from .dms_context import offer_context
+    from .dms_service import register_generated_pdf
+
+    try:
+        register_generated_pdf(
+            "offer",
+            "offer",
+            offer.id,
+            pdf_path.name,
+            pdf_bytes,
+            offer_context(offer),
+        )
+    except (RuntimeError, OSError) as exc:
+        raise OfferDocumentError(
+            "Der Archivierungsauftrag konnte nicht gespeichert werden."
+        ) from exc
+
     return OfferDocumentResult(
         pdf_storage_name=str(
             pdf_path.relative_to(

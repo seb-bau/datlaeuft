@@ -13,6 +13,46 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from .extensions import db
 
 
+class DmsProfile(db.Model):
+    __tablename__ = "dms_profile"
+
+    document_type: Mapped[str] = mapped_column(db.String(80), primary_key=True)
+    category_id: Mapped[str] = mapped_column(db.String(80), default="", nullable=False)
+    key_property_id: Mapped[str] = mapped_column(db.String(80), default="", nullable=False)
+    mappings: Mapped[dict] = mapped_column(db.JSON, default=dict, nullable=False)
+    schema: Mapped[dict | None] = mapped_column(db.JSON)
+
+
+class DmsDocument(db.Model):
+    __tablename__ = "dms_document"
+
+    id: Mapped[str] = mapped_column(db.String(36), primary_key=True)
+    document_type: Mapped[str] = mapped_column(db.String(80), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(db.String(40), nullable=False, index=True)
+    entity_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(db.String(255), nullable=False)
+    storage_name: Mapped[str] = mapped_column(db.String(255), nullable=False)
+    sha256: Mapped[str] = mapped_column(db.String(64), nullable=False)
+    context: Mapped[dict] = mapped_column(db.JSON, nullable=False)
+    profile_snapshot: Mapped[dict | None] = mapped_column(db.JSON)
+    hostname: Mapped[str] = mapped_column(db.String(255), default="", nullable=False)
+    repository_id: Mapped[str] = mapped_column(db.String(80), default="", nullable=False)
+    status: Mapped[str] = mapped_column(db.String(30), nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    available_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True), nullable=False, index=True,
+    )
+    locked_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    lock_token: Mapped[str | None] = mapped_column(db.String(36))
+    upload_started: Mapped[bool] = mapped_column(default=False, nullable=False)
+    dms_document_id: Mapped[str | None] = mapped_column(db.String(80))
+    error: Mapped[str | None] = mapped_column(db.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True), nullable=False,
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+
+
 class SettingValueType(str, Enum):
     STRING = "string"
     INT = "int"
