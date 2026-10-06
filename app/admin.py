@@ -1020,6 +1020,13 @@ def ticket_settings() -> Any:
                 ] = service_position
 
             for craft_activity in craft_activities:
+                field_name = f"fallback_position_{craft_activity.id}"
+                if field_name not in request.form:
+                    continue
+
+                mapping = mappings.get(
+                    craft_activity.id
+                )
                 mapping = mappings.get(
                     craft_activity.id
                 )

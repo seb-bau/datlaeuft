@@ -68,8 +68,9 @@
 
   <div class="card-body">
     <table
-      class="table table-striped datatable align-middle"
-    >
+        id="ticketFallbackTable"
+        class="table table-striped datatable align-middle"
+      >
       <thead>
         <tr>
           <th>Gewerk</th>
@@ -532,6 +533,36 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+  const fallbackTableElement = document.getElementById(
+    "ticketFallbackTable"
+  );
+  const fallbackForm = fallbackTableElement.closest("form");
+
+  fallbackForm.addEventListener("formdata", function (event) {
+    if (
+      typeof DataTable === "undefined"
+      || !DataTable.isDataTable(fallbackTableElement)
+    ) {
+      return;
+    }
+
+    const fallbackTable = new DataTable.Api(fallbackTableElement);
+
+    fallbackTable
+      .rows({page: "all", search: "none"})
+      .nodes()
+      .each(function (row) {
+        row.querySelectorAll(
+          "select[name^='fallback_position_']"
+        ).forEach(function (select) {
+          if (!select.disabled) {
+            event.formData.set(select.name, select.value);
+          }
+        });
+      });
+  });
+</script>
 <script>
   const assignmentTypeSelect = document.getElementById(
     "ruleAssignmentType"
