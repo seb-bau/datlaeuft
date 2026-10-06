@@ -1353,10 +1353,23 @@ def resolve_commission_creator_official_id(
         .all()
     )
 
-    if len(mappings) != 1:
+    if len(mappings) > 1:
         return None
 
-    person_id = mappings[0].jurisdiction_person_erp_id
+    if mappings:
+        person_id = mappings[0].jurisdiction_person_erp_id
+    else:
+        person_id = user.person_erp_id
+        if person_id is not None:
+            owner = UserJurisdictionPersonMapping.query.filter_by(
+                jurisdiction_person_erp_id=person_id,
+                active=True,
+            ).one_or_none()
+            if owner is not None and owner.user_id != user.id:
+                return None
+
+    if person_id is None:
+        return None
     jurisdictions = (
         WowiEconomicUnitJurisdiction.query
         .join(

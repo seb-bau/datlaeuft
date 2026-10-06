@@ -38,6 +38,12 @@ def create_pending_commission(
     source: CommissionSource,
     allow_assignment_override: bool = False,
 ) -> Commission:
+    creator_official_id = resolve_commission_creator_official_id(created_by_user)
+    if source == CommissionSource.WEB and creator_official_id is None:
+        raise ValueError(
+            "Für den anlegenden Benutzer fehlt eine eindeutige Wowiport-Sachbearbeiterzuordnung. "
+            "Bitte die Personenzuordnung und den Objektspiegel prüfen."
+        )
     notify_tenants = resolve_tenant_notification_choice(data.get("notify_tenants"))
     notify_on_completion = resolve_completion_notification_choice(
         source, data.get("notify_on_completion")
@@ -536,9 +542,7 @@ def create_pending_commission(
             department.erp_id if department is not None else None
         )
 
-    commission.responsible_official_repair_erp_id = (
-        resolve_commission_creator_official_id(created_by_user)
-    )
+    commission.responsible_official_repair_erp_id = creator_official_id
 
     if len(commission.positions) > 1:
         commission.title = "Mehrere Positionen"

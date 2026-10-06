@@ -1441,6 +1441,9 @@ class WowiportService:
             license_agreement_id=reference_ids.get(
                 "license_agreement_id"
             ),
+            person_in_charge_responsible_official_id=(
+                commission.responsible_official_repair_erp_id
+            ),
             crafts_process_from=process_from_value,
             description=commission.description,
         )
@@ -1657,6 +1660,29 @@ class WowiportService:
             self,
             commission: Commission,
     ) -> Any:
+        if commission.responsible_official_repair_erp_id is None:
+            from .object_directory import resolve_commission_creator_official_id
+
+            commission.responsible_official_repair_erp_id = (
+                resolve_commission_creator_official_id(commission.created_by)
+            )
+
+        if (
+            commission.source == CommissionSource.WEB.value
+            and commission.responsible_official_repair_erp_id is None
+        ):
+            raise ErpTargetConflict(
+                "Für den anlegenden Benutzer fehlt eine eindeutige Wowiport-Sachbearbeiterzuordnung. "
+                "Bitte die Personenzuordnung und den Objektspiegel prüfen."
+            )
+
+        current_app.logger.info(
+            "commission_create_official_resolved commission_id=%s creator_user_id=%s "
+            "responsible_official_repair_id=%s",
+            commission.id,
+            commission.created_by_user_id,
+            commission.responsible_official_repair_erp_id,
+        )
         raw_payload = commission.raw_payload or {}
 
         process_type_code = str(
@@ -3441,9 +3467,16 @@ def upsert_commission(
     commission.department_erp_id = _as_int(
         _read_first(department, "id_", "id", "Id")
     )
-    commission.responsible_official_repair_erp_id = (
-        _commission_responsible_official_id(payload)
-    )
+    incoming_official_id = _commission_responsible_official_id(payload)
+    if commission.responsible_official_repair_erp_id != incoming_official_id:
+        current_app.logger.info(
+            "commission_official_synced erp_id=%s previous_official_id=%s "
+            "responsible_official_repair_id=%s",
+            erp_id,
+            commission.responsible_official_repair_erp_id,
+            incoming_official_id,
+        )
+    commission.responsible_official_repair_erp_id = incoming_official_id
     commission.status_id = _as_int(
         _read_first(commission_status, "id_", "id", "Id")
     )
