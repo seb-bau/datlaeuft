@@ -3,11 +3,6 @@
 {% block content %}
 <h1 class="h3 mb-3">Archiv/DMS – Anbindung</h1>
 
-<div class="mb-3 d-flex gap-2">
-  <a class="btn btn-outline-primary" href="{{ url_for('dms_admin.profiles') }}">Dokumentarten</a>
-  <a class="btn btn-outline-primary" href="{{ url_for('dms_admin.documents') }}">Übertragungen</a>
-</div>
-
 <form method="post" class="card card-body mb-3">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
