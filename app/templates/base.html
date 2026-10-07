@@ -618,12 +618,31 @@
             <i class="bi bi-chevron-down" aria-hidden="true"></i>
           </button>
 
-          <ul class="dropdown-menu dropdown-menu-end app-user-dropdown">
+                    <ul class="dropdown-menu dropdown-menu-end app-user-dropdown">
             <li class="user-dropdown-header">
               <strong>{{ current_user.display_name }}</strong>
               <span>{{ current_user.email }}</span>
             </li>
             <li><hr class="dropdown-divider"></li>
+            {% if can_access_foreman %}
+              <li>
+                <button
+                  class="dropdown-item text-wrap"
+                  type="button"
+                  data-desktop-push
+                  data-csrf="{{ csrf_token() }}"
+                  disabled
+                >
+                  Desktop-Benachrichtigungen aktivieren
+                </button>
+                <div
+                  class="small text-muted px-3 text-wrap"
+                  data-desktop-push-status
+                  role="status"
+                ></div>
+              </li>
+              <li><hr class="dropdown-divider"></li>
+            {% endif %}
             <li>
               <a
                 class="dropdown-item"
@@ -678,20 +697,6 @@
 
 {% if current_user.is_authenticated %}
   <div class="page-content">
-{% endif %}
-
-{% if current_user.is_authenticated and (current_user.is_admin or current_user.is_foreman) %}
-<div class="mb-3">
-  <button
-    class="btn btn-outline-secondary btn-sm"
-    type="button"
-    data-desktop-push
-    data-csrf="{{ csrf_token() }}"
-  >
-    Desktop-Benachrichtigungen aktivieren
-  </button>
-  <span class="small text-muted ms-2" data-desktop-push-status></span>
-</div>
 {% endif %}
 
 {% block content %}{% endblock %}
