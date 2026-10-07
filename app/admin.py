@@ -9733,8 +9733,9 @@ def jurisdiction_person_candidates(
     ] = {}
 
     def add_candidate(
-        erp_id: int,
-        name: str | None,
+            erp_id: int,
+            name: str | None,
+            usage_count: int = 1,
     ) -> None:
         candidate = candidates.setdefault(
             erp_id,
@@ -9754,12 +9755,28 @@ def jurisdiction_person_candidates(
         )
 
         if (
-            candidate["name"] is None
-            and normalized_name is not None
+                candidate["name"] is None
+                and normalized_name is not None
         ):
             candidate["name"] = normalized_name
 
-        candidate["usage_count"] += 1
+        candidate["usage_count"] += usage_count
+
+    officials = (
+        WowiResponsibleOfficial.query
+        .filter(
+            WowiResponsibleOfficial.active.is_(True),
+            WowiResponsibleOfficial.person_erp_id.isnot(None),
+        )
+        .all()
+    )
+
+    for official in officials:
+        add_candidate(
+            official.person_erp_id,
+            official.name,
+            usage_count=0,
+        )
 
     jurisdictions = (
         WowiEconomicUnitJurisdiction.query
@@ -9895,7 +9912,7 @@ def save_user_jurisdiction_person_mappings(
         raise ValueError(
             "Mindestens eine ausgewählte "
             "Wowiport-Person ist nicht mehr "
-            "in den Zuständigkeiten vorhanden."
+            "im lokalen Wowiport-Verzeichnis verfügbar."
         )
 
     current_mappings = (

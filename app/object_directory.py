@@ -1458,6 +1458,18 @@ def resolve_commission_creator_official_id(
         if item.universal_responsible_official_erp_id is not None
     )
 
+    official_ids.update(
+        official.erp_id
+        for official in (
+            WowiResponsibleOfficial.query
+            .filter(
+                WowiResponsibleOfficial.active.is_(True),
+                WowiResponsibleOfficial.person_erp_id == person_id,
+            )
+            .all()
+        )
+    )
+
     return next(iter(official_ids)) if len(official_ids) == 1 else None
 
 
