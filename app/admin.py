@@ -3105,6 +3105,66 @@ def save_web_commission_photo(
     return photo, False
 
 
+def ticket_owner_names(owner_ids: set[int]) -> dict[int, str]:
+    if not owner_ids:
+        return {}
+
+    rows = []
+    for model, user_column, person_column, name_column in (
+        (WowiEconomicUnitJurisdiction,
+         WowiEconomicUnitJurisdiction.responsible_user_erp_id,
+         WowiEconomicUnitJurisdiction.responsible_person_erp_id,
+         WowiEconomicUnitJurisdiction.responsible_name),
+        (WowiEconomicUnit,
+         WowiEconomicUnit.universal_responsible_user_erp_id,
+         WowiEconomicUnit.universal_responsible_person_erp_id,
+         WowiEconomicUnit.universal_responsible_name),
+    ):
+        rows.extend(
+            db.session.query(
+                user_column, person_column, name_column, model.active, model.synced_at
+            ).filter(user_column.in_(owner_ids)).distinct().all()
+        )
+
+    missing_person_ids = {
+        row[1] for row in rows
+        if row[1] is not None and not str(row[2] or "").strip()
+    }
+    fallback_names = {}
+    if missing_person_ids:
+        snapshots = db.session.query(
+            UserJurisdictionPersonMapping.jurisdiction_person_erp_id,
+            UserJurisdictionPersonMapping.person_name_snapshot,
+            User.display_name,
+        ).join(UserJurisdictionPersonMapping.user).filter(
+            UserJurisdictionPersonMapping.jurisdiction_person_erp_id.in_(missing_person_ids)
+        ).all()
+        for person_id, snapshot, display_name in snapshots:
+            fallback_names[person_id] = (
+                str(snapshot or "").strip() or str(display_name or "").strip()
+            )
+
+    rows.sort(
+        key=lambda row: (bool(row[3]), row[4].isoformat() if row[4] else ""),
+        reverse=True,
+    )
+    names = {}
+    for user_id, person_id, name, active, synced_at in rows:
+        name = str(name or "").strip() or fallback_names.get(person_id, "")
+        if name:
+            names.setdefault(user_id, name)
+    return names
+
+
+def ticket_owner_sort_key(name: str) -> tuple[str, str]:
+    last_name = name.split(",", 1)[0] if "," in name else name.rsplit(" ", 1)[-1]
+    translation = str.maketrans("äöü", "aou")
+    return (
+        last_name.strip().casefold().translate(translation),
+        name.casefold().translate(translation),
+    )
+
+
 def ticket_owner_erp_ids(user: User) -> set[int]:
     person_ids = {
         mapping.jurisdiction_person_erp_id
@@ -3129,7 +3189,7 @@ def ticket_owner_erp_ids(user: User) -> set[int]:
 
     jurisdiction_ids = db.session.execute(
         select(
-            WowiEconomicUnitJurisdiction.responsible_official_erp_id
+            WowiEconomicUnitJurisdiction.responsible_user_erp_id
         )
         .join(
             WowiEconomicUnit,
@@ -3147,7 +3207,7 @@ def ticket_owner_erp_ids(user: User) -> set[int]:
     ).scalars().all()
 
     universal_ids = db.session.execute(
-        select(WowiEconomicUnit.universal_responsible_official_erp_id)
+        select(WowiEconomicUnit.universal_responsible_user_erp_id)
         .where(
             WowiEconomicUnit.active.is_(True),
             WowiEconomicUnit.universal_responsibility.is_(True),
@@ -3158,9 +3218,9 @@ def ticket_owner_erp_ids(user: User) -> set[int]:
     ).scalars().all()
 
     return {
-        official_id
-        for official_id in (*jurisdiction_ids, *universal_ids)
-        if official_id is not None
+        user_id
+        for user_id in (*jurisdiction_ids, *universal_ids)
+        if user_id is not None
     }
 
 
@@ -3173,22 +3233,7 @@ def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
         TicketMirror.priority_code,
     ).distinct().all()
     owner_ids = {row[0] for row in rows if row[0] is not None}
-    owner_names = {}
-
-    if owner_ids:
-        names = db.session.query(
-            WowiEconomicUnitJurisdiction.responsible_official_erp_id,
-            WowiEconomicUnitJurisdiction.responsible_name,
-        ).filter(
-            WowiEconomicUnitJurisdiction.responsible_official_erp_id.in_(owner_ids),
-        ).order_by(
-            WowiEconomicUnitJurisdiction.synced_at.desc(),
-            WowiEconomicUnitJurisdiction.id.asc(),
-        ).all()
-
-        for owner_id, name in names:
-            if str(name or "").strip():
-                owner_names.setdefault(owner_id, name.strip())
+    owner_names = ticket_owner_names(owner_ids)
 
     departments = {}
     priorities = {}
@@ -3218,8 +3263,17 @@ def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
                 priorities.setdefault(str(priority_id), f"Priorität {priority_id}")
 
     owners = {
-        f"erp:{owner_id}": owner_names.get(owner_id, f"Sachbearbeiter-ID {owner_id}")
-        for owner_id in owner_ids
+        f"erp:{owner_id}": (
+                owner_names.get(owner_id) or f"Name nicht verfügbar (Benutzer-ID {owner_id})"
+        )
+        for owner_id in sorted(
+            owner_ids,
+            key=lambda owner_id: (
+                owner_id not in owner_names,
+                ticket_owner_sort_key(owner_names.get(owner_id, "")),
+                owner_id,
+            ),
+        )
     }
     options = {
         "owner": {"mine": "Meine Tickets", "all": "Alle Sachbearbeiter", "unassigned": "Nicht zugewiesen"},
@@ -3229,10 +3283,10 @@ def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
         "ai_state": {"all": "Alle Analysestände", "not_requested": "Nicht analysiert", "ready": "Vorschlag vorhanden", "stale": "Vorschlag veraltet", "failed": "Analyse fehlgeschlagen"},
     }
 
+    options["owner"].update(owners)
     for key, choices in (
-        ("owner", owners),
-        ("priority", priorities),
-        ("department", departments),
+            ("priority", priorities),
+            ("department", departments),
     ):
         options[key].update(
             sorted(choices.items(), key=lambda item: (item[1].casefold(), item[0]))

@@ -6769,6 +6769,13 @@ class WowiEconomicUnit(db.Model):
         db.Integer,
         index=True,
     )
+    universal_responsible_user_erp_id: Mapped[int | None] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    universal_responsible_name: Mapped[str | None] = mapped_column(
+        db.String(255)
+    )
     active: Mapped[bool] = mapped_column(
         db.Boolean,
         default=True,
@@ -6831,6 +6838,10 @@ class WowiEconomicUnitJurisdiction(db.Model):
     responsible_person_erp_id: Mapped[
         int | None
     ] = mapped_column(
+        db.Integer,
+        index=True,
+    )
+    responsible_user_erp_id: Mapped[int | None] = mapped_column(
         db.Integer,
         index=True,
     )

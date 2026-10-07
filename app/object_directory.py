@@ -907,7 +907,13 @@ def sync_object_directory() -> dict[str, int]:
                     )
                 )
             )
-
+            economic_unit.universal_responsible_user_erp_id = _as_int(
+                _value(universal_official, "UserId", "userId")
+            )
+            economic_unit.universal_responsible_name = (
+                _person_name(_object(universal_official, "Person", "person"))
+                or _text(_value(universal_official, "PersonName", "personName"))
+            )
             jurisdiction_list = _value(
                 response_row,
                 "EconomicUnitJurisdictionList",
@@ -1088,6 +1094,9 @@ def sync_object_directory() -> dict[str, int]:
                         "id",
                     )
                 )
+            )
+            item.responsible_user_erp_id = _as_int(
+                _value(official, "UserId", "userId")
             )
             item.responsible_name = (
                     _person_name(person)
