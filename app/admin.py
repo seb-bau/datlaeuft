@@ -3164,6 +3164,83 @@ def ticket_owner_erp_ids(user: User) -> set[int]:
     }
 
 
+def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
+    rows = query.with_entities(
+        TicketMirror.assigned_user_erp_id,
+        TicketMirror.department_erp_id,
+        TicketMirror.department_name,
+        TicketMirror.priority_erp_id,
+        TicketMirror.priority_code,
+    ).distinct().all()
+    owner_ids = {row[0] for row in rows if row[0] is not None}
+    owner_names = {}
+
+    if owner_ids:
+        names = db.session.query(
+            WowiEconomicUnitJurisdiction.responsible_official_erp_id,
+            WowiEconomicUnitJurisdiction.responsible_name,
+        ).filter(
+            WowiEconomicUnitJurisdiction.responsible_official_erp_id.in_(owner_ids),
+        ).order_by(
+            WowiEconomicUnitJurisdiction.synced_at.desc(),
+            WowiEconomicUnitJurisdiction.id.asc(),
+        ).all()
+
+        for owner_id, name in names:
+            if str(name or "").strip():
+                owner_names.setdefault(owner_id, name.strip())
+
+    departments = {}
+    priorities = {}
+    priority_labels = {
+        "low": "Niedrige Priorität", "lowpriority": "Niedrige Priorität",
+        "normal": "Normale Priorität", "medium": "Normale Priorität",
+        "normalpriority": "Normale Priorität", "mediumpriority": "Normale Priorität",
+        "high": "Hohe Priorität", "highpriority": "Hohe Priorität",
+        "urgent": "Dringend",
+    }
+
+    for _, department_id, department_name, priority_id, priority_code in rows:
+        if department_id is not None:
+            key = str(department_id)
+            name = str(department_name or "").strip()
+            if name:
+                departments[key] = name
+            else:
+                departments.setdefault(key, f"Abteilungs-ID {department_id}")
+
+        if priority_id is not None:
+            code = str(priority_code or "").strip().casefold().replace("_", "").replace(" ", "")
+            label = priority_labels.get(code)
+            if label:
+                priorities[str(priority_id)] = label
+            else:
+                priorities.setdefault(str(priority_id), f"Priorität {priority_id}")
+
+    owners = {
+        f"erp:{owner_id}": owner_names.get(owner_id, f"Sachbearbeiter-ID {owner_id}")
+        for owner_id in owner_ids
+    }
+    options = {
+        "owner": {"mine": "Meine Tickets", "all": "Alle Sachbearbeiter", "unassigned": "Nicht zugewiesen"},
+        "state": {"all": "Alle Bearbeitungsstände", "new": "Zu prüfen", "ignored": "Kein Auftrag", "converted": "Auftrag erstellt"},
+        "priority": {"all": "Alle Prioritäten", "unassigned": "Ohne Priorität"},
+        "department": {"all": "Alle Abteilungen", "unassigned": "Ohne Abteilung"},
+        "ai_state": {"all": "Alle Analysestände", "not_requested": "Nicht analysiert", "ready": "Vorschlag vorhanden", "stale": "Vorschlag veraltet", "failed": "Analyse fehlgeschlagen"},
+    }
+
+    for key, choices in (
+        ("owner", owners),
+        ("priority", priorities),
+        ("department", departments),
+    ):
+        options[key].update(
+            sorted(choices.items(), key=lambda item: (item[1].casefold(), item[0]))
+        )
+
+    return options
+
+
 @admin_bp.get("/admin/tickets")
 @foreman_required
 def tickets() -> Any:
@@ -3199,6 +3276,25 @@ def tickets() -> Any:
         )
     )
 
+    filter_options = ticket_filter_options(query)
+    defaults = {
+        "owner": "mine",
+        "state": "new",
+        "priority": "all",
+        "department": "all",
+        "ai_state": "all",
+    }
+    selected_filters = {
+        key: request.args.get(key, default).strip()
+        for key, default in defaults.items()
+    }
+
+    for key, value in selected_filters.items():
+        if value not in filter_options[key]:
+            selected_filters[key] = "mine" if key == "owner" else "all"
+
+    selected_owner = selected_filters["owner"]
+    selected_state = selected_filters["state"]
     owner_ids = (
         ticket_owner_erp_ids(current_user)
         if selected_owner == "mine"
@@ -3209,18 +3305,32 @@ def tickets() -> Any:
         query = query.filter(
             TicketMirror.assigned_user_erp_id.in_(owner_ids)
         )
-
-    valid_states = {
-        item.value
-        for item in TicketMirrorState
-    }
-
-    if selected_state in valid_states:
+    elif selected_owner == "unassigned":
         query = query.filter(
-            TicketMirror.state == selected_state
+            TicketMirror.assigned_user_erp_id.is_(None)
         )
-    else:
-        selected_state = "all"
+    elif selected_owner != "all":
+        query = query.filter(
+            TicketMirror.assigned_user_erp_id == int(selected_owner[4:])
+        )
+
+    if selected_state != "all":
+        query = query.filter(TicketMirror.state == selected_state)
+
+    for key, column in (
+            ("priority", TicketMirror.priority_erp_id),
+            ("department", TicketMirror.department_erp_id),
+    ):
+        selected_value = selected_filters[key]
+        if selected_value == "unassigned":
+            query = query.filter(column.is_(None))
+        elif selected_value != "all":
+            query = query.filter(column == int(selected_value))
+
+    if selected_filters["ai_state"] != "all":
+        query = query.filter(
+            TicketMirror.ai_state == selected_filters["ai_state"]
+        )
 
     if search_text:
         like_term = f"%{search_text}%"
@@ -3275,6 +3385,18 @@ def tickets() -> Any:
         openai_configured=openai_configured,
         selected_owner=selected_owner,
         owner_mapping_available=bool(owner_ids),
+        ticket_filters=[
+            (key, label, selected_filters[key], filter_options[key])
+            for key, label in (
+                ("owner", "Sachbearbeiter"),
+                ("state", "Bearbeitungsstand"),
+                ("priority", "Priorität"),
+                ("department", "Abteilung"),
+                ("ai_state", "Analysestatus"),
+            )
+        ],
+        ticket_owner_labels=filter_options["owner"],
+        pagination_filters={**selected_filters, "q": search_text},
     )
 
 

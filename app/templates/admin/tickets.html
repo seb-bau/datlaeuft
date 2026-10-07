@@ -3,6 +3,20 @@
 
 {% block head %}
 <style>
+    #ticketFilters .form-select {
+    width: auto;
+    max-width: 12rem;
+    flex: 0 0 auto;
+  }
+
+  #ticketSearch {
+    width: 11rem;
+    max-width: 100%;
+  }
+
+  #ticketFilters .btn {
+    white-space: nowrap;
+  }
   .ticket-card-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(8.5rem, 22vw, 13.5rem);
@@ -30,42 +44,42 @@
 {% endblock %}
 
 {% block content %}
-<div
-  class="d-flex flex-wrap justify-content-between
-         align-items-center gap-3 mb-4"
->
-  <div>
-    <h1 class="h3 mb-1">Tickets</h1>
-    <div class="text-muted">
-      Gespiegelte Tickets aus Wowiport
-    </div>
-  </div>
-
-  <form
-    class="d-flex gap-2"
-    method="get"
-  >
-    <input
-      type="hidden"
-      name="state"
-      value="{{ selected_state }}"
-    >
-    <input type="hidden" name="owner" value="{{ selected_owner }}">
-    <input
-      class="form-control"
-      type="search"
-      name="q"
-      value="{{ search_text }}"
-      placeholder="Ticket, Betreff oder Inhalt"
-    >
-    <button
-      class="btn btn-outline-primary"
-      type="submit"
-    >
-      Suchen
-    </button>
-  </form>
+<div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+  <h1 class="h3 mb-0">Tickets</h1>
+  <span class="small text-muted">Gespiegelte Tickets aus Wowiport</span>
 </div>
+
+<form id="ticketFilters" method="get" class="d-flex flex-wrap align-items-center gap-1 mb-3">
+  {% for filter_key, filter_label, filter_value, filter_choices in ticket_filters %}
+  <select
+    class="form-select form-select-sm"
+    name="{{ filter_key }}"
+    aria-label="{{ filter_label }} filtern"
+    title="{{ filter_label }}"
+    onchange="this.form.submit()"
+  >
+    {% for choice_key, choice_label in filter_choices.items() %}
+    <option value="{{ choice_key }}" {% if filter_value == choice_key %}selected{% endif %}>
+      {{ choice_label }}
+    </option>
+    {% endfor %}
+  </select>
+  {% endfor %}
+
+  <input
+    id="ticketSearch"
+    class="form-control form-control-sm"
+    type="search"
+    name="q"
+    value="{{ search_text }}"
+    placeholder="Ticket, Betreff oder Inhalt"
+    aria-label="Tickets durchsuchen"
+  >
+  <button class="btn btn-sm btn-outline-primary" type="submit">Suchen</button>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.tickets') }}">
+    Filter zurücksetzen
+  </a>
+</form>
 
 {% if not openai_configured %}
 <div class="alert alert-warning">
@@ -74,16 +88,6 @@ nicht vollständig konfiguriert. Die benötigten
 Einstellungen findest du unter Einstellungen.
 </div>
 {% endif %}
-<div class="d-flex gap-2 mb-3">
-  <a
-    class="btn {{ 'btn-primary' if selected_owner == 'mine' else 'btn-outline-primary' }}"
-    href="{{ url_for('admin.tickets', owner='mine', state=selected_state, q=search_text) }}"
-  >Meine Tickets</a>
-  <a
-    class="btn {{ 'btn-primary' if selected_owner == 'all' else 'btn-outline-primary' }}"
-    href="{{ url_for('admin.tickets', owner='all', state=selected_state, q=search_text) }}"
-  >Alle Tickets</a>
-</div>
 
 {% if selected_owner == "mine" and not owner_mapping_available %}
 <div class="alert alert-info">
@@ -91,30 +95,6 @@ Einstellungen findest du unter Einstellungen.
   aus den bestehenden Zuordnungen ermittelt werden.
 </div>
 {% endif %}
-
-
-<ul class="nav nav-pills mb-4">
-  {% for value, label in [
-    ("new", "Zu prüfen"),
-    ("ignored", "Kein Auftrag"),
-    ("converted", "Auftrag erstellt"),
-    ("all", "Alle")
-  ] %}
-  <li class="nav-item">
-    <a
-      class="nav-link
-             {% if selected_state == value %}active{% endif %}"
-      href="{{ url_for(
-        'admin.tickets',
-        state=value,
-        q=search_text
-      ) }}"
-    >
-      {{ label }}
-    </a>
-  </li>
-  {% endfor %}
-</ul>
 
 <div class="vstack gap-3">
   {% for ticket in pagination.items %}
@@ -157,6 +137,11 @@ Einstellungen findest du unter Einstellungen.
             {{ ticket.content_excerpt }}
           </p>
           {% endif %}
+
+           <div class="small text-muted mb-1">
+            Sachbearbeiter:
+            {{ ticket_owner_labels.get("erp:" ~ ticket.assigned_user_erp_id, "Nicht zugewiesen") }}
+          </div>
 
           <div class="small text-muted">
             {% if ticket.department_name %}
@@ -281,8 +266,7 @@ Einstellungen findest du unter Einstellungen.
           href="{{ url_for(
             'admin.tickets',
             page=page_number,
-            state=selected_state,
-            q=search_text
+            **pagination_filters
           ) }}"
         >
           {{ page_number }}
