@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Iterable
-
+from flask import current_app
 from sqlalchemy import or_
 
 from .extensions import db
@@ -22,6 +22,7 @@ from .models import (
     WowiUseUnit,
     utc_now,
     UserJurisdictionPersonMapping,
+    WowiResponsibleOfficial
 )
 from .wowiport import WowiportService
 
@@ -1134,7 +1135,48 @@ def sync_object_directory() -> dict[str, int]:
         synced_at,
     )
 
+    result["responsible_officials"] = sync_responsible_official_directory(service, synced_at)
+
     return result
+
+
+def sync_responsible_official_directory(
+    service: WowiportService,
+    synced_at: datetime,
+) -> int:
+    rows = service.read_all_rows(
+        "CommercialInventory/ResponsibleOfficial",
+        {"showNullValues": "true"},
+    )
+    _require_rows(rows, "Sachbearbeiter")
+    records = {}
+    for row in rows:
+        erp_id = _as_int(_value(row, "Id", "id"))
+        if erp_id is None or erp_id <= 0:
+            raise RuntimeError("Wowiport hat eine ungültige Sachbearbeiter-ID geliefert.")
+        if erp_id in records and records[erp_id] != row:
+            raise RuntimeError("Wowiport hat widersprüchliche Sachbearbeiterdaten geliefert.")
+        records[erp_id] = row
+
+    existing = {item.erp_id: item for item in WowiResponsibleOfficial.query.all()}
+    for erp_id, row in records.items():
+        item = existing.get(erp_id)
+        if item is None:
+            item = WowiResponsibleOfficial(erp_id=erp_id)
+            db.session.add(item)
+        person = _object(row, "Person", "person")
+        name = _person_name(person) or _text(_value(row, "PersonName", "personName"))
+        item.user_erp_id = _as_int(_value(row, "UserId", "userId"))
+        item.person_erp_id = _as_int(
+            _value(person, "Id", "id") or _value(row, "PersonId", "personId")
+        )
+        item.name = name[:500] if name else None
+        item.active = True
+        item.synced_at = synced_at
+
+    _deactivate_missing(WowiResponsibleOfficial, set(records), synced_at)
+    current_app.logger.info("responsible_official_directory_synced count=%s", len(records))
+    return len(records)
 
 
 def resolve_commission_object(

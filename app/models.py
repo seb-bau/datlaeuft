@@ -6723,6 +6723,17 @@ class CraftActivityDepartmentMapping(db.Model):
     updated_by: Mapped[User | None] = relationship()
 
 
+class WowiResponsibleOfficial(db.Model):
+    __tablename__ = "wowi_responsible_official"
+
+    erp_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    user_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    person_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
+    name: Mapped[str | None] = mapped_column(db.String(500))
+    active: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+
+
 class WowiEconomicUnit(db.Model):
     __tablename__ = "wowi_economic_unit"
 

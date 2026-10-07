@@ -125,6 +125,7 @@ from .models import (
     ExternalCraftsman,
     ExternalCraftsmanAccessToken,
     CommissionAssignmentType,
+    WowiResponsibleOfficial,
 )
 from .external_craftsman_service import (
     automatic_external_craftsman,
@@ -2773,7 +2774,8 @@ def object_directory_sync() -> Any:
         "Zuständigkeiten, "
         f"{result['buildings']} Gebäude, "
         f"{result['use_units']} "
-        "Nutzungseinheiten.",
+        "Nutzungseinheiten, "
+        f"{result['responsible_officials']} Sachbearbeiter.",
         "success",
     )
 
@@ -3111,6 +3113,10 @@ def ticket_owner_names(owner_ids: set[int]) -> dict[int, str]:
 
     rows = []
     for model, user_column, person_column, name_column in (
+        (WowiResponsibleOfficial,
+         WowiResponsibleOfficial.user_erp_id,
+         WowiResponsibleOfficial.person_erp_id,
+         WowiResponsibleOfficial.name),
         (WowiEconomicUnitJurisdiction,
          WowiEconomicUnitJurisdiction.responsible_user_erp_id,
          WowiEconomicUnitJurisdiction.responsible_person_erp_id,
@@ -3143,9 +3149,18 @@ def ticket_owner_names(owner_ids: set[int]) -> dict[int, str]:
             fallback_names[person_id] = (
                 str(snapshot or "").strip() or str(display_name or "").strip()
             )
+        users = User.query.filter(User.person_erp_id.in_(missing_person_ids)).order_by(User.id).all()
+        for user in users:
+            name = str(user.display_name or "").strip()
+            if name:
+                fallback_names.setdefault(user.person_erp_id, name)
 
     rows.sort(
-        key=lambda row: (bool(row[3]), row[4].isoformat() if row[4] else ""),
+        key=lambda row: (
+            bool(row[3]),
+            bool(str(row[2] or "").strip()),
+            row[4].isoformat() if row[4] else "",
+        ),
         reverse=True,
     )
     names = {}
@@ -3153,6 +3168,9 @@ def ticket_owner_names(owner_ids: set[int]) -> dict[int, str]:
         name = str(name or "").strip() or fallback_names.get(person_id, "")
         if name:
             names.setdefault(user_id, name)
+    missing_ids = sorted(owner_ids - names.keys())
+    if missing_ids:
+        current_app.logger.warning("ticket_owner_names_unresolved user_ids=%s", missing_ids)
     return names
 
 
@@ -3217,9 +3235,16 @@ def ticket_owner_erp_ids(user: User) -> set[int]:
         )
     ).scalars().all()
 
+    directory_ids = db.session.execute(
+        select(WowiResponsibleOfficial.user_erp_id).where(
+            WowiResponsibleOfficial.active.is_(True),
+            WowiResponsibleOfficial.person_erp_id.in_(person_ids),
+        )
+    ).scalars().all()
+
     return {
         user_id
-        for user_id in (*jurisdiction_ids, *universal_ids)
+        for user_id in (*jurisdiction_ids, *universal_ids, *directory_ids)
         if user_id is not None
     }
 
