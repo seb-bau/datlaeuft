@@ -6582,8 +6582,29 @@ class SafetyInspectionProtocol(db.Model):
     )
 
 
+class HealthHeartbeat(db.Model):
+    __tablename__ = "health_heartbeat"
+
+    name: Mapped[str] = mapped_column(
+        db.String(40),
+        primary_key=True,
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        nullable=False,
+    )
+
+
 class WebhookEvent(db.Model):
     __tablename__ = "webhook_event"
+
+    __table_args__ = (
+        db.Index(
+            "ix_webhook_event_processed_received_at",
+            "processed",
+            "received_at",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     entity_type: Mapped[str | None] = mapped_column(db.String(80), index=True)

@@ -6,6 +6,7 @@ from typing import Any
 
 from flask import current_app
 from sqlalchemy import or_
+from time import monotonic, sleep
 
 from .audit import audit
 from .extensions import db
@@ -18,7 +19,8 @@ from app.models import (
     ErpOutboxState,
     WebhookEvent,
     utc_now,
-    CommissionPhoto
+    CommissionPhoto,
+    HealthHeartbeat
 )
 from .wowiport import (
     ERP_OPERATION_STATUS,
@@ -784,17 +786,42 @@ def require_erp_id(commission: Commission) -> None:
 def run_worker(
     poll_seconds: int,
 ) -> None:
+    last_heartbeat = None
+
     while True:
+        current_time = monotonic()
+
+        if (
+            last_heartbeat is None
+            or current_time - last_heartbeat >= 60
+        ):
+            heartbeat = db.session.get(
+                HealthHeartbeat,
+                "worker",
+            )
+
+            if heartbeat is None:
+                heartbeat = HealthHeartbeat(
+                    name="worker",
+                    last_seen_at=utc_now(),
+                )
+                db.session.add(heartbeat)
+            else:
+                heartbeat.last_seen_at = utc_now()
+
+            db.session.commit()
+            last_heartbeat = monotonic()
+
         result = process_due_work()
 
         if (
-                result["webhooks"] == 0
-                and result["outbox"] == 0
-                and result["process_infos"] == 0
-                and result["push"] == 0
-                and result["external_assignment_emails"] == 0
-                and result["tenant_notifications"] == 0
-                and result["completion_notifications"] == 0
-                and result["dms"] == 0
+            result["webhooks"] == 0
+            and result["outbox"] == 0
+            and result["process_infos"] == 0
+            and result["push"] == 0
+            and result["external_assignment_emails"] == 0
+            and result["tenant_notifications"] == 0
+            and result["completion_notifications"] == 0
+            and result["dms"] == 0
         ):
             sleep(poll_seconds)

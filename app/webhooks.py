@@ -37,8 +37,21 @@ def wowiport_webhook() -> Any:
 
 
 def valid_bearer_token() -> bool:
-    expected = settings.get(SettingKeys.WOWI_WEBHOOK_TOKEN)
-    header = request.headers.get("Authorization", "")
+    expected = settings.get(
+        SettingKeys.WOWI_WEBHOOK_TOKEN
+    )
+
+    if (
+        not expected
+        or expected
+        == SettingKeys.WOWI_WEBHOOK_TOKEN.default
+    ):
+        return False
+
+    header = request.headers.get(
+        "Authorization",
+        "",
+    )
     prefix = "Bearer "
 
     if not header.startswith(prefix):

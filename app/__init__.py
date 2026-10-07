@@ -13,6 +13,7 @@ from .extensions import cors, csrf, db, jwt, login_manager, migrate
 from .logging_service import configure_logging
 from .settings import SettingKeys, settings
 from .webhooks import webhooks_bp
+from .health import health_bp
 from .appointments import appointments_bp
 from .safety_inspection_admin import (
     safety_inspection_admin_bp,
@@ -79,6 +80,7 @@ def create_app() -> Flask:
     app.register_blueprint(
         safety_inspection_api_bp
     )
+    app.register_blueprint(health_bp)
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(appointments_bp)
     app.register_blueprint(
