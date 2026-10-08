@@ -466,6 +466,20 @@ class SettingKeys:
         "api.cors_origins", SettingValueType.STRING, "*", "CORS Origins", "API")
     MOBILE_TOKEN_NEVER_EXPIRES = SettingDefinition[bool](
         "mobile.token_never_expires", SettingValueType.BOOL, True, "App-Login dauerhaft gültig", "Mobile App")
+    MOBILE_SHOW_SERVICE_TARGET_TIMES = SettingDefinition[bool](
+        "mobile.show_service_target_times",
+        SettingValueType.BOOL,
+        True,
+        "SOLL-Zeiten für Leistungspositionen in der App anzeigen",
+        "Mobile App",
+    )
+    MOBILE_SHOW_WORK_TIME_TARGET_TIMES = SettingDefinition[bool](
+        "mobile.show_work_time_target_times",
+        SettingValueType.BOOL,
+        True,
+        "SOLL-Zeiten für die Zeiterfassung in der App anzeigen",
+        "Mobile App",
+    )
     MOBILE_MICROSOFT_CLIENT_ID = SettingDefinition[str](
         "mobile.microsoft_client_id", SettingValueType.STRING, "", "Microsoft Client-ID der iOS-App", "Mobile App")
     MOBILE_MICROSOFT_REDIRECT_URI = SettingDefinition[str](

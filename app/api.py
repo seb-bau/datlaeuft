@@ -141,6 +141,8 @@ def mobile_config() -> Any:
     return jsonify({
         "password_login_enabled": settings.get(SettingKeys.PASSWORD_LOGIN_ENABLED),
         "microsoft": microsoft_config,
+        "show_service_target_times": settings.get(SettingKeys.MOBILE_SHOW_SERVICE_TARGET_TIMES),
+        "show_work_time_target_times": settings.get(SettingKeys.MOBILE_SHOW_WORK_TIME_TARGET_TIMES),
     })
 
 
