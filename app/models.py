@@ -552,6 +552,13 @@ class ExternalCraftsman(db.Model):
     password_hash: Mapped[str | None] = mapped_column(
         db.String(255)
     )
+    assignment_enabled: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+        index=True,
+    )
     portal_enabled: Mapped[bool] = mapped_column(
         db.Boolean,
         default=False,

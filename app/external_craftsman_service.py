@@ -62,6 +62,7 @@ def available_external_craftsmen(
             )
         )
         .filter(
+            ExternalCraftsman.assignment_enabled.is_(True),
             ExternalCraftsman.wowi_active.is_(True),
             ExternalCraftsman.craftsman_erp_id.not_in(
                 internal_craftsman_ids

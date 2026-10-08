@@ -11983,6 +11983,46 @@ def external_craftsmen_sync() -> Any:
     )
 
 
+@admin_bp.post("/admin/external-craftsmen/<int:craftsman_id>/assignment")
+@admin_required
+def external_craftsman_assignment(craftsman_id: int) -> Any:
+    craftsman = db.get_or_404(ExternalCraftsman, craftsman_id)
+    action = request.form.get("action")
+    target_url = url_for("admin.external_craftsmen")
+
+    if action not in {"enable", "disable"}:
+        flash("Die Aktion ist ungültig.", "danger")
+        return redirect(target_url)
+
+    enabled = action == "enable"
+    if enabled:
+        if not craftsman.wowi_active:
+            flash("Der Handwerker ist in Wowiport nicht aktiv.", "danger")
+            return redirect(target_url)
+        internal_user = User.query.filter_by(
+            craftsman_erp_id=craftsman.craftsman_erp_id,
+            is_active_flag=True,
+        ).first()
+        if internal_user is not None:
+            flash("Für diesen Handwerker besteht bereits ein interner Benutzerzugang.", "danger")
+            return redirect(target_url)
+
+    craftsman.assignment_enabled = enabled
+    audit(
+        "external_craftsman.assignment.enable" if enabled else "external_craftsman.assignment.disable",
+        "external_craftsman",
+        craftsman.id,
+        metadata={"assignment_enabled": enabled},
+    )
+    db.session.commit()
+    flash(
+        "Der Handwerker wurde zur Whitelist hinzugefügt."
+        if enabled else "Der Handwerker wurde von der Whitelist entfernt.",
+        "success",
+    )
+    return redirect(target_url)
+
+
 @admin_bp.post(
     "/admin/external-craftsmen/"
     "<int:craftsman_id>/enable"

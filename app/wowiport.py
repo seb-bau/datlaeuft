@@ -2994,6 +2994,10 @@ def sync_commissions_from_wowiport_regular(
         )
         .filter(
             ExternalCraftsman.wowi_active.is_(True),
+            or_(
+                ExternalCraftsman.assignment_enabled.is_(True),
+                ExternalCraftsman.portal_enabled.is_(True),
+            ),
         )
         .distinct()
         .all()

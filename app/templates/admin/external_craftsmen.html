@@ -4,10 +4,6 @@
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
   <div>
     <h1 class="h3 mb-1">Externe Handwerker</h1>
-    <p class="text-muted mb-0">
-      Externe Handwerker können unabhängig vom Portalzugang beauftragt werden.
-      Hier verwalten Sie die Freischaltung für das Auftragnehmerportal.
-    </p>
   </div>
   <form method="post" action="{{ url_for('admin.external_craftsmen_sync') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -28,6 +24,7 @@
             <th>E-Mail</th>
             <th>Gewerke</th>
             <th>Benutzername</th>
+            <th>Beauftragung</th>
             <th>Portalzugang</th>
             <th data-filter="false"></th>
           </tr>
@@ -58,6 +55,17 @@
             <td>{{ item.username or "–" }}</td>
             <td>
               {% if item.craftsman_erp_id in internal_craftsman_erp_ids %}
+              <span class="badge text-bg-secondary">Interner Benutzer</span>
+              {% elif not item.wowi_active %}
+              <span class="badge text-bg-secondary">Nicht mehr aktiv</span>
+              {% elif item.assignment_enabled %}
+              <span class="badge text-bg-success">Freigegeben</span>
+              {% else %}
+              <span class="badge text-bg-light border">Nicht freigegeben</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if item.craftsman_erp_id in internal_craftsman_erp_ids %}
               <span class="badge text-bg-secondary">
                 Interner Benutzer
               </span>
@@ -81,6 +89,17 @@
             </td>
             <td class="text-end">
               <div class="d-flex flex-wrap justify-content-end gap-2">
+                <form method="post" action="{{ url_for('admin.external_craftsman_assignment', craftsman_id=item.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="{{ 'disable' if item.assignment_enabled else 'enable' }}">
+                  <button
+                    class="btn btn-sm btn-outline-secondary"
+                    type="submit"
+                    {% if not item.assignment_enabled and (not item.wowi_active or item.craftsman_erp_id in internal_craftsman_erp_ids) %}disabled{% endif %}
+                  >
+                    {{ 'Von Whitelist entfernen' if item.assignment_enabled else 'Zur Whitelist hinzufügen' }}
+                  </button>
+                </form>
                 {% if item.portal_enabled %}
                 <form method="post" action="{{ url_for('admin.external_craftsman_invite', craftsman_id=item.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
