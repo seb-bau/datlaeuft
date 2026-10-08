@@ -158,7 +158,7 @@ def enqueue_commission_push(
 ) -> PushBatch:
     target_user = user or commission.user
 
-    if target_user is None or not target_user.is_active_flag:
+    if target_user is None or not target_user.is_active:
         return PushBatch(batch_id=str(uuid4()), queued_count=0)
 
     if not _event_enabled(target_user, event_type):
@@ -204,7 +204,7 @@ def enqueue_process_info_push(
     info: ProcessInfo,
     badge: int,
 ) -> PushBatch:
-    if not user.is_active_flag:
+    if not user.is_active:
         return PushBatch(
             batch_id=str(uuid4()),
             queued_count=0,
@@ -270,7 +270,7 @@ def enqueue_safety_inspection_push(
 
     if (
         target_user is None
-        or not target_user.is_active_flag
+        or not target_user.is_active
     ):
         return PushBatch(
             batch_id=str(uuid4()),
@@ -671,7 +671,7 @@ def _deliver(delivery_id: int) -> None:
         return
 
     user = db.session.get(User, delivery.user_id)
-    if user is None or not user.is_active_flag:
+    if user is None or not user.is_active:
         _discard_delivery(
             delivery,
             "Der Benutzer ist nicht mehr aktiv.",

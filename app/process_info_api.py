@@ -298,7 +298,7 @@ def serialize_process_info(
             item.process_erp_id
         ),
         "body": item.body,
-        "author_name": item.author_name,
+        "author_name": item.visible_author_name,
         "direction": item.direction,
         "date": (
             item.erp_date.isoformat()

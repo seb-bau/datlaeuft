@@ -252,7 +252,7 @@ def work_report_entry_context(
         ).strftime(
             "%d.%m.%Y"
         ),
-        "user_name": entry.user.display_name,
+        "user_name": entry.user.display_name if entry.user else "Nicht verfügbar",
         "task_code": (
             entry.task_template.code
             if entry.task_template

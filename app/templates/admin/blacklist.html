@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Blacklist{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Blacklist</h1>
+<p class="text-muted">
+  Gesperrte Personen werden aus Listen und Auswahlen ausgeblendet und können sich nicht anmelden.
+  Die Sperre gilt auch für Zugänge mit derselben Wowiport-Identität.
+  Manuelle Zuständigkeitszuordnungen sperren keine vertretenden Benutzer.
+</p>
+<form method="post" class="card mb-4">
+  <div class="card-body row g-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="add">
+    <div class="col-md-6">
+      <label for="blacklistTarget" class="form-label">Benutzer oder Sachbearbeiter</label>
+      <select id="blacklistTarget" name="target" class="form-select" required>
+        <option value="">Bitte auswählen</option>
+        {% for target_type, group in choices.items() %}
+        <optgroup label="{{ group.label }}">
+          {% for item in group['items'] %}
+          <option value="{{ target_type }}:{{ item.id }}">{{ item.name }} · ID {{ item.id }}</option>
+          {% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-6">
+      <label for="blacklistReason" class="form-label">Grund (optional)</label>
+      <input id="blacklistReason" name="reason" class="form-control" maxlength="500">
+    </div>
+    <div class="col-12">
+      <button class="btn btn-danger" type="submit">Zur Blacklist hinzufügen</button>
+    </div>
+  </div>
+</form>
+<div class="card">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead><tr><th>Typ</th><th>Name</th><th>Grund</th><th></th></tr></thead>
+      <tbody>
+        {% for entry in entries %}
+        <tr>
+          <td>{{ targets[entry.target_type][1] }}</td>
+          <td>{{ entry.name_snapshot }} <span class="text-muted">· ID {{ entry.target_id }}</span></td>
+          <td>{{ entry.reason or '–' }}</td>
+          <td class="text-end">
+            <form method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="remove">
+              <input type="hidden" name="target" value="{{ entry.target_type }}:{{ entry.target_id }}">
+              <button class="btn btn-sm btn-outline-secondary" type="submit">Freigeben</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="text-muted">Die Blacklist ist leer.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

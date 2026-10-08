@@ -243,6 +243,7 @@ from .catalog import (
 )
 
 from .appointment_service import format_manual_appointment
+from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -1544,7 +1545,7 @@ def ticket_assignment_rule_toggle(
 
         if (
             target_user is None
-            or not target_user.is_active_flag
+            or not target_user.is_active
             or target_user.craftsman_erp_id is None
         ):
             flash(
@@ -3108,6 +3109,7 @@ def save_web_commission_photo(
 
 
 def ticket_owner_names(owner_ids: set[int]) -> dict[int, str]:
+    owner_ids = set(owner_ids) - blacklist_ids("erp_user")
     if not owner_ids:
         return {}
 
@@ -3257,7 +3259,7 @@ def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
         TicketMirror.priority_erp_id,
         TicketMirror.priority_code,
     ).distinct().all()
-    owner_ids = {row[0] for row in rows if row[0] is not None}
+    owner_ids = {row[0] for row in rows if row[0] is not None} - blacklist_ids("erp_user")
     owner_names = ticket_owner_names(owner_ids)
 
     departments = {}
@@ -6998,6 +7000,12 @@ def commission_official_labels(
 
     result = {}
     for item in items:
+        if (
+            is_blacklisted("user", item.local_official_user_id)
+            or is_blacklisted("official", item.responsible_official_repair_erp_id)
+        ):
+            result[item.id] = ("unassigned", "Nicht verfügbar")
+            continue
         if item.local_official_user_id is not None:
             name = (
                 item.local_official.display_name
@@ -9178,7 +9186,7 @@ def performance_reviews() -> Any:
                         else ""
                     ),
                     *[
-                        entry.user.display_name
+                        entry.user.display_name if entry.user else "Nicht verfügbar"
                         for entry in row["entries"]
                     ],
                     *[
@@ -9731,12 +9739,15 @@ def jurisdiction_person_candidates(
         int,
         dict[str, Any],
     ] = {}
+    blocked_person_ids = blacklist_ids("person")
 
     def add_candidate(
             erp_id: int,
             name: str | None,
             usage_count: int = 1,
     ) -> None:
+        if erp_id in blocked_person_ids:
+            return
         candidate = candidates.setdefault(
             erp_id,
             {
@@ -9825,6 +9836,8 @@ def jurisdiction_person_candidates(
     )
 
     for mapping in mappings:
+        if mapping.jurisdiction_person_erp_id in blocked_person_ids:
+            continue
         candidate = candidates.setdefault(
             mapping.jurisdiction_person_erp_id,
             {
@@ -9932,18 +9945,20 @@ def save_user_jurisdiction_person_mappings(
             mapping.active = False
 
     for erp_id in selected_ids:
-        mapping = (
-            UserJurisdictionPersonMapping.query
-            .filter_by(
-                jurisdiction_person_erp_id=erp_id
+        with include_blacklisted():
+            mapping = (
+                UserJurisdictionPersonMapping.query
+                .filter_by(
+                    jurisdiction_person_erp_id=erp_id
+                )
+                .one_or_none()
             )
-            .one_or_none()
-        )
 
         if (
-            mapping is not None
-            and mapping.active
-            and mapping.user_id != item.id
+                mapping is not None
+                and mapping.active
+                and mapping.user_id != item.id
+                and not is_blacklisted("user", mapping.user_id)
         ):
             other_user_name = (
                 mapping.user.display_name

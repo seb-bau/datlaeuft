@@ -25,6 +25,7 @@ from .process_info_service import (
 from .settings import SettingKeys, settings
 from .utils import ensure_utc, iso_datetime
 from .wowiport import WowiportService
+from .blacklist import blacklist_ids, is_blacklisted
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ class OfficeRecipient:
 
 def office_user(user: User | None) -> bool:
     return bool(
-        user and user.is_active_flag and (user.is_admin or user.is_foreman)
+        user and user.is_active and (user.is_admin or user.is_foreman)
     )
 
 
@@ -66,6 +67,8 @@ def office_recipients(commissions: list[Commission]) -> list[OfficeRecipient]:
                 commission.responsible_official_repair_erp_id = official_id
 
             if official_id is not None:
+                if is_blacklisted("official", official_id):
+                    continue
                 service = service or WowiportService()
                 if official_id not in officials:
                     officials[official_id] = service.get_responsible_official(
@@ -74,6 +77,8 @@ def office_recipients(commissions: list[Commission]) -> list[OfficeRecipient]:
 
                 person = _row_value(officials[official_id], "Person") or {}
                 person_id = _integer_value(_row_value(person, "Id"))
+                if is_blacklisted("person", person_id):
+                    continue
                 communication = (
                     _row_value(person, "FirstEmailCommunication") or {}
                 )
@@ -279,18 +284,29 @@ def receipt_status(
 
 def read_receipts(message: ProcessInfo) -> list[dict]:
     if message.direction == CRAFTSMAN_DIRECTION:
-        deliveries = ProcessInfoDelivery.query.filter(
+        deliveries = ProcessInfoDelivery.query.join(
+            Commission, Commission.id == ProcessInfoDelivery.commission_id,
+        ).filter(
             ProcessInfoDelivery.process_info_id == message.id,
             ProcessInfoDelivery.version == message.version,
             ProcessInfoDelivery.channel == "email",
             ProcessInfoDelivery.state.in_(
                 ("pending", "failed", "sent", "read")
             ),
+            or_(
+                Commission.local_official_user_id.is_(None),
+                Commission.local_official_user_id.not_in(blacklist_ids("user")),
+            ),
+            or_(
+                Commission.responsible_official_repair_erp_id.is_(None),
+                Commission.responsible_official_repair_erp_id.not_in(blacklist_ids("official")),
+            ),
         ).order_by(ProcessInfoDelivery.id.asc()).all()
 
         return [
             receipt_status(message, row.user_id, row.recipient_name)
             for row in deliveries
+            if not is_blacklisted("user", row.user_id)
         ]
 
     result = [

@@ -30,6 +30,8 @@ from .safety_inspection_protocol_admin import (
 from .external_portal import external_portal_bp
 from .process_info_web import process_info_web_bp
 from .dms_admin import dms_admin_bp
+from .blacklist import init_blacklist
+from .blacklist_admin import blacklist_bp
 
 # Worker starten: flask datlaeuft-worker --poll-seconds 10
 # fällige Aufgaben: flask datlaeuft-process-erp-work
@@ -54,6 +56,9 @@ def create_app() -> Flask:
     csrf.init_app(app)
     login_manager.login_view = "auth.login"
     login_manager.login_message = "Bitte anmelden."
+
+    init_blacklist(app)
+    app.register_blueprint(blacklist_bp)
 
     with app.app_context():
         load_runtime_config(app)

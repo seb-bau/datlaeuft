@@ -10,6 +10,7 @@ import requests
 from .extensions import db
 from .models import User
 from .settings import SettingKeys, settings
+from .blacklist import include_blacklisted
 
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
@@ -26,6 +27,7 @@ class EntraImportResult:
     skipped: int = 0
 
 
+@include_blacklisted()
 def import_entra_users() -> EntraImportResult:
     access_token = _acquire_graph_access_token()
     allowed_group_id = _configured_allowed_group_id()

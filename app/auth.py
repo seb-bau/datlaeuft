@@ -19,6 +19,7 @@ from .entra import (
 )
 from .models import BrowserPushSubscription, User, utc_now
 from .settings import SettingKeys, settings
+from .blacklist import include_blacklisted
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -29,7 +30,8 @@ auth_bp = Blueprint("auth", __name__)
 def load_user(user_id: str) -> User | None:
     if not user_id.isdigit():
         return None
-    return db.session.get(User, int(user_id))
+    user = db.session.get(User, int(user_id))
+    return user if user is not None and user.is_active else None
 
 
 def clear_external_craftsman_session() -> None:
@@ -475,6 +477,7 @@ def _build_generic_oidc_client() -> Any:
     return client
 
 
+@include_blacklisted()
 def resolve_generic_oidc_user(
     claims: dict[str, Any],
     create: bool,
@@ -521,6 +524,7 @@ def _build_msal_app() -> msal.ConfidentialClientApplication:
     return msal.ConfidentialClientApplication(client_id=client_id, client_credential=client_secret, authority=authority)
 
 
+@include_blacklisted()
 def resolve_microsoft_user(
     claims: dict[str, Any],
     create: bool,

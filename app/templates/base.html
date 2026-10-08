@@ -77,6 +77,7 @@
     or request.path.startswith('/admin/appointment-windows')
     or request.path.startswith('/admin/work-time-profiles')
     or request.path.startswith('/admin/external-craftsmen')
+    or request.path.startswith('/admin/blacklist')
   ) %}
 
   {% set current_section_label = 'Dashboard' %}
@@ -435,6 +436,13 @@
                   'Benutzer',
                   'people',
                   request.path.startswith('/admin/users')
+                ) }}
+
+              {{ sidebar_link(
+                  'blacklist.blacklist_page',
+                  'Blacklist',
+                  'person-slash',
+                  request.path.startswith('/admin/blacklist')
                 ) }}
 
               {{ sidebar_link(

@@ -354,9 +354,9 @@
         <div class="process-info-bubble">
           <div class="small fw-semibold mb-1">
             {% if information.direction == "craftsman" %}
-              {{ information.author_name or "Handwerker" }}
+              {{ information.visible_author_name or "Handwerker" }}
             {% else %}
-              {{ information.author_name or "Sachbearbeitung" }}
+              {{ information.visible_author_name or "Sachbearbeitung" }}
             {% endif %}
           </div>
 

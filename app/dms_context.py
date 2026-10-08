@@ -194,6 +194,10 @@ def work_report_context(commission, entries, scope):
         "completion_reason": commission.completion_reason or "",
         "entry_count": len(entries),
         "total_minutes": sum(entry.minutes for entry in entries),
-        "craftsmen": sorted({entry.user.display_name for entry in entries}),
+        "craftsmen": sorted({
+            entry.user.display_name
+            for entry in entries
+            if entry.user is not None
+        }),
         "scope": scope,
     }

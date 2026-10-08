@@ -810,7 +810,9 @@ class User(UserMixin, db.Model):
 
     @property
     def is_active(self) -> bool:
-        return self.is_active_flag
+        from .blacklist import is_blacklisted
+
+        return self.is_active_flag and not is_blacklisted("user", self.id)
 
     def set_password(self, password: str | None) -> None:
         self.password_hash = generate_password_hash(password) if password else None
@@ -2093,6 +2095,17 @@ class ProcessInfo(db.Model):
             sender_external_craftsman_id
         ]
     )
+
+    @property
+    def visible_author_name(self) -> str | None:
+        from .blacklist import is_blacklisted
+
+        if (
+            is_blacklisted("user", self.sender_user_id)
+            or is_blacklisted("external", self.sender_external_craftsman_id)
+        ):
+            return None
+        return self.author_name
 
 
 class ProcessInfoRead(db.Model):
@@ -7175,3 +7188,22 @@ class ProcessInfoDelivery(db.Model):
     )
     sent_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(db.Text)
+
+
+class BlacklistEntry(db.Model):
+    __tablename__ = "blacklist_entry"
+    __table_args__ = (
+        db.CheckConstraint(
+            "target_type IN ('user', 'official', 'external')",
+            name="ck_blacklist_target_type",
+        ),
+        db.CheckConstraint("target_id > 0", name="ck_blacklist_target_id"),
+    )
+
+    target_type: Mapped[str] = mapped_column(db.String(20), primary_key=True)
+    target_id: Mapped[int] = mapped_column(db.Integer, primary_key=True)
+    name_snapshot: Mapped[str] = mapped_column(db.String(500), nullable=False)
+    reason: Mapped[str | None] = mapped_column(db.String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True), default=utc_now, nullable=False,
+    )

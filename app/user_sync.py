@@ -16,6 +16,7 @@ from .models import (
 )
 from .settings import SettingKeys, settings
 from .wowiport import WowiportService
+from .blacklist import include_blacklisted
 
 
 EMAIL_PATTERN = re.compile(
@@ -40,6 +41,7 @@ class UserSyncResult:
     configuration_missing: int = 0
 
 
+@include_blacklisted()
 def sync_users_from_wowiport(
     service: WowiportService | None = None,
     craftsman_rows: list[Any] | None = None,

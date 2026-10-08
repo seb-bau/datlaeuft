@@ -3155,7 +3155,7 @@ def viewable_commission_user_ids(
         for visible_user
         in user.visible_commission_users
         if (
-            visible_user.is_active_flag
+            visible_user.is_active
             and visible_user.craftsman_erp_id
             is not None
         )

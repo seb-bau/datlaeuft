@@ -25,6 +25,7 @@ from .models import (
     WowiResponsibleOfficial
 )
 from .wowiport import WowiportService
+from .blacklist import include_blacklisted, is_blacklisted
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class CommissionAssignment:
     responsible_official_erp_id: int | None
 
 
+@include_blacklisted()
 def sync_object_directory() -> dict[str, int]:
     service = WowiportService()
     synced_at = utc_now()
@@ -1140,6 +1142,7 @@ def sync_object_directory() -> dict[str, int]:
     return result
 
 
+@include_blacklisted()
 def sync_responsible_official_directory(
     service: WowiportService,
     synced_at: datetime,
@@ -1395,7 +1398,7 @@ def resolve_commission_object(
 def resolve_commission_creator_official_id(
     user: User | None,
 ) -> int | None:
-    if user is None or user.id is None:
+    if user is None or user.id is None or is_blacklisted("user", user.id):
         return None
 
     mappings = (
@@ -1419,7 +1422,7 @@ def resolve_commission_creator_official_id(
             if owner is not None and owner.user_id != user.id:
                 return None
 
-    if person_id is None:
+    if person_id is None or is_blacklisted("person", person_id):
         return None
     jurisdictions = (
         WowiEconomicUnitJurisdiction.query
@@ -1469,6 +1472,12 @@ def resolve_commission_creator_official_id(
             .all()
         )
     )
+
+    official_ids = {
+        official_id
+        for official_id in official_ids
+        if not is_blacklisted("official", official_id)
+    }
 
     return next(iter(official_ids)) if len(official_ids) == 1 else None
 
@@ -1538,6 +1547,13 @@ def resolve_department_assignment(
             .responsible_person_erp_id
         )
 
+    if (
+        is_blacklisted("official", responsible_official_erp_id)
+        or is_blacklisted("person", responsible_person_erp_id)
+    ):
+        responsible_official_erp_id = None
+        responsible_person_erp_id = None
+
     if require_responsible_official and responsible_official_erp_id is None:
         raise ValueError(
             "In der Zuständigkeit fehlt der "
@@ -1572,7 +1588,7 @@ def resolve_department_assignment(
 
             if (
                 assigned_user is None
-                or not assigned_user.is_active_flag
+                or not assigned_user.is_active
                 or assigned_user.craftsman_erp_id
                 is None
             ):

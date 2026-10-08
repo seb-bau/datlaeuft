@@ -337,6 +337,7 @@ def invitation(raw_token: str) -> Any:
     valid = bool(
         token is not None
         and external_token_is_current(token)
+        and token.external_craftsman is not None
         and token.external_craftsman.portal_enabled
         and token.external_craftsman.wowi_active
     )

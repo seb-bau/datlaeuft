@@ -461,7 +461,7 @@ def ticket_analysis_configuration() -> dict[
             rule.target_user_id is not None
             and (
                 target_user is None
-                or not target_user.is_active_flag
+                or not target_user.is_active
                 or target_user.craftsman_erp_id is None
             )
         ):

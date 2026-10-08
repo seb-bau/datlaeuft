@@ -30,6 +30,7 @@ from .user_sync import (
     extract_craftsman_email,
     extract_craftsman_erp_id,
 )
+from .blacklist import include_blacklisted
 
 
 @dataclass
@@ -172,6 +173,7 @@ def resolve_external_craftsman(
     return automatic_candidate
 
 
+@include_blacklisted()
 def sync_external_craftsmen_from_wowiport(
     rows: list[Any],
 ) -> ExternalCraftsmanSyncResult:

@@ -55,6 +55,7 @@ from .process_info_service import (
 
 from datetime import datetime
 from .ticket_service import sync_all_ticket_mirrors
+from .blacklist import include_blacklisted
 
 
 def register_cli(app: Flask) -> None:
@@ -145,6 +146,7 @@ def register_cli(app: Flask) -> None:
     @click.option("--email", prompt=True)
     @click.option("--name", prompt=True)
     @click.password_option("--password")
+    @include_blacklisted()
     def create_admin(
         email: str,
         name: str,
