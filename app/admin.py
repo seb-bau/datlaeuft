@@ -4638,8 +4638,7 @@ def commission_assignment_preview() -> Any:
 
             if not candidates:
                 raise ValueError(
-                    "Für dieses Gewerk ist kein "
-                    "freigeschalteter externer "
+                    "Für dieses Gewerk ist kein externer "
                     "Handwerker verfügbar."
                 )
 

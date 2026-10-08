@@ -2993,7 +2993,6 @@ def sync_commissions_from_wowiport_regular(
             ExternalCraftsman.craftsman_erp_id
         )
         .filter(
-            ExternalCraftsman.portal_enabled.is_(True),
             ExternalCraftsman.wowi_active.is_(True),
         )
         .distinct()

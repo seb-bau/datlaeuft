@@ -21,6 +21,7 @@ from .models import (
     ExternalCommissionAssignmentMail,
     ExternalCraftsman,
     ExternalCraftsmanAccessToken,
+    User,
     utc_now,
 )
 from .settings import SettingKeys, settings
@@ -46,6 +47,13 @@ class ExternalCraftsmanSyncResult:
 def available_external_craftsmen(
     craft_activity_id: int | None = None,
 ) -> list[ExternalCraftsman]:
+    internal_craftsman_ids = db.session.query(
+        User.craftsman_erp_id
+    ).filter(
+        User.is_active_flag.is_(True),
+        User.craftsman_erp_id.is_not(None),
+    )
+
     query = (
         ExternalCraftsman.query
         .options(
@@ -54,23 +62,19 @@ def available_external_craftsmen(
             )
         )
         .filter(
-            ExternalCraftsman.portal_enabled.is_(True),
             ExternalCraftsman.wowi_active.is_(True),
-            ExternalCraftsman.email.is_not(None),
+            ExternalCraftsman.craftsman_erp_id.not_in(
+                internal_craftsman_ids
+            ),
         )
     )
 
     if craft_activity_id is not None:
         query = query.filter(
             or_(
-                ~ExternalCraftsman
-                .craft_activities
-                .any(),
-                ExternalCraftsman
-                .craft_activities
-                .any(
-                    CraftActivity.id
-                    == craft_activity_id
+                ~ExternalCraftsman.craft_activities.any(),
+                ExternalCraftsman.craft_activities.any(
+                    CraftActivity.id == craft_activity_id
                 ),
             )
         )
@@ -154,8 +158,7 @@ def resolve_external_craftsman(
 
     if not candidates:
         raise ValueError(
-            "Für dieses Gewerk ist kein "
-            "freigeschalteter externer "
+            "Für dieses Gewerk ist kein externer "
             "Handwerker verfügbar."
         )
 

@@ -5,7 +5,8 @@
   <div>
     <h1 class="h3 mb-1">Externe Handwerker</h1>
     <p class="text-muted mb-0">
-      Wählen Sie aus, welche Wowiport-Handwerker das Auftragnehmerportal verwenden dürfen.
+      Externe Handwerker können unabhängig vom Portalzugang beauftragt werden.
+      Hier verwalten Sie die Freischaltung für das Auftragnehmerportal.
     </p>
   </div>
   <form method="post" action="{{ url_for('admin.external_craftsmen_sync') }}">
@@ -27,7 +28,7 @@
             <th>E-Mail</th>
             <th>Gewerke</th>
             <th>Benutzername</th>
-            <th>Status</th>
+            <th>Portalzugang</th>
             <th data-filter="false"></th>
           </tr>
         </thead>
