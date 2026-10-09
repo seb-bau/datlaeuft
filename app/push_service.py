@@ -25,6 +25,7 @@ from .models import (
     SafetyInspectionJobStatus,
     ProcessInfo
 )
+from .push_preferences import is_push_event_enabled
 from .settings import SettingKeys, settings
 
 
@@ -467,6 +468,8 @@ def _enqueue_for_user(
         SafetyInspectionJob | None
     ) = None,
 ) -> PushBatch:
+    if not user.is_active or not _event_enabled(user, event_type):
+        return PushBatch(batch_id=str(uuid4()), queued_count=0)
     devices = PushDevice.query.filter_by(
         user_id=user.id,
         active=True,
@@ -505,40 +508,7 @@ def _event_enabled(
     user: User,
     event_type: PushEventType,
 ) -> bool:
-    if (
-        event_type
-        == PushEventType.NEW_COMMISSION
-    ):
-        return bool(
-            user.push_new_commission_enabled
-        )
-
-    if event_type == PushEventType.CHANGED_COMMISSION:
-        return False
-
-    if event_type in {
-        PushEventType.APPOINTMENT_ACCEPTED,
-        PushEventType.APPOINTMENT_REJECTED,
-        PushEventType.COMMISSION_PRIORITY_RAISED,
-    }:
-        return bool(
-            user.push_changed_commission_enabled
-        )
-
-    if event_type in {
-        PushEventType
-        .NEW_SAFETY_INSPECTION,
-        PushEventType
-        .CHANGED_SAFETY_INSPECTION,
-        PushEventType
-        .URGENT_SAFETY_DEFECT,
-    }:
-        return bool(
-            user
-            .push_safety_inspection_enabled
-        )
-
-    return True
+    return is_push_event_enabled(user, event_type)
 
 
 def _commission_message(

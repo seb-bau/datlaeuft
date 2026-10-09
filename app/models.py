@@ -737,6 +737,13 @@ class User(UserMixin, db.Model):
         server_default=true(),
         nullable=False,
     )
+    push_event_preferences: Mapped[
+        dict[str, bool] | None
+    ] = mapped_column(
+        db.JSON,
+        default=dict,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 

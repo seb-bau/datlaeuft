@@ -95,6 +95,12 @@ from .object_directory import (
 from .attachment_service import (
     commission_attachment_path,
 )
+from .push_preferences import (
+    COMMISSION_CHANGE_EVENTS,
+    CONFIGURABLE_PUSH_EVENTS,
+    PushEventType,
+    serialize_push_preferences,
+)
 from .push_service import (
     register_push_device,
     unregister_push_device,
@@ -183,18 +189,7 @@ def me() -> Any:
 @jwt_required()
 def push_preferences() -> Any:
     user = current_api_user()
-    return jsonify(
-        {
-            "preferences": {
-                "new_commission_enabled": bool(
-                    user.push_new_commission_enabled
-                ),
-                "changed_commission_enabled": bool(
-                    user.push_changed_commission_enabled
-                ),
-            }
-        }
-    )
+    return jsonify({"preferences": serialize_push_preferences(user)})
 
 
 @api_bp.patch("/push/preferences")
@@ -206,52 +201,61 @@ def update_push_preferences() -> Any:
     if not isinstance(data, dict):
         return jsonify({"message": "Ungültiger JSON-Body."}), 400
 
-    changed = False
+    legacy_fields = {
+        "new_commission_enabled": (
+            "push_new_commission_enabled",
+            (PushEventType.NEW_COMMISSION,),
+        ),
+        "changed_commission_enabled": (
+            "push_changed_commission_enabled",
+            COMMISSION_CHANGE_EVENTS,
+        ),
+    }
+    events = data.get("events", {})
+    allowed_events = {
+        event_type.value for event_type in CONFIGURABLE_PUSH_EVENTS
+    }
 
-    if "new_commission_enabled" in data:
-        value = data["new_commission_enabled"]
-        if type(value) is not bool:
-            return jsonify(
-                {
-                    "message": (
-                        "new_commission_enabled muss ein Wahrheitswert sein."
-                    )
-                }
-            ), 400
-        user.push_new_commission_enabled = value
-        changed = True
+    if not isinstance(events, dict):
+        return jsonify({
+            "message": "Mitteilungstypen müssen als Objekt übergeben werden."
+        }), 400
 
-    if "changed_commission_enabled" in data:
-        value = data["changed_commission_enabled"]
-        if type(value) is not bool:
-            return jsonify(
-                {
-                    "message": (
-                        "changed_commission_enabled muss ein Wahrheitswert sein."
-                    )
-                }
-            ), 400
-        user.push_changed_commission_enabled = value
-        changed = True
+    for key, value in events.items():
+        if key not in allowed_events or type(value) is not bool:
+            return jsonify({
+                "message": "Ungültiger Mitteilungstyp oder Wahrheitswert."
+            }), 400
 
-    if not changed:
-        return jsonify(
-            {"message": "Es wurde keine Mitteilungseinstellung übergeben."}
-        ), 400
+    for key in legacy_fields:
+        if key in data and type(data[key]) is not bool:
+            return jsonify({
+                "message": f"{key} muss ein Wahrheitswert sein."
+            }), 400
 
-    db.session.commit()
-    return jsonify(
-        {
-            "preferences": {
-                "new_commission_enabled": bool(
-                    user.push_new_commission_enabled
-                ),
-                "changed_commission_enabled": bool(
-                    user.push_changed_commission_enabled
-                ),
-            }
-        }
+    if not events and not any(key in data for key in legacy_fields):
+        return jsonify({
+            "message": "Es wurde keine Mitteilungseinstellung übergeben."
+        }), 400
+
+    user = (
+        User.query.filter_by(id=user.id)
+        .with_for_update()
+        .populate_existing()
+        .one()
     )
+    preferences = dict(user.push_event_preferences or {})
+
+    for key, (attribute, event_types) in legacy_fields.items():
+        if key in data:
+            setattr(user, attribute, data[key])
+            for event_type in event_types:
+                preferences.pop(event_type.value, None)
+
+    preferences.update(events)
+    user.push_event_preferences = preferences
+    db.session.commit()
+    return jsonify({"preferences": serialize_push_preferences(user)})
 
 
 @api_bp.put("/push/device")
