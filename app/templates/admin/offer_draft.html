@@ -193,13 +193,6 @@
                 data-search-url="{{ url_for('admin.offer_object_search', offer_id=item.id) }}"
                 data-recipient-url="{{ url_for('admin.offer_recipient_candidates', offer_id=item.id) }}"
               >
-                <button
-                  class="btn btn-outline-secondary"
-                  id="objectSearchButton"
-                  type="button"
-                >
-                  Suchen
-                </button>
               </div>
 
               <div
@@ -1149,7 +1142,10 @@ refreshCatalogue();
 updateEmptyMessage();
 </script>
 {% endif %}
+{% if editable %}
+<script src="{{ url_for('static', filename='js/recipient_lookup.js') }}" defer></script>
+{% endif %}
 {% with document_type='offer' %}
-  {% include 'admin/_document_articles.html' %}
+{% include 'admin/_document_articles.html' %}
 {% endwith %}
 {% endblock %}
