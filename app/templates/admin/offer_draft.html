@@ -182,12 +182,17 @@
               </label>
 
               <div class="input-group">
-                <input
-                  class="form-control"
-                  id="objectSearch"
-                  type="search"
-                  placeholder="Name, Vertrag, Adresse oder Objekt"
-                >
+              <input
+                class="form-control"
+                id="objectSearch"
+                type="search"
+                placeholder="Name, Vertrag, Adresse oder Objekt"
+                data-recipient-search
+                data-document-type="offer"
+                data-agreement-id="{{ item.license_agreement_erp_id or '' }}"
+                data-search-url="{{ url_for('admin.offer_object_search', offer_id=item.id) }}"
+                data-recipient-url="{{ url_for('admin.offer_recipient_candidates', offer_id=item.id) }}"
+              >
                 <button
                   class="btn btn-outline-secondary"
                   id="objectSearchButton"
@@ -225,15 +230,6 @@
 
               {% if editable %}
               <div class="mt-3 d-flex gap-2">
-                <button
-                  class="btn btn-sm btn-outline-primary"
-                  id="loadRecipientButton"
-                  type="button"
-                  {% if not item.license_agreement_erp_id %}disabled{% endif %}
-                >
-                  Anschrift aus Wowiport abrufen
-                </button>
-
                 <button
                   class="btn btn-sm btn-outline-secondary"
                   id="clearObjectButton"
@@ -949,20 +945,6 @@ const craftActivity = document.getElementById("craftActivity");
 const cataloguePosition = document.getElementById("cataloguePosition");
 const positionsBody = document.getElementById("offerPositions");
 const emptyPositionMessage = document.getElementById("emptyPositionMessage");
-const objectSearch = document.getElementById("objectSearch");
-const objectSearchButton = document.getElementById("objectSearchButton");
-const objectSearchResults = document.getElementById("objectSearchResults");
-const objectTypeInput = document.getElementById("objectType");
-const objectIdInput = document.getElementById("objectId");
-const selectedObject = document.getElementById("selectedObject");
-const loadRecipientButton = document.getElementById("loadRecipientButton");
-const clearObjectButton = document.getElementById("clearObjectButton");
-const recipientMessage = document.getElementById("recipientMessage");
-const candidateContainer = document.getElementById("recipientCandidateContainer");
-const candidateSelect = document.getElementById("recipientCandidateSelect");
-const personIdInput = document.getElementById("recipientPersonErpId");
-let selectedAgreementErpId = {{ item.license_agreement_erp_id|tojson }};
-let recipientCandidates = [];
 let draftChanged = false;
 
 function escapeValue(value) {
@@ -1051,147 +1033,6 @@ function createPositionRow(values) {
   draftChanged = true;
 }
 
-async function searchObjects() {
-  const query = objectSearch.value.trim();
-  objectSearchResults.innerHTML = "";
-
-  if (query.length < 2) {
-    return;
-  }
-
-  const response = await fetch(
-    "{{ url_for('admin.offer_object_search', offer_id=item.id) }}"
-    + "?q="
-    + encodeURIComponent(query)
-  );
-  const data = await response.json();
-
-  data.items.forEach(result => {
-    const agreement = result.license_agreement || {};
-    const economicUnit = result.economic_unit || {};
-    const building = result.building || {};
-    const button = document.createElement("button");
-
-    button.type = "button";
-    button.className =
-      "list-group-item list-group-item-action";
-    button.textContent = [
-      result.tenant_name || result.label,
-      agreement.id_num
-        ? `Vertrag ${agreement.id_num}`
-        : "",
-      economicUnit.id_num
-        ? `WE ${economicUnit.id_num}`
-        : "",
-      building.address || ""
-    ].filter(Boolean).join(" · ");
-
-    button.addEventListener("click", () => {
-      objectTypeInput.value =
-        result.object_type || "";
-      objectIdInput.value =
-        result.object_id || "";
-      selectedAgreementErpId =
-        agreement.erp_id || null;
-      selectedObject.textContent =
-        button.textContent;
-      loadRecipientButton.disabled =
-        !selectedAgreementErpId;
-      objectSearchResults.innerHTML = "";
-      recipientMessage.textContent = "";
-      candidateContainer.classList.add("d-none");
-      draftChanged = true;
-    });
-
-    objectSearchResults.appendChild(button);
-  });
-
-  if (data.items.length === 0) {
-    objectSearchResults.innerHTML =
-      '<div class="list-group-item text-muted">Keine passenden Objekte gefunden.</div>';
-  }
-}
-
-function applyRecipient(candidate) {
-  personIdInput.value =
-    candidate.person_id || "";
-  document.getElementById("recipientType").value =
-    candidate.recipient_type || "private";
-  document.getElementById("recipientName").value =
-    candidate.name || "";
-  document.getElementById("recipientNameAddition").value =
-    candidate.name_addition || "";
-  document.getElementById("recipientStreet").value =
-    candidate.street || "";
-  document.getElementById("recipientPostalCode").value =
-    candidate.postal_code || "";
-  document.getElementById("recipientTown").value =
-    candidate.town || "";
-  document.getElementById("recipientCountryCode").value =
-    candidate.country_code || "DE";
-  document.getElementById("recipientEmail").value =
-    candidate.email || "";
-  document.getElementById("recipientVatId").value =
-    candidate.vat_id || "";
-  draftChanged = true;
-}
-
-async function loadRecipient() {
-  recipientMessage.textContent = "";
-  candidateContainer.classList.add("d-none");
-
-  if (!selectedAgreementErpId) {
-    recipientMessage.textContent =
-      "Bitte zuerst einen Mietvertrag auswählen.";
-    return;
-  }
-
-  loadRecipientButton.disabled = true;
-
-  try {
-    const response = await fetch(
-      "{{ url_for('admin.offer_recipient_candidates', offer_id=item.id) }}"
-      + "?license_agreement_id="
-      + encodeURIComponent(selectedAgreementErpId)
-    );
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        data.message
-        || "Die Anschrift konnte nicht geladen werden."
-      );
-    }
-
-    recipientCandidates = data.items || [];
-
-    if (recipientCandidates.length === 1) {
-      applyRecipient(recipientCandidates[0]);
-      return;
-    }
-
-    candidateSelect.innerHTML =
-      '<option value="">Bitte auswählen</option>';
-
-    recipientCandidates.forEach((candidate, index) => {
-      const option = document.createElement("option");
-      option.value = String(index);
-      option.textContent = [
-        candidate.name,
-        candidate.role
-      ].filter(Boolean).join(" · ");
-      candidateSelect.appendChild(option);
-    });
-
-    candidateContainer.classList.remove("d-none");
-  } catch (error) {
-    recipientMessage.textContent = error.message;
-  } finally {
-    loadRecipientButton.disabled =
-      !selectedAgreementErpId;
-  }
-}
-
 craftActivity.addEventListener(
   "change",
   refreshCatalogue
@@ -1264,53 +1105,6 @@ positionsBody.addEventListener("click", event => {
     }
   }
 });
-
-objectSearchButton.addEventListener(
-  "click",
-  searchObjects
-);
-objectSearch.addEventListener(
-  "keydown",
-  event => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      searchObjects();
-    }
-  }
-);
-loadRecipientButton.addEventListener(
-  "click",
-  loadRecipient
-);
-candidateSelect.addEventListener(
-  "change",
-  () => {
-    if (candidateSelect.value === "") {
-      return;
-    }
-
-    applyRecipient(
-      recipientCandidates[
-        Number(candidateSelect.value)
-      ]
-    );
-  }
-);
-clearObjectButton.addEventListener(
-  "click",
-  () => {
-    objectTypeInput.value = "";
-    objectIdInput.value = "";
-    selectedAgreementErpId = null;
-    selectedObject.textContent =
-      "Kein Objekt ausgewählt";
-    loadRecipientButton.disabled = true;
-    candidateContainer.classList.add("d-none");
-    recipientMessage.textContent = "";
-    draftChanged = true;
-  }
-);
-
 offerDraftForm.addEventListener(
   "input",
   () => {
