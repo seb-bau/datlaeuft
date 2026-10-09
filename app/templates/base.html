@@ -48,7 +48,7 @@
     request.path.startswith('/admin/reports')
   %}
   {% set is_safety_section = request.path.startswith('/admin/safety-inspections') %}
-  {% set is_inventory_stock_section = (
+    {% set is_inventory_stock_section = (
     request.path == '/admin/inventory'
     or request.path.startswith('/admin/inventory/')
   ) %}
@@ -56,9 +56,17 @@
     request.path == '/admin/inventory-items'
     or request.path.startswith('/admin/inventory-items/')
   ) %}
+  {% set is_inventory_locations_section = (
+    request.path.startswith('/admin/inventory-locations')
+  ) %}
+  {% set is_inventory_classifications_section = (
+    request.path.startswith('/admin/inventory-classifications')
+  ) %}
   {% set is_inventory_section = (
     is_inventory_stock_section
     or is_inventory_items_section
+    or is_inventory_locations_section
+    or is_inventory_classifications_section
   ) %}
   {% set is_administration_section = (
     request.path.startswith('/admin/users')
@@ -71,8 +79,6 @@
     or request.path.startswith('/admin/settings')
     or request.path.startswith('/admin/sync-health')
     or request.path.startswith('/admin/dms')
-    or request.path.startswith('/admin/inventory-locations')
-    or request.path.startswith('/admin/inventory-classifications')
     or request.path.startswith('/admin/time-templates')
     or request.path.startswith('/admin/appointment-windows')
     or request.path.startswith('/admin/work-time-profiles')
@@ -379,7 +385,7 @@
             id="navInventory"
             data-bs-parent="#appNavigation"
           >
-            <div class="sidebar-subnav-inner">
+                        <div class="sidebar-subnav-inner">
             {{ sidebar_link(
               'admin.inventory',
               'Lagerbestand',
@@ -392,6 +398,20 @@
               'Lagerartikel',
               'box-seam',
               is_inventory_items_section
+            ) }}
+
+            {{ sidebar_link(
+              'admin.inventory_locations',
+              'Lagerorte',
+              'geo-alt',
+              is_inventory_locations_section
+            ) }}
+
+            {{ sidebar_link(
+              'admin.inventory_classifications',
+              'Artikelgruppen und -arten',
+              'tags',
+              is_inventory_classifications_section
             ) }}
             </div>
           </div>
@@ -503,22 +523,8 @@
               {% endif %}
 
               <div class="sidebar-subnav-label">
-                Planung und Lager
+                Planung
               </div>
-
-              {{ sidebar_link(
-                'admin.inventory_locations',
-                'Lagerorte',
-                'geo-alt',
-                request.path.startswith('/admin/inventory-locations')
-              ) }}
-
-              {{ sidebar_link(
-                'admin.inventory_classifications',
-                'Artikelgruppen und -arten',
-                'tags',
-                request.path.startswith('/admin/inventory-classifications')
-              ) }}
 
               {{ sidebar_link(
                 'admin.time_templates',
