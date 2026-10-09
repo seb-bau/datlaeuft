@@ -9414,13 +9414,13 @@ def parse_work_time_value(
 def save_user_work_time_profile_assignment(
     item: User,
 ) -> None:
-    if item.craftsman_erp_id is None:
-        return
-
     raw_profile_id = request.form.get(
         "work_time_profile_id",
         "",
     ).strip()
+
+    if not raw_profile_id and item.craftsman_erp_id is None:
+        return
 
     if not raw_profile_id.isdigit():
         raise ValueError(
