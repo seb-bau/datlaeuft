@@ -1,0 +1,155 @@
+{% if editable %}
+<div class="modal fade" id="documentArticleModal" tabindex="-1"
+     aria-labelledby="documentArticleTitle" aria-hidden="true"
+     data-endpoint="{{ url_for('document_articles.items', document_type=document_type, document_id=item.id) }}">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title fs-5" id="documentArticleTitle">
+          Artikel hinzufügen
+        </h2>
+        <button type="button" class="btn-close"
+                data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+
+      <div class="modal-body">
+        <div id="documentArticleMessage"
+             class="alert alert-danger" role="alert" hidden></div>
+
+        <div id="documentArticleSelection">
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <select id="documentArticleSource"
+                    class="form-select w-auto" aria-label="Artikelquelle">
+              <option value="material">Lager (Material)</option>
+              <option value="local_catalog">Lokaler Katalog</option>
+            </select>
+
+            <input id="documentArticleSearch"
+                   class="form-control flex-fill w-auto"
+                   placeholder="Artikelnummer oder Bezeichnung suchen"
+                   aria-label="Artikel suchen">
+
+            <button id="documentArticleNew"
+                    type="button" class="btn btn-primary">
+              Neuer Artikel
+            </button>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  {% for label in [
+                    'Artikel-Nr.', 'Bezeichnung', 'Geschäftsbereich',
+                    'Warengruppe', 'Einheit', 'Nettopreis', 'Aktiv',
+                    'Steuersatz', 'MwSt.', ''
+                  ] %}
+                  <th>{{ label }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody id="documentArticleResults"></tbody>
+            </table>
+          </div>
+
+          <div class="d-flex align-items-center justify-content-end gap-2">
+            <button id="documentArticlePrevious" type="button"
+                    class="btn btn-outline-secondary btn-sm">
+              Zurück
+            </button>
+            <span id="documentArticlePage" aria-live="polite"></span>
+            <button id="documentArticleNext" type="button"
+                    class="btn btn-outline-secondary btn-sm">
+              Weiter
+            </button>
+          </div>
+        </div>
+
+        <form id="documentArticleForm" hidden>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="row g-3">
+            {% for field, label, length, default in [
+              ('item_number', 'Artikelnummer', 100, ''),
+              ('name', 'Bezeichnung', 255, ''),
+              ('unit', 'Einheit', 40, 'Stk')
+            ] %}
+            <div class="col-md-{{ 12 if field == 'name' else 6 }}">
+              <label class="form-label" for="newArticle_{{ field }}">
+                {{ label }}
+              </label>
+              <input id="newArticle_{{ field }}" class="form-control"
+                     name="{{ field }}" maxlength="{{ length }}"
+                     value="{{ default }}" required>
+            </div>
+            {% endfor %}
+
+            <div class="col-md-6" id="newArticleTypeSection">
+              <label class="form-label" for="newArticleType">Artikelart</label>
+              <select id="newArticleType" name="item_type_id"
+                      class="form-select"></select>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label" for="newArticlePrice">
+                Nettopreis je Einheit
+              </label>
+              <input id="newArticlePrice" class="form-control"
+                     name="price_net" inputmode="decimal"
+                     value="0,00" required>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label" for="newArticleVat">MwSt. in %</label>
+              <input id="newArticleVat" class="form-control"
+                     name="vat_rate" inputmode="decimal"
+                     value="19,00" required>
+            </div>
+
+            <div id="newArticleLocalSection" class="col-12" hidden>
+              <div class="row g-3">
+                {% for field, label, length, default in [
+                  ('business_area', 'Geschäftsbereich', 100, ''),
+                  ('product_group', 'Warengruppe', 100, ''),
+                  ('tax_label', 'Steuersatz', 80, 'Normalsteuersatz')
+                ] %}
+                <div class="col-md-4">
+                  <label class="form-label" for="newArticle_{{ field }}">
+                    {{ label }}
+                  </label>
+                  <input id="newArticle_{{ field }}" class="form-control"
+                         name="{{ field }}" maxlength="{{ length }}"
+                         value="{{ default }}"
+                         {{ 'required' if field == 'tax_label' else '' }}>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="col-12 form-check ms-2">
+              <input id="newArticleActive" class="form-check-input"
+                     type="checkbox" name="active" checked>
+              <label class="form-check-label" for="newArticleActive">
+                Aktiv
+              </label>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-end gap-2 mt-4">
+            <button id="documentArticleBack" type="button"
+                    class="btn btn-outline-secondary">
+              Abbrechen
+            </button>
+            <button id="documentArticleSave" type="submit"
+                    class="btn btn-primary">
+              Speichern und übernehmen
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/document_articles.js') }}" defer></script>
+{% endif %}

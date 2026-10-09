@@ -575,9 +575,12 @@
             Freie Position
           </button>
         </div>
+        <button class="btn btn-sm btn-outline-primary" type="button"
+          data-bs-toggle="modal" data-bs-target="#documentArticleModal">
+          Artikel hinzufügen
+        </button>
         {% endif %}
       </div>
-
       <div class="card-body">
         <div class="table-responsive">
           <table class="table table-sm align-middle">
@@ -614,6 +617,12 @@
                     name="position_task_template_id"
                     value="{{ position.task_template_id or '' }}"
                   >
+                  <input type="hidden" name="position_inventory_item_id"
+                         value="{{ position.inventory_item_id or '' }}">
+                  <input type="hidden" name="position_local_catalog_item_id"
+                         value="{{ position.local_catalog_item_id or '' }}">
+                  <input type="hidden" name="position_source_data"
+                         value="{{ (position.source_data or {})|tojson|forceescape }}">
                 </td>
                 <td>
                   <textarea
@@ -1003,6 +1012,9 @@ function createPositionRow(values) {
       </span>
       <input type="hidden" name="position_source_type" value="${escapeValue(values.sourceType)}">
       <input type="hidden" name="position_task_template_id" value="${escapeValue(values.taskTemplateId)}">
+      <input type="hidden" name="position_inventory_item_id" value="">
+      <input type="hidden" name="position_local_catalog_item_id" value="">
+      <input type="hidden" name="position_source_data" value="{}">
     </td>
     <td>
       <textarea class="form-control form-control-sm" name="position_description" rows="2" required>${escapeValue(values.description)}</textarea>
@@ -1343,4 +1355,7 @@ refreshCatalogue();
 updateEmptyMessage();
 </script>
 {% endif %}
+{% with document_type='offer' %}
+  {% include 'admin/_document_articles.html' %}
+{% endwith %}
 {% endblock %}

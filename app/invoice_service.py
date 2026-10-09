@@ -224,14 +224,7 @@ def create_offer_invoice_draft(
     rows = []
 
     for position in offer.positions:
-        source_type = (
-            InvoicePositionSource.CATALOG.value
-            if (
-                position.source_type
-                == OfferPositionSource.CATALOG.value
-            )
-            else InvoicePositionSource.FREE.value
-        )
+        source_type = position.source_type
 
         rows.append(
             {
@@ -239,19 +232,17 @@ def create_offer_invoice_draft(
                 "task_template_id": (
                     position.task_template_id
                 ),
-                "inventory_item_id": None,
+                "inventory_item_id": position.inventory_item_id,
+                "local_catalog_item_id": position.local_catalog_item_id,
                 "source_data": {
+                    **(position.source_data or {}),
                     "source_key": (
                         "offer-position:"
                         f"{position.id}"
                     ),
                     "offer_id": offer.id,
-                    "offer_position_id": (
-                        position.id
-                    ),
-                    "commission_id": (
-                        offer.commission_id
-                    ),
+                    "offer_position_id": position.id,
+                    "commission_id": offer.commission_id,
                 },
                 "description": (
                     position.description
@@ -1220,6 +1211,7 @@ def append_invoice_position(
         inventory_item_id=values.get(
             "inventory_item_id"
         ),
+        local_catalog_item_id=values.get("local_catalog_item_id"),
         source_data=values.get(
             "source_data"
         ),

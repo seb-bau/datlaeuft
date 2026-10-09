@@ -10,6 +10,7 @@ from sqlalchemy import UniqueConstraint, false, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.mysql import LONGTEXT
 from werkzeug.security import check_password_hash, generate_password_hash
+from decimal import Decimal
 
 from .extensions import db
 
@@ -246,6 +247,7 @@ class InvoicePositionSource(str, Enum):
     TIME = "time"
     MATERIAL = "material"
     CATALOG = "catalog"
+    LOCAL_CATALOG = "local_catalog"
     FREE = "free"
     CANCELLATION = "cancellation"
 
@@ -269,6 +271,8 @@ class OfferStatus(str, Enum):
 
 class OfferPositionSource(str, Enum):
     CATALOG = "catalog"
+    MATERIAL = "material"
+    LOCAL_CATALOG = "local_catalog"
     FREE = "free"
 
 
@@ -3457,6 +3461,47 @@ class InventoryMovement(db.Model):
     )
 
 
+class LocalCatalogItem(db.Model):
+    __tablename__ = "local_catalog_item"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_number: Mapped[str] = mapped_column(
+        db.String(100), unique=True, index=True
+    )
+    name: Mapped[str] = mapped_column(
+        db.String(255), index=True
+    )
+    business_area: Mapped[str] = mapped_column(
+        db.String(100), default="", server_default=""
+    )
+    product_group: Mapped[str] = mapped_column(
+        db.String(100), default="", server_default=""
+    )
+    unit: Mapped[str] = mapped_column(
+        db.String(40), default="Stk", server_default="Stk"
+    )
+    price_net: Mapped[Decimal] = mapped_column(
+        db.Numeric(14, 4), default=0, server_default="0"
+    )
+    active: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=True,
+        server_default=true(),
+        index=True,
+    )
+    tax_label: Mapped[str] = mapped_column(
+        db.String(80),
+        default="Normalsteuersatz",
+        server_default="Normalsteuersatz",
+    )
+    vat_rate: Mapped[Decimal] = mapped_column(
+        db.Numeric(5, 2), default=19, server_default="19"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True), default=utc_now
+    )
+
+
 class TimeTaskTemplate(db.Model):
     __tablename__ = "time_task_template"
 
@@ -4086,6 +4131,11 @@ class InvoicePosition(db.Model):
         db.ForeignKey("inventory_item.id"),
         index=True,
     )
+    local_catalog_item_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("local_catalog_item.id", ondelete="SET NULL"),
+        index=True,
+    )
+    local_catalog_item: Mapped[LocalCatalogItem | None] = relationship()
     source_data: Mapped[dict[str, Any] | None] = mapped_column(
         db.JSON
     )
@@ -4713,6 +4763,17 @@ class OfferPosition(db.Model):
             index=True,
         )
     )
+    inventory_item_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("inventory_item.id", ondelete="SET NULL"),
+        index=True,
+    )
+    local_catalog_item_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("local_catalog_item.id", ondelete="SET NULL"),
+        index=True,
+    )
+    source_data: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
+    inventory_item: Mapped[InventoryItem | None] = relationship()
+    local_catalog_item: Mapped[LocalCatalogItem | None] = relationship()
     description: Mapped[str] = mapped_column(
         db.Text,
         nullable=False,

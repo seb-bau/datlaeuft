@@ -244,6 +244,7 @@ from .catalog import (
 
 from .appointment_service import format_manual_appointment
 from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
+from .document_articles import attach_article_fields
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -5562,10 +5563,10 @@ def offer_edit_context(
         "selected_object": selected_object,
         "status_labels": OFFER_STATUS_LABELS,
         "position_source_labels": {
-            OfferPositionSource.CATALOG.value:
-                "Katalog",
-            OfferPositionSource.FREE.value:
-                "Freie Position",
+            OfferPositionSource.CATALOG.value: "Katalog",
+            OfferPositionSource.MATERIAL.value: "Material",
+            OfferPositionSource.LOCAL_CATALOG.value: "Lokaler Katalog",
+            OfferPositionSource.FREE.value: "Freie Position",
         },
     }
 
@@ -5867,6 +5868,8 @@ def save_offer_positions_form(
 
         if source_type not in {
             OfferPositionSource.CATALOG.value,
+            OfferPositionSource.MATERIAL.value,
+            OfferPositionSource.LOCAL_CATALOG.value,
             OfferPositionSource.FREE.value,
         }:
             raise ValueError(
@@ -5939,6 +5942,7 @@ def save_offer_positions_form(
             }
         )
 
+    attach_article_fields(rows, item.positions)
     replace_offer_positions(
         item,
         rows,
@@ -6509,6 +6513,7 @@ def invoice_edit_context(
             "time": "Zeit",
             "material": "Material",
             "catalog": "Katalog",
+            "local_catalog": "Lokaler Katalog",
             "free": "Freie Position",
             "cancellation": "Storno",
         },
@@ -6560,6 +6565,7 @@ def save_invoice_positions_form(
         InvoicePositionSource.TIME.value,
         InvoicePositionSource.MATERIAL.value,
         InvoicePositionSource.CATALOG.value,
+        InvoicePositionSource.LOCAL_CATALOG.value,
         InvoicePositionSource.FREE.value,
     }
     rows = []
@@ -6707,6 +6713,7 @@ def save_invoice_positions_form(
             }
         )
 
+    attach_article_fields(rows, item.positions)
     replace_invoice_positions(
         item,
         rows,

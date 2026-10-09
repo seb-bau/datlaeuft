@@ -184,6 +184,8 @@ def replace_offer_positions(
 
         if source_type not in {
             OfferPositionSource.CATALOG.value,
+            OfferPositionSource.MATERIAL.value,
+            OfferPositionSource.LOCAL_CATALOG.value,
             OfferPositionSource.FREE.value,
         }:
             raise ValueError(
@@ -343,6 +345,9 @@ def replace_offer_positions(
                 position_index=position_index,
                 source_type=source_type,
                 task_template=task_template,
+                inventory_item_id=row.get("inventory_item_id"),
+                local_catalog_item_id=row.get("local_catalog_item_id"),
+                source_data=row.get("source_data"),
                 description=description,
                 details=details,
                 quantity=quantity,
@@ -770,6 +775,9 @@ def copy_offer_to_draft(
             "task_template_id": (
                 position.task_template_id
             ),
+            "inventory_item_id": position.inventory_item_id,
+            "local_catalog_item_id": position.local_catalog_item_id,
+            "source_data": dict(position.source_data or {}),
             "description": (
                 position.description
             ),
@@ -945,10 +953,13 @@ def offer_commission_draft_data(
                     f"Für Position {index + 1} "
                     "fehlt die Leistungsposition."
                 )
-
         elif (
-            position.source_type
-            == OfferPositionSource.FREE.value
+                position.source_type
+                in {
+                    OfferPositionSource.FREE.value,
+                    OfferPositionSource.MATERIAL.value,
+                    OfferPositionSource.LOCAL_CATALOG.value,
+                }
         ):
             if (
                 fallback is None

@@ -728,6 +728,10 @@
             Freie Position
           </button>
         </div>
+          <button class="btn btn-sm btn-outline-primary" type="button"
+                    data-bs-toggle="modal" data-bs-target="#documentArticleModal">
+              Artikel hinzufügen
+            </button>
         {% endif %}
       </div>
 
@@ -779,6 +783,8 @@
                     name="position_inventory_item_id"
                     value="{{ position.inventory_item_id or '' }}"
                   >
+                  <input type="hidden" name="position_local_catalog_item_id"
+                   value="{{ position.local_catalog_item_id or '' }}">
                   <input
                     type="hidden"
                     name="position_source_data"
@@ -1174,6 +1180,7 @@
         <input type="hidden" name="position_source_type" value="${escapePositionValue(values.sourceType)}">
         <input type="hidden" name="position_task_template_id" value="${escapePositionValue(values.taskTemplateId)}">
         <input type="hidden" name="position_inventory_item_id" value="">
+        <input type="hidden" name="position_local_catalog_item_id" value="">
         <input type="hidden" name="position_source_data" value="{}">
       </td>
       <td>
@@ -1407,4 +1414,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 </script>
+{% with document_type='invoice' %}
+  {% include 'admin/_document_articles.html' %}
+{% endwith %}
 {% endblock %}
