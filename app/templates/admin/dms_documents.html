@@ -3,6 +3,22 @@
 {% block content %}
 <h1 class="h3 mb-3">Archiv/DMS – Übertragungen</h1>
 
+{% if paused %}
+<div class="alert alert-warning" role="alert">
+  <strong>Automatische PDF-Übertragung pausiert.</strong>
+  Vorgemerkte PDFs bleiben in der Warteschlange. Einzelne Dokumente können
+  freigegeben oder aus der Warteschlange entfernt werden.
+  <form method="post" action="{{ url_for('dms_admin.processing_pause') }}"
+        class="mt-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="paused" value="false">
+    <input type="hidden" name="return_to" value="documents">
+    <button type="submit" class="btn btn-sm btn-outline-dark">
+      Übertragung fortsetzen
+    </button>
+  </form>
+</div>
+{% endif %}
 <form method="get" class="d-flex gap-2 mb-3">
   <select class="form-select" name="status" aria-label="Status">
     <option value="">Alle Status</option>
@@ -39,25 +55,65 @@
         </td>
         <td>{{ document.attempts }}</td>
         <td>
-        <td>{% if document.status not in ('archived', 'processing') %}
+        {% if document.status not in ('archived', 'processing', 'cancelled') %}
           {% set has_key = document.profile_snapshot and document.profile_snapshot.get('key_property_id') %}
           {% if document.upload_started %}
-          <form method="post" action="{{ url_for('dms_admin.document_link', document_id=document.id) }}" class="mb-3">
+          <form method="post"
+                action="{{ url_for('dms_admin.document_link', document_id=document.id) }}"
+                class="mb-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <label class="form-label small" for="dms-id-{{ document.id }}">Vorhandene d.velop-ID</label>
-            <input class="form-control form-control-sm" id="dms-id-{{ document.id }}" name="dms_document_id" maxlength="80" pattern="[A-Za-z0-9_-]+" required>
-            <label class="form-check small mt-2"><input class="form-check-input" type="checkbox" name="confirmed_document" required> Ich habe geprüft, dass das DMS-Dokument zu diesem PDF gehört.</label>
-            <button class="btn btn-sm btn-outline-success mt-1">d.velop-ID zuordnen</button>
+            <label class="form-label small" for="dms-id-{{ document.id }}">
+              Vorhandene d.velop-ID
+            </label>
+            <input class="form-control form-control-sm"
+                   id="dms-id-{{ document.id }}" name="dms_document_id"
+                   maxlength="80" pattern="[A-Za-z0-9_-]+" required>
+            <label class="form-check small mt-2">
+              <input class="form-check-input" type="checkbox"
+                     name="confirmed_document" required>
+              Ich habe geprüft, dass das DMS-Dokument zu diesem PDF gehört.
+            </label>
+            <button class="btn btn-sm btn-outline-success mt-1">
+              d.velop-ID zuordnen
+            </button>
           </form>
           {% endif %}
-          <form method="post" action="{{ url_for('dms_admin.document_retry', document_id=document.id) }}">
+
+          <form method="post"
+                action="{{ url_for('dms_admin.document_retry', document_id=document.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             {% if document.upload_started %}
-            <label class="form-check small"><input class="form-check-input" type="checkbox" name="confirmed_absent" {% if not has_key %}required{% endif %}> Im ursprünglichen Repository geprüft: Dieses PDF wurde nicht archiviert. Erneuten Upload freigeben.</label>
+            <label class="form-check small">
+              <input class="form-check-input" type="checkbox" name="confirmed_absent"
+                     {% if not has_key %}required{% endif %}>
+              Im ursprünglichen Repository geprüft: Dieses PDF wurde nicht archiviert.
+              Erneuten Upload freigeben.
+            </label>
             {% endif %}
-            <button class="btn btn-sm btn-outline-primary mt-1">{{ ('DMS erneut prüfen / Upload freigeben' if has_key else 'Erneuten Upload freigeben') if document.upload_started else 'Erneut vormerken' }}</button>
+            <button type="submit" class="btn btn-sm btn-outline-primary mt-1"
+                    {% if not enabled %}disabled{% endif %}>
+              {{ ('DMS erneut prüfen / Upload freigeben' if has_key else 'Erneuten Upload freigeben') if document.upload_started else 'Einzeln übertragen' }}
+            </button>
           </form>
-        {% endif %}</td>
+
+          <form method="post"
+                action="{{ url_for('dms_admin.document_remove', document_id=document.id) }}"
+                class="mt-2"
+                onsubmit="return confirm('Aus der Warteschlange entfernen? Die lokale PDF bleibt erhalten.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if document.upload_started %}
+            <label class="form-check small">
+              <input class="form-check-input" type="checkbox"
+                     name="confirmed_absent" required>
+              Im ursprünglichen Repository geprüft: Dieses PDF wurde nicht archiviert.
+            </label>
+            {% endif %}
+            <button type="submit" class="btn btn-sm btn-outline-danger">
+              Aus Warteschlange entfernen
+            </button>
+          </form>
+        {% endif %}
+      </td>
       </tr>
       {% else %}
       <tr><td colspan="5">Keine Archivierungsaufträge vorhanden.</td></tr>

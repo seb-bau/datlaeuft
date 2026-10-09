@@ -14,7 +14,8 @@ from .dms_context import DOCUMENT_TYPES, available_fields
 from .dms_service import (
     STATUS_LABELS, connection, document_path, field_name,
     link_existing_document, profile_snapshot, refresh_metadata,
-    repository_metadata, retry_document, seed_profiles, validate_profile,
+    remove_from_queue, repository_metadata, retry_document,
+    seed_profiles, validate_profile,
 )
 from .extensions import db
 from .models import Commission, DmsDocument, DmsProfile, SettingValueType
@@ -103,7 +104,33 @@ def connection_page():
         metadata=repository_metadata(),
         legacy_definitions=legacy_definitions,
         legacy_values=legacy_values,
+        paused=settings.get(SettingKeys.DMS_PROCESSING_PAUSED),
     )
+
+
+@dms_admin_bp.post("/processing/pause")
+@admin_required
+def processing_pause():
+    raw_value = request.form.get("paused")
+    if raw_value not in ("true", "false"):
+        abort(400)
+
+    paused = raw_value == "true"
+    settings.set(SettingKeys.DMS_PROCESSING_PAUSED, paused)
+    audit("dms.processing.pause", metadata={"paused": paused})
+    db.session.commit()
+
+    flash(
+        "Automatische PDF-Übertragung pausiert."
+        if paused else "Automatische PDF-Übertragung fortgesetzt.",
+        "warning" if paused else "success",
+    )
+    endpoint = (
+        "dms_admin.documents"
+        if request.form.get("return_to") == "documents"
+        else "dms_admin.connection_page"
+    )
+    return redirect(url_for(endpoint))
 
 
 @dms_admin_bp.post("/metadata/refresh")
@@ -295,6 +322,8 @@ def documents():
         status=status,
         status_labels=STATUS_LABELS,
         document_types=DOCUMENT_TYPES,
+        enabled=settings.get(SettingKeys.DMS_ENABLED),
+        paused=settings.get(SettingKeys.DMS_PROCESSING_PAUSED),
     )
 
 
@@ -306,15 +335,35 @@ def document_retry(document_id):
         retry_document(
             document,
             confirmed_absent=request.form.get("confirmed_absent") == "on",
+            manual=True,
+        )
+        db.session.commit()
+        flash("Einzelübertragung vorgemerkt.", "success")
+    except DmsError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+
+    return redirect(url_for("dms_admin.documents"))
+
+
+@dms_admin_bp.post("/documents/<document_id>/remove")
+@admin_required
+def document_remove(document_id):
+    document = db.get_or_404(DmsDocument, document_id)
+    try:
+        remove_from_queue(
+            document,
+            confirmed_absent=request.form.get("confirmed_absent") == "on",
         )
         db.session.commit()
         flash(
-            "Archivierungsauftrag zur erneuten Bearbeitung vorgemerkt.",
+            "Aus der Warteschlange entfernt. Die lokale PDF bleibt erhalten.",
             "success",
         )
     except DmsError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
+
     return redirect(url_for("dms_admin.documents"))
 
 

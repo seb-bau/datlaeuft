@@ -60,6 +60,28 @@
   <button class="btn btn-primary align-self-start">Anbindung speichern</button>
 </form>
 
+<form method="post" action="{{ url_for('dms_admin.processing_pause') }}"
+      class="card card-body mb-3">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="paused" value="{{ 'false' if paused else 'true' }}">
+  <h2 class="h5">PDF-Übertragung</h2>
+  <p class="mb-3">
+    Bei aktivierter Archivierung werden neue PDFs auch während einer Pause
+    eingereiht. Einzelne Dokumente können unter „Übertragungen“ freigegeben
+    oder aus der Warteschlange entfernt werden.
+    Bereits laufende Uploads laufen noch zu Ende.
+  </p>
+  {% if paused %}
+  <div class="alert alert-warning" role="alert">
+    Automatische PDF-Übertragung pausiert.
+  </div>
+  {% endif %}
+  <button type="submit"
+          class="btn {{ 'btn-success' if paused else 'btn-warning' }} align-self-start">
+    {{ 'Übertragung fortsetzen' if paused else 'Übertragung pausieren' }}
+  </button>
+</form>
+
 <form method="post" action="{{ url_for('dms_admin.metadata_refresh') }}"
       class="card card-body">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

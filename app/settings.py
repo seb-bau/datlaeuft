@@ -171,6 +171,13 @@ class SettingKeys:
         "Automatische Archivierung",
         "d.velop",
     )
+    DMS_PROCESSING_PAUSED = SettingDefinition[bool](
+        "dms.processing_paused",
+        SettingValueType.BOOL,
+        False,
+        "PDF-Übertragung pausieren",
+        "d.velop",
+    )
     DMS_METADATA = SettingDefinition[dict](
         "dms.metadata",
         SettingValueType.JSON,

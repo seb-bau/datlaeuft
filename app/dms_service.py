@@ -17,7 +17,8 @@ from .dms_client import CloudDmsClient, DmsError, normalize_hostname
 from .dms_context import DOCUMENT_TYPES, available_fields
 from .extensions import db
 from .models import (
-    DmsDocument, DmsProfile, Invoice, Offer, SafetyInspectionProtocol, utc_now,
+    AppSetting, DmsDocument, DmsProfile, Invoice, Offer,
+    SafetyInspectionProtocol, utc_now,
 )
 from .settings import SettingKeys, settings
 
@@ -25,11 +26,13 @@ from .settings import SettingKeys, settings
 STATUS_LABELS = {
     "disabled": "Archivierung war deaktiviert",
     "pending": "Ausstehend",
+    "manual_pending": "Einzelübertragung vorgemerkt",
     "processing": "Wird übertragen",
     "archived": "Archiviert",
     "failed": "Wird erneut versucht",
     "blocked": "Prüfung erforderlich",
     "uncertain": "Upload-Bestätigung ausstehend",
+    "cancelled": "Aus Warteschlange entfernt",
 }
 
 
@@ -450,23 +453,30 @@ def upload_properties(document, client):
     return properties
 
 
-def retry_document(document, *, confirmed_absent=False):
+def retry_document(document, *, confirmed_absent=False, manual=False):
     db.session.refresh(document, with_for_update=True)
+    if document.status == "cancelled":
+        raise DmsError("Dieses Dokument wurde aus der Warteschlange entfernt.")
     if document.status == "archived":
         raise DmsError("Dieses Dokument ist bereits archiviert.")
     if document.status == "processing":
         raise DmsError("Dieses Dokument wird gerade übertragen.")
     if not settings.get(SettingKeys.DMS_ENABLED):
         raise DmsError("Die automatische Archivierung ist deaktiviert.")
+
     upload_started = document.upload_started and not confirmed_absent
     if upload_started and not (document.profile_snapshot or {}).get("key_property_id"):
         raise DmsError(
             "Bitte die vorhandene d.velop-ID zuordnen oder nach Prüfung bestätigen, "
             "dass dieses PDF nicht archiviert wurde."
         )
+
     values = {
         "upload_started": upload_started,
-        "status": "uncertain" if upload_started else "pending",
+        "status": (
+            "manual_pending" if manual
+            else "uncertain" if upload_started else "pending"
+        ),
         "available_at": utc_now(),
         "error": None,
     }
@@ -477,11 +487,12 @@ def retry_document(document, *, confirmed_absent=False):
             repository_id=repository,
             profile_snapshot=profile_snapshot(document.document_type),
         )
+
     changed = db.session.execute(
         update(DmsDocument).where(
             DmsDocument.id == document.id,
             DmsDocument.lock_token.is_(None),
-            DmsDocument.status.notin_(("processing", "archived")),
+            DmsDocument.status.notin_(("processing", "archived", "cancelled")),
             DmsDocument.upload_started == document.upload_started,
         ).values(**values)
     ).rowcount
@@ -489,9 +500,52 @@ def retry_document(document, *, confirmed_absent=False):
         raise DmsError(
             "Der Archivierungsauftrag wird bereits anderweitig bearbeitet."
         )
+
     db.session.refresh(document)
     audit(
         "dms.document.retry",
+        "dms_document",
+        document.id,
+        {"confirmed_absent": confirmed_absent, "manual": manual},
+    )
+
+
+def remove_from_queue(document, *, confirmed_absent=False):
+    db.session.refresh(document, with_for_update=True)
+    if document.status == "cancelled":
+        return
+    if document.status in ("archived", "processing") or document.lock_token:
+        raise DmsError(
+            "Archivierte oder laufende Übertragungen können nicht entfernt werden."
+        )
+    if document.upload_started and not confirmed_absent:
+        raise DmsError(
+            "Bitte zuerst im ursprünglichen Repository prüfen und bestätigen, "
+            "dass dieses PDF nicht archiviert wurde."
+        )
+
+    changed = db.session.execute(
+        update(DmsDocument).where(
+            DmsDocument.id == document.id,
+            DmsDocument.status.notin_(("processing", "archived", "cancelled")),
+            DmsDocument.lock_token.is_(None),
+            DmsDocument.upload_started == document.upload_started,
+        ).values(
+            status="cancelled",
+            upload_started=False,
+            locked_at=None,
+            lock_token=None,
+            error=None,
+        )
+    ).rowcount
+    if changed != 1:
+        raise DmsError(
+            "Der Archivierungsauftrag wird bereits anderweitig bearbeitet."
+        )
+
+    db.session.refresh(document)
+    audit(
+        "dms.document.remove_from_queue",
         "dms_document",
         document.id,
         {"confirmed_absent": confirmed_absent},
@@ -620,6 +674,7 @@ def link_existing_document(document, remote_id):
 def process_dms_batch(limit=10):
     if not settings.get(SettingKeys.DMS_ENABLED):
         return 0
+
     threshold = utc_now() - timedelta(minutes=10)
     db.session.execute(
         update(DmsDocument).where(
@@ -636,12 +691,40 @@ def process_dms_batch(limit=10):
         )
     )
     db.session.commit()
+
     seen = 0
     for _ in range(limit):
+        control_rows = db.session.execute(
+            select(AppSetting).where(
+                AppSetting.key.in_((
+                    SettingKeys.DMS_ENABLED.key,
+                    SettingKeys.DMS_PROCESSING_PAUSED.key,
+                )),
+            ).order_by(AppSetting.key).with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalars().all()
+        control_values = {
+            row.key: str(row.value_text).lower()
+            in {"1", "true", "yes", "on", "ja"}
+            for row in control_rows
+        }
+        if not control_values.get(SettingKeys.DMS_ENABLED.key, False):
+            db.session.rollback()
+            break
+
+        paused = control_values.get(
+            SettingKeys.DMS_PROCESSING_PAUSED.key, False,
+        )
+        allowed_statuses = (
+            ("manual_pending",) if paused
+            else ("pending", "failed", "uncertain", "manual_pending")
+        )
+
         document_id = db.session.execute(
             select(DmsDocument.id).where(
-                DmsDocument.status.in_(("pending", "failed", "uncertain")),
+                DmsDocument.status.in_(allowed_statuses),
                 DmsDocument.available_at <= utc_now(),
+                DmsDocument.lock_token.is_(None),
             ).order_by(
                 DmsDocument.available_at,
                 DmsDocument.created_at,
@@ -650,11 +733,12 @@ def process_dms_batch(limit=10):
         if document_id is None:
             db.session.rollback()
             break
+
         token = str(uuid4())
         claimed = db.session.execute(
             update(DmsDocument).where(
                 DmsDocument.id == document_id,
-                DmsDocument.status.in_(("pending", "failed", "uncertain")),
+                DmsDocument.status.in_(allowed_statuses),
                 DmsDocument.available_at <= utc_now(),
                 DmsDocument.lock_token.is_(None),
             ).values(
@@ -667,8 +751,10 @@ def process_dms_batch(limit=10):
         db.session.commit()
         if claimed != 1:
             continue
+
         seen += 1
         process_claimed_document(document_id, token)
+
     return seen
 
 
