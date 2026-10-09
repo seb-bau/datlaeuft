@@ -29,42 +29,7 @@
 </div>
 {% endif %}
 
-  {% if item.status == "draft" %}
-    <div class="card mt-4">
-        <div class="card-body">
-            <h2 class="h5">Rechnung festschreiben</h2>
-
-            <p class="text-danger mb-3">
-                Nach dem Festschreiben können Empfänger,
-                Positionen und Beträge nicht mehr geändert
-                werden. Die verknüpften Aufträge werden über
-                die ERP-Synchronisierung auf Erledigt gesetzt.
-            </p>
-
-            <form
-                method="post"
-                action="{{ url_for(
-                    'admin.invoice_finalize',
-                    invoice_id=item.id
-                ) }}"
-                id="invoice-finalize-form"
-            >
-                <input
-                    type="hidden"
-                    name="csrf_token"
-                    value="{{ csrf_token() }}"
-                >
-
-                <button
-                    type="submit"
-                    class="btn btn-danger"
-                >
-                    Rechnung endgültig festschreiben
-                </button>
-            </form>
-        </div>
-    </div>
-{% elif item.status in ["finalized", "canceled"] %}
+  {% if item.status in ["finalized", "canceled"] %}
     <div class="card mt-4">
         <div class="card-body">
             <h2 class="h5">
@@ -500,36 +465,6 @@
             </div>
           </div>
         </div>
-
-        <div class="card shadow-sm">
-          <div class="card-header">
-            Rechnungstexte
-          </div>
-
-          <div class="card-body">
-            <div class="mb-3">
-              <label class="form-label">
-                Einleitung
-              </label>
-              <textarea
-                class="form-control"
-                name="introductory_text"
-                rows="3"
-              >{{ item.introductory_text or '' }}</textarea>
-            </div>
-
-            <div>
-              <label class="form-label">
-                Schlusstext
-              </label>
-              <textarea
-                class="form-control"
-                name="concluding_text"
-                rows="3"
-              >{{ item.concluding_text or '' }}</textarea>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div class="col-lg-5">
@@ -665,6 +600,35 @@
               Freie Rechnung
             </div>
             {% endif %}
+          </div>
+        </div>
+        <div class="card shadow-sm">
+          <div class="card-header">
+            Rechnungstexte
+          </div>
+
+          <div class="card-body">
+            <div class="mb-3">
+              <label class="form-label">
+                Einleitung
+              </label>
+              <textarea
+                class="form-control"
+                name="introductory_text"
+                rows="3"
+              >{{ item.introductory_text or '' }}</textarea>
+            </div>
+
+            <div>
+              <label class="form-label">
+                Schlusstext
+              </label>
+              <textarea
+                class="form-control"
+                name="concluding_text"
+                rows="3"
+              >{{ item.concluding_text or '' }}</textarea>
+            </div>
           </div>
         </div>
 
@@ -949,27 +913,67 @@
 </form>
 {% endif %}
 {% if editable %}
-<form
-  method="post"
-  action="{{ url_for(
-    'admin.invoice_delete',
-    invoice_id=item.id
-  ) }}"
-  class="mt-4 text-end"
-  onsubmit="return confirm('Rechnungsentwurf wirklich löschen?')"
->
-  <input
-    type="hidden"
-    name="csrf_token"
-    value="{{ csrf_token() }}"
-  >
-  <button
-    class="btn btn-outline-danger"
-    type="submit"
-  >
-    Entwurf löschen
-  </button>
-</form>
+<div class="card shadow-sm mt-4">
+  <div class="card-header fw-semibold">
+    Rechnungsaktionen
+  </div>
+
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+      <form
+        method="post"
+        action="{{ url_for(
+          'admin.invoice_delete',
+          invoice_id=item.id
+        ) }}"
+        onsubmit="return confirm('Rechnungsentwurf wirklich löschen?')"
+      >
+        <input
+          type="hidden"
+          name="csrf_token"
+          value="{{ csrf_token() }}"
+        >
+        <button
+          class="btn btn-outline-danger"
+          type="submit"
+        >
+          Entwurf löschen
+        </button>
+      </form>
+
+      <div class="d-flex flex-wrap gap-2">
+        <button
+          class="btn btn-primary"
+          type="submit"
+          form="invoice-draft-form"
+        >
+          Entwurf speichern
+        </button>
+
+        <form
+          method="post"
+          action="{{ url_for(
+            'admin.invoice_finalize',
+            invoice_id=item.id
+          ) }}"
+          id="invoice-finalize-form"
+        >
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token() }}"
+          >
+          <button
+            class="btn btn-danger"
+            type="submit"
+          >
+            Rechnung festschreiben
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
   const catalogueItems = {{ catalogue_items|tojson }};
