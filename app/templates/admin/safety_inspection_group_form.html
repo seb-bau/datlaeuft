@@ -419,7 +419,7 @@
         aber keine Aufträge daraus erstellt.
       </div>
     </div>
-      <div id="correctiveFields" class="row g-3">
+            <div class="col-md-4">
         <label class="form-label">
           Auftragsart
         </label>
@@ -1204,12 +1204,16 @@ function updateAssignmentUi() {
 
 function updateCorrectiveOrdersUi() {
   const enabled = correctiveOrdersEnabled.checked;
-  const fields = document.getElementById("correctiveFields");
+  const selectors = [
+    'select[name="corrective_commission_type_erp_id"]',
+    'select[name="corrective_craft_activity_id"]',
+    'select[name="corrective_task_template_id"]'
+  ];
 
-  fields.classList.toggle("opacity-50", !enabled);
-  fields.querySelectorAll("select").forEach((field) => {
+  groupForm.querySelectorAll(selectors.join(",")).forEach((field) => {
     field.disabled = !enabled;
     field.required = enabled;
+    field.closest(".col-md-4")?.classList.toggle("opacity-50", !enabled);
   });
 }
 
