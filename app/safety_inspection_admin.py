@@ -54,6 +54,10 @@ from .models import (
     SafetyInspectionSelectionMode,
     SafetyInspectionRegexAction,
 )
+from .safety_inspection_import import (
+    MAX_IMPORT_BYTES,
+    resolve_safety_inspection_import,
+)
 from .safety_inspection_service import (
     create_safety_inspection_revision,
     create_safety_inspection_template,
@@ -714,6 +718,25 @@ def group_edit(
 
 
 @safety_inspection_admin_bp.post(
+    "/admin/safety-inspections/groups/import-objects"
+)
+@login_required
+@safety_inspection_manage_required
+def group_import_objects() -> Any:
+    upload = request.files.get("file")
+    if upload is None or not upload.filename:
+        return jsonify({"error": "Bitte eine Datei auswählen."}), 400
+    try:
+        payload = resolve_safety_inspection_import(
+            upload.filename,
+            upload.stream.read(MAX_IMPORT_BYTES + 1),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(payload)
+
+
+@safety_inspection_admin_bp.post(
     "/admin/safety-inspections/groups/preview"
 )
 @login_required
@@ -1211,48 +1234,39 @@ def _save_group(
         "schedule_id",
         "Prüfzeitplan",
     )
-    item.department = _required_model(
-        WowiDepartment,
-        "department_id",
-        "Abteilung",
+    department_id = _form_optional_int("department_id")
+    item.department = (
+        _required_model(WowiDepartment, "department_id", "Abteilung")
+        if department_id is not None
+        else None
     )
-    item.corrective_craft_activity = (
-        _required_model(
+
+    if request.form.get("corrective_orders_enabled") == "1":
+        item.corrective_craft_activity = _required_model(
             CraftActivity,
             "corrective_craft_activity_id",
             "Gewerk",
         )
-    )
-    item.corrective_task_template = (
-        _required_model(
+        item.corrective_task_template = _required_model(
             TimeTaskTemplate,
             "corrective_task_template_id",
             "Standard-Leistungsposition",
         )
-    )
-
-    commission_type_erp_id = (
-        _required_form_int(
+        commission_type_erp_id = _required_form_int(
             "corrective_commission_type_erp_id",
             "Auftragsart",
         )
-    )
-    commission_type = (
-        WowiCommissionType.query.filter_by(
+        commission_type = WowiCommissionType.query.filter_by(
             erp_id=commission_type_erp_id,
             active=True,
         ).one_or_none()
-    )
-
-    if commission_type is None:
-        raise ValueError(
-            "Die Auftragsart ist nicht mehr "
-            "verfügbar."
-        )
-
-    item.corrective_commission_type_erp_id = (
-        commission_type.erp_id
-    )
+        if commission_type is None:
+            raise ValueError("Die Auftragsart ist nicht mehr verfügbar.")
+        item.corrective_commission_type_erp_id = commission_type.erp_id
+    else:
+        item.corrective_commission_type_erp_id = None
+        item.corrective_craft_activity = None
+        item.corrective_task_template = None
     item.object_level = request.form.get(
         "object_level",
         "",
@@ -1313,10 +1327,7 @@ def _save_group(
             or fallback_user
             .craftsman_erp_id is None
         ):
-            raise ValueError(
-                "Der Ersatz-Handwerker ist "
-                "nicht verfügbar."
-            )
+            raise ValueError("Der ausgewählte Handwerker ist nicht verfügbar.")
 
         item.fallback_user = fallback_user
 

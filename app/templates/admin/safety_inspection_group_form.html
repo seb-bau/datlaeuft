@@ -192,17 +192,17 @@
         </select>
       </div>
 
-      <div class="col-md-3">
-        <label class="form-label">
+            <div class="col-md-3">
+        <label class="form-label" for="departmentSelect">
           Zuständige Abteilung
         </label>
         <select
+          id="departmentSelect"
           class="form-select"
           name="department_id"
-          required
         >
           <option value="">
-            Bitte auswählen
+            Keine Abteilung – Handwerker fest wählen
           </option>
           {% for option in departments %}
           <option
@@ -218,16 +218,19 @@
       </div>
 
       <div class="col-md-3">
-        <label class="form-label">
-          Ersatz-Handwerker
+        <label
+          id="craftsmanLabel"
+          class="form-label"
+          for="fallbackUserSelect"
+        >
+          Handwerker
         </label>
         <select
+          id="fallbackUserSelect"
           class="form-select"
           name="fallback_user_id"
         >
-          <option value="">
-            Keine Ersatzzuständigkeit
-          </option>
+          <option value="">Bitte bei Bedarf auswählen</option>
           {% for option in fallback_users %}
           <option
             value="{{ option.id }}"
@@ -239,11 +242,7 @@
           </option>
           {% endfor %}
         </select>
-        <div class="form-text">
-          Wird nur verwendet, wenn die
-          Wowiport-Zuständigkeit nicht
-          eindeutig aufgelöst werden kann.
-        </div>
+        <div id="craftsmanHelp" class="form-text"></div>
       </div>
             <div class="col-md-4">
         <label class="form-label">
@@ -397,7 +396,30 @@
 
   <div class="card-body">
     <div class="row g-3">
-      <div class="col-md-4">
+          <div class="form-check mb-3">
+      <input
+        id="correctiveOrdersEnabled"
+        class="form-check-input"
+        type="checkbox"
+        name="corrective_orders_enabled"
+        value="1"
+        {% if (request.method == 'POST' and request.form.get('corrective_orders_enabled') == '1') or
+              (request.method != 'POST' and (item.id is none or item.corrective_orders_enabled)) %}
+        checked
+        {% endif %}
+      >
+      <label
+        class="form-check-label"
+        for="correctiveOrdersEnabled"
+      >
+        Aufträge aus Mängeln ermöglichen
+      </label>
+      <div class="form-text">
+        Ohne diese Option werden Mängel weiterhin erfasst,
+        aber keine Aufträge daraus erstellt.
+      </div>
+    </div>
+      <div id="correctiveFields" class="row g-3">
         <label class="form-label">
           Auftragsart
         </label>
@@ -493,6 +515,53 @@
     <div class="card-header border-top">
     Objektauswahl
   </div>
+
+      <div class="row g-3 mb-3">
+      <div class="col-md-5">
+        <label class="form-label" for="objectImportFile">
+          CSV- oder Excel-Datei
+        </label>
+        <input
+          id="objectImportFile"
+          class="form-control"
+          type="file"
+          accept=".csv,.xlsx,.xls"
+        >
+      </div>
+      <div class="col-md-4">
+        <label class="form-label" for="objectImportMode">
+          Importmodus
+        </label>
+        <select id="objectImportMode" class="form-select">
+          <option value="append">An vorhandene Liste anhängen</option>
+          <option value="replace">Vorhandene Liste ersetzen</option>
+        </select>
+      </div>
+      <div class="col-md-3 d-flex align-items-end">
+        <button
+          id="objectImportButton"
+          class="btn btn-outline-primary w-100"
+          type="button"
+        >
+          Objekte importieren
+        </button>
+      </div>
+    </div>
+    <div class="form-text mb-2">
+      Spalten: Objekttyp und IdNum.
+      Objekttyp: Wirtschaftseinheit, Gebäude oder Nutzungseinheit.
+      IdNum in Excel als Text formatieren, damit führende Nullen
+      erhalten bleiben. Es wird das erste Tabellenblatt gelesen.
+      Höchstens 5000 Zeilen und 5 MB.
+      Im Auswahlmodus Whitelist werden Objekte eingeschlossen,
+      im Auswahlmodus Blacklist ausgeschlossen.
+    </div>
+    <div
+      id="objectImportState"
+      class="small mb-3"
+      role="status"
+      aria-live="polite"
+    ></div>
 
   <div class="card-body">
     <div class="row g-3 mb-3">
@@ -691,7 +760,14 @@ const taskTemplate =
   document.getElementById(
     "taskTemplate"
   );
-
+const departmentSelect = document.getElementById("departmentSelect");
+const fallbackUserSelect = document.getElementById("fallbackUserSelect");
+const correctiveOrdersEnabled = document.getElementById("correctiveOrdersEnabled");
+const objectImportFile = document.getElementById("objectImportFile");
+const objectImportMode = document.getElementById("objectImportMode");
+const objectImportButton = document.getElementById("objectImportButton");
+const objectImportState = document.getElementById("objectImportState");
+let isImportingObjects = false;
 const previewButton =
   document.getElementById(
     "previewButton"
@@ -1113,6 +1189,118 @@ function filterTaskTemplates() {
   }
 }
 
+function updateAssignmentUi() {
+  const hasDepartment = Boolean(departmentSelect.value);
+  departmentSelect.required = !fallbackUserSelect.value;
+  fallbackUserSelect.required = !hasDepartment;
+
+  document.getElementById("craftsmanLabel").textContent =
+    hasDepartment ? "Ersatz-Handwerker" : "Zuständiger Handwerker";
+
+  document.getElementById("craftsmanHelp").textContent = hasDepartment
+    ? "Wird verwendet, wenn die Zuständigkeit über die Abteilung nicht aufgelöst werden kann."
+    : "Dieser Handwerker erhält alle Prüfaufträge der Gruppe direkt.";
+}
+
+function updateCorrectiveOrdersUi() {
+  const enabled = correctiveOrdersEnabled.checked;
+  const fields = document.getElementById("correctiveFields");
+
+  fields.classList.toggle("opacity-50", !enabled);
+  fields.querySelectorAll("select").forEach((field) => {
+    field.disabled = !enabled;
+    field.required = enabled;
+  });
+}
+
+async function importObjects() {
+  const file = objectImportFile.files[0];
+  if (!file || isImportingObjects) {
+    objectImportState.textContent = "Bitte eine Datei auswählen.";
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    objectImportState.textContent = "Die Datei darf höchstens 5 MB groß sein.";
+    return;
+  }
+
+  const mode = objectImportMode.value;
+  const data = new FormData();
+  data.append("file", file);
+  data.append(
+    "csrf_token",
+    groupForm.querySelector('[name="csrf_token"]').value
+  );
+
+  isImportingObjects = true;
+  objectImportButton.disabled = true;
+  objectImportState.textContent = "Die Datei wird geprüft …";
+
+  try {
+    const response = await fetch(
+      "{{ url_for('safety_inspection_admin.group_import_objects') }}",
+      {
+        method: "POST",
+        headers: {"Accept": "application/json"},
+        body: data
+      }
+    );
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !payload || !Array.isArray(payload.items)) {
+      objectImportState.textContent =
+        payload?.error || "Die Datei konnte nicht importiert werden.";
+      return;
+    }
+
+    synchronizeTargets();
+    if (mode === "replace") {
+      targetRows.length = 0;
+    }
+
+    const seen = new Set(
+      targetRows.map(
+        (row) => `${row.object_type}:${Number(row.object_erp_id)}`
+      )
+    );
+    let added = 0;
+    let duplicates = Number(payload.duplicates || 0);
+
+    payload.items.forEach((row) => {
+      const key = `${row.object_type}:${Number(row.object_erp_id)}`;
+      if (seen.has(key)) {
+        duplicates += 1;
+        return;
+      }
+
+      seen.add(key);
+      targetRows.push({
+        ...row,
+        included: selectionMode.value === "whitelist"
+      });
+      added += 1;
+    });
+
+    targetsJson.value = JSON.stringify(targetRows);
+    renderTargets();
+    invalidateObjectPreview();
+    objectImportState.textContent =
+      `${added} Objekte importiert; ${duplicates} doppelte Einträge ignoriert.`;
+    objectImportFile.value = "";
+  } catch (error) {
+    objectImportState.textContent =
+      "Der Import ist fehlgeschlagen. Bitte die Verbindung prüfen und erneut versuchen.";
+  } finally {
+    isImportingObjects = false;
+    objectImportButton.disabled = false;
+  }
+}
+
+departmentSelect.addEventListener("change", updateAssignmentUi);
+fallbackUserSelect.addEventListener("change", updateAssignmentUi);
+correctiveOrdersEnabled.addEventListener("change", updateCorrectiveOrdersUi);
+objectImportButton.addEventListener("click", importObjects);
+
 selectionMode.addEventListener(
   "change",
   updateSelectionModeUi
@@ -1203,18 +1391,22 @@ groupForm.addEventListener(
 );
 
 
-groupForm.addEventListener(
-  "submit",
-  () => {
-    synchronizeTargets();
-
-    targetsJson.value =
-      JSON.stringify(targetRows);
+groupForm.addEventListener("submit", (event) => {
+  if (isImportingObjects) {
+    event.preventDefault();
+    objectImportState.textContent =
+      "Bitte warten, bis der Import abgeschlossen ist.";
+    return;
   }
-);
+
+  synchronizeTargets();
+  targetsJson.value = JSON.stringify(targetRows);
+});
 
 renderTargets();
 updateSelectionModeUi();
 filterTaskTemplates();
+updateAssignmentUi();
+updateCorrectiveOrdersUi();
 </script>
 {% endblock %}

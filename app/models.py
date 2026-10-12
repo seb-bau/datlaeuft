@@ -446,6 +446,7 @@ class SafetyInspectionPhotoSource(
 class SafetyInspectionAssignmentSource(str, Enum):
     JURISDICTION = "jurisdiction"
     FALLBACK = "fallback"
+    DIRECT = "direct"
     UNASSIGNED = "unassigned"
     MANUAL = "manual"
 
@@ -5412,40 +5413,28 @@ class SafetyInspectionGroup(db.Model):
     ] = mapped_column(
         db.String(20)
     )
-    department_id: Mapped[int] = (
-        mapped_column(
-            db.ForeignKey("wowi_department.id"),
-            nullable=False,
-            index=True,
-        )
+    department_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("wowi_department.id"),
+        nullable=True,
+        index=True,
     )
-    fallback_user_id: Mapped[
-        int | None
-    ] = mapped_column(
+    fallback_user_id: Mapped[int | None] = mapped_column(
         db.ForeignKey("user_account.id"),
         index=True,
     )
-    corrective_commission_type_erp_id: Mapped[
-        int
-    ] = mapped_column(
+    corrective_commission_type_erp_id: Mapped[int | None] = mapped_column(
         db.Integer,
-        nullable=False,
+        nullable=True,
         index=True,
     )
-    corrective_craft_activity_id: Mapped[
-        int
-    ] = mapped_column(
+    corrective_craft_activity_id: Mapped[int | None] = mapped_column(
         db.ForeignKey("craft_activity.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
-    corrective_task_template_id: Mapped[
-        int
-    ] = mapped_column(
-        db.ForeignKey(
-            "time_task_template.id"
-        ),
-        nullable=False,
+    corrective_task_template_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("time_task_template.id"),
+        nullable=True,
         index=True,
     )
     first_period_start: Mapped[
@@ -5533,20 +5522,12 @@ class SafetyInspectionGroup(db.Model):
     ] = relationship(
         back_populates="groups"
     )
-    department: Mapped[
-        WowiDepartment
-    ] = relationship()
-    fallback_user: Mapped[
-        User | None
-    ] = relationship(
+    department: Mapped[WowiDepartment | None] = relationship()
+    fallback_user: Mapped[User | None] = relationship(
         foreign_keys=[fallback_user_id]
     )
-    corrective_craft_activity: Mapped[
-        CraftActivity
-    ] = relationship()
-    corrective_task_template: Mapped[
-        TimeTaskTemplate
-    ] = relationship()
+    corrective_craft_activity: Mapped[CraftActivity | None] = relationship()
+    corrective_task_template: Mapped[TimeTaskTemplate | None] = relationship()
     created_by: Mapped[User] = relationship(
         foreign_keys=[created_by_user_id]
     )
@@ -5561,6 +5542,14 @@ class SafetyInspectionGroup(db.Model):
     ] = relationship(
         back_populates="group"
     )
+
+    @property
+    def corrective_orders_enabled(self) -> bool:
+        return all(value is not None for value in (
+            self.corrective_commission_type_erp_id,
+            self.corrective_craft_activity_id,
+            self.corrective_task_template_id,
+        ))
 
 
 class SafetyInspectionGroupTarget(db.Model):
@@ -5797,12 +5786,10 @@ class SafetyInspectionJob(db.Model):
     longitude: Mapped[
         float | None
     ] = mapped_column(db.Float)
-    department_id: Mapped[int] = (
-        mapped_column(
-            db.ForeignKey("wowi_department.id"),
-            nullable=False,
-            index=True,
-        )
+    department_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("wowi_department.id"),
+        nullable=True,
+        index=True,
     )
     jurisdiction_id: Mapped[
         int | None
@@ -5907,9 +5894,7 @@ class SafetyInspectionJob(db.Model):
     ] = relationship(
         back_populates="jobs"
     )
-    department: Mapped[
-        WowiDepartment
-    ] = relationship()
+    department: Mapped[WowiDepartment | None] = relationship()
     jurisdiction: Mapped[
         WowiEconomicUnitJurisdiction | None
     ] = relationship()

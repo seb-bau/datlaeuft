@@ -861,11 +861,15 @@ def serialize_safety_inspection_job(
                 job.template_version.version_number
             ),
         },
-        "department": {
-            "id": job.department.id,
-            "erp_id": job.department.erp_id,
-            "name": job.department.name,
-        },
+        "department": (
+            {
+                "id": job.department.id,
+                "erp_id": job.department.erp_id,
+                "name": job.department.name,
+            }
+            if job.department is not None
+            else None
+        ),
         "assigned_user": (
             serialize_user(job.assigned_user)
             if job.assigned_user is not None

@@ -25,3 +25,5 @@ pycountry>=26.2,<27
 PyMySQL>=1.1,<2
 icalendar>=6.3.2,<7
 pywebpush>=2,<3
+openpyxl>=3.1,<4
+xlrd>=2.0,<3

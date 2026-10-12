@@ -58,7 +58,7 @@
 
           <dt class="col-sm-4">Abteilung</dt>
           <dd class="col-sm-8">
-            {{ item.department.name }}
+            {{ item.department.name if item.department else "Fest zugeordneter Handwerker" }}
           </dd>
 
           <dt class="col-sm-4">Handwerker</dt>
@@ -432,7 +432,8 @@
       {% endif %}
 
       <div class="d-flex flex-wrap gap-2 mt-3">
-        {% if not defect.commission_links and
+        {% if item.group.corrective_orders_enabled and
+              not defect.commission_links and
               defect.status not in ['resolved', 'dismissed'] %}
         <form
           method="post"

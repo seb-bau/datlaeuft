@@ -39,6 +39,7 @@ from .models import (
     User,
     WowiBuilding,
     WowiEconomicUnit,
+    WowiDepartment,
     WowiUseUnit,
     utc_now,
     PushEventType,
@@ -395,67 +396,69 @@ def validate_safety_inspection_group(
             "dem Beginn liegen."
         )
 
-    if not group.department.active:
-        raise ValueError(
-            "Die ausgewählte Abteilung "
-            "ist nicht aktiv."
+    if group.department is None:
+        _resolve_safety_inspection_assignment(
+            None,
+            None,
+            group.fallback_user,
         )
+    elif not group.department.active:
+        raise ValueError("Die ausgewählte Abteilung ist nicht aktiv.")
 
-    task_template = (
-        group.corrective_task_template
+    if group.fallback_user is not None and (
+            not group.fallback_user.is_active
+            or group.fallback_user.craftsman_erp_id is None
+    ):
+        raise ValueError("Der ausgewählte Handwerker ist nicht verfügbar.")
+
+    corrective_values = (
+        group.corrective_commission_type_erp_id,
+        group.corrective_craft_activity_id,
+        group.corrective_task_template_id,
     )
-    craft_activity = (
-        group.corrective_craft_activity
-    )
-    if (
-            not craft_activity.active
-            or not craft_activity.app_enabled
-    ):
-        raise ValueError(
-            "Das ausgewählte Gewerk ist "
-            "global deaktiviert."
-        )
-
-    if (
-            not task_template.active
-            or task_template
-            .erp_service_catalogue_id is None
-    ):
-        raise ValueError(
-            "Die Standard-Leistungsposition "
-            "ist nicht verfügbar."
-        )
-
-    if (
-            task_template.craft_activity_id
-            != craft_activity.id
-    ):
-        raise ValueError(
-            "Leistungsposition und Gewerk "
-            "gehören nicht zusammen."
-        )
-
-    mapping = (
-        CraftActivityDepartmentMapping.query
-        .filter_by(
-            craft_activity_id=(
-                craft_activity.id
+    if any(value is not None for value in corrective_values):
+        if not group.corrective_orders_enabled:
+            raise ValueError(
+                "Bitte die Vorgabe für Mängelaufträge vollständig ausfüllen."
             )
-        )
-        .one_or_none()
-    )
 
-    if (
-            mapping is None
-            or mapping.department_id
-            != group.department_id
-    ):
-        raise ValueError(
-            "Das Gewerk der "
-            "Standard-Leistungsposition ist "
-            "nicht der ausgewählten Abteilung "
-            "zugeordnet."
+        task_template = group.corrective_task_template
+        craft_activity = group.corrective_craft_activity
+
+        if not craft_activity.active or not craft_activity.app_enabled:
+            raise ValueError(
+                "Das ausgewählte Gewerk ist global deaktiviert."
+            )
+
+        if (
+                not task_template.active
+                or task_template.erp_service_catalogue_id is None
+        ):
+            raise ValueError(
+                "Die Standard-Leistungsposition ist nicht verfügbar."
+            )
+
+        if task_template.craft_activity_id != craft_activity.id:
+            raise ValueError(
+                "Leistungsposition und Gewerk gehören nicht zusammen."
+            )
+
+        mapping = CraftActivityDepartmentMapping.query.filter_by(
+            craft_activity_id=craft_activity.id,
+        ).one_or_none()
+
+        if (
+                mapping is None
+                or not mapping.department.active
+                or (
+                group.department is not None
+                and mapping.department_id != group.department_id
         )
+        ):
+            raise ValueError(
+                "Das Gewerk benötigt eine aktive Abteilungszuordnung, "
+                "die zu einer gewählten Prüfgruppen-Abteilung passen muss."
+            )
 
     selection_modes = {
         mode.value
@@ -810,40 +813,18 @@ def create_safety_inspection_job(
     )
 
     try:
-        assignment = (
-            resolve_department_assignment(
-                context.economic_unit,
-                group.department,
-            )
-        )
-        assigned_user = assignment.user
-        jurisdiction = (
-            assignment.jurisdiction
-        )
-        responsible_official_erp_id = (
-            assignment
-            .responsible_official_erp_id
-        )
-        assignment_source = (
-            SafetyInspectionAssignmentSource
-            .JURISDICTION.value
+        (
+            assigned_user,
+            jurisdiction,
+            responsible_official_erp_id,
+            assignment_source,
+        ) = _resolve_safety_inspection_assignment(
+            context.economic_unit,
+            group.department,
+            group.fallback_user,
         )
     except ValueError as exc:
-        fallback_user = group.fallback_user
-
-        if (
-                fallback_user is not None
-                and fallback_user.is_active
-                and fallback_user
-                .craftsman_erp_id is not None
-        ):
-            assigned_user = fallback_user
-            assignment_source = (
-                SafetyInspectionAssignmentSource
-                .FALLBACK.value
-            )
-        else:
-            assignment_error = str(exc)
+        assignment_error = str(exc)
 
     building = context.building
     use_unit = context.use_unit
@@ -1017,7 +998,7 @@ def reconcile_safety_inspection_assignments(
             .one_or_none()
         )
 
-        if economic_unit is None:
+        if economic_unit is None and job.department is not None:
             job.assignment_source = (
                 SafetyInspectionAssignmentSource
                 .UNASSIGNED.value
@@ -1031,53 +1012,28 @@ def reconcile_safety_inspection_assignments(
             continue
 
         try:
-            assignment = (
-                resolve_department_assignment(
-                    economic_unit,
-                    job.department,
-                )
+            (
+                assigned_user,
+                jurisdiction,
+                responsible_official_erp_id,
+                assignment_source,
+            ) = _resolve_safety_inspection_assignment(
+                economic_unit,
+                job.department,
+                job.group.fallback_user,
             )
         except ValueError as exc:
-            fallback_user = (
-                job.group.fallback_user
-            )
-
-            if (
-                    fallback_user is None
-                    or not fallback_user.is_active
-                    or fallback_user
-                    .craftsman_erp_id is None
-            ):
-                job.assignment_source = (
-                    SafetyInspectionAssignmentSource
-                    .UNASSIGNED.value
-                )
-                job.assignment_error = str(exc)
-                result["unresolved"] += 1
-                continue
-
-            job.assigned_user = fallback_user
-            job.jurisdiction = None
-            job.responsible_official_erp_id = (
-                None
-            )
             job.assignment_source = (
-                SafetyInspectionAssignmentSource
-                .FALLBACK.value
+                SafetyInspectionAssignmentSource.UNASSIGNED.value
             )
-        else:
-            job.assigned_user = assignment.user
-            job.jurisdiction = (
-                assignment.jurisdiction
-            )
-            job.responsible_official_erp_id = (
-                assignment
-                .responsible_official_erp_id
-            )
-            job.assignment_source = (
-                SafetyInspectionAssignmentSource
-                .JURISDICTION.value
-            )
+            job.assignment_error = str(exc)
+            result["unresolved"] += 1
+            continue
+
+        job.assigned_user = assigned_user
+        job.jurisdiction = jurisdiction
+        job.responsible_official_erp_id = responsible_official_erp_id
+        job.assignment_source = assignment_source
 
         job.assignment_error = None
         result["assigned"] += 1
@@ -1248,6 +1204,49 @@ def complete_safety_inspection_job(
     return defects
 
 
+def _resolve_safety_inspection_assignment(
+    economic_unit: WowiEconomicUnit | None,
+    department: WowiDepartment | None,
+    fallback_user: User | None,
+):
+    user_available = (
+        fallback_user is not None
+        and fallback_user.is_active
+        and fallback_user.craftsman_erp_id is not None
+    )
+    if department is None:
+        if not user_available:
+            raise ValueError(
+                "Bitte einen verfügbaren Handwerker fest auswählen."
+            )
+        return (
+            fallback_user,
+            None,
+            None,
+            SafetyInspectionAssignmentSource.DIRECT.value,
+        )
+    try:
+        assignment = resolve_department_assignment(
+            economic_unit,
+            department,
+        )
+    except ValueError:
+        if not user_available:
+            raise
+        return (
+            fallback_user,
+            None,
+            None,
+            SafetyInspectionAssignmentSource.FALLBACK.value,
+        )
+    return (
+        assignment.user,
+        assignment.jurisdiction,
+        assignment.responsible_official_erp_id,
+        SafetyInspectionAssignmentSource.JURISDICTION.value,
+    )
+
+
 def validate_safety_inspection_results(
         results: Iterable[
             SafetyInspectionResult
@@ -1366,6 +1365,10 @@ def create_commission_from_safety_defect(
 
     job = defect.job
     group = job.group
+    if not group.corrective_orders_enabled:
+        raise ValueError(
+            "Für diese Prüfgruppe sind Mängelaufträge deaktiviert."
+        )
     object_type = None
     object_id = None
 

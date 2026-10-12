@@ -696,6 +696,7 @@ def _object_level_labels() -> dict[str, str]:
 
 def _assignment_source_labels() -> dict[str, str]:
     return {
+        SafetyInspectionAssignmentSource.DIRECT.value: "Fest zugeordnet",
         SafetyInspectionAssignmentSource
         .JURISDICTION.value: "Wowiport-Zuständigkeit",
         SafetyInspectionAssignmentSource.FALLBACK.value: (

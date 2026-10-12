@@ -86,7 +86,7 @@
           </td>
 
           <td>
-            {{ item.department.name }}
+            {{ item.department.name if item.department else item.fallback_user.display_name }}
           </td>
 
           <td>
