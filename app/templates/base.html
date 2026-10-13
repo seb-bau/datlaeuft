@@ -226,7 +226,7 @@
         </div>
         {% endif %}
 
-                {% if can_access_foreman %}
+        {% if can_access_foreman or can_review_safety %}
         <div class="sidebar-group">
           <button
             class="sidebar-group-toggle{% if is_reports_section %} active{% else %} collapsed{% endif %}"
@@ -257,6 +257,7 @@
             data-bs-parent="#appNavigation"
           >
             <div class="sidebar-subnav-inner">
+              {% if can_access_foreman %}
               {{ sidebar_link(
                 'admin.report_service_positions',
                 'Leistungspositionen',
@@ -277,6 +278,16 @@
                 'box-seam',
                 request.path == '/admin/reports/installed-materials'
               ) }}
+              {% endif %}
+
+              {% if can_review_safety %}
+              {{ sidebar_link(
+                'safety_inspection_admin.report',
+                'Verkehrssicherung',
+                'signpost-2',
+                request.path == '/admin/reports/safety-inspections'
+              ) }}
+              {% endif %}
             </div>
           </div>
         </div>

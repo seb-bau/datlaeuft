@@ -60,6 +60,7 @@ from .safety_inspection_import import (
     MAX_IMPORT_BYTES,
     resolve_safety_inspection_import,
 )
+from .safety_inspection_reporting import build_safety_inspection_report
 from .safety_inspection_progress import get_safety_inspection_group_progress
 from .safety_inspection_reset import reset_unprocessed_safety_inspection_jobs
 from .safety_inspection_service import (
@@ -80,6 +81,24 @@ safety_inspection_admin_bp = Blueprint(
     "safety_inspection_admin",
     __name__,
 )
+
+
+@safety_inspection_admin_bp.get("/admin/reports/safety-inspections")
+@login_required
+@safety_inspection_review_required
+def report() -> Any:
+    groups = (
+        SafetyInspectionGroup.query
+        .options(selectinload(SafetyInspectionGroup.schedule))
+        .order_by(SafetyInspectionGroup.name, SafetyInspectionGroup.id)
+        .all()
+    )
+    report_data = build_safety_inspection_report(groups, request.args)
+    return render_template(
+        "admin/report_safety_inspections.html",
+        groups=groups,
+        report=report_data,
+    ), 400 if report_data["error"] else 200
 
 
 @safety_inspection_admin_bp.get(

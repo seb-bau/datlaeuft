@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+{% block title %}Auswertung Verkehrssicherung{% endblock %}
+
+{% macro percentage(value) -%}
+  {% if value is not none %}{{ "%.1f"|format(value)|replace('.', ',') }} %{% else %}—{% endif %}
+{%- endmacro %}
+
+{% block head %}
+<style>
+  .safety-report-circle {
+    position: relative;
+    width: 12rem;
+    height: 12rem;
+    flex-shrink: 0;
+    border-radius: 50%;
+  }
+  .safety-report-ring-value {
+    position: absolute;
+    inset: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bs-body-bg);
+    font-size: 1.75rem;
+    font-weight: 600;
+  }
+  .safety-report-color {
+    display: inline-block;
+    width: .8rem;
+    height: .8rem;
+    margin-right: .4rem;
+    border-radius: .15rem;
+  }
+  .safety-report-volume {
+    display: flex;
+    height: 1.1rem;
+    overflow: hidden;
+    border-radius: .25rem;
+  }
+  .safety-report-progress-cell { min-width: 12rem; }
+  .safety-report-volume-cell { min-width: 18rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">Auswertung Verkehrssicherung</h1>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <form method="get" id="safetyReportFilters">
+      <div class="row g-3 align-items-end">
+        <div class="col-lg-4">
+          <label class="form-label" for="safetyReportGroupScope">Prüfgruppen</label>
+          <select class="form-select" name="group_scope" id="safetyReportGroupScope">
+            <option value="all" {% if report.filters.group_scope == 'all' %}selected{% endif %}>Alle Prüfgruppen</option>
+            <option value="selected" {% if report.filters.group_scope == 'selected' %}selected{% endif %}>Prüfgruppen auswählen</option>
+          </select>
+        </div>
+        <div class="col-lg-4">
+          <label class="form-label" for="safetyReportPeriodMode">Zeitraum</label>
+          <select class="form-select" name="period_mode" id="safetyReportPeriodMode">
+            <option value="current" {% if report.filters.period_mode == 'current' %}selected{% endif %}>Aktueller Prüfzeitraum je Gruppe</option>
+            <option value="range" {% if report.filters.period_mode == 'range' %}selected{% endif %}>Zeitraum festlegen</option>
+          </select>
+        </div>
+        <div class="col-lg-4 d-flex gap-2">
+          <button type="submit" class="btn btn-primary">Auswerten</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('safety_inspection_admin.report') }}">Zurücksetzen</a>
+        </div>
+      </div>
+
+      <fieldset class="mt-3" id="safetyReportGroupChoices">
+        <legend class="fs-6">Eine oder mehrere Prüfgruppen auswählen</legend>
+        <div class="d-flex gap-2 mb-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-group-selection="all">Alle markieren</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-group-selection="none">Auswahl leeren</button>
+        </div>
+        <div class="border rounded p-3 overflow-auto" style="max-height: 14rem;">
+          {% for group in groups %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="group_id"
+              id="safetyReportGroup{{ group.id }}" value="{{ group.id }}"
+              {% if group.id in report.filters.selected_group_ids %}checked{% endif %}>
+            <label class="form-check-label" for="safetyReportGroup{{ group.id }}">
+              {{ group.name }}{% if not group.active %} (inaktiv){% endif %}
+            </label>
+          </div>
+          {% else %}
+          <span class="text-muted">Keine Prüfgruppen vorhanden.</span>
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <fieldset class="mt-3" id="safetyReportDateRange">
+        <legend class="fs-6">Datumsbereich</legend>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="safetyReportStartDate">Von</label>
+            <input class="form-control" type="date" name="start_date" id="safetyReportStartDate"
+              value="{{ report.filters.start_date }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="safetyReportEndDate">Bis einschließlich</label>
+            <input class="form-control" type="date" name="end_date" id="safetyReportEndDate"
+              value="{{ report.filters.end_date }}">
+          </div>
+        </div>
+      </fieldset>
+    </form>
+  </div>
+</div>
+
+{% if report.error %}
+<div class="alert alert-danger" role="alert">{{ report.error }}</div>
+{% else %}
+<div class="alert alert-light border">
+  {% if report.filters.period_mode == 'current' %}
+    Aktueller Prüfzeitraum jeder ausgewählten Gruppe, Stand {{ report.current_date.strftime('%d.%m.%Y') }}.
+  {% else %}
+    Datumsbereich: {{ report.range_start.strftime('%d.%m.%Y') }} bis {{ report.range_end.strftime('%d.%m.%Y') }}.
+    Berücksichtigt werden Prüfaufträge, deren Prüfzeitraum diesen Bereich überschneidet.
+  {% endif %}
+  <br>
+  {{ report.groups|length }} Prüfgruppen. Erledigt zählt mit und ohne Mängel.
+  {{ report.summary.canceled }} abgebrochene Prüfaufträge sind aus allen Kennzahlen und Diagrammen ausgeschlossen.
+  Ausgewertet werden bereits erzeugte Prüfaufträge.
+  Die Anzeige verwendet den aktuellen Bearbeitungsstand der ausgewählten Aufträge.
+</div>
+{% for warning in report.warnings %}
+<div class="alert alert-danger" role="alert">{{ warning }}</div>
+{% endfor %}
+
+<div class="row g-3 mb-4">
+  {% for label, value in [
+    ('Prüfaufträge insgesamt', report.summary.total),
+    ('Erledigt', report.summary.completed),
+    ('Frist überschritten', report.summary.overdue),
+    ('Ohne Zuordnung', report.unassigned)
+  ] %}
+  <div class="col-sm-6 col-xl-3">
+    <div class="card shadow-sm h-100"><div class="card-body">
+      <div class="text-muted small">{{ label }}</div>
+      <div class="fs-3 fw-semibold{% if label == 'Frist überschritten' and value %} text-danger{% endif %}">{{ value }}</div>
+    </div></div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-xl-5">
+    <div class="card shadow-sm h-100"><div class="card-body">
+      <h2 class="h5 mb-3">Erledigungsquote</h2>
+      {% if report.summary.total %}
+      <div class="d-flex align-items-center justify-content-center flex-wrap gap-4">
+        <div class="safety-report-circle" role="img" aria-label="Erledigungsquote: {{ percentage(report.summary.percentage) }}"
+          style="background: conic-gradient(#198754 {{ report.summary.percentage }}%, #e9ecef 0);">
+          <div class="safety-report-ring-value">{{ percentage(report.summary.percentage) }}</div>
+        </div>
+        <div>
+          <strong>{{ report.summary.completed }} von {{ report.summary.total }} erledigt</strong>
+          <div class="text-muted">{{ report.summary.total - report.summary.completed }} noch nicht erledigt</div>
+        </div>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0">Keine auswertbaren Prüfaufträge. Erledigungsquote: —</p>
+      {% endif %}
+    </div></div>
+  </div>
+  <div class="col-xl-7">
+    <div class="card shadow-sm h-100"><div class="card-body">
+      <h2 class="h5 mb-3">Prüfstatus</h2>
+      {% if report.summary.total %}
+      <div class="d-flex align-items-center justify-content-center flex-wrap gap-4">
+        <div class="safety-report-circle" style="background: {{ report.status_gradient }};"
+          role="img" aria-label="{% for status in report.statuses %}{{ status.label }}: {{ status.count }}. {% endfor %}"></div>
+        <ul class="list-unstyled mb-0">
+          {% for status in report.statuses %}
+          <li class="mb-2">
+            <span class="safety-report-color" style="background: {{ status.color }};" aria-hidden="true"></span>
+            {{ status.label }}: <strong>{{ status.count }}</strong> ({{ percentage(status.percentage) }})
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0">Für die gewählten Filter sind keine auswertbaren Prüfaufträge vorhanden.</p>
+      {% endif %}
+    </div></div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4"><div class="card-body">
+  <h2 class="h5">Handwerkervergleich</h2>
+  <p class="small text-muted">
+    Zuordnung zum derzeit verantwortlichen Handwerker des Prüfauftrags.
+    Die Statusbalken verwenden eine gemeinsame Skala; die Quote bezieht sich auf die eigenen Aufträge.
+    Fristüberschreitungen umfassen unerledigte Aufträge mit überschrittener Frist sowie abgelaufene Aufträge.
+  </p>
+  {% if report.craftsmen %}
+  <div class="small text-muted mb-2">Balkenskala: 0 bis {{ report.maximum_total }} Prüfaufträge.</div>
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead><tr>
+        <th scope="col">Handwerker</th><th scope="col">Gesamt</th>
+        <th scope="col">Erledigt</th><th scope="col">Prüfstatus nach Anzahl</th>
+        <th scope="col">Fortschritt</th><th scope="col">Frist überschritten</th>
+      </tr></thead>
+      <tbody>
+        {% for row in report.craftsmen %}
+        <tr>
+          <th scope="row">{{ row.name }}</th>
+          <td>{{ row.total }}</td><td>{{ row.completed }}</td>
+          <td class="safety-report-volume-cell">
+            <div class="safety-report-volume" style="width: {{ row.volume_percentage }}%;"
+              role="img" aria-label="{% for status in report.statuses %}{{ status.label }}: {{ row.counts[status.key] }}. {% endfor %}">
+              {% for status in report.statuses %}
+              {% if row.counts[status.key] %}
+              <span style="width: {{ row.counts[status.key] * 100 / row.total }}%; background: {{ status.color }};"
+                title="{{ status.label }}: {{ row.counts[status.key] }}"></span>
+              {% endif %}
+              {% endfor %}
+            </div>
+          </td>
+          <td class="safety-report-progress-cell">
+            <div class="small mb-1">{{ percentage(row.percentage) }}</div>
+            <div class="progress" role="progressbar" aria-label="Erledigungsquote {{ row.name }}"
+              aria-valuenow="{{ row.percentage }}" aria-valuemin="0" aria-valuemax="100" style="height: .5rem;">
+              <div class="progress-bar bg-success" style="width: {{ row.percentage }}%;"></div>
+            </div>
+          </td>
+          <td{% if row.overdue %} class="text-danger fw-semibold"{% endif %}>{{ row.overdue }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-muted mb-0">Keine auswertbaren Prüfaufträge für den Handwerkervergleich vorhanden.</p>
+  {% endif %}
+</div></div>
+
+<details class="card shadow-sm">
+  <summary class="card-header">Prüfgruppen und berücksichtigte Zeiträume</summary>
+  <div class="card-body table-responsive">
+    <table class="table align-middle mb-0">
+      <thead><tr>
+        <th scope="col">Prüfgruppe</th><th scope="col">Prüfzeitraum von / bis</th>
+        <th scope="col">Gesamt</th><th scope="col">Erledigt</th><th scope="col">Fortschritt</th>
+      </tr></thead>
+      <tbody>
+        {% for row in report.groups %}
+        <tr>
+          <th scope="row">{{ row.name }}{% if not row.active %} <span class="text-muted">(inaktiv)</span>{% endif %}</th>
+          <td>
+            {% if row.error %}{{ row.error }}
+            {% elif row.period_start %}{{ row.period_start.strftime('%d.%m.%Y') }} – {{ row.period_end.strftime('%d.%m.%Y') }}
+            {% elif report.filters.period_mode == 'current' %}Kein aktueller Prüfzeitraum
+            {% else %}Keine Prüfaufträge im Datumsbereich{% endif %}
+          </td>
+          <td>{{ row.total }}</td><td>{{ row.completed }}</td><td>{{ percentage(row.percentage) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-muted">Keine Prüfgruppen vorhanden.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="small text-muted mt-2">Bei mehreren Prüfzeiträumen wird die gesamte Zeitspanne von der ersten bis zur letzten Prüfung angezeigt.</div>
+  </div>
+</details>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const form = document.getElementById("safetyReportFilters");
+    const groupScope = document.getElementById("safetyReportGroupScope");
+    const periodMode = document.getElementById("safetyReportPeriodMode");
+    const groupChoices = document.getElementById("safetyReportGroupChoices");
+    const dateRange = document.getElementById("safetyReportDateRange");
+
+    function updateFilters() {
+      groupChoices.hidden = groupScope.value !== "selected";
+      groupChoices.disabled = groupChoices.hidden;
+      dateRange.hidden = periodMode.value !== "range";
+      dateRange.disabled = dateRange.hidden;
+      dateRange.querySelectorAll("input").forEach((input) => {
+        input.required = !dateRange.hidden;
+      });
+    }
+
+    form.querySelectorAll("[data-group-selection]").forEach((button) => {
+      button.addEventListener("click", () => {
+        groupChoices.querySelectorAll("input[type=checkbox]").forEach((input) => {
+          input.checked = button.dataset.groupSelection === "all";
+        });
+      });
+    });
+    groupScope.addEventListener("change", updateFilters);
+    periodMode.addEventListener("change", updateFilters);
+    updateFilters();
+  })();
+</script>
+{% endblock %}
