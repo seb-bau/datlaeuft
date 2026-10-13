@@ -62,6 +62,10 @@ from .safety_inspection_import import (
 )
 from .safety_inspection_reporting import build_safety_inspection_report
 from .safety_inspection_progress import get_safety_inspection_group_progress
+from .safety_inspection_template_deletion import (
+    delete_safety_inspection_template,
+    get_safety_inspection_template_delete_reasons,
+)
 from .safety_inspection_reset import reset_unprocessed_safety_inspection_jobs
 from .safety_inspection_service import (
     create_safety_inspection_revision,
@@ -170,23 +174,64 @@ def dashboard() -> Any:
 @login_required
 @safety_inspection_manage_required
 def templates() -> Any:
-    items = SafetyInspectionTemplate.query.order_by(
-        SafetyInspectionTemplate.active.desc(),
-        SafetyInspectionTemplate.name.asc(),
-    ).all()
+    items = (
+        SafetyInspectionTemplate.query
+        .options(selectinload(SafetyInspectionTemplate.versions))
+        .order_by(
+            SafetyInspectionTemplate.active.desc(),
+            SafetyInspectionTemplate.name.asc(),
+        )
+        .all()
+    )
 
     return render_template(
         "admin/safety_inspection_templates.html",
         items=items,
+        delete_reasons=get_safety_inspection_template_delete_reasons(items),
         version_status_labels={
-            SafetyInspectionTemplateVersionStatus
-            .DRAFT.value: "Entwurf",
-            SafetyInspectionTemplateVersionStatus
-            .PUBLISHED.value: "Veröffentlicht",
-            SafetyInspectionTemplateVersionStatus
-            .ARCHIVED.value: "Archiviert",
+            SafetyInspectionTemplateVersionStatus.DRAFT.value: "Entwurf",
+            SafetyInspectionTemplateVersionStatus.PUBLISHED.value: "Veröffentlicht",
+            SafetyInspectionTemplateVersionStatus.ARCHIVED.value: "Archiviert",
         },
     )
+
+
+@safety_inspection_admin_bp.post(
+    "/admin/safety-inspections/templates/<int:template_id>/delete"
+)
+@login_required
+@safety_inspection_manage_required
+def template_delete(template_id: int) -> Any:
+    try:
+        delete_safety_inspection_template(template_id, current_user)
+        db.session.commit()
+    except LookupError:
+        db.session.rollback()
+        abort(404)
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except IntegrityError:
+        db.session.rollback()
+        flash(
+            "Der Prüfdetailplan wird inzwischen verwendet und kann nicht gelöscht werden. "
+            "Bitte die Seite neu laden.",
+            "danger",
+        )
+    except SQLAlchemyError:
+        db.session.rollback()
+        current_app.logger.exception(
+            "safety_inspection_template_delete_failed template_id=%s",
+            template_id,
+        )
+        flash(
+            "Der Prüfdetailplan konnte nicht gelöscht werden. Bitte erneut versuchen.",
+            "danger",
+        )
+    else:
+        flash("Der Prüfdetailplan wurde gelöscht.", "success")
+
+    return redirect(url_for("safety_inspection_admin.templates"))
 
 
 @safety_inspection_admin_bp.route(
@@ -372,6 +417,7 @@ def template_edit(template_id: int) -> Any:
     return render_template(
         "admin/safety_inspection_template_form.html",
         item=template,
+        delete_reason=get_safety_inspection_template_delete_reasons([template])[template.id],
         version=version,
         versions=sorted(
             template.versions,

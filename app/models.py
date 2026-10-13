@@ -4964,6 +4964,12 @@ class SafetyInspectionTemplate(db.Model):
     legal_reference: Mapped[str | None] = (
         mapped_column(db.Text)
     )
+    used_for_jobs: Mapped[bool] = mapped_column(
+        db.Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
     active: Mapped[bool] = mapped_column(
         db.Boolean,
         default=True,
@@ -5001,6 +5007,7 @@ class SafetyInspectionTemplate(db.Model):
         list["SafetyInspectionTemplateVersion"]
     ] = relationship(
         back_populates="template",
+        cascade="all, delete-orphan",
         order_by=(
             "SafetyInspectionTemplateVersion."
             "version_number"

@@ -765,6 +765,14 @@ def create_safety_inspection_job(
         due_to: date,
         missed_on: date,
 ) -> tuple[SafetyInspectionJob, bool]:
+    template = db.session.get(
+        SafetyInspectionTemplate,
+        template_version.template_id,
+        with_for_update=True,
+        populate_existing=True,
+    )
+    if template is None:
+        raise ValueError("Der Prüfdetailplan existiert nicht mehr.")
     existing = (
         SafetyInspectionJob.query.filter_by(
             group_id=group.id,
@@ -946,7 +954,9 @@ def create_safety_inspection_job(
             )
         )
 
+    template.used_for_jobs = True
     db.session.flush()
+
     if job.assigned_user is not None:
         enqueue_safety_inspection_push(
             job,
