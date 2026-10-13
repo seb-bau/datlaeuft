@@ -708,6 +708,23 @@
         Betroffene Objekte anzeigen
       </button>
 
+      {% if item.id %}
+      <button
+        class="btn btn-outline-danger"
+        type="submit"
+        name="action"
+        value="reset_unprocessed"
+      >
+        Unbearbeitete Prüfaufträge zurücksetzen
+      </button>
+
+      <div class="small text-muted w-100">
+        Speichert deine Gruppeneingaben und löscht alle vollständig
+        unbearbeiteten Prüfaufträge dieser Gruppe. Anschließend kannst
+        du die fälligen Prüfungen erneut erzeugen.
+      </div>
+      {% endif %}
+
       <button
         class="btn btn-primary"
         type="submit"
@@ -1400,6 +1417,16 @@ groupForm.addEventListener("submit", (event) => {
     event.preventDefault();
     objectImportState.textContent =
       "Bitte warten, bis der Import abgeschlossen ist.";
+    return;
+  }
+
+  if (
+    event.submitter?.value === "reset_unprocessed"
+    && !window.confirm(
+      "Gruppeneingaben speichern und alle vollständig unbearbeiteten Prüfaufträge dieser Gruppe löschen?"
+    )
+  ) {
+    event.preventDefault();
     return;
   }
 

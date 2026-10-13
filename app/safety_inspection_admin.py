@@ -16,10 +16,11 @@ from flask import (
     render_template,
     request,
     url_for,
+    current_app,
 )
 from flask_login import current_user, login_required
 from sqlalchemy import or_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .audit import audit
 from .auth import (
@@ -58,6 +59,7 @@ from .safety_inspection_import import (
     MAX_IMPORT_BYTES,
     resolve_safety_inspection_import,
 )
+from .safety_inspection_reset import reset_unprocessed_safety_inspection_jobs
 from .safety_inspection_service import (
     create_safety_inspection_revision,
     create_safety_inspection_template,
@@ -672,47 +674,78 @@ def group_new() -> Any:
 )
 @login_required
 @safety_inspection_manage_required
-def group_edit(
-    group_id: int,
-) -> Any:
+def group_edit(group_id: int) -> Any:
+    is_post = request.method == "POST"
     item = db.session.get(
         SafetyInspectionGroup,
         group_id,
+        with_for_update=is_post,
+        populate_existing=is_post,
     )
 
     if item is None:
         abort(404)
 
-    if request.method == "POST":
+    if is_post:
+        action = request.form.get("action", "save")
+        removed_count = 0
+
         try:
+            if action not in {"save", "reset_unprocessed"}:
+                raise ValueError("Die Gruppenaktion ist ungültig.")
+
             _save_group(item)
             db.session.flush()
-            validate_safety_inspection_group(
-                item
-            )
-            db.session.commit()
-        except (ValueError, IntegrityError) as exc:
-            db.session.rollback()
-            flash(_write_error(exc), "danger")
-        else:
+            validate_safety_inspection_group(item)
+
+            if action == "reset_unprocessed":
+                removed_count = reset_unprocessed_safety_inspection_jobs(
+                    item,
+                    current_user,
+                )
+                audit(
+                    "safety_inspection.group_jobs_reset",
+                    "safety_inspection_group",
+                    item.id,
+                    {"removed_count": removed_count},
+                )
+
             audit(
                 "safety_inspection.group_updated",
                 "safety_inspection_group",
                 item.id,
             )
             db.session.commit()
+
+        except (ValueError, IntegrityError) as exc:
+            db.session.rollback()
+            flash(_write_error(exc), "danger")
+
+        except SQLAlchemyError:
+            db.session.rollback()
+            current_app.logger.exception(
+                "safety_inspection_group_save_failed group_id=%s",
+                group_id,
+            )
             flash(
-                "Die Prüfgruppe wurde "
-                "gespeichert.",
-                "success",
+                "Die Aktion konnte nicht gespeichert werden. "
+                "Bitte erneut versuchen.",
+                "danger",
             )
-            return redirect(
-                url_for(
-                    "safety_inspection_admin."
-                    "group_edit",
-                    group_id=item.id,
+
+        else:
+            message = "Die Prüfgruppe wurde gespeichert."
+            if action == "reset_unprocessed":
+                message += (
+                    f" {removed_count} unbearbeitete Prüfaufträge "
+                    "wurden zurückgesetzt."
                 )
-            )
+
+            flash(message, "success")
+            return redirect(url_for(
+                "safety_inspection_admin.group_edit",
+                group_id=item.id,
+            ))
 
     return _render_group_form(item)
 

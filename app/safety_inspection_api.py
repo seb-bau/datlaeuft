@@ -745,6 +745,8 @@ def viewable_safety_inspection_job(
     job = db.session.get(
         SafetyInspectionJob,
         job_id,
+        with_for_update=request.method in {"POST", "PATCH", "DELETE"},
+        populate_existing=request.method in {"POST", "PATCH", "DELETE"},
     )
 
     if job is None:
@@ -771,12 +773,14 @@ def viewable_safety_result(
         job_id,
         user,
     )
-    result = (
-        SafetyInspectionResult.query.filter_by(
-            id=result_id,
-            job_id=job.id,
-        ).one_or_none()
+    query = SafetyInspectionResult.query.filter_by(
+        id=result_id,
+        job_id=job.id,
     )
+    if request.method in {"POST", "PATCH", "DELETE"}:
+        query = query.populate_existing().with_for_update()
+
+    result = query.one_or_none()
 
     if result is None:
         abort(404)

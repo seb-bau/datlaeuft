@@ -197,6 +197,8 @@ def job_cancel(job_id: int) -> Any:
     item = db.session.get(
         SafetyInspectionJob,
         job_id,
+        with_for_update=True,
+        populate_existing=True,
     )
 
     if item is None:
@@ -259,6 +261,8 @@ def job_assign(job_id: int) -> Any:
     item = db.session.get(
         SafetyInspectionJob,
         job_id,
+        with_for_update=True,
+        populate_existing=True,
     )
 
     if item is None:
