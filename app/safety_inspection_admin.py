@@ -19,6 +19,7 @@ from flask import (
     current_app,
 )
 from flask_login import current_user, login_required
+from sqlalchemy.orm import selectinload
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -59,6 +60,7 @@ from .safety_inspection_import import (
     MAX_IMPORT_BYTES,
     resolve_safety_inspection_import,
 )
+from .safety_inspection_progress import get_safety_inspection_group_progress
 from .safety_inspection_reset import reset_unprocessed_safety_inspection_jobs
 from .safety_inspection_service import (
     create_safety_inspection_revision,
@@ -594,6 +596,7 @@ def schedule_update(
 def groups() -> Any:
     items = (
         SafetyInspectionGroup.query
+        .options(selectinload(SafetyInspectionGroup.schedule))
         .order_by(
             SafetyInspectionGroup.active.desc(),
             SafetyInspectionGroup.name.asc(),
@@ -604,12 +607,9 @@ def groups() -> Any:
     return render_template(
         "admin/safety_inspection_groups.html",
         items=items,
-        object_level_labels=(
-            _object_level_labels()
-        ),
-        selection_mode_labels=(
-            _selection_mode_labels()
-        ),
+        group_progress=get_safety_inspection_group_progress(items),
+        object_level_labels=_object_level_labels(),
+        selection_mode_labels=_selection_mode_labels(),
     )
 
 

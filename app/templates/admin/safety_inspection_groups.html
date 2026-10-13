@@ -27,6 +27,7 @@
           <th>Ebene</th>
           <th>Abteilung</th>
           <th>Objekte</th>
+          <th>Aktueller Prüffortschritt</th>
           <th>Letzte Erzeugung</th>
           <th>Aktiv</th>
           <th data-filter="false">Aktionen</th>
@@ -95,6 +96,66 @@
             {% if excluded_targets %}
             · {{ excluded_targets|length }}
             ausgeschlossen
+            {% endif %}
+          </td>
+
+          {% set progress = group_progress[item.id] %}
+          <td
+            data-order="{{ progress.percentage if progress.percentage is not none else -1 }}"
+            style="min-width: 220px"
+          >
+            {% if progress.error %}
+            <span class="text-muted">
+              {{ progress.error }}
+            </span>
+
+            {% elif progress.period_start is none %}
+            <span class="text-muted">
+              Kein aktueller Prüfzeitraum
+            </span>
+
+            {% else %}
+            <div class="small text-muted mb-1">
+              {{ progress.period_start.strftime('%d.%m.%Y') }}
+              bis
+              {{ progress.period_end.strftime('%d.%m.%Y') }}
+            </div>
+
+            {% if progress.total %}
+            <div class="d-flex justify-content-between gap-2 mb-1">
+              <span>
+                {{ progress.completed }} von {{ progress.total }} erledigt
+              </span>
+              <span class="fw-semibold">
+                {{ ('%.1f'|format(progress.percentage)).replace('.', ',') }} %
+              </span>
+            </div>
+
+            <div
+              class="progress"
+              role="progressbar"
+              aria-label="Prüffortschritt für {{ item.name }}"
+              aria-valuenow="{{ progress.percentage }}"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              style="height: 6px"
+            >
+              <div
+                class="progress-bar bg-secondary"
+                style="width: {{ progress.percentage }}%"
+              ></div>
+            </div>
+
+            {% elif progress.canceled %}
+            <span class="text-muted">
+              Alle Prüfaufträge abgebrochen
+            </span>
+
+            {% else %}
+            <span class="text-muted">
+              Noch keine Prüfaufträge
+            </span>
+            {% endif %}
             {% endif %}
           </td>
 
