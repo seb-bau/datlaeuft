@@ -14,7 +14,11 @@ from flask import (
 )
 from flask_jwt_extended import jwt_required
 
-from .api import current_api_user, serialize_user
+from .api import (
+    current_api_user,
+    serialize_user,
+    viewable_commission_user_ids,
+)
 from .audit import audit
 from .extensions import db
 from .models import (
@@ -51,85 +55,84 @@ safety_inspection_api_bp = Blueprint(
 )
 
 
-@safety_inspection_api_bp.get(
-    "/safety-inspections"
-)
+@safety_inspection_api_bp.get("/safety-inspections")
 @jwt_required()
 def safety_inspections() -> Any:
     user = current_api_user()
-    scope = request.args.get(
-        "scope",
-        "mine",
-    ).strip()
-    status = request.args.get(
-        "status",
-        "active",
-    ).strip()
-    overdue_only = (
-        request.args.get("overdue") == "1"
-    )
+    scope = request.args.get("scope", "mine").strip()
+    status = request.args.get("status", "active").strip()
+    user_id_filter = request.args.get("user_id", "").strip()
+    overdue_only = request.args.get("overdue") == "1"
 
+    if scope not in {"mine", "all"}:
+        return jsonify({
+            "message": "Der Benutzerfilter ist ungültig."
+        }), 400
+
+    allowed_user_ids = viewable_safety_inspection_user_ids(user)
     query = SafetyInspectionJob.query
 
-    if (
-        scope != "all"
-        or not can_view_all_jobs(user)
-    ):
+    if scope == "mine":
         query = query.filter(
-            SafetyInspectionJob.assigned_user_id
-            == user.id
+            SafetyInspectionJob.assigned_user_id == user.id
+        )
+    elif user_id_filter:
+        try:
+            selected_user_id = int(user_id_filter)
+        except ValueError:
+            return jsonify({
+                "message": "Der ausgewählte Prüfer ist ungültig."
+            }), 400
+
+        if not 0 < selected_user_id <= 2**63 - 1:
+            return jsonify({
+                "message": "Der ausgewählte Prüfer ist ungültig."
+            }), 400
+
+        if (
+            allowed_user_ids is not None
+            and selected_user_id not in allowed_user_ids
+        ):
+            return jsonify({
+                "message": "Für diesen Prüfer besteht keine Berechtigung."
+            }), 403
+
+        query = query.filter(
+            SafetyInspectionJob.assigned_user_id == selected_user_id
+        )
+    elif allowed_user_ids is not None:
+        query = query.filter(
+            SafetyInspectionJob.assigned_user_id.in_(allowed_user_ids)
         )
 
     if status == "active":
         query = query.filter(
-            SafetyInspectionJob.status.in_(
-                {
-                    SafetyInspectionJobStatus
-                    .PLANNED.value,
-                    SafetyInspectionJobStatus
-                    .IN_PROGRESS.value,
-                }
-            )
+            SafetyInspectionJob.status.in_({
+                SafetyInspectionJobStatus.PLANNED.value,
+                SafetyInspectionJobStatus.IN_PROGRESS.value,
+            })
         )
     elif status == "completed":
         query = query.filter(
-            SafetyInspectionJob.status.in_(
-                {
-                    SafetyInspectionJobStatus
-                    .COMPLETED.value,
-                    SafetyInspectionJobStatus
-                    .COMPLETED_WITH_DEFECTS.value,
-                }
-            )
+            SafetyInspectionJob.status.in_({
+                SafetyInspectionJobStatus.COMPLETED.value,
+                SafetyInspectionJobStatus.COMPLETED_WITH_DEFECTS.value,
+            })
         )
-    elif status in {
-        item.value
-        for item in SafetyInspectionJobStatus
-    }:
-        query = query.filter(
-            SafetyInspectionJob.status == status
-        )
+    elif status in {item.value for item in SafetyInspectionJobStatus}:
+        query = query.filter(SafetyInspectionJob.status == status)
     elif status != "all":
-        return jsonify(
-            {
-                "message": (
-                    "Der Statusfilter ist ungültig."
-                )
-            }
-        ), 400
+        return jsonify({
+            "message": "Der Statusfilter ist ungültig."
+        }), 400
 
     if overdue_only:
         query = query.filter(
-            SafetyInspectionJob.status.in_(
-                {
-                    SafetyInspectionJobStatus
-                    .PLANNED.value,
-                    SafetyInspectionJobStatus
-                    .IN_PROGRESS.value,
-                }
-            ),
-            SafetyInspectionJob.due_to
-            < date.today(),
+            SafetyInspectionJob.status.in_({
+                SafetyInspectionJobStatus.PLANNED.value,
+                SafetyInspectionJobStatus.IN_PROGRESS.value,
+            }),
+            SafetyInspectionJob.due_to < date.today(),
         )
 
     items = query.order_by(
@@ -138,17 +141,39 @@ def safety_inspections() -> Any:
         SafetyInspectionJob.id.asc(),
     ).all()
 
-    return jsonify(
-        {
-            "items": [
-                serialize_safety_inspection_job(
-                    item,
-                    user,
-                )
-                for item in items
-            ]
-        }
+    return jsonify({
+        "items": [
+            serialize_safety_inspection_job(item, user)
+            for item in items
+        ],
+    })
+
+
+@safety_inspection_api_bp.get("/safety-inspections/users")
+@jwt_required()
+def safety_inspection_users() -> Any:
+    user = current_api_user()
+    allowed_user_ids = viewable_safety_inspection_user_ids(user)
+    query = User.query.filter(User.id != user.id)
+
+    if allowed_user_ids is None:
+        assigned_user_ids = db.session.query(
+            SafetyInspectionJob.assigned_user_id
+        ).filter(
+            SafetyInspectionJob.assigned_user_id.isnot(None)
+        )
+        query = query.filter(User.id.in_(assigned_user_ids))
+    else:
+        query = query.filter(User.id.in_(allowed_user_ids))
+
+    items = [user]
+    items.extend(
+        query.order_by(User.display_name.asc(), User.id.asc()).all()
     )
+
+    return jsonify({
+        "items": [serialize_user(item) for item in items],
+    })
 
 
 @safety_inspection_api_bp.get(
@@ -738,25 +763,53 @@ def can_view_all_jobs(user: User) -> bool:
     )
 
 
+def can_edit_safety_inspection_job(
+    job: SafetyInspectionJob,
+    user: User,
+) -> bool:
+    return (
+        job.assigned_user_id == user.id
+        or user.is_admin
+        or user.can_manage_safety_inspections
+        or user.can_review_safety_inspections
+    )
+
+
+def viewable_safety_inspection_user_ids(
+    user: User,
+) -> set[int] | None:
+    if can_view_all_jobs(user):
+        return None
+
+    return viewable_commission_user_ids(user)
+
+
 def viewable_safety_inspection_job(
     job_id: int,
     user: User,
 ) -> SafetyInspectionJob:
+    write_request = request.method not in {"GET", "HEAD", "OPTIONS"}
     job = db.session.get(
         SafetyInspectionJob,
         job_id,
-        with_for_update=request.method in {"POST", "PATCH", "DELETE"},
-        populate_existing=request.method in {"POST", "PATCH", "DELETE"},
+        with_for_update=write_request,
+        populate_existing=write_request,
     )
 
     if job is None:
         abort(404)
 
-    if (
-        job.assigned_user_id != user.id
-        and not can_view_all_jobs(user)
-    ):
-        abort(403)
+    if write_request:
+        if not can_edit_safety_inspection_job(job, user):
+            abort(403)
+    else:
+        allowed_user_ids = viewable_safety_inspection_user_ids(user)
+
+        if (
+            allowed_user_ids is not None
+            and job.assigned_user_id not in allowed_user_ids
+        ):
+            abort(403)
 
     return job
 
@@ -845,10 +898,7 @@ def serialize_safety_inspection_job(
         "is_terminal": job.is_terminal,
         "can_edit": (
             not job.is_terminal
-            and (
-                job.assigned_user_id == viewer.id
-                or can_view_all_jobs(viewer)
-            )
+            and can_edit_safety_inspection_job(job, viewer)
         ),
         "group": {
             "id": job.group.id,
