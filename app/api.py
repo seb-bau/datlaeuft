@@ -720,14 +720,22 @@ def commission_contacts(commission_id: int) -> Any:
     user = current_api_user()
     commission = viewable_commission(commission_id, user)
 
-    try:
-        contact_items = WowiportService().get_commission_contact_items(commission.erp_id)
-    except Exception as exc:
-        current_app.logger.exception(
-            "commission_contacts_failed commission_id=%s erp_id=%s", commission.id, commission.erp_id)
-        return jsonify({"contact_items": [], "message": str(exc)}), 502
+    if commission.erp_id is None:
+        return jsonify({"contact_items": []}), 200
 
-    return jsonify({"contact_items": contact_items})
+    try:
+        contact_items = WowiportService().get_commission_contact_items(
+            commission.erp_id
+        )
+    except Exception:
+        current_app.logger.exception(
+            "commission_contacts_failed commission_id=%s erp_id=%s",
+            commission.id,
+            commission.erp_id,
+        )
+        contact_items = []
+
+    return jsonify({"contact_items": contact_items}), 200
 
 
 @api_bp.post("/commissions/<int:commission_id>/start")
