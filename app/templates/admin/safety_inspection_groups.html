@@ -25,8 +25,8 @@
           <th>Prüfdetailplan</th>
           <th>Prüfzeitplan</th>
           <th>Ebene</th>
-          <th>Abteilung</th>
-          <th>Objekte</th>
+          <th>Zuständigkeit</th>
+          <th>Objektauswahl</th>
           <th>Aktueller Prüffortschritt</th>
           <th>Letzte Erzeugung</th>
           <th>Aktiv</th>
@@ -87,16 +87,36 @@
           </td>
 
           <td>
-            {{ item.department.name if item.department else item.fallback_user.display_name }}
+            {% if item.department %}
+            <div>{{ item.department.name }}</div>
+            {% if item.fallback_user %}
+            <div class="small text-muted">
+              Ersatz: {{ item.fallback_user.display_name }}
+            </div>
+            {% endif %}
+            {% elif item.fallback_user %}
+            <div>{{ item.fallback_user.display_name }}</div>
+            <div class="small text-muted">Fester Handwerker</div>
+            {% else %}
+            <span class="text-muted">Keine Zuständigkeit hinterlegt</span>
+            {% endif %}
           </td>
 
           <td>
-            {{ included_targets|length }}
-            eingeschlossen
-            {% if excluded_targets %}
-            · {{ excluded_targets|length }}
-            ausgeschlossen
+            <div>
+              {% if item.selection_mode == 'blacklist' %}
+              Alle Objekte mit Ausnahmen
+              {% else %}
+              Gezielt ausgewählte Objekte
+              {% endif %}
+            </div>
+            {% if item.id_num_regex %}
+            <div class="small text-muted">RegEx-Filter aktiv</div>
             {% endif %}
+            <div class="small text-muted">
+              Manuell: {{ included_targets|length }} eingeschlossen
+              · {{ excluded_targets|length }} ausgeschlossen
+            </div>
           </td>
 
           {% set progress = group_progress[item.id] %}
