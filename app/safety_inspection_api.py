@@ -1021,6 +1021,8 @@ def serialize_safety_inspection_result(
         "public_id": result.public_id,
         "position_index": result.position_index,
         "title": result.item_title,
+        "section_key": result.section_key,
+        "section_title": result.section_title,
         "description": result.item_description,
         "help_text": result.item_help_text,
         "required": result.required,

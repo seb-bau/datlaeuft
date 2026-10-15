@@ -170,6 +170,8 @@ def result_rows(
             {
                 "number": number,
                 "title": result.item_title,
+                "section_key": result.section_key,
+                "section_title": result.section_title,
                 "description": (
                     result.item_description
                     or ""

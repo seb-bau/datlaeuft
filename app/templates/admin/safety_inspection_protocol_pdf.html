@@ -415,7 +415,14 @@
 
     <h2>Prüfergebnisse</h2>
 
+    {% set section = namespace(key=none) %}
     {% for row in rows %}
+        {% if row.section_key != section.key %}
+            {% if row.section_title %}
+                <h3 style="break-after: avoid; background: #eef1f3; padding: 8px;">{{ row.section_title }}</h3>
+            {% endif %}
+            {% set section.key = row.section_key %}
+        {% endif %}
         <section class="result">
             <div class="result-heading">
                 <div class="result-number">

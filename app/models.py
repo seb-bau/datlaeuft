@@ -5163,6 +5163,12 @@ class SafetyInspectionTemplateItem(db.Model):
         default=lambda: str(uuid4()),
         nullable=False,
     )
+    row_type: Mapped[str] = mapped_column(
+        db.String(16),
+        default="check",
+        server_default="check",
+        nullable=False,
+    )
     position_index: Mapped[int] = (
         mapped_column(
             db.Integer,
@@ -6028,6 +6034,8 @@ class SafetyInspectionResult(db.Model):
         db.String(36),
         nullable=False,
     )
+    section_key: Mapped[str | None] = mapped_column(db.String(36))
+    section_title: Mapped[str | None] = mapped_column(db.String(255))
     position_index: Mapped[int] = (
         mapped_column(
             db.Integer,

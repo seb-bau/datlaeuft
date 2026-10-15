@@ -270,7 +270,8 @@
   </div>
 
   <div class="card-body">
-    <table class="table table-sm align-middle datatable">
+    {% set has_sections = item.results|selectattr('section_key')|list|length > 0 %}
+    <table class="table table-sm align-middle{% if not has_sections %} datatable{% endif %}">
       <thead>
         <tr>
           <th>Nr.</th>
@@ -284,7 +285,16 @@
       </thead>
 
       <tbody>
+      {% set section = namespace(key=none) %}
         {% for result in item.results %}
+        {% if result.section_key != section.key %}
+          {% if result.section_title %}
+          <tr class="table-secondary">
+            <th colspan="7" scope="rowgroup">{{ result.section_title }}</th>
+          </tr>
+          {% endif %}
+          {% set section.key = result.section_key %}
+        {% endif %}
         <tr class="{% if result.state == 'defect_urgent' %}table-danger{% elif result.state == 'defect_info' %}table-warning{% endif %}">
           <td data-order="{{ result.position_index }}">
             {{ result.position_index + 1 }}

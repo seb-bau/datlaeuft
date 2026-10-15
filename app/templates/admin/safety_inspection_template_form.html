@@ -89,7 +89,40 @@
     {% endif %}
   </div>
 </div>
-
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-2">
+      <button class="btn btn-outline-secondary" type="button" data-export-format="xlsx">XLSX exportieren</button>
+      <button class="btn btn-outline-secondary" type="button" data-export-format="csv">CSV exportieren</button>
+    </div>
+    {% if version.status == draft_status %}
+    <div class="row g-3 align-items-end mt-1">
+      <div class="col-lg-4">
+        <label class="form-label" for="templateImportFile">CSV oder XLSX importieren</label>
+        <input class="form-control" type="file" id="templateImportFile" accept=".csv,.xlsx">
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label" for="templateImportMode">Planinhalt</label>
+        <select class="form-select" id="templateImportMode">
+          <option value="replace">Ersetzen</option>
+          <option value="append">Anhängen</option>
+        </select>
+      </div>
+      <div class="col-lg-3">
+        <label class="form-check-label">
+          <input class="form-check-input me-1" type="checkbox" id="templateImportPlan">
+          Planangaben aus der Datei übernehmen
+        </label>
+      </div>
+      <div class="col-lg-2">
+        <button class="btn btn-outline-primary" type="button" id="templateImportButton">Importieren</button>
+      </div>
+    </div>
+    <div class="form-text mt-2">Importiert wird in den Entwurf. Gespeichert wird über „Entwurf speichern“.</div>
+    {% endif %}
+    <div class="small mt-2" id="templateTransferState" role="status" aria-live="polite"></div>
+  </div>
+</div>
 <form
   id="templateForm"
   method="post"
@@ -115,13 +148,10 @@
     <span>Plan und Prüfpunkte</span>
 
     {% if version.status == draft_status %}
-    <button
-      id="addItemButton"
-      class="btn btn-sm btn-outline-primary"
-      type="button"
-    >
-      Prüfpunkt hinzufügen
-    </button>
+    <div class="d-flex flex-wrap gap-2">
+      <button id="addHeadingButton" class="btn btn-sm btn-outline-secondary" type="button">Überschrift hinzufügen</button>
+      <button id="addItemButton" class="btn btn-sm btn-outline-primary" type="button">Prüfpunkt hinzufügen</button>
+    </div>
     {% endif %}
   </div>
 
@@ -300,359 +330,16 @@
 </form>
 {% endif %}
 
-<script>
-const itemRows = {{ item_rows|tojson }};
-const itemTableBody =
-  document.getElementById("itemTableBody");
-const itemsJson =
-  document.getElementById("itemsJson");
-const emptyItems =
-  document.getElementById("emptyItems");
-const templateForm =
-  document.getElementById("templateForm");
-const editable = {{
-  "true"
-  if version.status == draft_status
-  else "false"
-}};
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function checked(value) {
-  return value ? "checked" : "";
-}
-
-function disabled() {
-  return editable ? "" : "disabled";
-}
-
-function renderItems() {
-  itemTableBody.innerHTML = "";
-  emptyItems.classList.toggle(
-    "d-none",
-    itemRows.length > 0
-  );
-
-  itemRows.forEach((row, index) => {
-    const tableRow =
-      document.createElement("tr");
-
-    tableRow.dataset.index =
-      String(index);
-
-    tableRow.innerHTML = `
-      <td class="fw-semibold text-center">
-        ${index + 1}
-      </td>
-      <td>
-        <input
-          class="form-control form-control-sm item-title"
-          value="${escapeHtml(row.title)}"
-          ${disabled()}
-          required
-        >
-      </td>
-      <td>
-        <textarea
-          class="form-control form-control-sm item-description mb-2"
-          rows="2"
-          placeholder="Beschreibung"
-          ${disabled()}
-        >${escapeHtml(row.description)}</textarea>
-        <textarea
-          class="form-control form-control-sm item-help-text"
-          rows="2"
-          placeholder="Hinweis für den Prüfer"
-          ${disabled()}
-        >${escapeHtml(row.help_text)}</textarea>
-      </td>
-      <td>
-        <div class="form-check">
-          <input
-            class="form-check-input item-required"
-            type="checkbox"
-            ${checked(row.required)}
-            ${disabled()}
-          >
-          <label class="form-check-label">
-            Pflichtfeld
-          </label>
-        </div>
-        <div class="form-check">
-          <input
-            class="form-check-input item-allow-not-present"
-            type="checkbox"
-            ${checked(row.allow_not_present)}
-            ${disabled()}
-          >
-          <label class="form-check-label">
-            „Nicht vorhanden“ zulassen
-          </label>
-        </div>
-        <div class="form-check">
-          <input
-            class="form-check-input item-photo-no-defect"
-            type="checkbox"
-            ${checked(row.photo_required_no_defect)}
-            ${disabled()}
-          >
-          <label class="form-check-label">
-            Foto bei „ohne Mangel“
-          </label>
-        </div>
-        <div class="form-check">
-          <input
-            class="form-check-input item-photo-not-present"
-            type="checkbox"
-            ${checked(row.photo_required_not_present)}
-            ${disabled()}
-          >
-          <label class="form-check-label">
-            Foto bei „nicht vorhanden“
-          </label>
-        </div>
-        <div class="form-check">
-          <input
-            class="form-check-input item-photo-info"
-            type="checkbox"
-            ${checked(
-              row.photo_required_defect_info
-            )}
-            ${disabled()}
-          >
-          <label class="form-check-label">
-            Foto bei Info-Mangel
-          </label>
-        </div>
-        <div class="form-check">
-          <input
-            class="form-check-input item-photo-urgent"
-            type="checkbox"
-            ${checked(
-              row.photo_required_defect_urgent
-            )}
-            ${disabled()}
-          >
-          <label class="form-check-label">
-            Foto bei dringendem Mangel
-          </label>
-        </div>
-      </td>
-      ${editable ? `
-      <td>
-        <div class="btn-group btn-group-sm">
-          <button
-            class="btn btn-outline-secondary item-up"
-            type="button"
-            ${index === 0 ? "disabled" : ""}
-          >
-            ↑
-          </button>
-          <button
-            class="btn btn-outline-secondary item-down"
-            type="button"
-            ${index === itemRows.length - 1
-              ? "disabled"
-              : ""}
-          >
-            ↓
-          </button>
-          <button
-            class="btn btn-outline-danger item-remove"
-            type="button"
-          >
-            Entfernen
-          </button>
-        </div>
-      </td>` : ""}
-    `;
-
-    itemTableBody.appendChild(tableRow);
-  });
-}
-
-function readItems() {
-  return Array.from(
-    itemTableBody.querySelectorAll("tr")
-  ).map((tableRow) => {
-    const index =
-      Number(tableRow.dataset.index);
-    const original = itemRows[index];
-
-    return {
-      stable_key:
-        original.stable_key || "",
-      title:
-        tableRow
-          .querySelector(".item-title")
-          .value
-          .trim(),
-      description:
-        tableRow
-          .querySelector(
-            ".item-description"
-          )
-          .value
-          .trim(),
-      help_text:
-        tableRow
-          .querySelector(
-            ".item-help-text"
-          )
-          .value
-          .trim(),
-      required:
-        tableRow
-          .querySelector(
-            ".item-required"
-          )
-          .checked,
-      allow_not_present:
-        tableRow
-          .querySelector(
-            ".item-allow-not-present"
-          )
-          .checked,
-      photo_required_no_defect:
-        tableRow
-          .querySelector(
-            ".item-photo-no-defect"
-          )
-          .checked,
-      photo_required_not_present:
-        tableRow
-          .querySelector(
-            ".item-photo-not-present"
-          )
-          .checked,
-      photo_required_defect_info:
-        tableRow
-          .querySelector(
-            ".item-photo-info"
-          )
-          .checked,
-      photo_required_defect_urgent:
-        tableRow
-          .querySelector(
-            ".item-photo-urgent"
-          )
-          .checked
-    };
-  });
-}
-
-function synchronizeItems() {
-  const currentRows = readItems();
-
-  itemRows.splice(
-    0,
-    itemRows.length,
-    ...currentRows
-  );
-}
-
-if (editable) {
-  document
-    .getElementById("addItemButton")
-    .addEventListener("click", () => {
-      synchronizeItems();
-
-      itemRows.push({
-        stable_key: "",
-        title: "",
-        description: "",
-        help_text: "",
-        required: true,
-        allow_not_present: true,
-        photo_required_no_defect: false,
-        photo_required_not_present: false,
-        photo_required_defect_info: false,
-        photo_required_defect_urgent: true
-      });
-
-      renderItems();
-
-      itemTableBody
-        .querySelector(
-          "tr:last-child .item-title"
-        )
-        .focus();
-    });
-
-  itemTableBody.addEventListener(
-    "click",
-    (event) => {
-      const button =
-        event.target.closest("button");
-      const tableRow =
-        event.target.closest("tr");
-
-      if (!button || !tableRow) {
-        return;
-      }
-
-      synchronizeItems();
-
-      const index =
-        Number(tableRow.dataset.index);
-
-      if (
-        button.classList.contains(
-          "item-remove"
-        )
-      ) {
-        itemRows.splice(index, 1);
-      } else if (
-        button.classList.contains(
-          "item-up"
-        )
-        && index > 0
-      ) {
-        [
-          itemRows[index - 1],
-          itemRows[index]
-        ] = [
-          itemRows[index],
-          itemRows[index - 1]
-        ];
-      } else if (
-        button.classList.contains(
-          "item-down"
-        )
-        && index < itemRows.length - 1
-      ) {
-        [
-          itemRows[index + 1],
-          itemRows[index]
-        ] = [
-          itemRows[index],
-          itemRows[index + 1]
-        ];
-      } else {
-        return;
-      }
-
-      renderItems();
-    }
-  );
-
-  templateForm.addEventListener(
-    "submit",
-    () => {
-      synchronizeItems();
-      itemsJson.value =
-        JSON.stringify(itemRows);
-    }
-  );
-}
-
-renderItems();
+<script id="templateEditorConfig" type="application/json">
+{{ {
+  "rows": item_rows,
+  "editable": version.status == draft_status,
+  "versionNumber": version.version_number,
+  "flags": template_flag_fields,
+  "maxRows": template_max_rows,
+  "importUrl": url_for('safety_inspection_admin.template_import', template_id=item.id, version_id=version.id),
+  "exportUrl": url_for('safety_inspection_admin.template_export', template_id=item.id, version_id=version.id, file_format='FILE_FORMAT')
+}|tojson }}
 </script>
+<script src="{{ url_for('static', filename='js/safety-inspection-template.js') }}"></script>
 {% endblock %}

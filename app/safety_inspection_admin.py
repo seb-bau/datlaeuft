@@ -76,8 +76,17 @@ from .safety_inspection_service import (
     validate_safety_inspection_group,
     validate_safety_inspection_schedule,
 )
-from .push_service import (
-    enqueue_safety_inspection_push,
+from io import BytesIO
+from flask import send_file
+
+from .safety_inspection_template_transfer import (
+    MAX_IMPORT_BYTES as MAX_TEMPLATE_IMPORT_BYTES,
+    FLAG_FIELDS,
+    MAX_ROWS,
+    export_template_file,
+    import_template_file,
+    normalize_template_rows,
+    template_item_rows,
 )
 
 
@@ -381,38 +390,7 @@ def template_edit(template_id: int) -> Any:
                 )
             )
 
-    item_rows = [
-        {
-            "stable_key": item.stable_key,
-            "title": item.title,
-            "description": (
-                item.description or ""
-            ),
-            "help_text": item.help_text or "",
-            "required": item.required,
-            "allow_not_present": (
-                item.allow_not_present
-            ),
-            "photo_required_no_defect": (
-                item.photo_required_no_defect
-            ),
-            "photo_required_not_present": (
-                item.photo_required_not_present
-            ),
-            "photo_required_defect_info": (
-                item.photo_required_defect_info
-            ),
-            "photo_required_defect_urgent": (
-                item.photo_required_defect_urgent
-            ),
-        }
-        for item in sorted(
-            version.items,
-            key=lambda value: (
-                value.position_index
-            ),
-        )
-    ]
+    item_rows = template_item_rows(version)
 
     return render_template(
         "admin/safety_inspection_template_form.html",
@@ -427,6 +405,8 @@ def template_edit(template_id: int) -> Any:
             reverse=True,
         ),
         item_rows=item_rows,
+        template_flag_fields=FLAG_FIELDS,
+        template_max_rows=MAX_ROWS,
         draft_status=(
             SafetyInspectionTemplateVersionStatus
             .DRAFT.value
@@ -1151,96 +1131,74 @@ def _selected_template_version(
     )
 
 
+def _plan_transfer_version(template_id, version_id):
+    version = db.session.get(SafetyInspectionTemplateVersion, version_id)
+    if version is None or version.template_id != template_id:
+        abort(404)
+    return version
+
+
+@safety_inspection_admin_bp.post(
+    "/admin/safety-inspections/templates/<int:template_id>/versions/<int:version_id>/import"
+)
+@login_required
+@safety_inspection_manage_required
+def template_import(template_id: int, version_id: int) -> Any:
+    version = _plan_transfer_version(template_id, version_id)
+    if version.status != SafetyInspectionTemplateVersionStatus.DRAFT.value:
+        return jsonify({"error": "Ein Import ist nur in einen Entwurf möglich."}), 409
+    upload = request.files.get("file")
+    if upload is None or not upload.filename:
+        return jsonify({"error": "Bitte eine Datei auswählen."}), 400
+    try:
+        result = import_template_file(
+            upload.filename,
+            upload.stream.read(MAX_TEMPLATE_IMPORT_BYTES + 1),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result)
+
+
+@safety_inspection_admin_bp.post(
+    "/admin/safety-inspections/templates/<int:template_id>/versions/<int:version_id>/export/<file_format>"
+)
+@login_required
+@safety_inspection_manage_required
+def template_export(template_id: int, version_id: int, file_format: str) -> Any:
+    version = _plan_transfer_version(template_id, version_id)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Der Planinhalt ist ungültig."}), 400
+    try:
+        content, mimetype = export_template_file(
+            file_format, payload.get("plan"), payload.get("items"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return send_file(
+        BytesIO(content),
+        mimetype=mimetype,
+        as_attachment=True,
+        download_name=f"pruefdetailplan-v{version.version_number}.{file_format}",
+    )
+
+
 def _replace_template_items(
     version: SafetyInspectionTemplateVersion,
 ) -> None:
     try:
-        payload = json.loads(
-            request.form.get(
-                "items_json",
-                "[]",
-            )
-        )
+        payload = json.loads(request.form.get("items_json", "[]"))
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            "Die Prüfpunkte konnten nicht "
-            "gelesen werden."
-        ) from exc
-
-    if not isinstance(payload, list):
-        raise ValueError(
-            "Die Prüfpunkte sind ungültig."
-        )
-
+        raise ValueError("Die Planzeilen konnten nicht gelesen werden.") from exc
+    rows = normalize_template_rows(payload)
     version.items.clear()
     db.session.flush()
-
-    for position_index, row in enumerate(
-        payload
-    ):
-        if not isinstance(row, dict):
-            raise ValueError(
-                "Ein Prüfpunkt ist ungültig."
-            )
-
-        title = str(
-            row.get("title") or ""
-        ).strip()
-
-        if not title:
-            raise ValueError(
-                "Jeder Prüfpunkt benötigt "
-                "eine Bezeichnung."
-            )
-
-        stable_key = str(
-            row.get("stable_key")
-            or uuid4()
-        ).strip()
-
-        version.items.append(
-            SafetyInspectionTemplateItem(
-                stable_key=stable_key,
-                position_index=(
-                    position_index
-                ),
-                title=title,
-                description=_clean_text(
-                    row.get("description")
-                ),
-                help_text=_clean_text(
-                    row.get("help_text")
-                ),
-                required=bool(
-                    row.get("required")
-                ),
-                allow_not_present=bool(
-                    row.get(
-                        "allow_not_present"
-                    )
-                ),
-                photo_required_no_defect=bool(
-                    row.get(
-                        "photo_required_no_defect"
-                    )
-                ),
-                photo_required_not_present=bool(
-                    row.get(
-                        "photo_required_not_present"
-                    )
-                ),
-                photo_required_defect_info=bool(
-                    row.get(
-                        "photo_required_defect_info"
-                    )
-                ),
-                photo_required_defect_urgent=bool(
-                    row.get(
-                        "photo_required_defect_urgent"
-                    )
-                ),
-            )
-        )
+    for position_index, row in enumerate(rows):
+        version.items.append(SafetyInspectionTemplateItem(
+            position_index=position_index,
+            **row,
+        ))
 
 
 def _save_schedule(

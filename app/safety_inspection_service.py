@@ -164,6 +164,7 @@ def create_safety_inspection_revision(
             version.items.append(
                 SafetyInspectionTemplateItem(
                     stable_key=item.stable_key,
+                    row_type=item.row_type,
                     position_index=(
                         item.position_index
                     ),
@@ -212,7 +213,7 @@ def publish_safety_inspection_version(
             "veröffentlicht werden."
         )
 
-    if not version.items:
+    if not any(item.row_type == "check" for item in version.items):
         raise ValueError(
             "Der Prüfdetailplan benötigt "
             "mindestens einen Prüfpunkt."
@@ -228,6 +229,9 @@ def publish_safety_inspection_version(
             "Die Reihenfolge der Prüfpunkte "
             "ist nicht eindeutig."
         )
+
+    if any(item.row_type not in {"check", "heading"} for item in version.items):
+        raise ValueError("Der Prüfdetailplan enthält einen ungültigen Zeilentyp.")
 
     if any(
             not item.title.strip()
@@ -804,7 +808,7 @@ def create_safety_inspection_job(
         .all()
     )
 
-    if not template_items:
+    if not any(item.row_type == "check" for item in template_items):
         raise ValueError(
             "Der veröffentlichte "
             "Prüfdetailplan enthält "
@@ -918,14 +922,20 @@ def create_safety_inspection_job(
 
     db.session.add(job)
 
+    section_key = None
+    section_title = None
     for item in template_items:
+        if item.row_type == "heading":
+            section_key = item.stable_key
+            section_title = item.title
+            continue
         job.results.append(
             SafetyInspectionResult(
                 template_item=item,
                 item_key=item.stable_key,
-                position_index=(
-                    item.position_index
-                ),
+                section_key=section_key,
+                section_title=section_title,
+                position_index=len(job.results),
                 item_title=item.title,
                 item_description=(
                     item.description
