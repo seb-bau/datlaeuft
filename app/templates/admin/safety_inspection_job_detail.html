@@ -275,6 +275,7 @@
       <thead>
         <tr>
           <th>Nr.</th>
+          <th>Katalogposition</th>
           <th>Prüfpunkt</th>
           <th>Ergebnis</th>
           <th>Feststellung</th>
@@ -290,7 +291,7 @@
         {% if result.section_key != section.key %}
           {% if result.section_title %}
           <tr class="table-secondary">
-            <th colspan="7" scope="rowgroup">{{ result.section_title }}</th>
+            <th colspan="8" scope="rowgroup">{{ result.section_title }}</th>
           </tr>
           {% endif %}
           {% set section.key = result.section_key %}
@@ -298,6 +299,10 @@
         <tr class="{% if result.state == 'defect_urgent' %}table-danger{% elif result.state == 'defect_info' %}table-warning{% endif %}">
           <td data-order="{{ result.position_index }}">
             {{ result.position_index + 1 }}
+          </td>
+
+          <td class="text-nowrap">
+            {{ result.item_catalog_position or '–' }}
           </td>
 
           <td>
@@ -390,7 +395,7 @@
       </div>
 
       <h3 class="h6">
-        {{ defect.result.item_title }}
+        {{ defect.result.display_title }}
       </h3>
 
       <div style="white-space: pre-wrap">

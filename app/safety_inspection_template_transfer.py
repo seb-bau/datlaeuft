@@ -24,6 +24,7 @@ FLAG_FIELDS = (
 COLUMNS = (
     "Typ", "Bezeichnung", "Beschreibung", "Hinweis", "Rechtsgrundlage", "Aktiv",
     *(label for _, label, _ in FLAG_FIELDS),
+    "Katalogposition",
 )
 
 
@@ -75,6 +76,8 @@ def normalize_template_rows(payload):
             "stable_key": stable_key, "row_type": row_type, "title": title,
             "description": _text(value.get("description"), 10000, "Beschreibung"),
             "help_text": _text(value.get("help_text"), 10000, "Hinweis"),
+            "catalog_position": _text(value.get("catalog_position"), 16,
+                                      "Katalogposition") if row_type == "check" else "",
         }
         for key, label, default in FLAG_FIELDS:
             row[key] = _boolean(value.get(key), default, label) if row_type == "check" else False
@@ -90,6 +93,7 @@ def template_item_rows(version):
             "stable_key": item.stable_key, "row_type": item.row_type,
             "title": item.title, "description": item.description or "",
             "help_text": item.help_text or "",
+            "catalog_position": item.catalog_position or "",
             **{key: getattr(item, key) for key, _, _ in FLAG_FIELDS},
         }
         for item in sorted(version.items, key=lambda item: item.position_index)
@@ -131,7 +135,7 @@ def export_template_file(file_format, plan, payload):
     rows = normalize_template_rows(payload)
     table = [list(COLUMNS), [
         "Plan", plan["name"], plan["description"], plan["change_note"],
-        plan["legal_reference"], "Ja" if plan["active"] else "Nein", *([""] * 6),
+        plan["legal_reference"], "Ja" if plan["active"] else "Nein", *([""] * 6), "",
     ]]
     for row in rows:
         table.append([
@@ -141,6 +145,7 @@ def export_template_file(file_format, plan, payload):
                 ("Ja" if row[key] else "Nein") if row["row_type"] == "check" else ""
                 for key, _, _ in FLAG_FIELDS
             ),
+            row["catalog_position"],
         ])
     if file_format == "csv":
         stream = StringIO(newline="")
@@ -157,14 +162,17 @@ def export_template_file(file_format, plan, payload):
         for column_number, value in enumerate(row, 1):
             cell = sheet.cell(row_number, column_number, str(value))
             cell.data_type = "s"
+            if column_number == len(COLUMNS):
+                cell.number_format = "@"
             if row_number == 1 or row[0] == "Überschrift":
                 cell.font = Font(bold=True)
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for column in "ABCDEFGHIJKL":
+    for column in "ABCDEFGHIJKLM":
         sheet.column_dimensions[column].width = 25
     sheet.column_dimensions["B"].width = 45
     sheet.column_dimensions["C"].width = 55
+    sheet.column_dimensions["M"].width = 18
     output = BytesIO()
     workbook.save(output)
     workbook.close()
@@ -214,6 +222,7 @@ def _parse_table(table, csv_values=False):
         items.append({
             "row_type": kinds[row_type], "title": cells.get("bezeichnung"),
             "description": cells.get("beschreibung"), "help_text": cells.get("hinweis"),
+            "catalog_position": cells.get("katalogposition"),
             **{key: cells.get(label.casefold()) for key, label, _ in FLAG_FIELDS},
         })
     if not items and plan is None:

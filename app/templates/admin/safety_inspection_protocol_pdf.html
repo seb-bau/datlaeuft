@@ -434,6 +434,12 @@
                         {{ row.title }}
                     </div>
 
+                    {% if row.catalog_position %}
+                    <div class="result-description">
+                        Katalogposition: {{ row.catalog_position }}
+                    </div>
+                    {% endif %}
+
                     {% if row.description %}
                         <div
                             class="result-description"

@@ -5169,6 +5169,7 @@ class SafetyInspectionTemplateItem(db.Model):
         server_default="check",
         nullable=False,
     )
+    catalog_position: Mapped[str | None] = mapped_column(db.String(16))
     position_index: Mapped[int] = (
         mapped_column(
             db.Integer,
@@ -6036,6 +6037,7 @@ class SafetyInspectionResult(db.Model):
     )
     section_key: Mapped[str | None] = mapped_column(db.String(36))
     section_title: Mapped[str | None] = mapped_column(db.String(255))
+    item_catalog_position: Mapped[str | None] = mapped_column(db.String(16))
     position_index: Mapped[int] = (
         mapped_column(
             db.Integer,
@@ -6171,6 +6173,12 @@ class SafetyInspectionResult(db.Model):
         cascade="all, delete-orphan",
         uselist=False,
     )
+
+    @property
+    def display_title(self) -> str:
+        if self.item_catalog_position:
+            return f"{self.item_catalog_position} · {self.item_title}"
+        return self.item_title
 
 
 class SafetyInspectionPhoto(db.Model):

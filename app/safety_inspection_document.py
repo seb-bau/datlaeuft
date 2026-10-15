@@ -142,7 +142,7 @@ def result_rows(
                     SafetyInspectionDocumentError(
                         "Die Fotodatei zu "
                         f"Prüfpunkt "
-                        f"„{result.item_title}“ "
+                        f"„{result.display_title}“ "
                         "fehlt."
                     )
                 )
@@ -170,6 +170,7 @@ def result_rows(
             {
                 "number": number,
                 "title": result.item_title,
+                "catalog_position": result.item_catalog_position or "",
                 "section_key": result.section_key,
                 "section_title": result.section_title,
                 "description": (

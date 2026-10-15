@@ -273,9 +273,8 @@ def photo_archive_values(
             "photo_sha256": (
                 photo.content_sha256
             ),
-            "inspection_point": (
-                photo.result.item_title
-            ),
+            "inspection_point": photo.result.display_title,
+            "inspection_catalog_position": photo.result.item_catalog_position or "",
         }
     )
     return values

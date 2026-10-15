@@ -165,6 +165,7 @@ def create_safety_inspection_revision(
                 SafetyInspectionTemplateItem(
                     stable_key=item.stable_key,
                     row_type=item.row_type,
+                    catalog_position=item.catalog_position,
                     position_index=(
                         item.position_index
                     ),
@@ -937,6 +938,7 @@ def create_safety_inspection_job(
                 section_title=section_title,
                 position_index=len(job.results),
                 item_title=item.title,
+                item_catalog_position=item.catalog_position or None,
                 item_description=(
                     item.description
                 ),
@@ -1175,7 +1177,7 @@ def complete_safety_inspection_job(
                     .OPEN.value
                 ),
                 description=(
-                        result.note or result.item_title
+                        result.note or result.display_title
                 ),
                 immediate_action=(
                     result.immediate_action
@@ -1283,7 +1285,7 @@ def validate_safety_inspection_results(
         ):
             raise ValueError(
                 f"Der Prüfpunkt "
-                f"„{result.item_title}“ "
+                f"„{result.display_title}“ "
                 "wurde noch nicht bearbeitet."
             )
 
@@ -1296,7 +1298,7 @@ def validate_safety_inspection_results(
                 and not result.note
         ):
             raise ValueError(
-                f"Für „{result.item_title}“ "
+                f"Für „{result.display_title}“ "
                 "muss begründet werden, warum "
                 "der Prüfpunkt nicht vorhanden ist."
             )
@@ -1313,7 +1315,7 @@ def validate_safety_inspection_results(
         ):
             raise ValueError(
                 f"Der Mangel bei "
-                f"„{result.item_title}“ "
+                f"„{result.display_title}“ "
                 "benötigt eine Beschreibung."
             )
 
@@ -1362,7 +1364,7 @@ def validate_safety_inspection_results(
         if photo_required and active_photo_count == 0:
             raise ValueError(
                 f"Der Prüfpunkt "
-                f"„{result.item_title}“ "
+                f"„{result.display_title}“ "
                 "benötigt mindestens ein Foto."
             )
 
@@ -1460,7 +1462,7 @@ def create_commission_from_safety_defect(
     description_parts = [
         urgency_text,
         f"Prüfgruppe: {group.name}",
-        f"Prüfpunkt: {result.item_title}",
+        f"Prüfpunkt: {result.display_title}",
         f"Prüfzeitraum: "
         f"{job.period_start:%d.%m.%Y} bis "
         f"{job.period_end:%d.%m.%Y}",
@@ -1486,10 +1488,10 @@ def create_commission_from_safety_defect(
             "object_id": object_id,
             "title": (
                 f"{urgency_text}: "
-                f"{result.item_title}"
+                f"{result.display_title}"
             )[:255],
             "damage_location": (
-                result.item_title
+                result.display_title
             )[:255],
             "positions": [
                 {
@@ -1607,7 +1609,7 @@ def copy_defect_photos_to_commission(
             ),
             caption=(
                     photo.caption
-                    or defect.result.item_title
+                    or defect.result.display_title
             ),
             active=True,
             erp_sync_state=(

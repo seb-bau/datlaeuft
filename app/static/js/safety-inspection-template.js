@@ -29,7 +29,7 @@
       const title = `<input class="form-control form-control-sm item-title" value="${escapeHtml(row.title)}" ${disabled} required>`;
       if (row.row_type === "heading") {
         return `<tr class="table-secondary" data-index="${index}">
-          <td colspan="4"><div class="small fw-semibold mb-1">Überschrift</div>${title}</td>
+          <td colspan="5"><div class="small fw-semibold mb-1">Überschrift</div>${title}</td>
           ${actions(index)}</tr>`;
       }
       number += 1;
@@ -37,6 +37,7 @@
         <label class="form-check-label"><input class="form-check-input" type="checkbox" data-field="${key}" ${row[key] ? "checked" : ""} ${disabled}> ${escapeHtml(label)}</label>
       </div>`).join("");
       return `<tr data-index="${index}"><td class="fw-semibold text-center">${number}</td>
+        <td><input class="form-control form-control-sm item-catalog-position" style="width: 7rem" maxlength="16" aria-label="Katalogposition" value="${escapeHtml(row.catalog_position)}" ${disabled}></td>
         <td>${title}</td><td>
           <textarea class="form-control form-control-sm mb-2 item-description" rows="2" placeholder="Beschreibung" ${disabled}>${escapeHtml(row.description)}</textarea>
           <textarea class="form-control form-control-sm item-help-text" rows="2" placeholder="Hinweis für den Prüfer" ${disabled}>${escapeHtml(row.help_text)}</textarea>
@@ -52,6 +53,7 @@
         ...original,
         row_type: original.row_type || "check",
         title: element.querySelector(".item-title").value.trim(),
+        catalog_position: original.row_type === "heading" ? "" : (element.querySelector(".item-catalog-position")?.value.trim() ?? ""),
         description: element.querySelector(".item-description")?.value.trim() ?? original.description ?? "",
         help_text: element.querySelector(".item-help-text")?.value.trim() ?? original.help_text ?? "",
       };
@@ -137,7 +139,7 @@
         return;
       }
       synchronizeItems();
-      const row = {stable_key: "", row_type: rowType, title: "", description: "", help_text: ""};
+      const row = {stable_key: "", row_type: rowType, title: "", catalog_position: "", description: "", help_text: ""};
       config.flags.forEach(([key, , defaultValue]) => { row[key] = rowType === "check" && defaultValue; });
       itemRows.push(row);
       renderItems();
