@@ -14,8 +14,7 @@ from .models import (
 
 
 JOB_DELETE_REASON = (
-    "Mit diesem Prüfdetailplan wurden bereits Prüfaufträge angelegt. "
-    "Eine Löschung ist nicht möglich."
+    ""
 )
 GROUP_DELETE_REASON = (
     "Dieser Prüfdetailplan ist noch einer Prüfgruppe zugeordnet. "
