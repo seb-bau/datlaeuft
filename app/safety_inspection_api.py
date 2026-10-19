@@ -38,6 +38,7 @@ from .models import (
     SafetyInspectionResultState,
     User,
     utc_now,
+    AuditLog,
 )
 from .photo_service import (
     MAX_PHOTO_BYTES,
@@ -1564,6 +1565,7 @@ def safety_inspection_offline_operation(job_id: int) -> Any:
             "kind": kind,
             "user_id": user.id,
             "occurred_at": data.get("occurred_at"),
+            "replaces_operation_id": data.get("replaces_operation_id"),
         })
         db.session.commit()
         return jsonify(payload)
@@ -1571,35 +1573,90 @@ def safety_inspection_offline_operation(job_id: int) -> Any:
         db.session.rollback()
         if stored_photo is not None:
             remove_stored_photo(
-                stored_photo.storage_name, stored_photo.thumbnail_storage_name
+                stored_photo.storage_name,
+                stored_photo.thumbnail_storage_name,
             )
         response = jsonify({"message": exc.description})
+        if exc.code in {403, 404, 409, 422}:
+            record_safety_inspection_mobile_issue(
+                user, job_id, data, exc.description, exc.code
+            )
         response.status_code = exc.code
         return response
     except (ValueError, IntegrityError) as exc:
         db.session.rollback()
         if stored_photo is not None:
             remove_stored_photo(
-                stored_photo.storage_name, stored_photo.thumbnail_storage_name
+                stored_photo.storage_name,
+                stored_photo.thumbnail_storage_name,
             )
         if isinstance(exc, IntegrityError):
             existing = existing_response()
             if existing is not None:
                 return existing
+            record_safety_inspection_mobile_issue(
+                user,
+                job_id,
+                data,
+                "Der Vorgang konnte nicht eindeutig gespeichert werden.",
+                409,
+            )
             return jsonify({
                 "message": "Der Vorgang konnte nicht eindeutig gespeichert werden."
             }), 409
+        record_safety_inspection_mobile_issue(
+            user, job_id, data, str(exc), 409
+        )
         return jsonify({"message": str(exc)}), 409
     except Exception:
         db.session.rollback()
         if stored_photo is not None:
             remove_stored_photo(
-                stored_photo.storage_name, stored_photo.thumbnail_storage_name
+                stored_photo.storage_name,
+                stored_photo.thumbnail_storage_name,
             )
         current_app.logger.exception(
             "safety_inspection_offline_failed job_id=%s operation_id=%s",
-            job_id, operation_id,
+            job_id,
+            operation_id,
         )
         return jsonify({
             "message": "Der Vorgang wird später erneut übertragen."
         }), 503
+
+def record_safety_inspection_mobile_issue(
+    user: User,
+    job_id: int,
+    data: dict[str, Any],
+    reason: str,
+    status: int,
+) -> None:
+    try:
+        entity_id = f"{user.id}:{data['operation_id']}"
+        existing = AuditLog.query.filter_by(
+            action="safety_inspection.mobile_issue",
+            entity_type="safety_inspection_mobile_operation",
+            entity_id=entity_id,
+        ).first()
+
+        if existing is None:
+            audit(
+                "safety_inspection.mobile_issue",
+                "safety_inspection_mobile_operation",
+                entity_id,
+                {
+                    "job_id": job_id,
+                    "operation": data,
+                    "reason": reason,
+                    "status": status,
+                },
+                actor_user_id=user.id,
+            )
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "safety_inspection_mobile_issue_failed job_id=%s operation_id=%s",
+            job_id,
+            data.get("operation_id"),
+        )
