@@ -53,6 +53,15 @@ from .utils import iso_datetime
 from .safety_inspection_document import (
     SafetyInspectionDocumentError,
 )
+import hashlib
+import json
+
+from uuid import UUID
+
+from sqlalchemy.exc import IntegrityError
+from werkzeug.exceptions import HTTPException
+
+from .models import SafetyInspectionMobileOperation
 
 
 safety_inspection_api_bp = Blueprint(
@@ -1315,3 +1324,282 @@ def remove_stored_photo(
                 "storage_name=%s",
                 name,
             )
+
+
+@safety_inspection_api_bp.post("/safety-inspections/offline-details")
+@jwt_required()
+def safety_inspection_offline_details() -> Any:
+    user = current_api_user()
+    data = request.get_json(silent=True)
+    ids = data.get("ids") if isinstance(data, dict) else None
+
+    if (
+        not isinstance(ids, list)
+        or not 1 <= len(ids) <= 50
+        or any(type(value) is not int or not 0 < value <= 2**63 - 1 for value in ids)
+    ):
+        return jsonify({"message": "Bitte 1 bis 50 gültige Prüfaufträge angeben."}), 400
+
+    ids = list(dict.fromkeys(ids))
+    query = SafetyInspectionJob.query.filter(SafetyInspectionJob.id.in_(ids))
+    allowed_ids = viewable_safety_inspection_user_ids(user)
+
+    if allowed_ids is not None:
+        query = query.filter(SafetyInspectionJob.assigned_user_id.in_(allowed_ids))
+
+    items = query.options(
+        selectinload(SafetyInspectionJob.group),
+        selectinload(SafetyInspectionJob.template_version).selectinload(
+            SafetyInspectionTemplateVersion.template
+        ),
+        selectinload(SafetyInspectionJob.department),
+        selectinload(SafetyInspectionJob.assigned_user),
+        selectinload(SafetyInspectionJob.completed_by),
+        selectinload(SafetyInspectionJob.defects),
+        selectinload(SafetyInspectionJob.results).selectinload(
+            SafetyInspectionResult.checked_by
+        ),
+        selectinload(SafetyInspectionJob.results).selectinload(
+            SafetyInspectionResult.photos
+        ).selectinload(SafetyInspectionPhoto.uploaded_by),
+        selectinload(SafetyInspectionJob.results).selectinload(
+            SafetyInspectionResult.defect
+        ).selectinload(SafetyInspectionDefect.commission_links),
+    ).all()
+
+    by_id = {item.id: item for item in items}
+    return jsonify({
+        "items": [
+            serialize_safety_inspection_job(by_id[job_id], user, include_details=True)
+            for job_id in ids
+            if job_id in by_id
+        ],
+        "unavailable_ids": [job_id for job_id in ids if job_id not in by_id],
+    })
+
+
+@safety_inspection_api_bp.post(
+    "/safety-inspections/<int:job_id>/offline-operations"
+)
+@jwt_required()
+def safety_inspection_offline_operation(job_id: int) -> Any:
+    user = current_api_user()
+    try:
+        data = (
+            json.loads(request.form.get("operation", "{}"))
+            if request.mimetype == "multipart/form-data"
+            else request.get_json(silent=True)
+        )
+    except ValueError:
+        return jsonify({"message": "Ungültiger JSON-Body."}), 400
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "Ungültiger Vorgang."}), 400
+
+    try:
+        operation_id = str(UUID(str(data.get("operation_id", ""))))
+        if type(data.get("job_id")) is not int or data["job_id"] != job_id:
+            raise ValueError("Der Prüfauftrag stimmt nicht mit dem Vorgang überein.")
+        kind = data.get("kind")
+        if kind not in {"result", "photo", "delete_photo", "complete"}:
+            raise ValueError("Der Vorgang ist ungültig.")
+        occurred_at = parse_optional_datetime(data.get("occurred_at"))
+        upload = request.files.get("photo")
+        raw_data = upload.stream.read(MAX_PHOTO_BYTES + 1) if upload else b""
+        if kind == "photo" and not raw_data:
+            raise ValueError("Die Bilddatei fehlt.")
+        if len(raw_data) > MAX_PHOTO_BYTES:
+            raise ValueError("Die Bilddatei ist zu groß.")
+        data["operation_id"] = operation_id
+        request_sha256 = hashlib.sha256(
+            json.dumps(
+                data, sort_keys=True, ensure_ascii=False,
+                separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+            + b"\0" + hashlib.sha256(raw_data).digest()
+        ).hexdigest()
+    except (ValueError, TypeError) as exc:
+        return jsonify({"message": str(exc)}), 400
+
+    def existing_response(locking=False):
+        receipt = db.session.get(
+            SafetyInspectionMobileOperation,
+            (user.id, operation_id),
+            populate_existing=True,
+            with_for_update=locking,
+        )
+        if receipt is None:
+            return None
+        if receipt.job_id != job_id or receipt.request_sha256 != request_sha256:
+            return jsonify({
+                "message": "Diese Vorgangs-ID wurde bereits für andere Daten verwendet."
+            }), 409
+        return jsonify(receipt.response_payload)
+
+    existing = existing_response()
+    if existing is not None:
+        return existing
+
+    stored_photo = None
+    try:
+        job = viewable_safety_inspection_job(job_id, user)
+        existing = existing_response(locking=True)
+        if existing is not None:
+            return existing
+        ensure_job_editable(job, user)
+
+        result = None
+        photo_id = None
+        if kind != "complete":
+            result_id = data.get("result_id")
+            if type(result_id) is not int:
+                raise ValueError("Der Prüfpunkt fehlt.")
+            result = SafetyInspectionResult.query.filter_by(
+                id=result_id, job_id=job.id,
+            ).populate_existing().with_for_update().one_or_none()
+            if result is None:
+                raise ValueError("Der Prüfpunkt gehört nicht zu diesem Prüfauftrag.")
+
+        if kind == "result":
+            version = data.get("version")
+            if type(version) is not int or version < 1:
+                raise ValueError("Die Ausgangsversion fehlt.")
+            update_safety_inspection_result(
+                result=result,
+                state=str(data.get("state") or "").strip(),
+                note=data.get("note"),
+                immediate_action=data.get("immediate_action"),
+                user=user,
+                expected_version=version,
+            )
+
+        elif kind == "photo":
+            source = data.get("source")
+            if not isinstance(source, str) or source not in {
+                item.value for item in SafetyInspectionPhotoSource
+            }:
+                raise ValueError("Die Fotoquelle ist ungültig.")
+            stored_photo = store_commission_photo_bytes(
+                commission=None,
+                raw_data=raw_data,
+                original_filename=upload.filename or "prueffoto.jpg",
+                storage_directory=(
+                    Path("safety_inspections") / job.public_id / result.public_id
+                ),
+            )
+            photo = SafetyInspectionPhoto.query.filter_by(
+                result_id=result.id,
+                content_sha256=stored_photo.content_sha256,
+                active=True,
+            ).order_by(SafetyInspectionPhoto.id).first()
+            if photo is None:
+                photo = SafetyInspectionPhoto(
+                    public_id=operation_id,
+                    result=result,
+                    uploaded_by=user,
+                    source=source,
+                    original_filename=stored_photo.original_filename,
+                    storage_name=stored_photo.storage_name,
+                    thumbnail_storage_name=stored_photo.thumbnail_storage_name,
+                    mime_type=stored_photo.mime_type,
+                    size_bytes=stored_photo.size_bytes,
+                    content_sha256=stored_photo.content_sha256,
+                    caption=clean_optional_text(data.get("caption"), 500),
+                    captured_at=parse_optional_datetime(data.get("captured_at")),
+                    active=True,
+                )
+                db.session.add(photo)
+                db.session.flush()
+            else:
+                remove_stored_photo(
+                    stored_photo.storage_name, stored_photo.thumbnail_storage_name
+                )
+                stored_photo = None
+            photo_id = photo.id
+
+        elif kind == "delete_photo":
+            photo_id = data.get("photo_id")
+            parent_id = data.get("photo_operation_id")
+            if parent_id:
+                parent = db.session.get(
+                    SafetyInspectionMobileOperation,
+                    (user.id, str(UUID(str(parent_id)))),
+                )
+                if parent is None or parent.job_id != job.id:
+                    raise ValueError("Der vorherige Foto-Upload fehlt.")
+                photo_id = parent.response_payload.get("photo_id")
+            if type(photo_id) is not int:
+                raise ValueError("Das Foto fehlt.")
+            photo = SafetyInspectionPhoto.query.filter_by(
+                id=photo_id, result_id=result.id,
+            ).one_or_none()
+            if photo is None:
+                raise ValueError("Das Foto gehört nicht zu diesem Prüfpunkt.")
+            photo.active = False
+            photo.deleted_at = utc_now()
+
+        else:
+            complete_safety_inspection_job(
+                job, user, overall_note=data.get("overall_note")
+            )
+
+        job.updated_at = utc_now()
+        db.session.flush()
+        db.session.expire(job, ["results", "defects"])
+        payload = {
+            "item": serialize_safety_inspection_job(job, user, include_details=True),
+            "operation_id": operation_id,
+            "photo_id": photo_id,
+        }
+        db.session.add(SafetyInspectionMobileOperation(
+            user_id=user.id,
+            operation_id=operation_id,
+            job_id=job.id,
+            request_sha256=request_sha256,
+            response_payload=payload,
+            occurred_at=occurred_at,
+        ))
+        audit("safety_inspection.offline_operation", "safety_inspection_job", job.id, {
+            "operation_id": operation_id,
+            "kind": kind,
+            "user_id": user.id,
+            "occurred_at": data.get("occurred_at"),
+        })
+        db.session.commit()
+        return jsonify(payload)
+    except HTTPException as exc:
+        db.session.rollback()
+        if stored_photo is not None:
+            remove_stored_photo(
+                stored_photo.storage_name, stored_photo.thumbnail_storage_name
+            )
+        response = jsonify({"message": exc.description})
+        response.status_code = exc.code
+        return response
+    except (ValueError, IntegrityError) as exc:
+        db.session.rollback()
+        if stored_photo is not None:
+            remove_stored_photo(
+                stored_photo.storage_name, stored_photo.thumbnail_storage_name
+            )
+        if isinstance(exc, IntegrityError):
+            existing = existing_response()
+            if existing is not None:
+                return existing
+            return jsonify({
+                "message": "Der Vorgang konnte nicht eindeutig gespeichert werden."
+            }), 409
+        return jsonify({"message": str(exc)}), 409
+    except Exception:
+        db.session.rollback()
+        if stored_photo is not None:
+            remove_stored_photo(
+                stored_photo.storage_name, stored_photo.thumbnail_storage_name
+            )
+        current_app.logger.exception(
+            "safety_inspection_offline_failed job_id=%s operation_id=%s",
+            job_id, operation_id,
+        )
+        return jsonify({
+            "message": "Der Vorgang wird später erneut übertragen."
+        }), 503

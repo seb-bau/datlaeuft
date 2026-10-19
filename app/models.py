@@ -7290,3 +7290,21 @@ class BlacklistEntry(db.Model):
     created_at: Mapped[datetime] = mapped_column(
         db.DateTime(timezone=True), default=utc_now, nullable=False,
     )
+
+
+class SafetyInspectionMobileOperation(db.Model):
+    __tablename__ = "safety_inspection_mobile_operation"
+
+    user_id: Mapped[int] = mapped_column(db.Integer, primary_key=True)
+    operation_id: Mapped[str] = mapped_column(db.String(36), primary_key=True)
+    job_id: Mapped[int] = mapped_column(db.Integer, nullable=False, index=True)
+    request_sha256: Mapped[str] = mapped_column(db.String(64), nullable=False)
+    response_payload: Mapped[dict] = mapped_column(db.JSON, nullable=False)
+    occurred_at: Mapped[datetime | None] = mapped_column(
+        db.DateTime(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
