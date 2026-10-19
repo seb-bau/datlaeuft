@@ -21,6 +21,7 @@ from .models import (
     User,
 )
 from .photo_service import commission_photo_path
+from .utils import ensure_utc
 
 
 class SafetyInspectionDocumentError(
@@ -127,7 +128,7 @@ def result_rows(
                 and item.deleted_at is None
             ),
             key=lambda item: (
-                item.created_at,
+                ensure_utc(item.created_at),
                 item.id or 0,
             ),
         ):

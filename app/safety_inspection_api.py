@@ -50,7 +50,7 @@ from .safety_inspection_service import (
     ensure_job_editable,
     update_safety_inspection_result,
 )
-from .utils import iso_datetime
+from .utils import ensure_utc, iso_datetime
 from .safety_inspection_document import (
     SafetyInspectionDocumentError,
 )
@@ -1137,7 +1137,7 @@ def serialize_safety_inspection_result(
             if photo.active
         ),
         key=lambda photo: (
-            photo.created_at,
+            ensure_utc(photo.created_at),
             photo.id,
         ),
     )
