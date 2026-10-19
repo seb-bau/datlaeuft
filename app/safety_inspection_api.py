@@ -4,6 +4,13 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from time import perf_counter
+
+from sqlalchemy import case, func
+from sqlalchemy.orm import raiseload, selectinload
+
+from .models import SafetyInspectionTemplateVersion
+
 from flask import (
     Blueprint,
     abort,
@@ -135,18 +142,54 @@ def safety_inspections() -> Any:
             SafetyInspectionJob.due_to < date.today(),
         )
 
-    items = query.order_by(
+    query_started_at = perf_counter()
+
+    items = query.options(
+        selectinload(SafetyInspectionJob.group),
+        selectinload(SafetyInspectionJob.template_version).selectinload(
+            SafetyInspectionTemplateVersion.template
+        ),
+        selectinload(SafetyInspectionJob.department),
+        selectinload(SafetyInspectionJob.assigned_user),
+        selectinload(SafetyInspectionJob.completed_by),
+        raiseload("*"),
+    ).order_by(
         SafetyInspectionJob.due_to.asc(),
         SafetyInspectionJob.due_from.asc(),
         SafetyInspectionJob.id.asc(),
     ).all()
 
-    return jsonify({
+    progress_by_job = _safety_inspection_progress_by_job(
+        [item.id for item in items]
+    )
+    query_duration_ms = (perf_counter() - query_started_at) * 1000
+
+    serialization_started_at = perf_counter()
+    response = jsonify({
         "items": [
-            serialize_safety_inspection_job(item, user)
+            serialize_safety_inspection_job(
+                item,
+                user,
+                progress=progress_by_job[item.id],
+            )
             for item in items
         ],
     })
+    serialization_duration_ms = (
+                                        perf_counter() - serialization_started_at
+                                ) * 1000
+
+    response.headers["Server-Timing"] = (
+        f"database;dur={query_duration_ms:.1f}, "
+        f"serialization;dur={serialization_duration_ms:.1f}"
+    )
+    current_app.logger.info(
+        "safety_inspections_list count=%s database_ms=%.1f serialization_ms=%.1f",
+        len(items),
+        query_duration_ms,
+        serialization_duration_ms,
+    )
+    return response
 
 
 @safety_inspection_api_bp.get("/safety-inspections/users")
@@ -859,26 +902,104 @@ def active_safety_inspection_photo(
     return photo
 
 
+def _safety_inspection_progress_by_job(
+    job_ids: list[int],
+) -> dict[int, dict[str, int]]:
+    progress_by_job = {
+        job_id: {
+            "result_count": 0,
+            "checked_count": 0,
+            "defect_count": 0,
+            "photo_count": 0,
+        }
+        for job_id in job_ids
+    }
+
+    for offset in range(0, len(job_ids), 500):
+        batch_ids = job_ids[offset:offset + 500]
+
+        result_rows = (
+            db.session.query(
+                SafetyInspectionResult.job_id,
+                func.count(SafetyInspectionResult.id),
+                func.sum(
+                    case(
+                        (
+                            SafetyInspectionResult.state
+                            != SafetyInspectionResultState.NOT_CHECKED.value,
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+            )
+            .filter(SafetyInspectionResult.job_id.in_(batch_ids))
+            .group_by(SafetyInspectionResult.job_id)
+            .all()
+        )
+
+        for job_id, result_count, checked_count in result_rows:
+            progress_by_job[job_id]["result_count"] = int(result_count)
+            progress_by_job[job_id]["checked_count"] = int(checked_count or 0)
+
+        defect_rows = (
+            db.session.query(
+                SafetyInspectionDefect.job_id,
+                func.count(SafetyInspectionDefect.id),
+            )
+            .filter(SafetyInspectionDefect.job_id.in_(batch_ids))
+            .group_by(SafetyInspectionDefect.job_id)
+            .all()
+        )
+
+        for job_id, defect_count in defect_rows:
+            progress_by_job[job_id]["defect_count"] = int(defect_count)
+
+        photo_rows = (
+            db.session.query(
+                SafetyInspectionResult.job_id,
+                func.count(SafetyInspectionPhoto.id),
+            )
+            .select_from(SafetyInspectionPhoto)
+            .join(
+                SafetyInspectionResult,
+                SafetyInspectionResult.id == SafetyInspectionPhoto.result_id,
+            )
+            .filter(
+                SafetyInspectionResult.job_id.in_(batch_ids),
+                SafetyInspectionPhoto.active.is_(True),
+            )
+            .group_by(SafetyInspectionResult.job_id)
+            .all()
+        )
+
+        for job_id, photo_count in photo_rows:
+            progress_by_job[job_id]["photo_count"] = int(photo_count)
+
+    return progress_by_job
+
+
 def serialize_safety_inspection_job(
     job: SafetyInspectionJob,
     viewer: User,
     include_details: bool = False,
+    progress: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    checked_count = sum(
-        1
-        for result in job.results
-        if (
-            result.state
-            != SafetyInspectionResultState
-            .NOT_CHECKED.value
-        )
-    )
-    photo_count = sum(
-        1
-        for result in job.results
-        for photo in result.photos
-        if photo.active
-    )
+    if progress is None:
+        progress = {
+            "result_count": len(job.results),
+            "checked_count": sum(
+                result.state != SafetyInspectionResultState.NOT_CHECKED.value
+                for result in job.results
+            ),
+            "defect_count": len(job.defects),
+            "photo_count": sum(
+                photo.active
+                for result in job.results
+                for photo in result.photos
+            ),
+        }
+
 
     item = {
         "id": job.id,
@@ -964,12 +1085,7 @@ def serialize_safety_inspection_job(
                 and job.longitude is not None
             ),
         },
-        "progress": {
-            "result_count": len(job.results),
-            "checked_count": checked_count,
-            "defect_count": len(job.defects),
-            "photo_count": photo_count,
-        },
+        "progress": progress,
         "overall_note": job.overall_note,
         "started_at": iso_datetime(
             job.started_at
