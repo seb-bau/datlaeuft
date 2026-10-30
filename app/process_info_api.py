@@ -75,14 +75,19 @@ def commission_infos(
             notify=True,
         )
         db.session.commit()
-    except Exception as exc:
+    except Exception as e:
         db.session.rollback()
-        sync_error = str(exc)
         current_app.logger.exception(
             "process_info_api_sync_failed "
-            "process_erp_id=%s",
-            process_erp_id,
+            "process_erp_id=%s exception=%s",
+            process_erp_id, str(e)
         )
+        return jsonify(
+            {
+                "items": [],
+                "sync_error": None,
+            }
+        ), 200
 
     items = (
         ProcessInfo.query.filter(
