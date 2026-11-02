@@ -5843,6 +5843,7 @@ class SafetyInspectionJob(db.Model):
     assignment_error: Mapped[
         str | None
     ] = mapped_column(db.Text)
+    visit_data: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     overall_note: Mapped[str | None] = (
         mapped_column(db.Text)
     )

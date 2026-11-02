@@ -1010,7 +1010,6 @@ def serialize_safety_inspection_job(
             ),
         }
 
-
     item = {
         "id": job.id,
         "public_id": job.public_id,
@@ -1096,6 +1095,7 @@ def serialize_safety_inspection_job(
             ),
         },
         "progress": progress,
+        "visit": job.visit_data,
         "overall_note": job.overall_note,
         "started_at": iso_datetime(
             job.started_at
@@ -1379,6 +1379,103 @@ def safety_inspection_offline_details() -> Any:
     })
 
 
+def _apply_inspection_visit(
+    job,
+    user,
+    data,
+    operation_id,
+    occurred_at,
+):
+    if not can_edit_safety_inspection_job(job, user):
+        raise ValueError(
+            "Für diese Prüfung besteht keine Bearbeitungsberechtigung."
+        )
+
+    requested_blocked = data.get("visit_blocked")
+    if requested_blocked is not None and type(requested_blocked) is not bool:
+        raise ValueError("Der Besuchsvermerk ist ungültig.")
+
+    group_id = str(UUID(str(data.get("visit_group_id", ""))))
+
+    raw_note = data.get("visit_note")
+    if raw_note is not None and not isinstance(raw_note, str):
+        raise ValueError("Der Hinweis ist ungültig.")
+
+    note = (raw_note or "").strip() or None
+    if note is not None and len(note) > 2000:
+        raise ValueError(
+            "Der Hinweis darf höchstens 2000 Zeichen enthalten."
+        )
+
+    follow_up = data.get("follow_up_on")
+    if follow_up is not None:
+        if not isinstance(follow_up, str):
+            raise ValueError("Das Wiedervorlagedatum ist ungültig.")
+
+        try:
+            follow_up = date.fromisoformat(follow_up).isoformat()
+        except ValueError as exc:
+            raise ValueError(
+                "Das Wiedervorlagedatum ist ungültig."
+            ) from exc
+
+    if requested_blocked is None and follow_up is None:
+        raise ValueError("Der Besuchsvermerk ist ungültig.")
+
+    if (requested_blocked is True or follow_up is not None) and not note:
+        raise ValueError(
+            "Bitte einen Grund für den Besuchsvermerk angeben."
+        )
+
+    now = utc_now()
+    event_at = min(occurred_at or now, now)
+    previous = job.visit_data or {}
+
+    blocked = (
+        previous.get("blocked", False)
+        if requested_blocked is None
+        else requested_blocked
+    )
+
+    previous_at = parse_optional_datetime(
+        previous.get("occurred_at")
+    )
+
+    applied = not job.is_terminal and (
+        previous_at is None
+        or (event_at, operation_id)
+        >= (previous_at, previous.get("operation_id", ""))
+    )
+
+    if applied:
+        job.visit_data = {
+            "blocked": blocked,
+            "note": note,
+            "follow_up_on": follow_up,
+            "occurred_at": event_at.isoformat(),
+            "operation_id": operation_id,
+            "group_id": group_id,
+        }
+
+    audit(
+        "safety_inspection.visit_recorded",
+        "safety_inspection_job",
+        job.id,
+        {
+            "operation_id": operation_id,
+            "group_id": group_id,
+            "blocked": blocked,
+            "requested_blocked": requested_blocked,
+            "note": note,
+            "follow_up_on": follow_up,
+            "occurred_at": (occurred_at or now).isoformat(),
+            "effective_at": event_at.isoformat(),
+            "applied": applied,
+        },
+        actor_user_id=user.id,
+    )
+
+
 @safety_inspection_api_bp.post(
     "/safety-inspections/<int:job_id>/offline-operations"
 )
@@ -1402,7 +1499,13 @@ def safety_inspection_offline_operation(job_id: int) -> Any:
         if type(data.get("job_id")) is not int or data["job_id"] != job_id:
             raise ValueError("Der Prüfauftrag stimmt nicht mit dem Vorgang überein.")
         kind = data.get("kind")
-        if kind not in {"result", "photo", "delete_photo", "complete"}:
+        if kind not in {
+            "result",
+            "photo",
+            "delete_photo",
+            "complete",
+            "visit",
+        }:
             raise ValueError("Der Vorgang ist ungültig.")
         occurred_at = parse_optional_datetime(data.get("occurred_at"))
         upload = request.files.get("photo")
@@ -1447,11 +1550,12 @@ def safety_inspection_offline_operation(job_id: int) -> Any:
         existing = existing_response(locking=True)
         if existing is not None:
             return existing
-        ensure_job_editable(job, user)
+        if kind != "visit":
+            ensure_job_editable(job, user)
 
         result = None
         photo_id = None
-        if kind != "complete":
+        if kind not in {"complete", "visit"}:
             result_id = data.get("result_id")
             if type(result_id) is not int:
                 raise ValueError("Der Prüfpunkt fehlt.")
@@ -1539,9 +1643,19 @@ def safety_inspection_offline_operation(job_id: int) -> Any:
             photo.active = False
             photo.deleted_at = utc_now()
 
+        elif kind == "visit":
+            _apply_inspection_visit(
+                job,
+                user,
+                data,
+                operation_id,
+                occurred_at,     
+            )
         else:
             complete_safety_inspection_job(
-                job, user, overall_note=data.get("overall_note")
+                job,
+                user,
+                overall_note=data.get("overall_note"),
             )
 
         job.updated_at = utc_now()
