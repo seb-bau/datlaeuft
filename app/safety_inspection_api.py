@@ -63,6 +63,7 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import HTTPException
 
 from .models import SafetyInspectionMobileOperation
+from .wowiport import WowiportService
 
 
 safety_inspection_api_bp = Blueprint(
@@ -251,6 +252,31 @@ def safety_inspection_detail(
             )
         }
     )
+
+
+@safety_inspection_api_bp.get("/safety-inspections/<int:job_id>/contacts")
+@jwt_required()
+def safety_inspection_contacts(job_id: int) -> Any:
+    user = current_api_user()
+    job = viewable_safety_inspection_job(job_id, user)
+    contact_items = []
+
+    if job.object_level == "use_unit":
+        use_unit_id = job.use_unit_erp_id or job.object_erp_id
+        if use_unit_id and use_unit_id > 0:
+            try:
+                contact_items = WowiportService().get_use_unit_contact_items(use_unit_id)
+            except Exception:
+                current_app.logger.exception(
+                    "safety_inspection_contacts_failed job_id=%s", job.id
+                )
+                return jsonify({
+                    "message": "Die aktuellen Mieterkontakte konnten nicht geladen werden."
+                }), 502
+
+    response = jsonify({"contact_items": contact_items})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @safety_inspection_api_bp.patch(
@@ -1153,9 +1179,7 @@ def serialize_safety_inspection_result(
         "description": result.item_description,
         "help_text": result.item_help_text,
         "required": result.required,
-        "allow_not_present": (
-            result.allow_not_present
-        ),
+        "allow_not_present": True,
         "photo_requirements": {
             "no_defect": (
                 result.photo_required_no_defect

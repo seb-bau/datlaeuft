@@ -11,12 +11,8 @@ from .safety_inspection_progress import _current_group_period
 STATUS_DEFINITIONS = (
     (SafetyInspectionJobStatus.PLANNED.value, "Geplant", "#6c757d"),
     (SafetyInspectionJobStatus.IN_PROGRESS.value, "In Bearbeitung", "#0d6efd"),
-    (SafetyInspectionJobStatus.COMPLETED.value, "Erledigt ohne Mängel", "#198754"),
-    (
-        SafetyInspectionJobStatus.COMPLETED_WITH_DEFECTS.value,
-        "Erledigt mit Mängeln",
-        "#6f42c1",
-    ),
+    (SafetyInspectionJobStatus.COMPLETED.value, "Erledigt ohne Mangel", "#198754"),
+    (SafetyInspectionJobStatus.COMPLETED_WITH_DEFECTS.value, "Erledigt mit Mangel", "#6f42c1"),
     (SafetyInspectionJobStatus.MISSED.value, "Abgelaufen", "#dc3545"),
     ("other", "Sonstige", "#343a40"),
 )

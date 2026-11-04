@@ -33,9 +33,18 @@
           ${actions(index)}</tr>`;
       }
       number += 1;
-      const flags = config.flags.map(([key, label]) => `<div class="form-check">
-        <label class="form-check-label"><input class="form-check-input" type="checkbox" data-field="${key}" ${row[key] ? "checked" : ""} ${disabled}> ${escapeHtml(label)}</label>
-      </div>`).join("");
+      const flags = config.flags
+      .filter(([key]) => !["allow_not_present", "photo_required_defect_urgent"].includes(key))
+      .map(([key, label]) => {
+        const isDefectPhoto = key === "photo_required_defect_info";
+        const checked = isDefectPhoto
+          ? row.photo_required_defect_info || row.photo_required_defect_urgent
+          : row[key];
+
+        return `<div class="form-check">
+          <label class="form-check-label"><input class="form-check-input" type="checkbox" data-field="${key}" ${checked ? "checked" : ""} ${disabled}> ${escapeHtml(isDefectPhoto ? "Foto bei Mangel" : label)}</label>
+        </div>`;
+      }).join("");
       return `<tr data-index="${index}"><td class="fw-semibold text-center">${number}</td>
         <td><input class="form-control form-control-sm item-catalog-position" style="width: 7rem" maxlength="16" aria-label="Katalogposition" value="${escapeHtml(row.catalog_position)}" ${disabled}></td>
         <td>${title}</td><td>
@@ -60,6 +69,10 @@
       config.flags.forEach(([key]) => {
         row[key] = row.row_type === "check" && Boolean(element.querySelector(`[data-field="${key}"]`)?.checked);
       });
+
+      row.allow_not_present = row.row_type === "check";
+      row.photo_required_defect_urgent = row.photo_required_defect_info;
+
       return row;
     });
   }

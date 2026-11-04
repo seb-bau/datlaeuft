@@ -2370,6 +2370,24 @@ class WowiportService:
 
         return contact_items
 
+    def get_use_unit_contact_items(self, use_unit_id: int) -> list[dict[str, Any]]:
+        license_agreement = self._get_license_agreement(
+            license_agreement_id=None,
+            use_unit_id=use_unit_id,
+        )
+        if license_agreement is None or _is_vacancy(license_agreement):
+            return []
+
+        contractors = self._get_contractors_from_license_agreement(
+            license_agreement=license_agreement,
+            license_agreement_id=_as_int(_attr(license_agreement, "id")),
+        )
+        return [
+            contact_item
+            for contractor in contractors
+            if (contact_item := _build_contact_item(contractor)) is not None
+        ]
+
     def _get_license_agreement(
             self,
             license_agreement_id: int | None,

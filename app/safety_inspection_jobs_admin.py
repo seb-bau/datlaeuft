@@ -33,6 +33,8 @@ from .models import (
     SafetyInspectionJobStatus,
     SafetyInspectionObjectLevel,
     SafetyInspectionResultState,
+    SafetyInspectionTemplate,
+    SafetyInspectionTemplateVersion,
     User,
     WowiBuilding,
     utc_now,
@@ -64,7 +66,31 @@ def jobs() -> Any:
     overdue_only = (
         request.args.get("overdue") == "1"
     )
+    selected_template_id = None
+    template_id = request.args.get("template_id", "").strip()
+    if template_id:
+        try:
+            selected_template_id = int(template_id)
+        except ValueError:
+            abort(400, description="Der Prüfdetailplanfilter ist ungültig.")
+        if not 0 < selected_template_id <= 2 ** 63 - 1:
+            abort(400, description="Der Prüfdetailplanfilter ist ungültig.")
+
+    templates = SafetyInspectionTemplate.query.order_by(
+        SafetyInspectionTemplate.name.asc(),
+        SafetyInspectionTemplate.id.asc(),
+    ).all()
+
+    if selected_template_id is not None and not any(
+            template.id == selected_template_id for template in templates
+    ):
+        abort(400, description="Der ausgewählte Prüfdetailplan existiert nicht mehr.")
+
     query = SafetyInspectionJob.query
+    if selected_template_id is not None:
+        query = query.join(SafetyInspectionJob.template_version).filter(
+            SafetyInspectionTemplateVersion.template_id == selected_template_id
+        )
 
     if view_mode == "completed":
         query = query.filter(
@@ -123,6 +149,8 @@ def jobs() -> Any:
         overdue_only=overdue_only,
         status_labels=_job_status_labels(),
         object_level_labels=_object_level_labels(),
+        templates=templates,
+        selected_template_id=selected_template_id,
     )
 
 
@@ -658,10 +686,10 @@ def _result_state_labels() -> dict[str, str]:
             "Nicht vorhanden"
         ),
         SafetyInspectionResultState.DEFECT_INFO.value: (
-            "Mangel (Info)"
+            "Mangel"
         ),
         SafetyInspectionResultState.DEFECT_URGENT.value: (
-            "Mangel (dringend)"
+            "Mangel"
         ),
     }
 

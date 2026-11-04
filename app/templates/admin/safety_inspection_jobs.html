@@ -8,42 +8,61 @@
   <div class="btn-group btn-group-sm">
     <a
       class="btn {% if view_mode == 'active' and not overdue_only %}btn-primary{% else %}btn-outline-primary{% endif %}"
-      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='active') }}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='active', template_id=selected_template_id) }}"
     >
       Offen
     </a>
     <a
       class="btn {% if overdue_only %}btn-danger{% else %}btn-outline-danger{% endif %}"
-      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='active', overdue=1) }}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='active', overdue=1, template_id=selected_template_id) }}"
     >
       Überfällig
     </a>
     <a
       class="btn {% if view_mode == 'completed' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='completed') }}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='completed', template_id=selected_template_id) }}"
     >
       Abgeschlossen
     </a>
     <a
       class="btn {% if view_mode == 'missed' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='missed') }}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='missed', template_id=selected_template_id) }}"
     >
       Abgelaufen
     </a>
     <a
       class="btn {% if view_mode == 'canceled' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='canceled') }}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='canceled', template_id=selected_template_id) }}"
     >
       Abgebrochen
     </a>
     <a
       class="btn {% if view_mode == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='all') }}"
+      href="{{ url_for('safety_inspection_jobs_admin.jobs', view='all', template_id=selected_template_id) }}"
     >
       Alle
     </a>
   </div>
 </div>
+
+<form method="get" class="row g-2 align-items-end mb-3">
+  <input type="hidden" name="view" value="{{ view_mode }}">
+  {% if overdue_only %}<input type="hidden" name="overdue" value="1">{% endif %}
+  <div class="col-sm-8 col-lg-5">
+    <label class="form-label" for="inspectionTemplateFilter">Prüfdetailplan</label>
+    <select class="form-select" id="inspectionTemplateFilter" name="template_id">
+      <option value="">Alle Prüfdetailpläne</option>
+      {% for template in templates %}
+      <option value="{{ template.id }}" {% if template.id == selected_template_id %}selected{% endif %}>
+        {{ template.name }}{% if not template.active %} (inaktiv){% endif %}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-primary" type="submit">Filtern</button>
+  </div>
+</form>
 
 <div class="card shadow-sm">
   <div class="card-body">

@@ -946,9 +946,7 @@ def create_safety_inspection_job(
                     item.help_text
                 ),
                 required=item.required,
-                allow_not_present=(
-                    item.allow_not_present
-                ),
+                allow_not_present=True,
                 photo_required_no_defect=(
                     item.photo_required_no_defect
                 ),
@@ -1089,19 +1087,6 @@ def update_safety_inspection_result(
     if state not in valid_states:
         raise ValueError(
             "Das Prüfergebnis ist ungültig."
-        )
-
-    if (
-            state
-            == (
-            SafetyInspectionResultState
-                    .NOT_PRESENT.value
-    )
-            and not result.allow_not_present
-    ):
-        raise ValueError(
-            "Für diesen Prüfpunkt ist "
-            "„nicht vorhanden“ nicht zulässig."
         )
 
     if (
@@ -1324,42 +1309,19 @@ def validate_safety_inspection_results(
             for photo in result.photos
             if photo.active
         )
-        photo_required = (
-            result.photo_required_no_defect
-            if result.state
-               == (
-                   SafetyInspectionResultState
-                   .NO_DEFECT.value
-               )
-            else (
-                result
-                .photo_required_not_present
-                if result.state
-                   == (
-                       SafetyInspectionResultState
-                       .NOT_PRESENT.value
-                   )
-                else (
-                    result
-                    .photo_required_defect_info
-                    if result.state
-                       == (
-                           SafetyInspectionResultState
-                           .DEFECT_INFO.value
-                       )
-                    else (
-                        result
-                        .photo_required_defect_urgent
-                        if result.state
-                           == (
-                               SafetyInspectionResultState
-                               .DEFECT_URGENT.value
-                           )
-                        else False
-                    )
-                )
+        if result.state == SafetyInspectionResultState.NO_DEFECT.value:
+            photo_required = result.photo_required_no_defect
+        elif result.state == SafetyInspectionResultState.NOT_PRESENT.value:
+            photo_required = result.photo_required_not_present
+        elif result.state in {
+            SafetyInspectionResultState.DEFECT_INFO.value,
+            SafetyInspectionResultState.DEFECT_URGENT.value,
+        }:
+            photo_required = (
+                    result.photo_required_defect_info or result.photo_required_defect_urgent
             )
-        )
+        else:
+            photo_required = False
 
         if photo_required and active_photo_count == 0:
             raise ValueError(

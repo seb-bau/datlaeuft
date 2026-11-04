@@ -38,9 +38,9 @@ STATE_LABELS = {
     SafetyInspectionResultState
     .NOT_PRESENT.value: "Nicht vorhanden",
     SafetyInspectionResultState
-    .DEFECT_INFO.value: "Mangel (Info)",
+    .DEFECT_INFO.value: "Mangel",
     SafetyInspectionResultState
-    .DEFECT_URGENT.value: "Mangel (dringend)",
+    .DEFECT_URGENT.value: "Mangel",
 }
 
 
