@@ -2380,7 +2380,7 @@ class WowiportService:
 
         contractors = self._get_contractors_from_license_agreement(
             license_agreement=license_agreement,
-            license_agreement_id=_as_int(_attr(license_agreement, "id")),
+            license_agreement_id=_as_int(_attr(license_agreement, "id_")),
         )
         return [
             contact_item
