@@ -793,7 +793,7 @@ def send_appointment_confirmation_email(
         "uid",
         str(uuid5(
             NAMESPACE_URL,
-            f"machma:appointment:{appointment_request.token_hash}",
+            f"wattnu:appointment:{appointment_request.token_hash}",
         )),
     )
     event.add("dtstamp", utc_now())

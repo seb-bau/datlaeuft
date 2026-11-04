@@ -415,9 +415,7 @@ def send_external_invitation_email(
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = craftsman.email
-    message["Subject"] = (
-        f"Einladung zum {get_external_portal_name()}-Auftragnehmerportal"
-    )
+    message["Subject"] = "Einladung"
     message.set_content(
         "\n".join(
             (
@@ -688,9 +686,7 @@ def send_external_assignment_email(
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = craftsman.email
-    message["Subject"] = (
-        f"{get_external_portal_name()} - Neuer Auftrag: {order_number}"
-    )
+    message["Subject"] = f"Neuer Auftrag: {order_number}"
     message.set_content(
         "\n".join(
             (
