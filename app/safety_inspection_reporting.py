@@ -6,6 +6,10 @@ from sqlalchemy import and_, case, func, or_
 
 from .models import SafetyInspectionJob, SafetyInspectionJobStatus, User
 from .safety_inspection_progress import _current_group_period
+from io import BytesIO
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 
 
 STATUS_DEFINITIONS = (
@@ -234,3 +238,115 @@ def build_safety_inspection_report(groups, values, run_date=None):
     if segments:
         report["status_gradient"] = f"conic-gradient({', '.join(segments)})"
     return report
+
+
+def export_safety_inspection_groups_xlsx(report) -> bytes:
+    if report["error"]:
+        raise ValueError(report["error"])
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Prüfgruppen"
+    sheet.append([
+        "Prüfgruppe",
+        "Prüfzeitraum von",
+        "Prüfzeitraum bis",
+        "Gesamt",
+        "Erledigt ohne Mangel",
+        "Erledigt mit Mangel",
+        "Fortschritt",
+        "Hinweis",
+    ])
+
+    for group in report["groups"]:
+        note = group["error"] or ""
+        if not note and group["period_start"] is None:
+            note = (
+                "Kein aktueller Prüfzeitraum"
+                if report["filters"]["period_mode"] == "current"
+                else "Keine Prüfaufträge im Datumsbereich"
+            )
+
+        name = group["name"]
+        if not group["active"]:
+            name += " (inaktiv)"
+
+        sheet.append([
+            name,
+            group["period_start"],
+            group["period_end"],
+            group["total"],
+            group["counts"]["completed"],
+            group["counts"]["completed_with_defects"],
+            (
+                group["percentage"] / 100
+                if group["percentage"] is not None
+                else None
+            ),
+            note,
+        ])
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for column, width in zip(
+        "ABCDEFGH",
+        (42, 18, 18, 12, 25, 25, 16, 55),
+    ):
+        sheet.column_dimensions[column].width = width
+
+    for cells in sheet.iter_rows(min_row=2, min_col=7, max_col=7):
+        cells[0].number_format = "0.0%"
+
+    info = workbook.create_sheet("Auswertung")
+    info.append(["Auswertung", "Prüfgruppen und berücksichtigte Zeiträume"])
+    info.append(["Stand", report["current_date"]])
+    info.append([
+        "Prüfgruppen",
+        (
+            "Alle Prüfgruppen"
+            if report["filters"]["group_scope"] == "all"
+            else "Ausgewählte Prüfgruppen"
+        ),
+    ])
+
+    if report["filters"]["period_mode"] == "current":
+        info.append(["Zeitraum", "Aktueller Prüfzeitraum je Gruppe"])
+    else:
+        info.append(["Auswertungszeitraum von", report["range_start"]])
+        info.append(["Auswertungszeitraum bis", report["range_end"]])
+        info.append([
+            "Berücksichtigung",
+            "Prüfaufträge, deren Prüfzeitraum den Datumsbereich überschneidet.",
+        ])
+
+    info.append([
+        "Zeitraumangabe",
+        "Bei mehreren Prüfzeiträumen wird die gesamte Zeitspanne "
+        "von der ersten bis zur letzten Prüfung angezeigt.",
+    ])
+    info.append([
+        "Kennzahlen",
+        "Ausgewertet werden bereits erzeugte Prüfaufträge. "
+        "Abgebrochene Prüfaufträge sind aus den Kennzahlen ausgeschlossen.",
+    ])
+    info.column_dimensions["A"].width = 28
+    info.column_dimensions["B"].width = 90
+
+    for worksheet in workbook:
+        for cells in worksheet.iter_rows():
+            for cell in cells:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
+                elif isinstance(cell.value, date):
+                    cell.number_format = "DD.MM.YYYY"
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        for cell in worksheet[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(fill_type="solid", fgColor="1F4E78")
+        worksheet.row_dimensions[1].height = 32
+
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()

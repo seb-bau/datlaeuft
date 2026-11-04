@@ -60,7 +60,10 @@ from .safety_inspection_import import (
     MAX_IMPORT_BYTES,
     resolve_safety_inspection_import,
 )
-from .safety_inspection_reporting import build_safety_inspection_report
+from .safety_inspection_reporting import (
+    build_safety_inspection_report,
+    export_safety_inspection_groups_xlsx,
+)
 from .safety_inspection_progress import get_safety_inspection_group_progress
 from .safety_inspection_template_deletion import (
     delete_safety_inspection_template,
@@ -107,6 +110,23 @@ def report() -> Any:
         .all()
     )
     report_data = build_safety_inspection_report(groups, request.args)
+
+    if request.args.get("export") == "xlsx" and not report_data["error"]:
+        content = export_safety_inspection_groups_xlsx(report_data)
+        response = send_file(
+            BytesIO(content),
+            mimetype=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            as_attachment=True,
+            download_name=(
+                f"pruefgruppen-{report_data['current_date'].isoformat()}.xlsx"
+            ),
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     return render_template(
         "admin/report_safety_inspections.html",
         groups=groups,
