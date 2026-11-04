@@ -13,7 +13,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from .extensions import db
-from .mail_service import send_email
+from .external_branding import (
+    get_external_portal_name,
+    send_external_email,
+)
 from .models import (
     Commission,
     CommissionLocalStatus,
@@ -413,7 +416,7 @@ def send_external_invitation_email(
     message["From"] = smtp_sender
     message["To"] = craftsman.email
     message["Subject"] = (
-        "Einladung zum WattNu-Auftragnehmerportal"
+        f"Einladung zum {get_external_portal_name()}-Auftragnehmerportal"
     )
     message.set_content(
         "\n".join(
@@ -422,7 +425,7 @@ def send_external_invitation_email(
                 "",
                 (
                     "für Sie wurde ein Zugang zum "
-                    "WattNu-Auftragnehmerportal eingerichtet."
+                    f"{get_external_portal_name()}-Auftragnehmerportal eingerichtet."
                 ),
                 "",
                 f"Benutzername: {craftsman.username}",
@@ -437,7 +440,7 @@ def send_external_invitation_email(
             )
         )
     )
-    send_email(
+    send_external_email(
         message,
         smtp_host=smtp_host,
         smtp_port=smtp_port,
@@ -686,7 +689,7 @@ def send_external_assignment_email(
     message["From"] = smtp_sender
     message["To"] = craftsman.email
     message["Subject"] = (
-        f"Neuer Auftrag: {order_number}"
+        f"{get_external_portal_name()} - Neuer Auftrag: {order_number}"
     )
     message.set_content(
         "\n".join(
@@ -725,7 +728,7 @@ def send_external_assignment_email(
             )
         )
     )
-    send_email(
+    send_external_email(
         message,
         smtp_host=smtp_host,
         smtp_port=smtp_port,

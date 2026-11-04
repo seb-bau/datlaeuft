@@ -24,6 +24,20 @@ class SettingDefinition(Generic[T]):
     secret: bool = False
 
 
+def normalize_external_portal_name(value: Any) -> str:
+    name = str(value or "")
+    if any(ord(character) < 32 or ord(character) == 127 for character in name):
+        raise ValueError(
+            "Der Portalname darf keine Zeilenumbrüche oder Steuerzeichen enthalten."
+        )
+
+    name = name.strip()
+    if len(name) > 120:
+        raise ValueError("Der Portalname darf höchstens 120 Zeichen lang sein.")
+
+    return name or SettingKeys.EXTERNAL_PORTAL_NAME.default
+
+
 class SettingKeys:
     APP_SECRET_KEY = SettingDefinition[str](
         "security.secret_key", SettingValueType.SECRET, "change-me", "Flask Secret Key", "Sicherheit", True)
@@ -331,6 +345,13 @@ class SettingKeys:
             ),
             "d.velop",
         )
+    )
+    EXTERNAL_PORTAL_NAME = SettingDefinition[str](
+        "external_portal.display_name",
+        SettingValueType.STRING,
+        "MachMa!",
+        "Anzeigename für externe Handwerker (leer = MachMa!)",
+        "Auftragnehmerportal",
     )
     SMTP_HOST = SettingDefinition[str](
         "smtp.host",
@@ -732,6 +753,8 @@ class SettingsService:
     def set(self, definition: SettingDefinition[T], value: T) -> None:
         if definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key:
             value = cast(T, validate_debug_email_address(cast(str, value)))
+        if definition.key == SettingKeys.EXTERNAL_PORTAL_NAME.key:
+            value = cast(T, normalize_external_portal_name(value))
         row = AppSetting.query.filter_by(key=definition.key).one_or_none()
         if row is None:
             row = AppSetting(key=definition.key, value_type=definition.value_type.value, label=definition.label,

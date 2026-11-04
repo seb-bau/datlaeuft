@@ -25,10 +25,25 @@ from .models import (
 )
 from .settings import SettingKeys, settings
 from .wowiport import WowiportService
+from email.utils import parseaddr
+
+from .external_branding import (
+    get_external_portal_name,
+    send_external_email,
+)
 
 
 OFFICE_DIRECTION = "office"
 CRAFTSMAN_DIRECTION = "craftsman"
+def remove_process_info_origin(body: str, author_name: str | None) -> str:
+    header, separator, content = body.partition("\n")
+    if (
+        separator
+        and header.startswith(f"{author_name} (")
+        and header.rstrip("\r").endswith("):")
+    ):
+        return content
+    return body
 
 
 def normalize_request_id(value: str) -> str:
@@ -308,17 +323,9 @@ def sync_process_infos(
             ):
                 item.body = body
             else:
-                origin = (
-                    "WattNu-Web"
-                    if item.direction == OFFICE_DIRECTION
-                    else (
-                        "WattNu-Auftragnehmerportal"
-                        if item.sender_external_craftsman_id
-                        else "WattNu"
-                    )
-                )
-                item.body = body.removeprefix(
-                    f"{item.author_name} ({origin}):\n"
+                item.body = remove_process_info_origin(
+                    body,
+                    item.author_name,
                 )
 
             item.version += 1
@@ -453,7 +460,7 @@ def create_office_info(
         sender_user_id=user.id,
         sender_external_craftsman_id=None,
         author_name=user.display_name,
-        origin_name="WattNu-Web",
+        origin_name="MachMa!-Web",
         direction=OFFICE_DIRECTION,
     )
 
@@ -471,7 +478,7 @@ def create_outgoing_info(
         sender_user_id=user.id,
         sender_external_craftsman_id=None,
         author_name=user.display_name,
-        origin_name="WattNu",
+        origin_name="MachMa!",
     )
 
 
@@ -501,9 +508,7 @@ def create_external_outgoing_info(
         author_name=(
             external_craftsman.display_name
         ),
-        origin_name=(
-            "WattNu-Auftragnehmerportal"
-        ),
+        origin_name=get_external_portal_name(),
     )
 
 
@@ -1476,9 +1481,8 @@ def _send_external_process_info_email(
     )
 
     sender_domain = (
-        smtp_sender.rsplit("@", 1)[1]
-        if "@" in smtp_sender
-        else "datlaeuft.local"
+        parseaddr(smtp_sender)[1].rpartition("@")[2]
+        or "portal.invalid"
     )
     message["Message-ID"] = (
         f"<external-process-info-{info.id}-v{info.version}-"
@@ -1519,7 +1523,7 @@ def _send_external_process_info_email(
         )
     )
 
-    send_email(
+    send_external_email(
         message,
         smtp_host=smtp_host,
         smtp_port=smtp_port,

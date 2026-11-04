@@ -97,6 +97,7 @@ STATUS_LABELS = {
         "Abrechnung wird geprüft",
     CommissionLocalStatus.DONE.value: "Abgeschlossen",
 }
+from .external_branding import get_external_portal_name
 
 
 def current_external_craftsman(
@@ -173,9 +174,9 @@ def clear_external_session() -> None:
 @external_portal_bp.context_processor
 def external_portal_context() -> dict[str, Any]:
     return {
-        "external_craftsman":
-            current_external_craftsman(),
+        "external_craftsman": current_external_craftsman(),
         "external_status_labels": STATUS_LABELS,
+        "external_portal_name": get_external_portal_name(),
     }
 
 

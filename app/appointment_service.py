@@ -784,7 +784,7 @@ def send_appointment_confirmation_email(
     )
 
     calendar = Calendar()
-    calendar.add("prodid", "-//WattNu//Terminvereinbarung//DE")
+    calendar.add("prodid", "-//MachMa//Terminvereinbarung//DE")
     calendar.add("version", "2.0")
     calendar.add("calscale", "GREGORIAN")
 
@@ -793,7 +793,7 @@ def send_appointment_confirmation_email(
         "uid",
         str(uuid5(
             NAMESPACE_URL,
-            f"wattnu:appointment:{appointment_request.token_hash}",
+            f"machma:appointment:{appointment_request.token_hash}",
         )),
     )
     event.add("dtstamp", utc_now())

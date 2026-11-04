@@ -59,12 +59,12 @@ def _crafts_process_short_description(
     value = str(
         commission.title
         or commission.description
-        or "Auftrag aus DatLäuft"
+        or "Auftrag aus MachMa!"
     ).strip()
 
     return (
         value
-        or "Auftrag aus DatLäuft"
+        or "Auftrag aus MachMa!"
     )[:CRAFTS_PROCESS_SHORT_DESCRIPTION_MAX_LENGTH]
 
 

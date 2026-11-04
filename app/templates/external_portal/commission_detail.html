@@ -1,5 +1,5 @@
 {% extends "external_portal/base.html" %}
-{% block title %}Auftrag {{ item.erp_idnum or item.code or item.id }} · WattNu{% endblock %}
+{% block title %}Auftrag {{ item.erp_idnum or item.code or item.id }} · {{ external_portal_name }}{% endblock %}
 {% block content %}
 <div class="d-flex align-items-start gap-3 mb-4">
   <a class="btn btn-outline-secondary" href="{{ url_for('external_portal.commissions') }}" aria-label="Zurück zur Auftragsliste">
