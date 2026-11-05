@@ -121,6 +121,13 @@ from .commission_workflow_service import (
     complete_commission as complete_commission_workflow,
     reject_commission as reject_commission_workflow,
 )
+import json
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
+from sqlalchemy.exc import IntegrityError
+from .commission_service import clean_text, normalize_public_id, required_int
+from .models import TicketCraftFallback
+
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 CANCELLATION_NOTE_PREFIX = "Storno zu Buchung #"
@@ -502,6 +509,368 @@ def commission_create_options() -> Any:
             ],
         }
     )
+
+
+def _simple_commission_task(craft_activity, mapping):
+    task = mapping.task_template if mapping is not None else None
+    if (
+        task is None
+        or not task.active
+        or task.craft_activity_id != craft_activity.id
+        or task.erp_service_catalogue_id is None
+    ):
+        return None
+    return task
+
+
+def _simple_commission_payload(data):
+    title = clean_text(data.get("title"))
+    commission_text = clean_text(data.get("commission_text"))
+    title = title or commission_text
+    commission_text = commission_text or title
+
+    if not title or not commission_text:
+        raise ValueError("Bitte Kurztitel oder Auftragstext eingeben.")
+
+    if len(title) > 255:
+        raise ValueError("Der Kurztitel darf höchstens 255 Zeichen enthalten.")
+
+    contact_person = clean_text(data.get("contact_person"))
+    if contact_person and len(contact_person) > 255:
+        raise ValueError("Der Ansprechpartner darf höchstens 255 Zeichen enthalten.")
+
+    craft_activity_id = required_int(data, "craft_activity_id", "Gewerk")
+    craft_activity = CraftActivity.query.filter(
+        CraftActivity.id == craft_activity_id,
+        CraftActivity.active.is_(True),
+        CraftActivity.app_enabled.is_(True),
+        CraftActivity.erp_id.isnot(None),
+    ).one_or_none()
+
+    if craft_activity is None:
+        raise ValueError("Das ausgewählte Gewerk ist nicht verfügbar.")
+
+    mapping = TicketCraftFallback.query.filter_by(
+        craft_activity_id=craft_activity.id,
+    ).one_or_none()
+
+    task = _simple_commission_task(craft_activity, mapping)
+    if task is None:
+        raise ValueError(
+            "Für dieses Gewerk fehlt eine gültige Fallback-Leistungsposition "
+            "unter KI-Auftragsvorgaben."
+        )
+
+    craftsman_user_id = required_int(data, "craftsman_user_id", "Handwerker")
+    craftsman = User.query.filter(
+        User.id == craftsman_user_id,
+        User.is_active_flag.is_(True),
+        User.craftsman_erp_id.isnot(None),
+    ).one_or_none()
+
+    if craftsman is None or not craftsman.is_active:
+        raise ValueError("Der ausgewählte interne Handwerker ist nicht verfügbar.")
+
+    commission_type_id = required_int(data, "commission_type_id", "Auftragsart")
+    allowed_type_ids = integer_set(
+        settings.get(SettingKeys.WOWI_ALLOWED_COMMISSION_TYPE_IDS)
+    )
+
+    commission_type = WowiCommissionType.query.filter(
+        WowiCommissionType.erp_id == commission_type_id,
+        WowiCommissionType.active.is_(True),
+    ).one_or_none()
+
+    if commission_type_id not in allowed_type_ids or commission_type is None:
+        raise ValueError("Diese Auftragsart ist nicht freigegeben.")
+
+    mapped_type_ids = integer_set(task.commission_type_erp_ids or [])
+    if mapped_type_ids and commission_type_id not in mapped_type_ids:
+        raise ValueError(
+            "Die Auftragsart ist für die Fallback-Leistungsposition "
+            "dieses Gewerks nicht zulässig."
+        )
+
+    execution_from = None
+    execution_date = clean_text(data.get("execution_date"))
+
+    if execution_date:
+        try:
+            parsed_date = date.fromisoformat(execution_date)
+            if parsed_date.isoformat() != execution_date:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError("Das Ausführungsdatum ist ungültig.") from exc
+
+        execution_from = datetime.combine(
+            parsed_date,
+            time.min,
+            tzinfo=ZoneInfo("Europe/Berlin"),
+        ).isoformat()
+
+    return {
+        "client_request_id": data["client_request_id"],
+        "object_type": data.get("object_type"),
+        "object_id": data.get("object_id"),
+        "commission_type_id": commission_type_id,
+        "craft_activity_id": craft_activity.id,
+        "craftsman_user_id": craftsman.id,
+        "assignment_type": "internal",
+        "title": title,
+        "contact_person": contact_person,
+        "notify_tenants": data.get("notify_tenants"),
+        "execution_from": execution_from,
+        "execution_to": None,
+        "positions": [{
+            "service_catalog_id": task.erp_service_catalogue_id,
+            "commission_text": commission_text,
+            "units": 1.0,
+        }],
+    }
+
+
+def _existing_simple_commission(public_id, user):
+    commission = Commission.query.filter_by(
+        public_id=public_id,
+    ).one_or_none()
+
+    if commission is not None:
+        if (
+            commission.created_by_user_id != user.id
+            or commission.source != CommissionSource.IOS.value
+        ):
+            abort(403)
+
+        if commission.local_status == CommissionLocalStatus.DELETED.value:
+            abort(409, description="Dieser Auftrag wurde bereits gelöscht.")
+
+    return commission
+
+
+def _simple_commission_response(commission, user, status):
+    return jsonify({
+        "item": serialize_commission(
+            commission,
+            include_details=True,
+            viewer=user,
+        ),
+    }), status
+
+
+def _remove_simple_commission_photo_files(stored_photos):
+    for stored_photo in stored_photos:
+        for storage_name in (
+            stored_photo.storage_name,
+            stored_photo.thumbnail_storage_name,
+        ):
+            try:
+                commission_photo_path(storage_name).unlink(missing_ok=True)
+            except OSError:
+                current_app.logger.exception(
+                    "Auftragsfoto konnte nicht bereinigt werden."
+                )
+
+
+@api_bp.get("/commissions/simple-create-options")
+@jwt_required()
+def simple_commission_create_options() -> Any:
+    user = current_api_user()
+
+    allowed_type_ids = integer_set(
+        settings.get(SettingKeys.WOWI_ALLOWED_COMMISSION_TYPE_IDS)
+    )
+
+    commission_types = WowiCommissionType.query.filter(
+        WowiCommissionType.active.is_(True),
+        WowiCommissionType.erp_id.in_(allowed_type_ids),
+    ).order_by(WowiCommissionType.code.asc()).all()
+
+    type_ids = {item.erp_id for item in commission_types}
+
+    craftsmen = User.query.filter(
+        User.is_active_flag.is_(True),
+        User.craftsman_erp_id.isnot(None),
+    ).order_by(User.display_name.asc()).all()
+
+    craftsmen = [item for item in craftsmen if item.is_active]
+
+    mappings = {
+        item.craft_activity_id: item
+        for item in TicketCraftFallback.query.all()
+    }
+
+    craft_activities = CraftActivity.query.filter(
+        CraftActivity.active.is_(True),
+        CraftActivity.app_enabled.is_(True),
+        CraftActivity.erp_id.isnot(None),
+    ).order_by(CraftActivity.name.asc()).all()
+
+    craft_choices = []
+
+    for craft_activity in craft_activities:
+        task = _simple_commission_task(
+            craft_activity,
+            mappings.get(craft_activity.id),
+        )
+
+        mapped_ids = (
+            integer_set(task.commission_type_erp_ids or [])
+            if task
+            else set()
+        )
+
+        supported_ids = (
+            (type_ids & mapped_ids if mapped_ids else type_ids)
+            if task
+            else set()
+        )
+
+        craft_choices.append({
+            "id": craft_activity.id,
+            "name": craft_activity.name or craft_activity.code or "Gewerk",
+            "fallback_available": task is not None,
+            "commission_type_ids": sorted(supported_ids),
+        })
+
+    return jsonify({
+        "can_create": bool(
+            craftsmen
+            and any(item["commission_type_ids"] for item in craft_choices)
+        ),
+        "notify_tenants_default": settings.get(
+            SettingKeys.COMMISSION_NOTIFY_TENANTS_DEFAULT
+        ),
+        "default_craftsman_user_id": (
+            user.id
+            if any(item.id == user.id for item in craftsmen)
+            else None
+        ),
+        "commission_types": [
+            {"id": item.erp_id, "code": item.code}
+            for item in commission_types
+        ],
+        "craft_activities": craft_choices,
+        "craftsmen": [
+            {"id": item.id, "display_name": item.display_name}
+            for item in craftsmen
+        ],
+    })
+
+
+@api_bp.post("/commissions/simple")
+@jwt_required()
+def create_simple_commission() -> Any:
+    user = current_api_user()
+
+    try:
+        data = json.loads(request.form.get("data", ""))
+
+        if not isinstance(data, dict):
+            raise ValueError("Die übermittelten Auftragsdaten sind ungültig.")
+
+        if not clean_text(data.get("client_request_id")):
+            raise ValueError("Die Client-Auftragskennung fehlt.")
+
+        public_id = normalize_public_id(data["client_request_id"])
+        data["client_request_id"] = public_id
+
+    except (ValueError, TypeError) as exc:
+        message = (
+            "Die Auftragsdaten sind ungültig."
+            if isinstance(exc, json.JSONDecodeError)
+            else str(exc)
+        )
+        return jsonify({"message": message}), 400
+
+    existing = _existing_simple_commission(public_id, user)
+    if existing is not None:
+        return _simple_commission_response(existing, user, 200)
+
+    stored_photos = []
+
+    try:
+        payload = _simple_commission_payload(data)
+
+        commission = create_pending_commission(
+            data=payload,
+            created_by_user=user,
+            source=CommissionSource.IOS,
+            allow_assignment_override=True,
+        )
+
+        photos = []
+        content_hashes = set()
+
+        for upload in request.files.getlist("photos"):
+            stored_photo = store_commission_photo(commission, upload)
+            stored_photos.append(stored_photo)
+
+            if stored_photo.content_sha256 in content_hashes:
+                _remove_simple_commission_photo_files([stored_photo])
+                continue
+
+            content_hashes.add(stored_photo.content_sha256)
+
+            photo = CommissionPhoto(
+                commission=commission,
+                uploaded_by=user,
+                source="app",
+                context="order",
+                external_document_id=f"datlaeuft-photo-{uuid4().hex}",
+                external_entity_name="Commission",
+                external_entity_id=commission.erp_id,
+                original_filename=stored_photo.original_filename,
+                storage_name=stored_photo.storage_name,
+                thumbnail_storage_name=stored_photo.thumbnail_storage_name,
+                mime_type=stored_photo.mime_type,
+                size_bytes=stored_photo.size_bytes,
+                content_sha256=stored_photo.content_sha256,
+                active=True,
+                erp_sync_state=CommissionSyncState.PENDING.value,
+            )
+
+            db.session.add(photo)
+            photos.append(photo)
+
+        db.session.flush()
+
+        audit("commission.create.ios", "commission", commission.id, {
+            "public_id": commission.public_id,
+            "assigned_user_id": commission.user_id,
+            "position_count": len(commission.positions),
+            "photo_count": len(photos),
+        })
+
+        for photo in photos:
+            audit("commission.photo.upload", "commission", commission.id, {
+                "photo_id": photo.id,
+                "filename": photo.original_filename,
+                "caption": photo.caption,
+            })
+
+        db.session.commit()
+
+    except IntegrityError:
+        db.session.rollback()
+        _remove_simple_commission_photo_files(stored_photos)
+
+        existing = _existing_simple_commission(public_id, user)
+        if existing is not None:
+            return _simple_commission_response(existing, user, 200)
+
+        raise
+
+    except ValueError as exc:
+        db.session.rollback()
+        _remove_simple_commission_photo_files(stored_photos)
+        return jsonify({"message": str(exc)}), 400
+
+    except Exception:
+        db.session.rollback()
+        _remove_simple_commission_photo_files(stored_photos)
+        raise
+
+    return _simple_commission_response(commission, user, 202)
 
 
 @api_bp.post("/commissions")
