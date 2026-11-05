@@ -507,6 +507,13 @@ class SettingKeys:
         "api.cors_origins", SettingValueType.STRING, "*", "CORS Origins", "API")
     MOBILE_TOKEN_NEVER_EXPIRES = SettingDefinition[bool](
         "mobile.token_never_expires", SettingValueType.BOOL, True, "App-Login dauerhaft gültig", "Mobile App")
+    MOBILE_TIME_COMPONENTS_ENABLED = SettingDefinition[bool](
+        "mobile.time_components_enabled",
+        SettingValueType.BOOL,
+        True,
+        "Zeitbausteine bei Aufträgen in der App aktivieren",
+        "Mobile App",
+    )
     MOBILE_SHOW_SERVICE_TARGET_TIMES = SettingDefinition[bool](
         "mobile.show_service_target_times",
         SettingValueType.BOOL,

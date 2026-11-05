@@ -149,6 +149,7 @@ def mobile_config() -> Any:
         "microsoft": microsoft_config,
         "show_service_target_times": settings.get(SettingKeys.MOBILE_SHOW_SERVICE_TARGET_TIMES),
         "show_work_time_target_times": settings.get(SettingKeys.MOBILE_SHOW_WORK_TIME_TARGET_TIMES),
+        "time_components_enabled": settings.get(SettingKeys.MOBILE_TIME_COMPONENTS_ENABLED),
     })
 
 
@@ -2905,6 +2906,19 @@ def update_time_entry(commission_id: int, entry_id: int) -> Any:
     commission, entry = editable_time_entry(commission_id, entry_id, user)
     data = request.get_json(silent=True) or {}
     values = time_entry_values_from_payload(data, user)
+    if (
+        not settings.get(SettingKeys.MOBILE_TIME_COMPONENTS_ENABLED)
+        and values["minutes"] == entry.minutes
+    ):
+        for field_name in (
+            "work_minutes",
+            "waiting_minutes",
+            "material_minutes",
+            "travel_minutes",
+            "documentation_minutes",
+            "extra_minutes",
+        ):
+            values[field_name] = getattr(entry, field_name)
     entry.task_template = values["task"]
     if values["service_date"] is not None:
         entry.service_date = (
@@ -3333,6 +3347,11 @@ def time_entry_values_from_payload(data: dict[str, Any], user: User) -> dict[str
                      documentation_minutes +
                      extra_minutes
                      )
+    if component_sum > 0 and not settings.get(SettingKeys.MOBILE_TIME_COMPONENTS_ENABLED):
+        abort(
+            400,
+            description="Zeitbausteine sind deaktiviert. Bitte nur eine Gesamtzeit eingeben.",
+        )
     minutes = component_sum if component_sum > 0 else int_payload(data, "minutes")
     if minutes <= 0:
         abort(400)
