@@ -3,6 +3,272 @@
 {% block content %}
 <h1 class="h3 mb-4">Synchronisierung</h1>
 
+<div class="card shadow-sm mb-4" id="tenant-notifications">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <span class="fw-semibold">Mieterbenachrichtigungen bei Beauftragung</span>
+    <a
+      class="btn btn-sm btn-outline-primary"
+      href="{{ url_for('admin.sync_health', tenant_state=tenant_sync.selected_filter, tenant_page=tenant_sync.pagination.page, _anchor='tenant-notifications') }}"
+    >
+      Anzeige aktualisieren
+    </a>
+  </div>
+
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      {% for label, count in tenant_sync.summary %}
+      <span class="badge text-bg-light border">{{ label }}: {{ count }}</span>
+      {% endfor %}
+    </div>
+
+    <div class="row g-3 small mb-3">
+      <div class="col-md-6">
+        Worker:
+        <span class="badge text-bg-{{ tenant_sync.worker_color }}">
+          {{ tenant_sync.worker_label }}
+        </span>
+        <div class="text-muted">
+          Letzte Rückmeldung:
+          {{ tenant_sync.worker_seen_at.strftime('%d.%m.%Y %H:%M:%S') if tenant_sync.worker_seen_at else 'Noch keine gespeichert' }}
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        Ticket-Dokumentation:
+        <strong>
+          {{ 'Aktiviert' if tenant_sync.writeback_enabled else 'Deaktiviert' }}
+        </strong>
+        <div class="text-muted">
+          Stand: {{ tenant_sync.checked_at.strftime('%d.%m.%Y %H:%M:%S') }}
+          · Deutsche Ortszeit
+        </div>
+      </div>
+    </div>
+
+    <form
+      method="get"
+      action="{{ url_for('admin.sync_health', _anchor='tenant-notifications') }}"
+      class="d-flex flex-wrap align-items-end gap-2"
+    >
+      <div>
+        <label class="form-label mb-1" for="tenantState">Anzeige</label>
+        <select
+          class="form-select form-select-sm"
+          id="tenantState"
+          name="tenant_state"
+        >
+          {% for value, label in tenant_sync.filter_choices.items() %}
+          <option
+            value="{{ value }}"
+            {% if value == tenant_sync.selected_filter %}selected{% endif %}
+          >
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-sm btn-outline-secondary" type="submit">
+        Filtern
+      </button>
+    </form>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Auftrag</th>
+          <th>Verarbeitung</th>
+          <th>E-Mail</th>
+          <th>Empfänger</th>
+          <th>Ticket-Dokumentation</th>
+          <th>Nächster Versuch</th>
+          <th>Letzter Fehler</th>
+          <th>Aktion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in tenant_sync.rows %}
+        <tr>
+          <td>
+            <a href="{{ url_for('admin.commission_detail', commission_id=row.commission_id) }}">
+              {{ row.commission_label }}
+            </a>
+          </td>
+
+          <td>
+            <span class="badge text-bg-{{ row.queue_color }} text-wrap">
+              {{ row.queue_label }}
+            </span>
+            <div class="small text-muted mt-1">
+              {{ row.attempt_count }} Verarbeitungsversuche
+            </div>
+            {% if row.locked_at %}
+            <div class="small text-muted">
+              Seit {{ row.locked_at.strftime('%d.%m.%Y %H:%M:%S') }}
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            <span class="badge text-bg-{{ row.mail_color }} text-wrap">
+              {{ row.mail_label }}
+            </span>
+
+            {% if row.recipient_count %}
+            <div class="small mt-1">
+              {{ row.delivered_count }} von {{ row.recipient_count }} E-Mails übergeben
+            </div>
+            {% endif %}
+
+            {% if row.sent_at %}
+            <div class="small text-muted">
+              {{ row.sent_at.strftime('%d.%m.%Y %H:%M:%S') }}
+            </div>
+            {% elif row.mail_complete %}
+            <div class="small text-muted">
+              Versandzeitpunkt nicht gespeichert
+            </div>
+            {% endif %}
+          </td>
+
+          <td class="small text-break">
+            {% if row.recipients %}
+            <div class="fw-semibold">Vorgesehen:</div>
+            {% for address in row.recipients %}
+            <div>{{ address }}</div>
+            {% endfor %}
+            {% else %}
+            <span class="text-muted">Noch keine Adresse gespeichert</span>
+            {% endif %}
+
+            {% if row.debug_delivery %}
+            <div class="badge text-bg-warning mt-2">Debug-Umleitung</div>
+            {% endif %}
+
+            {% if row.actual_recipients %}
+            <div class="fw-semibold mt-2">Tatsächlich übergeben an:</div>
+            {% for address in row.actual_recipients %}
+            <div>{{ address }}</div>
+            {% endfor %}
+            {% elif row.debug_delivery %}
+            <div class="text-muted mt-1">
+              Debug-Adresse beim Versand nicht gespeichert
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            <span class="badge text-bg-{{ row.ticket_color }} text-wrap">
+              {{ row.ticket_label }}
+            </span>
+            {% if row.ticket_count %}
+            <div class="small text-muted mt-1">
+              {{ row.documented_count }} von {{ row.ticket_count }} Kommentaren gespeichert
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            {% if row.next_attempt_at %}
+            <div class="text-nowrap">
+              {{ row.next_attempt_at.strftime('%d.%m.%Y %H:%M:%S') }}
+            </div>
+            {% if row.due %}
+            <span class="badge text-bg-warning">Fällig</span>
+            {% elif row.remaining_minutes %}
+            <div class="small text-muted">
+              In ca. {{ row.remaining_minutes }} Minuten
+            </div>
+            {% endif %}
+            {% else %}
+            <span class="text-muted">–</span>
+            {% endif %}
+          </td>
+
+          <td
+            class="small text-danger text-break"
+            style="white-space: pre-wrap; min-width: 12rem; max-width: 28rem;"
+          >{{ row.last_error or '–' }}</td>
+
+          <td>
+            {% if row.can_retry %}
+            <form
+              method="post"
+              action="{{ url_for('admin.sync_health_retry_tenant_notification', notification_id=row.id) }}"
+            >
+              <input
+                type="hidden"
+                name="csrf_token"
+                value="{{ csrf_token() }}"
+              >
+              <input
+                type="hidden"
+                name="tenant_state"
+                value="{{ tenant_sync.selected_filter }}"
+              >
+              <input
+                type="hidden"
+                name="tenant_page"
+                value="{{ tenant_sync.pagination.page }}"
+              >
+              <button class="btn btn-sm btn-outline-primary" type="submit">
+                {{ 'Nachbearbeitung erneut einplanen' if row.mail_complete else 'Erneut einplanen' }}
+              </button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-center text-muted py-4">
+            Keine Mieterbenachrichtigungen in dieser Ansicht.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card-footer">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <span class="small text-muted">
+        {{ tenant_sync.pagination.total }} Einträge in dieser Ansicht
+      </span>
+
+      {% if tenant_sync.pagination.pages > 1 %}
+      <nav aria-label="Seiten der Mieterbenachrichtigungen">
+        <ul class="pagination pagination-sm mb-0">
+          {% for page_number in tenant_sync.pagination.iter_pages(left_edge=1, right_edge=1, left_current=1, right_current=1) %}
+          {% if page_number %}
+          <li class="page-item {% if page_number == tenant_sync.pagination.page %}active{% endif %}">
+            <a
+              class="page-link"
+              href="{{ url_for('admin.sync_health', tenant_state=tenant_sync.selected_filter, tenant_page=page_number, _anchor='tenant-notifications') }}"
+              {% if page_number == tenant_sync.pagination.page %}aria-current="page"{% endif %}
+            >
+              {{ page_number }}
+            </a>
+          </li>
+          {% else %}
+          <li class="page-item disabled">
+            <span class="page-link">…</span>
+          </li>
+          {% endif %}
+          {% endfor %}
+        </ul>
+      </nav>
+      {% endif %}
+    </div>
+
+    <div class="small text-muted mt-2">
+      Die E-Mail-Anzeige bestätigt die Übergabe an den Mailserver.
+      Die Versuchszahl umfasst Versand und Ticket-Dokumentation.
+      „Erneut einplanen“ hebt die Wartezeit auf; die Verarbeitung übernimmt der Worker.
+    </div>
+  </div>
+</div>
+
 <div class="card shadow-sm mb-4">
   <div class="card-header fw-semibold">
     ERP-Aufträge

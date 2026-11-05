@@ -247,6 +247,12 @@ from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
 from .document_articles import attach_article_fields
 from .ticket_ai_service import enqueue_ticket_ai, ticket_ai_is_current
 
+from math import ceil
+from zoneinfo import ZoneInfo
+from sqlalchemy import func
+from .models import CommissionTenantNotification, HealthHeartbeat
+from .utils import ensure_utc
+
 admin_bp = Blueprint("admin", __name__)
 
 WORK_TIME_WEEKDAYS = (
@@ -427,9 +433,12 @@ def dashboard() -> Any:
         )
 
         sync_problem_count = (
-                failed_outbox_count
-                + failed_webhook_count
-                + commission_sync_error_count
+            failed_outbox_count
+            + failed_webhook_count
+            + commission_sync_error_count
+            + CommissionTenantNotification.query.filter_by(
+                state="failed"
+            ).count()
         )
 
     return render_template(
@@ -442,6 +451,311 @@ def dashboard() -> Any:
         tenant_charge_review_count=tenant_charge_review_count,
         sync_problem_count=sync_problem_count,
     )
+
+
+TENANT_SYNC_FILTERS = {
+    "active": "Offene und fehlgeschlagene",
+    "all": "Alle",
+    "pending": "Wartend",
+    "sending": "In Bearbeitung",
+    "failed": "Fehlgeschlagen",
+    "sent": "Abgeschlossen",
+    "no_recipients": "Ohne E-Mail-Adresse",
+    "discarded": "Verworfen",
+}
+
+
+def _tenant_sync_time(value):
+    return (
+        ensure_utc(value).astimezone(ZoneInfo("Europe/Berlin"))
+        if value else None
+    )
+
+
+def _tenant_notification_progress(item):
+    payload = item.payload if isinstance(item.payload, dict) else {}
+    recipients = payload.get("recipients")
+    recipients = recipients if isinstance(recipients, list) else []
+    delivered = payload.get("delivered")
+    delivered = delivered if isinstance(delivered, list) else []
+    delivered_count = sum(address in delivered for address in recipients)
+
+    return {
+        "payload": payload,
+        "recipients": recipients,
+        "delivered_count": delivered_count,
+        "complete": bool(recipients) and delivered_count == len(recipients),
+    }
+
+
+def _tenant_notification_sync_row(item, now, writeback_enabled):
+    progress = _tenant_notification_progress(item)
+    payload = progress["payload"]
+    complete = progress["complete"]
+    state = item.state
+
+    queue_labels = {
+        "pending": ("Wartend", "secondary"),
+        "sending": ("In Bearbeitung", "primary"),
+        "failed": ("Vorbereitung oder Versand fehlgeschlagen", "danger"),
+        "sent": ("Abgeschlossen", "success"),
+        "no_recipients": ("Ohne E-Mail-Adresse", "warning"),
+        "discarded": ("Verworfen", "secondary"),
+    }
+
+    queue_label, queue_color = queue_labels.get(
+        state, ("Unbekannter Status", "warning")
+    )
+
+    if complete and state in {"pending", "sending", "failed"}:
+        queue_label = {
+            "pending": "Nachbearbeitung eingeplant",
+            "sending": "Nachbearbeitung läuft",
+            "failed": "Nachbearbeitung fehlgeschlagen",
+        }[state]
+
+    if complete:
+        mail_label = (
+            "Übergeben (mit Debug-Umleitung)"
+            if payload.get("debug_delivery")
+            else "An Mailserver übergeben"
+        )
+        mail_color = "success"
+    elif progress["delivered_count"]:
+        mail_label, mail_color = "Teilweise übergeben", "warning"
+    elif state == "no_recipients":
+        mail_label, mail_color = "Keine Adresse vorhanden", "warning"
+    elif state == "discarded":
+        mail_label, mail_color = "Nicht versendet", "secondary"
+    else:
+        mail_label, mail_color = "Noch nicht übergeben", "secondary"
+
+    tickets = payload.get("tickets")
+    tickets = tickets if isinstance(tickets, list) else None
+    documented_count = sum(
+        bool(ticket.get("comment_id"))
+        for ticket in tickets or []
+        if isinstance(ticket, dict)
+    )
+    ticket_count = len(tickets) if tickets is not None else None
+
+    if ticket_count and documented_count == ticket_count:
+        ticket_label, ticket_color = "Dokumentiert", "success"
+    elif not writeback_enabled:
+        ticket_label, ticket_color = "Derzeit deaktiviert", "secondary"
+    elif tickets is None:
+        ticket_label, ticket_color = "Noch nicht ermittelt", "secondary"
+    elif not tickets:
+        ticket_label, ticket_color = "Kein Ticket verknüpft", "secondary"
+    elif complete and state == "failed":
+        ticket_label, ticket_color = "Fehlgeschlagen", "danger"
+    elif state == "sent":
+        ticket_label, ticket_color = "Keine Dokumentation gespeichert", "secondary"
+    elif complete:
+        ticket_label, ticket_color = "Ausstehend", "warning"
+    else:
+        ticket_label, ticket_color = "Nach dem E-Mail-Versand", "secondary"
+
+    actual_recipients = payload.get("delivery_recipients")
+    if not isinstance(actual_recipients, list):
+        actual_recipients = (
+            [] if payload.get("debug_delivery")
+            else payload.get("delivered", [])
+        )
+    if not isinstance(actual_recipients, list):
+        actual_recipients = []
+
+    available_at = ensure_utc(item.available_at) if item.available_at else None
+    waiting = state in {"pending", "failed"}
+    remaining_minutes = (
+        max(1, ceil((available_at - now).total_seconds() / 60))
+        if waiting and available_at and available_at > now
+        else None
+    )
+
+    commission = item.commission
+
+    return {
+        "id": item.id,
+        "commission_id": item.commission_id,
+        "commission_label": (
+            commission.erp_idnum or commission.code or str(commission.id)
+        ) if commission else str(item.commission_id),
+        "queue_label": queue_label,
+        "queue_color": queue_color,
+        "mail_label": mail_label,
+        "mail_color": mail_color,
+        "recipients": progress["recipients"],
+        "delivered_count": progress["delivered_count"],
+        "recipient_count": len(progress["recipients"]),
+        "actual_recipients": actual_recipients,
+        "debug_delivery": bool(payload.get("debug_delivery")),
+        "sent_at": _tenant_sync_time(item.sent_at),
+        "mail_complete": complete,
+        "ticket_label": ticket_label,
+        "ticket_color": ticket_color,
+        "ticket_count": ticket_count,
+        "documented_count": documented_count,
+        "attempt_count": item.attempt_count,
+        "next_attempt_at": _tenant_sync_time(available_at) if waiting else None,
+        "remaining_minutes": remaining_minutes,
+        "due": bool(waiting and available_at and available_at <= now),
+        "locked_at": (
+            _tenant_sync_time(item.locked_at)
+            if state == "sending" else None
+        ),
+        "last_error": item.last_error,
+        "can_retry": state == "failed",
+    }
+
+
+def tenant_notification_sync_context():
+    now = ensure_utc(utc_now())
+    selected_filter = request.args.get("tenant_state", "active")
+
+    if selected_filter not in TENANT_SYNC_FILTERS:
+        selected_filter = "active"
+
+    query = CommissionTenantNotification.query.options(
+        selectinload(CommissionTenantNotification.commission)
+    )
+
+    if selected_filter == "active":
+        query = query.filter(
+            CommissionTenantNotification.state.in_(
+                ("pending", "sending", "failed")
+            )
+        )
+    elif selected_filter != "all":
+        query = query.filter(
+            CommissionTenantNotification.state == selected_filter
+        )
+
+    if selected_filter in {"all", "sent", "no_recipients", "discarded"}:
+        query = query.order_by(CommissionTenantNotification.id.desc())
+    else:
+        query = query.order_by(
+            CommissionTenantNotification.available_at.asc(),
+            CommissionTenantNotification.id.asc(),
+        )
+
+    page_number = max(1, request.args.get("tenant_page", 1, type=int))
+    pagination = query.paginate(
+        page=page_number,
+        per_page=25,
+        error_out=False,
+    )
+
+    if pagination.pages and pagination.page > pagination.pages:
+        pagination = query.paginate(
+            page=pagination.pages,
+            per_page=25,
+            error_out=False,
+        )
+
+    counts = dict(
+        CommissionTenantNotification.query.with_entities(
+            CommissionTenantNotification.state,
+            func.count(CommissionTenantNotification.id),
+        )
+        .group_by(CommissionTenantNotification.state)
+        .all()
+    )
+
+    writeback_enabled = bool(
+        settings.get(SettingKeys.TENANT_TICKET_WRITEBACK_ENABLED)
+    )
+
+    heartbeat = db.session.get(HealthHeartbeat, "worker")
+    last_seen_at = ensure_utc(heartbeat.last_seen_at) if heartbeat else None
+    worker_age = (
+        max(0, (now - last_seen_at).total_seconds())
+        if last_seen_at else None
+    )
+
+    worker_label, worker_color = (
+        ("Keine aktuelle Rückmeldung", "danger")
+        if worker_age is None or worker_age > 600
+        else ("Rückmeldung verzögert", "warning")
+        if worker_age > 180
+        else ("Aktuelle Rückmeldung", "success")
+    )
+
+    return {
+        "rows": [
+            _tenant_notification_sync_row(item, now, writeback_enabled)
+            for item in pagination.items
+        ],
+        "pagination": pagination,
+        "selected_filter": selected_filter,
+        "filter_choices": TENANT_SYNC_FILTERS,
+        "summary": [
+            (TENANT_SYNC_FILTERS[state], counts.get(state, 0))
+            for state in (
+                "pending", "sending", "failed",
+                "sent", "no_recipients", "discarded",
+            )
+        ],
+        "checked_at": _tenant_sync_time(now),
+        "writeback_enabled": writeback_enabled,
+        "worker_label": worker_label,
+        "worker_color": worker_color,
+        "worker_seen_at": _tenant_sync_time(last_seen_at),
+    }
+
+
+@admin_bp.post(
+    "/admin/sync-health/tenant-notifications/<int:notification_id>/retry"
+)
+@admin_required
+def sync_health_retry_tenant_notification(notification_id: int) -> Any:
+    item = db.get_or_404(CommissionTenantNotification, notification_id)
+
+    changed = CommissionTenantNotification.query.filter(
+        CommissionTenantNotification.id == notification_id,
+        CommissionTenantNotification.state == "failed",
+    ).update({
+        CommissionTenantNotification.state: "pending",
+        CommissionTenantNotification.available_at: utc_now(),
+        CommissionTenantNotification.locked_at: None,
+    }, synchronize_session=False)
+
+    if changed == 1:
+        audit(
+            "tenant_notification.retry",
+            "commission",
+            item.commission_id,
+            {
+                "notification_id": item.id,
+                "mail_complete": _tenant_notification_progress(item)["complete"],
+            },
+        )
+        db.session.commit()
+        flash(
+            "Die Benachrichtigung wurde erneut eingeplant. "
+            "Bereits gespeicherte Versandfortschritte bleiben erhalten.",
+            "success",
+        )
+    else:
+        db.session.rollback()
+        flash(
+            "Der Eintrag ist nicht mehr fehlgeschlagen "
+            "oder wird bereits verarbeitet.",
+            "warning",
+        )
+
+    selected_filter = request.form.get("tenant_state", "active")
+    if selected_filter not in TENANT_SYNC_FILTERS:
+        selected_filter = "active"
+
+    page_number = max(1, request.form.get("tenant_page", 1, type=int))
+
+    return redirect(url_for(
+        "admin.sync_health",
+        tenant_state=selected_filter,
+        tenant_page=page_number,
+        _anchor="tenant-notifications",
+    ))
 
 
 @admin_bp.get("/admin/sync-health")
@@ -509,6 +823,7 @@ def sync_health() -> Any:
         webhook_items=webhook_items,
         commission_items=commission_items,
         outbox_status_labels=outbox_status_labels,
+        tenant_sync=tenant_notification_sync_context(),
     )
 
 

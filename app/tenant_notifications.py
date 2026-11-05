@@ -351,7 +351,13 @@ def execute_tenant_notification(item_id: int) -> None:
             "delivery_recipients": list(dict.fromkeys([*previous_recipients, debug_recipient or address])),
         }
         item.locked_at = utc_now()
+        if item.sent_at is None and all(
+                recipient in item.payload["delivered"]
+                for recipient in item.payload["recipients"]
+        ):
+            item.sent_at = item.locked_at
         db.session.commit()
+
     document_tenant_notification(item, service)
     item.state = "sent"
     item.locked_at = None
