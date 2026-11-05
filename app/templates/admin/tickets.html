@@ -132,6 +132,8 @@ Einstellungen findest du unter Einstellungen.
             {{ ticket.subject or "Ohne Betreff" }}
           </h2>
 
+           <div class="small text-muted mb-2">{{ ticket.ai_state_label }}</div>
+
           {% if ticket.content_excerpt %}
           <p class="mb-2 text-body-secondary">
             {{ ticket.content_excerpt }}
@@ -183,6 +185,13 @@ Einstellungen findest du unter Einstellungen.
               {% endif %}
             </button>
           </form>
+<!--          <form method="post" action="{{ url_for('admin.ticket_regenerate', ticket_id=ticket.id) }}">-->
+<!--            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">-->
+<!--            <button class="btn btn-outline-secondary w-100" type="submit"-->
+<!--                    {% if not openai_configured %}disabled{% endif %}>-->
+<!--              KI-Vorschlag neu erstellen-->
+<!--            </button>-->
+<!--          </form>-->
           {% endif %}
 
           {% if ticket.state == "new" %}

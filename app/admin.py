@@ -126,6 +126,7 @@ from .models import (
     ExternalCraftsmanAccessToken,
     CommissionAssignmentType,
     WowiResponsibleOfficial,
+    TicketAiJob,
 )
 from .external_craftsman_service import (
     automatic_external_craftsman,
@@ -136,7 +137,6 @@ from .external_craftsman_service import (
     sync_external_craftsmen_from_wowiport,
 )
 from .ticket_service import (
-    analyze_ticket_mirror,
     ticket_license_agreement_local_id,
     mark_ticket_analyses_stale,
     ticket_analysis_input_hash,
@@ -245,6 +245,7 @@ from .catalog import (
 from .appointment_service import format_manual_appointment
 from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
 from .document_articles import attach_article_fields
+from .ticket_ai_service import enqueue_ticket_ai, ticket_ai_is_current
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -3308,7 +3309,15 @@ def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
         "state": {"all": "Alle Bearbeitungsstände", "new": "Zu prüfen", "ignored": "Kein Auftrag", "converted": "Auftrag erstellt"},
         "priority": {"all": "Alle Prioritäten", "unassigned": "Ohne Priorität"},
         "department": {"all": "Alle Abteilungen", "unassigned": "Ohne Abteilung"},
-        "ai_state": {"all": "Alle Analysestände", "not_requested": "Nicht analysiert", "ready": "Vorschlag vorhanden", "stale": "Vorschlag veraltet", "failed": "Analyse fehlgeschlagen"},
+        "ai_state": {
+            "all": "Alle Analysestände",
+            "not_requested": "Nicht analysiert",
+            "queued": "Vorbereitung vorgemerkt",
+            "processing": "Vorschlag wird erstellt",
+            "ready": "Vorschlag vorhanden",
+            "stale": "Vorschlag veraltet",
+            "failed": "Analyse fehlgeschlagen",
+        },
     }
 
     options["owner"].update(owners)
@@ -3531,102 +3540,51 @@ def ticket_commissions(
     )
 
 
-@admin_bp.post(
-    "/admin/tickets/<int:ticket_id>/analyze"
-)
+@admin_bp.post("/admin/tickets/<int:ticket_id>/analyze")
 @foreman_required
-def ticket_analyze(
-    ticket_id: int,
-) -> Any:
-    ticket = db.get_or_404(
-        TicketMirror,
-        ticket_id,
-    )
+def ticket_analyze(ticket_id: int) -> Any:
+    ticket = db.get_or_404(TicketMirror, ticket_id)
+    if ticket.deleted_at is not None or ticket.state == TicketMirrorState.IGNORED.value:
+        abort(404)
+    if ticket_ai_is_current(ticket):
+        return redirect(url_for("admin.commission_create", ticket_id=ticket.id))
+    if not enqueue_ticket_ai(
+        ticket, current_user.id, automatic=False,
+        force=ticket.ai_state == TicketAiState.FAILED.value,
+    ):
+        flash("Die KI-Analyse ist nicht vollständig konfiguriert.", "warning")
+        return redirect(url_for("admin.tickets"))
+    db.session.commit()
+    return redirect(url_for("admin.ticket_analysis_status", ticket_id=ticket.id))
 
+
+@admin_bp.post("/admin/tickets/<int:ticket_id>/regenerate")
+@foreman_required
+def ticket_regenerate(ticket_id: int) -> Any:
+    ticket = db.get_or_404(TicketMirror, ticket_id)
+    if ticket.deleted_at is not None or ticket.state == TicketMirrorState.IGNORED.value:
+        abort(404)
+    if not enqueue_ticket_ai(ticket, current_user.id, automatic=False, force=True):
+        flash("Die KI-Analyse ist nicht vollständig konfiguriert.", "warning")
+        return redirect(url_for("admin.tickets"))
+    audit("ticket.ai.regenerate", "ticket", ticket.erp_id)
+    db.session.commit()
+    return redirect(url_for("admin.ticket_analysis_status", ticket_id=ticket.id))
+
+
+@admin_bp.get("/admin/tickets/<int:ticket_id>/analysis")
+@foreman_required
+def ticket_analysis_status(ticket_id: int) -> Any:
+    ticket = db.get_or_404(TicketMirror, ticket_id)
     if ticket.deleted_at is not None:
         abort(404)
-
-    try:
-        current_input_hash = (
-            ticket_analysis_input_hash(ticket)
-        )
-
-        if (
-            ticket.ai_state
-            == TicketAiState.READY.value
-            and ticket.ai_input_hash
-            == current_input_hash
-        ):
-            return redirect(
-                url_for(
-                    "admin.commission_create",
-                    ticket_id=ticket.id,
-                )
-            )
-
-        analyze_ticket_mirror(
-            ticket,
-            current_user.id,
-        )
-
-        audit(
-            "ticket.ai.analyze",
-            "ticket",
-            ticket.erp_id,
-            {
-                "model": ticket.ai_model,
-                "classification": (
-                    ticket.ai_classification
-                ),
-                "craft_activity_id": (
-                    ticket.ai_craft_activity_id
-                ),
-                "task_template_id": (
-                    ticket.ai_task_template_id
-                ),
-                "assignment_rule_id": (
-                    ticket.ai_assignment_rule_id
-                ),
-                "assigned_user_id": (
-                    ticket.ai_assigned_user_id
-                ),
-                "assignment_mode": (
-                    ticket.ai_assignment_mode
-                ),
-            },
-        )
-        db.session.commit()
-
-        return redirect(
-            url_for(
-                "admin.commission_create",
-                ticket_id=ticket.id,
-            )
-        )
-
-    except Exception as exc:
-        db.session.rollback()
-
-        failed_ticket = db.session.get(
-            TicketMirror,
-            ticket_id,
-        )
-
-        if failed_ticket is not None:
-            failed_ticket.ai_state = (
-                TicketAiState.FAILED.value
-            )
-            failed_ticket.ai_error = str(exc)[:2000]
-            db.session.commit()
-
-        current_app.logger.exception(
-            "ticket_ai_analysis_failed ticket_id=%s",
-            ticket_id,
-        )
-        flash(str(exc), "danger")
-
-    return redirect(
-        url_for("admin.tickets")
+    if ticket_ai_is_current(ticket):
+        return redirect(url_for("admin.commission_create", ticket_id=ticket.id))
+    job = db.session.get(TicketAiJob, ticket.id)
+    return render_template(
+        "admin/ticket_analysis_status.html",
+        ticket=ticket,
+        pending=job is not None and (job.locked_at is not None or job.attempt_count < 3),
     )
 
 
@@ -3982,6 +3940,11 @@ def commission_create() -> Any:
             return redirect(
                 url_for("admin.tickets")
             )
+
+        if not ticket_ai_is_current(source_ticket):
+            if request.method == "POST":
+                flash("Die KI-Vorgaben haben sich geändert. Bitte den Auftrag erneut prüfen.", "warning")
+            return redirect(url_for("admin.ticket_analysis_status", ticket_id=source_ticket.id))
 
         if request.method == "GET":
             form_values = {

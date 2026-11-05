@@ -665,6 +665,13 @@ class SettingKeys:
         "KI-Analyse aktivieren",
         "OpenAI",
     )
+    TICKET_AI_PREFETCH_ENABLED = SettingDefinition[bool](
+        "tickets.ai_prefetch_enabled",
+        SettingValueType.BOOL,
+        True,
+        "KI-Auftragsvorschläge automatisch vorbereiten",
+        "OpenAI",
+    )
     OPENAI_API_KEY = SettingDefinition[str](
         "openai.api_key",
         SettingValueType.SECRET,

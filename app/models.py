@@ -100,6 +100,8 @@ class TicketMirrorState(str, Enum):
 
 class TicketAiState(str, Enum):
     NOT_REQUESTED = "not_requested"
+    QUEUED = "queued"
+    PROCESSING = "processing"
     READY = "ready"
     STALE = "stale"
     FAILED = "failed"
@@ -1940,6 +1942,8 @@ class TicketMirror(db.Model):
     def ai_state_label(self) -> str:
         return {
             TicketAiState.NOT_REQUESTED.value: "Nicht analysiert",
+            TicketAiState.QUEUED.value: "Vorbereitung vorgemerkt",
+            TicketAiState.PROCESSING.value: "Vorschlag wird erstellt",
             TicketAiState.READY.value: "Vorschlag vorhanden",
             TicketAiState.STALE.value: "Vorschlag veraltet",
             TicketAiState.FAILED.value: "Analyse fehlgeschlagen",
@@ -7309,3 +7313,24 @@ class SafetyInspectionMobileOperation(db.Model):
         default=utc_now,
         nullable=False,
     )
+
+
+class TicketAiJob(db.Model):
+    __tablename__ = "ticket_ai_job"
+
+    ticket_id: Mapped[int] = mapped_column(
+        db.ForeignKey("ticket_mirror.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    revision: Mapped[int] = mapped_column(default=1, nullable=False)
+    source_signature: Mapped[str | None] = mapped_column(db.String(64))
+    automatic: Mapped[bool] = mapped_column(default=True, nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("user_account.id", ondelete="SET NULL")
+    )
+    available_at: Mapped[datetime] = mapped_column(
+        db.DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    locked_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    lock_token: Mapped[str | None] = mapped_column(db.String(32))

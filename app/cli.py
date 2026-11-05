@@ -60,6 +60,7 @@ from .blacklist import include_blacklisted
 from pathlib import Path
 
 from .external_craftsman_import import import_external_craftsman_crafts
+from .ticket_ai_service import run_ticket_ai_worker
 
 
 def register_cli(app: Flask) -> None:
@@ -651,6 +652,12 @@ def register_cli(app: Flask) -> None:
             f"Vorgänge={process_count} "
             f"Informationen={info_count}"
         )
+
+    @app.cli.command("datlaeuft-ai-worker")
+    @click.option("--poll-seconds", type=int, default=2)
+    @click.option("--once", is_flag=True)
+    def ai_worker(poll_seconds: int, once: bool) -> None:
+        run_ticket_ai_worker(poll_seconds=poll_seconds, once=once)
 
     @app.cli.command("datlaeuft-worker")
     @click.option("--poll-seconds", type=int, default=10)

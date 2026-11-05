@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Callable
 from .external_craftsman_service import (
     available_external_craftsmen,
 )
@@ -107,10 +107,16 @@ def analyze_ticket_mirror(
     ticket: TicketMirror,
     actor_user_id: int,
     service: WowiportService | None = None,
+    *,
+    validate_result: Callable[[int, str], TicketMirror] | None = None,
 ) -> TicketMirror:
+    ticket_id = ticket.id
+    ticket_erp_id = ticket.erp_id
+    original_input_hash = ticket_analysis_input_hash(ticket)
+    db.session.commit()
     wowiport = service or WowiportService()
     rows = wowiport.get_ticket_rows(
-        ticket_erp_id=ticket.erp_id,
+        ticket_erp_id=ticket_erp_id,
         include_comments=True,
     )
     row = next(
@@ -118,18 +124,20 @@ def analyze_ticket_mirror(
             item
             for item in rows
             if as_int(value(item, "Id"))
-            == ticket.erp_id
+            == ticket_erp_id
         ),
         None,
     )
 
     if row is None:
         raise RuntimeError(
-            f"OPENWOWI-Ticket {ticket.erp_id} "
+            f"OPENWOWI-Ticket {ticket_erp_id} "
             "wurde nicht gefunden."
         )
 
-    ticket = upsert_ticket_row(row)
+    if validate_result is not None:
+        ticket = validate_result(ticket_id, original_input_hash)
+    ticket = upsert_ticket_row(row, queue_analysis=False)
 
     configuration = ticket_analysis_configuration()
     crafts = configuration["crafts"]
@@ -146,6 +154,13 @@ def analyze_ticket_mirror(
     assignment_rule_options = configuration[
         "assignment_rule_options"
     ]
+
+    ticket_id = ticket.id
+    input_hash = build_ticket_analysis_input_hash(ticket, configuration)
+    db.session.commit()
+    if validate_result is not None:
+        ticket = validate_result(ticket_id, input_hash)
+        db.session.commit()
 
     result, model = analyze_ticket_content(
         analysis_ticket_data(row),
@@ -267,6 +282,8 @@ def analyze_ticket_mirror(
                 "KI-Zuweisungsregel ist für das "
                 "ermittelte Gewerk nicht verfügbar."
             )
+    if validate_result is not None:
+        ticket = validate_result(ticket_id, input_hash)
 
     ticket.ai_state = TicketAiState.READY.value
     ticket.ai_candidate = bool(
@@ -321,12 +338,7 @@ def analyze_ticket_mirror(
     )
 
     ticket.ai_model = model
-    ticket.ai_input_hash = (
-        build_ticket_analysis_input_hash(
-            ticket,
-            configuration,
-        )
-    )
+    ticket.ai_input_hash = input_hash
     ticket.ai_generated_at = utc_now()
     ticket.ai_error = None
 
@@ -720,25 +732,19 @@ def resolve_assignment_rule(
 
 
 def mark_ticket_analyses_stale() -> int:
-    return (
-        TicketMirror.query
-        .filter(
-            TicketMirror.ai_state
-            == TicketAiState.READY.value
-        )
-        .update(
-            {
-                TicketMirror.ai_state: (
-                    TicketAiState.STALE.value
-                )
-            },
-            synchronize_session=False,
-        )
-    )
+    from .ticket_ai_service import enqueue_ticket_ai
+
+    tickets = TicketMirror.query.filter_by(ai_state=TicketAiState.READY.value).all()
+    for ticket in tickets:
+        ticket.ai_state = TicketAiState.STALE.value
+        enqueue_ticket_ai(ticket)
+    return len(tickets)
 
 
 def upsert_ticket_row(
     row: dict[str, Any],
+    *,
+    queue_analysis: bool = True,
 ) -> TicketMirror:
     ticket_erp_id = required_positive_int(
         value(row, "Id"),
@@ -748,6 +754,8 @@ def upsert_ticket_row(
         erp_id=ticket_erp_id
     ).one_or_none()
     signature = ticket_signature(row)
+    is_new = ticket is None
+    changed = ticket is not None and ticket.source_signature != signature
 
     if ticket is None:
         ticket = TicketMirror(
@@ -814,6 +822,11 @@ def upsert_ticket_row(
     ticket.source_signature = signature
     ticket.synced_at = utc_now()
     ticket.deleted_at = None
+
+    if queue_analysis and (is_new or changed):
+        from .ticket_ai_service import enqueue_ticket_ai
+
+        enqueue_ticket_ai(ticket)
 
     return ticket
 

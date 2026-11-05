@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}KI-Vorschlag vorbereiten{% endblock %}
+{% block head %}
+{{ super() }}
+{% if pending %}<meta http-equiv="refresh" content="2">{% endif %}
+{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">KI-Vorschlag vorbereiten</h1>
+<p>Ticket {{ ticket.id_num or ticket.erp_id }}: {{ ticket.subject or "Ohne Betreff" }}</p>
+{% if pending %}
+<div class="alert alert-info" role="status">
+  Die KI-Vorschläge werden vorbereitet. Anschließend öffnet sich die Auftragserfassung automatisch.
+</div>
+{% else %}
+<div class="alert alert-warning">
+  {{ ticket.ai_error or "Es liegt kein aktueller KI-Vorschlag vor." }}
+</div>
+<form method="post" action="{{ url_for('admin.ticket_regenerate', ticket_id=ticket.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="btn btn-primary" type="submit">KI-Vorschläge neu erstellen</button>
+</form>
+{% endif %}
+<a class="btn btn-outline-secondary mt-3" href="{{ url_for('admin.tickets') }}">Zurück zu den Tickets</a>
+{% endblock %}
