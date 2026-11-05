@@ -11911,6 +11911,7 @@ def invoice_cancel(
 def external_craftsmen() -> Any:
     items = (
         ExternalCraftsman.query
+        .options(selectinload(ExternalCraftsman.craft_activities))
         .order_by(
             ExternalCraftsman.display_name.asc(),
             ExternalCraftsman.craftsman_erp_id.asc(),
@@ -11935,6 +11936,10 @@ def external_craftsmen() -> Any:
         internal_craftsman_erp_ids=(
             internal_craftsman_erp_ids
         ),
+        craft_activities=CraftActivity.query.order_by(
+            CraftActivity.name.asc(),
+            CraftActivity.id.asc(),
+        ).all(),
     )
 
 
@@ -11988,6 +11993,64 @@ def external_craftsmen_sync() -> Any:
     return redirect(
         url_for("admin.external_craftsmen")
     )
+
+
+@admin_bp.post(
+    "/admin/external-craftsmen/<int:craftsman_id>/craft-activities"
+)
+@admin_required
+def external_craftsman_craft_activities(craftsman_id: int) -> Any:
+    craftsman = db.get_or_404(ExternalCraftsman, craftsman_id)
+
+    try:
+        try:
+            selected_ids = {
+                int(value)
+                for value in request.form.getlist("craft_activity_ids")
+            }
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Die Gewerkeauswahl ist ungültig.") from exc
+
+        if any(activity_id <= 0 for activity_id in selected_ids):
+            raise ValueError("Die Gewerkeauswahl ist ungültig.")
+
+        activities = (
+            CraftActivity.query
+            .filter(CraftActivity.id.in_(sorted(selected_ids)))
+            .order_by(CraftActivity.id.asc())
+            .all()
+        ) if selected_ids else []
+
+        if len(activities) != len(selected_ids):
+            raise ValueError("Mindestens ein Gewerk wurde nicht gefunden.")
+
+        previous_ids = sorted(
+            activity.id for activity in craftsman.craft_activities
+        )
+        craftsman.craft_activities = activities
+        audit(
+            "external_craftsman.craft_activities.update",
+            "external_craftsman",
+            craftsman.id,
+            metadata={
+                "previous_craft_activity_ids": previous_ids,
+                "craft_activity_ids": sorted(selected_ids),
+                "source": "web",
+            },
+        )
+        db.session.commit()
+        flash("Die Gewerke wurden gespeichert.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "external_craftsman_craft_activities_failed"
+        )
+        flash("Die Gewerke konnten nicht gespeichert werden.", "danger")
+
+    return redirect(url_for("admin.external_craftsmen"))
 
 
 @admin_bp.post("/admin/external-craftsmen/<int:craftsman_id>/assignment")

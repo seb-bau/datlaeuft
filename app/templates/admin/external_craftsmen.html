@@ -35,7 +35,7 @@
             <td>
               <strong>{{ item.display_name }}</strong>
               <div class="small text-muted">
-                Wowiport-ID {{ item.craftsman_erp_id }}
+                Lokale ID {{ item.id }} · Wowiport-ID {{ item.craftsman_erp_id }}
               </div>
             </td>
             <td>{{ item.email or "–" }}</td>
@@ -89,6 +89,14 @@
             </td>
             <td class="text-end">
               <div class="d-flex flex-wrap justify-content-end gap-2">
+                <button
+                  class="btn btn-sm btn-outline-secondary"
+                  type="button"
+                  data-bs-toggle="modal"
+                  data-bs-target="#craft-activities-{{ item.id }}"
+                >
+                  Gewerke bearbeiten
+                </button>
                 <form method="post" action="{{ url_for('admin.external_craftsman_assignment', craftsman_id=item.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="action" value="{{ 'disable' if item.assignment_enabled else 'enable' }}">
@@ -144,4 +152,46 @@
     {% endif %}
   </div>
 </div>
+{% for item in items %}
+<div class="modal fade" id="craft-activities-{{ item.id }}" tabindex="-1" aria-labelledby="craft-activities-title-{{ item.id }}" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <form class="modal-content" method="post" action="{{ url_for('admin.external_craftsman_craft_activities', craftsman_id=item.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-header">
+        <h2 class="modal-title fs-5" id="craft-activities-title-{{ item.id }}">Gewerke: {{ item.display_name }}</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted">Lokale Handwerker-ID: {{ item.id }}</p>
+        {% set selected_ids = item.craft_activities|map(attribute='id')|list %}
+        {% for activity in craft_activities %}
+        <div class="form-check">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="craft_activity_ids"
+            value="{{ activity.id }}"
+            id="craft-{{ item.id }}-{{ activity.id }}"
+            {% if activity.id in selected_ids %}checked{% endif %}
+          >
+          <label class="form-check-label" for="craft-{{ item.id }}-{{ activity.id }}">
+            {{ activity.name }} (ID {{ activity.id }}){% if not activity.active %} · inaktiv{% endif %}
+          </label>
+        </div>
+        {% else %}
+        <p>Es sind noch keine Gewerke vorhanden.</p>
+        {% endfor %}
+        <div class="form-text mt-3">
+          Ohne Auswahl ist der Handwerker für alle Gewerke verfügbar.
+          Wowiport überschreibt diese Auswahl nur, wenn dort Gewerke angegeben sind.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Abbrechen</button>
+        <button class="btn btn-primary" type="submit">Speichern</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
 {% endblock %}

@@ -57,8 +57,59 @@ from datetime import datetime
 from .ticket_service import sync_all_ticket_mirrors
 from .blacklist import include_blacklisted
 
+from pathlib import Path
+
+from .external_craftsman_import import import_external_craftsman_crafts
+
 
 def register_cli(app: Flask) -> None:
+    @app.cli.command("datlaeuft-import-external-craftsman-crafts")
+    @click.argument(
+        "filename",
+        type=click.Path(exists=True, dir_okay=False, path_type=Path),
+        metavar="EXCEL_DATEI",
+    )
+    @click.option(
+        "--skip-header",
+        is_flag=True,
+        help="Erste Zeile als Kopfzeile überspringen.",
+    )
+    @click.option(
+        "--replace",
+        is_flag=True,
+        help="Gewerke der aufgeführten Handwerker ersetzen.",
+    )
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        help="Import prüfen, ohne Änderungen zu speichern.",
+    )
+    def import_external_craftsman_crafts_command(
+        filename: Path,
+        skip_header: bool,
+        replace: bool,
+        dry_run: bool,
+    ) -> None:
+        try:
+            seen, changed = import_external_craftsman_crafts(
+                filename,
+                skip_header=skip_header,
+                replace=replace,
+            )
+            if dry_run:
+                db.session.rollback()
+            else:
+                db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            raise click.ClickException(str(exc)) from exc
+
+        click.echo(
+            f"{'Probelauf' if dry_run else 'Import abgeschlossen'}: "
+            f"Handwerker={seen}, Änderungen={changed}, "
+            f"Modus={'Ersetzen' if replace else 'Ergänzen'}"
+        )
+
     @app.cli.command("datlaeuft-sync-company-codes")
     def sync_company_codes() -> None:
         result = sync_company_codes_from_wowiport()

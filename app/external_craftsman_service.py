@@ -243,11 +243,20 @@ def sync_external_craftsmen_from_wowiport(
         item.email = email
         item.wowi_active = True
         item.last_synced_at = now
-        item.craft_activities = [
-            craft_activities_by_erp_id[erp_id]
-            for erp_id in sorted(activity_ids)
-            if erp_id in craft_activities_by_erp_id
-        ]
+        if activity_ids:
+            missing_activity_ids = activity_ids.difference(
+                craft_activities_by_erp_id
+            )
+            if missing_activity_ids:
+                raise ValueError(
+                    f"Handwerker {craftsman_erp_id}: "
+                    "Unbekannte Wowiport-Gewerke-IDs: "
+                    + ", ".join(map(str, sorted(missing_activity_ids)))
+                )
+            item.craft_activities = [
+                craft_activities_by_erp_id[erp_id]
+                for erp_id in sorted(activity_ids)
+            ]
         current_values = (
             item.display_name,
             item.email,
