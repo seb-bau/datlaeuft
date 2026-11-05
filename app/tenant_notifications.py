@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from email.errors import HeaderParseError
 from email.headerregistry import Address
@@ -14,7 +15,8 @@ from .extensions import db
 from .mail_service import send_email
 from .models import (
     AppSetting, Commission, CommissionSource, CommissionSyncState,
-    CommissionTenantNotification, CraftActivity, ExternalCraftsman, User, utc_now,
+    CommissionTenantNotification, CommissionTicketLink, CraftActivity,
+    ExternalCraftsman, TicketMirror, User, utc_now,
 )
 from .settings import SettingKeys, settings
 from .user_sync import extract_craftsman_display_name
@@ -182,55 +184,176 @@ def claim_tenant_notification() -> int | None:
     return item_id
 
 
+def tenant_notification_tickets(commission: Commission, service: Any) -> list[dict[str, Any]]:
+    ticket_ids = {
+        link.ticket_erp_id
+        for link in CommissionTicketLink.query.filter_by(commission_id=commission.id).all()
+    }
+    ticket_ids.update(
+        ticket.erp_id
+        for ticket in TicketMirror.query.filter_by(commission_id=commission.id).all()
+    )
+    tickets = []
+    for ticket_id in sorted(ticket_ids):
+        rows = service.get_ticket_rows(ticket_erp_id=ticket_id)
+        row = next((row for row in rows if read_value(row, "id_") == ticket_id), None)
+        if row is None:
+            raise RuntimeError(f"Das verknüpfte Ticket {ticket_id} konnte nicht gelesen werden.")
+        ticket_number = str(read_value(row, "id_num") or "").strip()
+        if re.fullmatch(r"[0-9]{5}", ticket_number) is None:
+            raise RuntimeError(f"Die Ticketnummer '{ticket_number}' passt nicht zum mail2ticket-Format.")
+        tickets.append({"ticket_id": ticket_id, "ticket_number": ticket_number, "comment_id": None})
+    return tickets
+
+
+def document_tenant_notification(item: CommissionTenantNotification, service: Any) -> None:
+    if not settings.get(SettingKeys.TENANT_TICKET_WRITEBACK_ENABLED):
+        return
+    payload = item.payload
+    if "tickets" not in payload:
+        item.payload = {**payload, "tickets": tenant_notification_tickets(item.commission, service)}
+        db.session.commit()
+        payload = item.payload
+    if not payload["tickets"]:
+        return
+    if "comment_content" not in payload:
+        actual_recipients = payload.get("delivery_recipients")
+        if actual_recipients is None:
+            recipient_text = (
+                "Debug-Adresse beim ursprünglichen Versand nicht gespeichert"
+                if payload.get("debug_delivery") else "; ".join(payload["delivered"])
+            )
+        else:
+            recipient_text = "; ".join(actual_recipients)
+        content_lines = [
+            "Per E-Mail versendete Beauftragungsinformation",
+            f"Auftrag: {item.commission.erp_idnum}",
+            f"An: {recipient_text}",
+        ]
+        if payload.get("debug_delivery"):
+            content_lines.extend((
+                "Debug-Umleitung: ja",
+                f"Vorgesehene Empfänger: {'; '.join(payload['delivered'])}",
+            ))
+        content_lines.extend((
+            f"Betreff: {payload.get('subject', 'Information zur Beauftragung')}",
+            "", payload["body"],
+        ))
+        item.payload = {**payload, "comment_content": "\n".join(content_lines)}
+        db.session.commit()
+    for index in range(len(item.payload["tickets"])):
+        ticket = item.payload["tickets"][index]
+        if ticket.get("comment_id"):
+            continue
+        rows = service.get_ticket_rows(ticket_erp_id=ticket["ticket_id"], include_comments=True)
+        row = next((row for row in rows if read_value(row, "id_") == ticket["ticket_id"]), None)
+        if row is None:
+            raise RuntimeError(f"Das Ticket {ticket['ticket_id']} konnte nicht dokumentiert werden.")
+        content = item.payload["comment_content"]
+        existing = next((
+            comment for comment in read_value(row, "comments") or []
+            if read_value(comment, "comment_from_api") is True
+            and str(read_value(comment, "content") or "").replace("\r\n", "\n").rstrip()
+            == content.replace("\r\n", "\n").rstrip()
+        ), None)
+        if existing is not None:
+            comment_id = read_value(existing, "id_")
+        else:
+            result = service.client.create_ticket_comment(ticket_id=ticket["ticket_id"], content=content)
+            if result.status_code not in (200, 201):
+                raise RuntimeError(f"Die Ticketantwort konnte nicht gespeichert werden: {result.message}")
+            data = result.data[0] if isinstance(result.data, list) and len(result.data) == 1 else result.data
+            comment_id = read_value(data, "comment_id")
+        if not isinstance(comment_id, int) or isinstance(comment_id, bool) or comment_id <= 0:
+            raise RuntimeError("Wowiport hat keine gültige Kommentar-ID zurückgegeben.")
+        tickets = [dict(entry) for entry in item.payload["tickets"]]
+        tickets[index]["comment_id"] = comment_id
+        item.payload = {**item.payload, "tickets": tickets}
+        item.locked_at = utc_now()
+        db.session.commit()
+
+
 def execute_tenant_notification(item_id: int) -> None:
     item = db.session.get(CommissionTenantNotification, item_id)
     if item is None or item.state != "sending":
         return
     commission = item.commission
-    if not commission.notify_tenants or commission.deleted_at is not None or commission.status_id not in (7, 12):
+    mail_complete = item.payload is not None and bool(item.payload.get("recipients")) and all(
+        address in item.payload.get("delivered", []) for address in item.payload["recipients"]
+    )
+    if not mail_complete and (
+        not commission.notify_tenants or commission.deleted_at is not None or commission.status_id not in (7, 12)
+    ):
         item.state = "discarded"
         item.locked_at = None
         db.session.commit()
         return
-    if commission.erp_sync_state != CommissionSyncState.SYNCED.value:
+    if not mail_complete and commission.erp_sync_state != CommissionSyncState.SYNCED.value:
         raise RuntimeError("Die Übertragung des Auftrags an Wowiport ist noch nicht abgeschlossen.")
 
-    if item.payload is None:
-        from .wowiport import WowiportService
+    from .wowiport import WowiportService
 
-        service = WowiportService()
-        addresses = tenant_email_addresses(commission, service)
+    service = WowiportService()
+    if item.payload is None or ("tickets" not in item.payload and not item.payload.get("delivered")):
+        previous_payload = item.payload
+        addresses = previous_payload["recipients"] if previous_payload else tenant_email_addresses(commission, service)
         if not addresses:
             item.state = "no_recipients"
             item.locked_at = None
             item.last_error = None
             db.session.commit()
             return
+        tickets = tenant_notification_tickets(commission, service)
+        subject = "Information zur Beauftragung"
+        reply_to = ""
+        body = previous_payload["body"] if previous_payload else tenant_notification_body(commission, service)
+        if tickets:
+            reply_to = normalize_tenant_email(settings.get(SettingKeys.TENANT_TICKET_REPLY_TO))
+            if not reply_to:
+                raise RuntimeError("Bitte die mail2ticket-Antwortadresse in den E-Mail-Einstellungen hinterlegen.")
+            delimiter = settings.get(SettingKeys.TENANT_TICKET_REPLY_DELIMITER).strip()
+            if not delimiter or any(ord(character) < 32 or ord(character) == 127 for character in delimiter):
+                raise RuntimeError("Bitte eine gültige Antwort-Trennzeile ohne Zeilenumbrüche hinterlegen.")
+            subject += " " + " ".join(f"(Ticket {ticket['ticket_number']})" for ticket in tickets)
+            body = f"{delimiter}\n\n{body}"
         item.payload = {
             "recipients": addresses,
-            "body": tenant_notification_body(commission, service),
+            "body": body,
             "delivered": [],
+            "subject": subject,
+            "reply_to": reply_to,
+            "tickets": tickets,
         }
         db.session.commit()
 
-    smtp_host = settings.get(SettingKeys.SMTP_HOST).strip()
-    smtp_sender = settings.get(SettingKeys.SMTP_SENDER).strip()
-    if not smtp_host or not smtp_sender:
-        raise RuntimeError("SMTP-Server oder Absenderadresse fehlen.")
-    for address in item.payload["recipients"]:
-        if address in item.payload["delivered"]:
-            continue
+    pending = [address for address in item.payload["recipients"] if address not in item.payload["delivered"]]
+    if pending:
+        smtp_host = settings.get(SettingKeys.SMTP_HOST).strip()
+        smtp_sender = settings.get(SettingKeys.SMTP_SENDER).strip()
+        if not smtp_host or not smtp_sender:
+            raise RuntimeError("SMTP-Server oder Absenderadresse fehlen.")
+    for address in pending:
         message = EmailMessage()
         message["From"] = smtp_sender
         message["To"] = address
-        message["Subject"] = "Information zur Beauftragung"
+        message["Subject"] = item.payload.get("subject", "Information zur Beauftragung")
+        if item.payload.get("reply_to"):
+            message["Reply-To"] = item.payload["reply_to"]
         message.set_content(item.payload["body"])
-        send_email(message, smtp_host=smtp_host, smtp_port=settings.get(SettingKeys.SMTP_PORT))
-        item.payload = {**item.payload, "delivered": [*item.payload["delivered"], address]}
+        debug_recipient = send_email(message, smtp_host=smtp_host, smtp_port=settings.get(SettingKeys.SMTP_PORT))
+        previous_recipients = item.payload.get("delivery_recipients")
+        if previous_recipients is None:
+            previous_recipients = [] if item.payload.get("debug_delivery") else item.payload["delivered"]
+        item.payload = {
+            **item.payload,
+            "delivered": [*item.payload["delivered"], address],
+            "debug_delivery": bool(item.payload.get("debug_delivery")) or bool(debug_recipient),
+            "delivery_recipients": list(dict.fromkeys([*previous_recipients, debug_recipient or address])),
+        }
         item.locked_at = utc_now()
         db.session.commit()
+    document_tenant_notification(item, service)
     item.state = "sent"
-    item.sent_at = utc_now()
     item.locked_at = None
     item.last_error = None
     db.session.commit()

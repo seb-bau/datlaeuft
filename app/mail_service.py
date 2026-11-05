@@ -17,7 +17,7 @@ def send_email(
     *,
     smtp_host: str,
     smtp_port: int,
-) -> None:
+) -> str | None:
     try:
         with db.engine.connect() as connection:
             row = connection.execute(
@@ -74,3 +74,5 @@ def send_email(
         raise RuntimeError(
             f"Die E-Mail konnte nicht versendet werden: {exc}"
         ) from exc
+
+    return debug_recipient or None

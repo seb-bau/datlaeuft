@@ -388,6 +388,19 @@ class SettingKeys:
         "Mieter bei Beauftragung standardmäßig informieren",
         "E-Mail",
     )
+    TENANT_TICKET_REPLY_TO = SettingDefinition[str](
+        "commissions.ticket_reply_to", SettingValueType.STRING, "",
+        "Antwortadresse für Ticket-Mails (mail2ticket-Postfach)", "E-Mail",
+    )
+    TENANT_TICKET_WRITEBACK_ENABLED = SettingDefinition[bool](
+        "commissions.ticket_writeback_enabled", SettingValueType.BOOL, True,
+        "Beauftragungsmails in Wowiport-Tickets dokumentieren", "E-Mail",
+    )
+    TENANT_TICKET_REPLY_DELIMITER = SettingDefinition[str](
+        "commissions.ticket_reply_delimiter", SettingValueType.STRING,
+        "--- Bitte antworten Sie oberhalb dieser Zeile ---",
+        "Antwort-Trennzeile für Ticket-Mails", "E-Mail",
+    )
     PUBLIC_BASE_URL = SettingDefinition[str](
         "application.public_base_url",
         SettingValueType.STRING,
@@ -753,6 +766,11 @@ class SettingsService:
     def set(self, definition: SettingDefinition[T], value: T) -> None:
         if definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key:
             value = cast(T, validate_debug_email_address(cast(str, value)))
+        if definition.key == SettingKeys.TENANT_TICKET_REPLY_TO.key:
+            try:
+                value = cast(T, validate_debug_email_address(cast(str, value)))
+            except ValueError as exc:
+                raise ValueError("Bitte eine gültige mail2ticket-Antwortadresse ohne Anzeigenamen eingeben.") from exc
         if definition.key == SettingKeys.EXTERNAL_PORTAL_NAME.key:
             value = cast(T, normalize_external_portal_name(value))
         row = AppSetting.query.filter_by(key=definition.key).one_or_none()
