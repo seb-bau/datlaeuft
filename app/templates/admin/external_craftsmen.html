@@ -93,7 +93,11 @@
                   class="btn btn-sm btn-outline-secondary"
                   type="button"
                   data-bs-toggle="modal"
-                  data-bs-target="#craft-activities-{{ item.id }}"
+                  data-bs-target="#craftActivitiesModal"
+                  data-craftsman-id="{{ item.id }}"
+                  data-craftsman-name="{{ item.display_name }}"
+                  data-update-url="{{ url_for('admin.external_craftsman_craft_activities', craftsman_id=item.id) }}"
+                  data-activity-ids='{{ item.craft_activities|map(attribute="id")|list|tojson }}'
                 >
                   Gewerke bearbeiten
                 </button>
@@ -152,18 +156,21 @@
     {% endif %}
   </div>
 </div>
-{% for item in items %}
-<div class="modal fade" id="craft-activities-{{ item.id }}" tabindex="-1" aria-labelledby="craft-activities-title-{{ item.id }}" aria-hidden="true">
+<div class="modal fade" id="craftActivitiesModal" tabindex="-1" aria-labelledby="craftActivitiesTitle" aria-hidden="true">
   <div class="modal-dialog modal-dialog-scrollable">
-    <form class="modal-content" method="post" action="{{ url_for('admin.external_craftsman_craft_activities', craftsman_id=item.id) }}">
+    <form class="modal-content" method="post" id="craftActivitiesForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="modal-header">
-        <h2 class="modal-title fs-5" id="craft-activities-title-{{ item.id }}">Gewerke: {{ item.display_name }}</h2>
+        <h2 class="modal-title fs-5" id="craftActivitiesTitle">Gewerke bearbeiten</h2>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
       <div class="modal-body">
-        <p class="small text-muted">Lokale Handwerker-ID: {{ item.id }}</p>
-        {% set selected_ids = item.craft_activities|map(attribute='id')|list %}
+        <p class="small text-muted">
+          Lokale Handwerker-ID: <span id="craftActivitiesCraftsmanId"></span>
+        </p>
+        <div class="alert alert-danger" id="craftActivitiesError" role="alert" hidden>
+          Die Gewerkeauswahl konnte nicht geladen werden. Bitte die Seite neu laden.
+        </div>
         {% for activity in craft_activities %}
         <div class="form-check">
           <input
@@ -171,10 +178,9 @@
             type="checkbox"
             name="craft_activity_ids"
             value="{{ activity.id }}"
-            id="craft-{{ item.id }}-{{ activity.id }}"
-            {% if activity.id in selected_ids %}checked{% endif %}
+            id="craft-activity-{{ activity.id }}"
           >
-          <label class="form-check-label" for="craft-{{ item.id }}-{{ activity.id }}">
+          <label class="form-check-label" for="craft-activity-{{ activity.id }}">
             {{ activity.name }} (ID {{ activity.id }}){% if not activity.active %} · inaktiv{% endif %}
           </label>
         </div>
@@ -188,10 +194,58 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Abbrechen</button>
-        <button class="btn btn-primary" type="submit">Speichern</button>
+        <button class="btn btn-primary" type="submit" id="craftActivitiesSave" disabled>Speichern</button>
       </div>
     </form>
   </div>
 </div>
-{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const modal = document.getElementById("craftActivitiesModal");
+  const form = document.getElementById("craftActivitiesForm");
+  const title = document.getElementById("craftActivitiesTitle");
+  const craftsmanId = document.getElementById("craftActivitiesCraftsmanId");
+  const error = document.getElementById("craftActivitiesError");
+  const saveButton = document.getElementById("craftActivitiesSave");
+  const inputs = Array.from(
+    form.querySelectorAll('input[name="craft_activity_ids"]')
+  );
+
+  modal.addEventListener("show.bs.modal", function (event) {
+    const button = event.relatedTarget;
+    form.reset();
+    form.removeAttribute("action");
+    saveButton.disabled = true;
+    error.hidden = true;
+    title.textContent = "Gewerke bearbeiten";
+    craftsmanId.textContent = "";
+
+    try {
+      if (!button || !button.dataset.updateUrl || !button.dataset.activityIds) {
+        throw new Error("Ungültige Handwerkerauswahl");
+      }
+
+      const activityIds = JSON.parse(button.dataset.activityIds);
+      if (!Array.isArray(activityIds)) {
+        throw new Error("Ungültige Gewerkeauswahl");
+      }
+
+      const selectedIds = new Set(activityIds.map(String));
+      inputs.forEach(function (input) {
+        input.checked = selectedIds.has(input.value);
+      });
+
+      form.action = button.dataset.updateUrl;
+      title.textContent = `Gewerke: ${button.dataset.craftsmanName}`;
+      craftsmanId.textContent = button.dataset.craftsmanId;
+      saveButton.disabled = false;
+    } catch {
+      error.hidden = false;
+    }
+  });
+});
+</script>
 {% endblock %}

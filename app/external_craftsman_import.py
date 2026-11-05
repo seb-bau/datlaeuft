@@ -125,24 +125,41 @@ def import_external_craftsman_crafts(
         }
         previous_ids = set(existing_activities)
         selected_ids = imported_ids if replace else previous_ids | imported_ids
-        if selected_ids == previous_ids:
+        activities_changed = selected_ids != previous_ids
+        assignment_changed = not craftsman.assignment_enabled
+        if not activities_changed and not assignment_changed:
             continue
-        craftsman.craft_activities = [
-            activities[activity_id]
-            if activity_id in imported_ids
-            else existing_activities[activity_id]
-            for activity_id in sorted(selected_ids)
-        ]
-        audit(
-            "external_craftsman.craft_activities.update",
-            "external_craftsman",
-            craftsman.id,
-            metadata={
-                "previous_craft_activity_ids": sorted(previous_ids),
-                "craft_activity_ids": sorted(selected_ids),
-                "source": "excel",
-            },
-        )
+
+        if activities_changed:
+            craftsman.craft_activities = [
+                activities[activity_id]
+                if activity_id in imported_ids
+                else existing_activities[activity_id]
+                for activity_id in sorted(selected_ids)
+            ]
+            audit(
+                "external_craftsman.craft_activities.update",
+                "external_craftsman",
+                craftsman.id,
+                metadata={
+                    "previous_craft_activity_ids": sorted(previous_ids),
+                    "craft_activity_ids": sorted(selected_ids),
+                    "source": "excel",
+                },
+            )
+
+        if assignment_changed:
+            craftsman.assignment_enabled = True
+            audit(
+                "external_craftsman.assignment.enable",
+                "external_craftsman",
+                craftsman.id,
+                metadata={
+                    "assignment_enabled": True,
+                    "source": "excel",
+                },
+            )
+
         changed += 1
 
     return len(assignments), changed
