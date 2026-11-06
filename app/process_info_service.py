@@ -31,10 +31,13 @@ from .external_branding import (
     get_external_portal_name,
     send_external_email,
 )
+from .email_templates import apply_email_template, commission_email_context
 
 
 OFFICE_DIRECTION = "office"
 CRAFTSMAN_DIRECTION = "craftsman"
+
+
 def remove_process_info_origin(body: str, author_name: str | None) -> str:
     header, separator, content = body.partition("\n")
     if (
@@ -1280,74 +1283,18 @@ def send_commission_status_email(
             "SMTP-Server oder Absenderadresse fehlen."
         )
 
-    position_lines = [
-        (
-            f"{index}. {position.display_text}"
-            f" · Menge {position.units:g}"
-        )
-        for index, position in enumerate(
-            commission.positions,
-            start=1,
-        )
-    ]
-
+    template_key = {
+        "Auftrag abgelehnt": "commission_rejected",
+        "Auftrag nicht erfolgreich abgeschlossen": "commission_unsuccessful",
+    }.get(event_name)
+    if template_key is None:
+        raise ValueError("Für diesen Auftragsstatus ist keine E-Mail-Vorlage vorgesehen.")
+    context = commission_email_context(commission)
+    context.update({"craftsman_name": submitted_by_name or "", "reason": reason})
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = ", ".join(recipients)
-    message["Subject"] = (
-        f"{event_name}: "
-        f"{commission.erp_idnum or commission.code or commission.id}"
-    )
-
-    message.set_content(
-        "\n".join(
-            (
-                event_name,
-                "",
-                (
-                    "Auftrag: "
-                    f"{commission.erp_idnum or commission.code or commission.id}"
-                ),
-                (
-                    "Titel: "
-                    f"{commission.display_title}"
-                ),
-                (
-                    "Beschreibung: "
-                    f"{commission.description or '-'}"
-                ),
-                (
-                    "Schadensort: "
-                    f"{commission.damage_location or '-'}"
-                ),
-                (
-                    "Adresse: "
-                    f"{commission.apartment_address or '-'}"
-                ),
-                (
-                    "Lage: "
-                    f"{commission.apartment_location or '-'}"
-                ),
-                (
-                    "Mieter: "
-                    f"{commission.tenant_name or '-'}"
-                ),
-                (
-                    "Handwerker: "
-                    f"{submitted_by_name}"
-                ),
-                "",
-                "Leistungspositionen:",
-                *(
-                    position_lines
-                    or ["Keine Leistungspositionen vorhanden"]
-                ),
-                "",
-                "Begründung / Kommentar:",
-                reason,
-            )
-        )
-    )
+    apply_email_template(message, template_key, context)
 
     send_email(
         message,
@@ -1391,10 +1338,6 @@ def _send_process_info_email(
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = ", ".join(recipients)
-    message["Subject"] = (
-        "Neue Information zu Vorgang "
-        f"{info.process_erp_id}"
-    )
 
     sender_domain = (
         smtp_sender.rsplit("@", 1)[1]
@@ -1406,26 +1349,12 @@ def _send_process_info_email(
         f"@{sender_domain}>"
     )
 
-    message.set_content(
-        "\n".join(
-            (
-                (
-                    "Handwerker: "
-                    f"{info.author_name or 'Unbekannt'}"
-                ),
-                (
-                    "Vorgang: "
-                    f"{info.process_erp_id}"
-                ),
-                (
-                    "Aufträge: "
-                    f"{', '.join(references)}"
-                ),
-                "",
-                info.body,
-            )
-        )
-    )
+    apply_email_template(message, "process_internal", {
+        "process_id": info.process_erp_id,
+        "author_name": info.author_name or "",
+        "commission_numbers": [str(reference) for reference in references],
+        "message": info.body,
+    })
 
     send_email(
         message,
@@ -1466,19 +1395,9 @@ def _send_external_process_info_email(
         f"{public_base_url}/auftragnehmer/"
         f"auftraege/{commission.public_id}"
     )
-    order_number = (
-        commission.erp_idnum
-        or commission.code
-        or str(commission.id)
-    )
-
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = email
-    message["Subject"] = (
-        "Neue Zusatzinformation zu Auftrag "
-        f"{order_number}"
-    )
 
     sender_domain = (
         parseaddr(smtp_sender)[1].rpartition("@")[2]
@@ -1489,39 +1408,14 @@ def _send_external_process_info_email(
         f"{craftsman.id}@{sender_domain}>"
     )
 
-    message.set_content(
-        "\n".join(
-            (
-                (
-                    f"Guten Tag "
-                    f"{craftsman.display_name},"
-                ),
-                "",
-                (
-                    "zu Ihrem Auftrag wurde eine "
-                    "neue Zusatzinformation erfasst."
-                ),
-                "",
-                f"Auftrag: {order_number}",
-                (
-                    "Titel: "
-                    f"{commission.display_title}"
-                ),
-                (
-                    "Absender: "
-                    f"{info.author_name or 'Sachbearbeitung'}"
-                ),
-                "",
-                info.body,
-                "",
-                (
-                    "Den vollständigen Verlauf "
-                    "finden Sie hier:"
-                ),
-                commission_url,
-            )
-        )
-    )
+    context = commission_email_context(commission)
+    context.update({
+        "recipient_name": craftsman.display_name or "",
+        "author_name": info.author_name or "",
+        "message": info.body,
+        "commission_url": commission_url,
+    })
+    apply_email_template(message, "process_external", context)
 
     send_external_email(
         message,

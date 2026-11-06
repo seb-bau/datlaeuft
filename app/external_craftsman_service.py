@@ -35,6 +35,7 @@ from .user_sync import (
     extract_craftsman_erp_id,
 )
 from .blacklist import include_blacklisted
+from .email_templates import apply_email_template, commission_email_context
 
 
 @dataclass
@@ -424,29 +425,13 @@ def send_external_invitation_email(
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = craftsman.email
-    message["Subject"] = "Einladung"
-    message.set_content(
-        "\n".join(
-            (
-                f"Guten Tag {craftsman.display_name},",
-                "",
-                (
-                    "für Sie wurde ein Zugang zum "
-                    f"{get_external_portal_name()}-Auftragnehmerportal eingerichtet."
-                ),
-                "",
-                f"Benutzername: {craftsman.username}",
-                "",
-                (
-                    "Über den folgenden Link vergeben Sie "
-                    "Ihr persönliches Kennwort:"
-                ),
-                invitation_url,
-                "",
-                "Der Link ist 48 Stunden gültig.",
-            )
-        )
-    )
+    apply_email_template(message, "external_invitation", {
+        "portal_name": get_external_portal_name(),
+        "recipient_name": craftsman.display_name or "",
+        "username": craftsman.username or "",
+        "invitation_url": invitation_url,
+        "valid_hours": 48,
+    })
     send_external_email(
         message,
         smtp_host=smtp_host,
@@ -676,63 +661,15 @@ def send_external_assignment_email(
         f"{public_base_url}/auftragnehmer/auftraege/"
         f"{commission.public_id}"
     )
-    order_number = (
-        commission.erp_idnum
-        or commission.code
-        or str(commission.id)
-    )
-    position_lines = [
-        (
-            f"{index}. {position.display_text}"
-            f" · Menge {position.units:g}"
-        )
-        for index, position in enumerate(
-            commission.positions,
-            start=1,
-        )
-    ]
-
+    context = commission_email_context(commission)
+    context.update({
+        "recipient_name": craftsman.display_name or "",
+        "commission_url": commission_url,
+    })
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = craftsman.email
-    message["Subject"] = f"Neuer Auftrag: {order_number}"
-    message.set_content(
-        "\n".join(
-            (
-                f"Guten Tag {craftsman.display_name},",
-                "",
-                "Ihnen wurde ein Auftrag zugewiesen.",
-                "",
-                f"Auftrag: {order_number}",
-                f"Titel: {commission.display_title}",
-                (
-                    "Beschreibung: "
-                    f"{commission.description or '-'}"
-                ),
-                (
-                    "Schadensort: "
-                    f"{commission.damage_location or '-'}"
-                ),
-                (
-                    "Adresse: "
-                    f"{commission.apartment_address or '-'}"
-                ),
-                (
-                    "Lage: "
-                    f"{commission.apartment_location or '-'}"
-                ),
-                "",
-                "Leistungspositionen:",
-                *(
-                    position_lines
-                    or ["Keine Leistungspositionen vorhanden"]
-                ),
-                "",
-                "Auftrag im Portal öffnen:",
-                commission_url,
-            )
-        )
-    )
+    apply_email_template(message, "external_assignment", context)
     send_external_email(
         message,
         smtp_host=smtp_host,

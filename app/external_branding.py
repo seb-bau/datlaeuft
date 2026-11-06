@@ -31,10 +31,6 @@ def send_external_email(
         "From",
         formataddr((portal_name, sender_address)),
     )
-    outgoing.replace_header(
-        "Subject",
-        f"{portal_name} – {outgoing.get('Subject', '')}",
-    )
 
     send_email(
         outgoing,

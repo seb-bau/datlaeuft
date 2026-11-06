@@ -20,6 +20,7 @@ from .models import (
 )
 from .settings import SettingKeys, normalize_ticket_source_ids, settings
 from .user_sync import extract_craftsman_display_name
+from .email_templates import commission_email_context, render_email_template, set_email_content
 
 
 def resolve_tenant_notification_choice(value: Any) -> bool:
@@ -85,7 +86,7 @@ def tenant_email_addresses(commission: Commission, service: Any) -> list[str]:
     return list(addresses.values())
 
 
-def tenant_notification_body(commission: Commission, service: Any) -> str:
+def tenant_notification_content(commission: Commission, service: Any) -> str:
     craft_ids = {position.craft_activity_erp_id for position in commission.positions
                  if position.craft_activity_erp_id is not None}
     craft_names = {item.erp_id: item.name for item in
@@ -116,13 +117,12 @@ def tenant_notification_body(commission: Commission, service: Any) -> str:
     if not assignee_name:
         raise RuntimeError("Der beauftragte Handwerker konnte nicht ermittelt werden.")
 
-    names = sorted({" ".join(str(name).split()) for name in craft_names.values()})
-    return "\n".join((
-        "Guten Tag,", "", "für Ihr Mietverhältnis wurde eine Beauftragung erteilt.", "",
-        f"Gewerk: {'; '.join(names)}",
-        f"Beauftragt: {' '.join(str(assignee_name).split())}",
-        "", "Freundliche Grüße", "",
-    ))
+    context = commission_email_context(commission)
+    context.update({
+        "craft_names": sorted({" ".join(str(name).split()) for name in craft_names.values()}),
+        "craftsman_name": " ".join(str(assignee_name).split()),
+    })
+    return render_email_template("tenant_assignment", context)
 
 
 def ensure_tenant_notifications(limit: int = 200) -> int:
@@ -342,9 +342,16 @@ def execute_tenant_notification(item_id: int) -> None:
             db.session.commit()
             return
         tickets = tenant_notification_tickets(commission, service)
-        subject = "Information zur Beauftragung"
+        content = (
+            {
+                "subject": previous_payload.get("subject", "Information zur Beauftragung"),
+                "body": previous_payload["body"],
+            }
+            if previous_payload else tenant_notification_content(commission, service)
+        )
+        subject = content["subject"]
         reply_to = ""
-        body = previous_payload["body"] if previous_payload else tenant_notification_body(commission, service)
+        body = content["body"]
         if tickets:
             reply_to = normalize_tenant_email(settings.get(SettingKeys.TENANT_TICKET_REPLY_TO))
             if not reply_to:
@@ -374,10 +381,13 @@ def execute_tenant_notification(item_id: int) -> None:
         message = EmailMessage()
         message["From"] = smtp_sender
         message["To"] = address
-        message["Subject"] = item.payload.get("subject", "Information zur Beauftragung")
         if item.payload.get("reply_to"):
             message["Reply-To"] = item.payload["reply_to"]
-        message.set_content(item.payload["body"])
+        set_email_content(
+            message,
+            item.payload.get("subject", "Information zur Beauftragung"),
+            item.payload["body"],
+        )
         debug_recipient = send_email(message, smtp_host=smtp_host, smtp_port=settings.get(SettingKeys.SMTP_PORT))
         previous_recipients = item.payload.get("delivery_recipients")
         if previous_recipients is None:

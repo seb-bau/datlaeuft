@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}E-Mail-Vorlagen{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h3 mb-0">E-Mail-Vorlagen</h1>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.settings_page') }}">Einstellungen</a>
+</div>
+<form method="get" class="card shadow-sm mb-3">
+  <div class="card-body d-flex flex-wrap align-items-end gap-2">
+    <div class="flex-grow-1">
+      <label class="form-label" for="emailTemplate">Vorlage</label>
+      <select class="form-select" id="emailTemplate" name="template">
+        {% for key, label in template_options %}
+        <option value="{{ key }}" {% if key == template_key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-outline-primary" type="submit">Vorlage laden</button>
+  </div>
+</form>
+<div class="row g-3">
+  <div class="col-lg-8">
+    <form method="post" class="card shadow-sm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="template_key" value="{{ template_key }}">
+      <div class="card-body">
+        <label class="form-label" for="emailSubject">Betreff</label>
+        <input class="form-control mb-3" id="emailSubject" name="subject"
+               value="{{ template_value.subject }}" maxlength="500" required>
+        <label class="form-label" for="emailBody">Text</label>
+        <textarea class="form-control font-monospace" id="emailBody" name="body"
+                  rows="20" maxlength="50000" required>{{ template_value.body }}</textarea>
+        <div class="form-text">
+          Der Text wird für die Textansicht und die formatierte Mailansicht verwendet.
+          Links werden automatisch anklickbar. Änderungen gelten für künftig
+          vorbereitete Nachrichten. Bereits gespeicherte Mailinhalte bleiben erhalten.
+        </div>
+      </div>
+      <div class="card-footer d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" name="action" value="save">Speichern</button>
+        <button class="btn btn-outline-primary" name="action" value="preview">Vorschau mit Beispieldaten</button>
+        <button class="btn btn-outline-secondary" name="action" value="reset" formnovalidate>Standard wiederherstellen</button>
+      </div>
+    </form>
+    {% if preview %}
+    <div class="card shadow-sm mt-3">
+      <div class="card-header">Vorschau mit Beispieldaten</div>
+      <div class="card-body">
+        <div class="fw-semibold mb-3">{{ preview.subject }}</div>
+        <pre class="mb-0" style="white-space:pre-wrap;font-family:inherit">{{ preview.body }}</pre>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header">Verfügbare Platzhalter</div>
+      <div class="card-body small">
+        <p>Platzhalter werden beim Vorbereiten der Nachricht durch die aktuellen Werte ersetzt.</p>
+        {% for name, label in fields.items() %}
+        <div class="mb-2">
+          <code>{{ '{{ ' ~ name ~ ' }}' }}</code>
+          <div>{{ label }}</div>
+        </div>
+        {% endfor %}
+        <hr>
+        <div class="fw-semibold">Optionaler Abschnitt</div>
+        <pre class="small">{{ '{% if address %}Adresse: {{ address }}{% endif %}' }}</pre>
+        <div class="fw-semibold">Liste von Positionen</div>
+        <pre class="small">{{ '{% for position in positions %}\n{{ position.text }} · {{ position.units }}\n{% endfor %}' }}</pre>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

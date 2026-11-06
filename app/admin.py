@@ -878,6 +878,62 @@ def health_settings() -> Any:
     )
 
 
+@admin_bp.route("/admin/settings/email-templates", methods=["GET", "POST"])
+@admin_required
+def email_templates_page() -> Any:
+    from .email_templates import (
+        EMAIL_TEMPLATES, EXAMPLE_CONTEXT, FIELD_LABELS,
+        email_template_definition, get_email_template,
+        render_email_value, validate_email_template,
+    )
+
+    template_key = (
+        request.form.get("template_key")
+        if request.method == "POST"
+        else request.args.get("template", next(iter(EMAIL_TEMPLATES)))
+    )
+    if template_key not in EMAIL_TEMPLATES:
+        abort(404)
+    definition = email_template_definition(template_key)
+    value = get_email_template(template_key)
+    preview = None
+    if request.method == "POST":
+        action = request.form.get("action", "save")
+        if action not in {"save", "preview", "reset"}:
+            abort(400)
+        value = (
+            dict(definition.default) if action == "reset"
+            else {
+                "subject": request.form.get("subject", ""),
+                "body": request.form.get("body", ""),
+            }
+        )
+        try:
+            value = validate_email_template(template_key, value)
+            if action == "preview":
+                preview = render_email_value(template_key, value, EXAMPLE_CONTEXT)
+            else:
+                settings.set(definition, value)
+                audit(f"email_template.{action}", "app_setting", definition.key)
+                db.session.commit()
+                flash("E-Mail-Vorlage gespeichert.", "success")
+                return redirect(url_for("admin.email_templates_page", template=template_key))
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+    return render_template(
+        "admin/email_templates.html",
+        template_options=[(key, item["label"]) for key, item in EMAIL_TEMPLATES.items()],
+        template_key=template_key,
+        template_value=value,
+        fields={
+            name: FIELD_LABELS[name]
+            for name in EMAIL_TEMPLATES[template_key]["fields"].split()
+        },
+        preview=preview,
+    )
+
+
 @admin_bp.route("/admin/settings", methods=["GET", "POST"])
 @admin_required
 def settings_page() -> Any:

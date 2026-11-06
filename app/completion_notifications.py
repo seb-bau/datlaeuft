@@ -15,6 +15,7 @@ from .models import (
     CommissionSyncState, utc_now,
 )
 from .settings import SettingKeys, settings, validate_debug_email_address
+from .email_templates import commission_email_context, render_email_template, set_email_content
 
 
 def resolve_completion_notification_choice(source: CommissionSource, value: Any) -> bool:
@@ -94,25 +95,15 @@ def completion_notification_payload(commission: Commission) -> dict[str, str]:
         raise RuntimeError("Für den anlegenden Sachbearbeiter ist keine gültige E-Mail-Adresse hinterlegt.") from exc
     if not recipient:
         raise RuntimeError("Für den anlegenden Sachbearbeiter ist keine E-Mail-Adresse hinterlegt.")
-    reference = " ".join(str(commission.erp_idnum or commission.erp_id or commission.id).split())
-    lines = [
-        "Guten Tag,", "",
-        f"der von Ihnen angelegte Auftrag {reference} wurde als abgeschlossen gemeldet.", "",
-        f"Auftrag: {commission.display_title}",
-    ]
-    if commission.apartment_address:
-        lines.append(f"Objekt: {commission.apartment_address}")
-    if commission.status_id == 11:
-        lines.extend(("", "Die Mieterbelastung befindet sich noch in Prüfung."))
-    base_url = settings.get(SettingKeys.PUBLIC_BASE_URL).strip().rstrip("/")
-    if base_url:
-        lines.extend(("", f"{base_url}/admin/commissions/{commission.id}"))
-    lines.extend(("", "Freundliche Grüße", ""))
-    return {
-        "recipient": recipient,
-        "subject": f"Auftrag {reference} abgeschlossen",
-        "body": "\n".join(lines),
-    }
+    context = commission_email_context(commission)
+    context.update({
+        "commission_number": " ".join(
+            str(commission.erp_idnum or commission.erp_id or commission.id).split()
+        ),
+        "review_pending": commission.status_id == 11,
+    })
+    content = render_email_template("completion", context)
+    return {"recipient": recipient, **content}
 
 
 def execute_completion_notification(item_id: int) -> None:
@@ -142,8 +133,7 @@ def execute_completion_notification(item_id: int) -> None:
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = item.payload["recipient"]
-    message["Subject"] = item.payload["subject"]
-    message.set_content(item.payload["body"])
+    set_email_content(message, item.payload["subject"], item.payload["body"])
     send_email(message, smtp_host=smtp_host, smtp_port=settings.get(SettingKeys.SMTP_PORT))
     item.state = "sent"
     item.sent_at = utc_now()
