@@ -259,7 +259,23 @@ def document_tenant_notification(item: CommissionTenantNotification, service: An
         if existing is not None:
             comment_id = read_value(existing, "id_")
         else:
-            result = service.client.create_ticket_comment(ticket_id=ticket["ticket_id"], content=content)
+            current_app.logger.info(
+                "tenant_ticket_comment_ids notification_id=%s "
+                "request_ticket_id=%r request_ticket_id_type=%s "
+                "read_ticket_id=%r stored_ticket_number=%r "
+                "read_ticket_number=%r",
+                item.id,
+                ticket["ticket_id"],
+                type(ticket["ticket_id"]).__name__,
+                read_value(row, "id_"),
+                ticket.get("ticket_number"),
+                read_value(row, "id_num"),
+            )
+
+            result = service.client.create_ticket_comment(
+                ticket_id=ticket["ticket_id"],
+                content=content,
+            )
             if result.status_code not in (200, 201):
                 raise RuntimeError(f"Die Ticketantwort konnte nicht gespeichert werden: {result.message}")
             data = result.data[0] if isinstance(result.data, list) and len(result.data) == 1 else result.data
