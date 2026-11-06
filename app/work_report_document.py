@@ -22,6 +22,8 @@ from .models import (
 from .performance_review_service import (
     active_installed_material_movements,
 )
+from hashlib import sha256
+import json
 
 
 WORK_REPORT_SCOPE_BILLED = "billed"
@@ -455,6 +457,30 @@ def work_report_context(
     }
 
 
+def work_report_fingerprint(
+    commission: Commission,
+    entries: list[TimeEntry],
+    scope: str,
+) -> str:
+    context = work_report_context(commission, entries, scope)
+    context.pop("commission", None)
+    context.pop("generated_at", None)
+
+    template_source, _, _ = current_app.jinja_env.loader.get_source(
+        current_app.jinja_env,
+        "admin/work_report_pdf.html",
+    )
+
+    payload = json.dumps(
+        {"context": context, "template": template_source},
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
 def create_work_report_pdf(
     commission: Commission,
     entries: list[TimeEntry],
@@ -480,13 +506,18 @@ def create_work_report_pdf(
         from .dms_context import work_report_context as archive_context
         from .dms_service import register_generated_pdf
 
+        archive_values = archive_context(commission, entries, scope)
+        archive_values["content_fingerprint"] = work_report_fingerprint(
+            commission, entries, scope,
+        )
+
         register_generated_pdf(
             "work_report",
             "commission",
             commission.id,
             work_report_filename(commission),
             pdf_bytes,
-            archive_context(commission, entries, scope),
+            archive_values,
         )
     except Exception as exc:
         raise WorkReportDocumentError(

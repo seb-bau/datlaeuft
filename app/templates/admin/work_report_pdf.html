@@ -166,6 +166,22 @@
       text-align: right;
       white-space: nowrap;
     }
+    .entry {
+      break-inside: auto;
+    }
+
+    .entry-header {
+      break-inside: avoid;
+    }
+
+    .entry-text {
+      white-space: normal;
+    }
+
+    .entry-text-content {
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
   </style>
 </head>
 <body>
@@ -282,19 +298,15 @@
 
     {% if entry.deviation_reason %}
     <div class="entry-text">
-      <span class="entry-text-label">
-        Besonderheit:
-      </span>
-      {{ entry.deviation_reason }}
+      <div class="entry-text-label">Besonderheit:</div>
+      <div class="entry-text-content">{{ entry.deviation_reason }}</div>
     </div>
     {% endif %}
 
     {% if entry.note %}
     <div class="entry-text">
-      <span class="entry-text-label">
-        Erläuterung:
-      </span>
-      {{ entry.note }}
+      <div class="entry-text-label">Hinweis / Erläuterung:</div>
+      <div class="entry-text-content">{{ entry.note }}</div>
     </div>
     {% endif %}
   </div>

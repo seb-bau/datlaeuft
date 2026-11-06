@@ -197,6 +197,7 @@ from .work_report_document import (
     invoice_work_reports_filename,
     work_report_counts,
     work_report_filename,
+    work_report_fingerprint,
 )
 from .offer_document import (
     OfferDocumentError,
@@ -2577,10 +2578,7 @@ def invoice_commission_work_report(
     )
 
 
-@admin_bp.get(
-    "/admin/commissions/"
-    "<int:commission_id>/work-report"
-)
+@admin_bp.get("/admin/commissions/<int:commission_id>/work-report")
 @foreman_required
 def commission_work_report(commission_id: int) -> Any:
     from .dms_client import DmsError
@@ -2588,6 +2586,11 @@ def commission_work_report(commission_id: int) -> Any:
     from .models import DmsDocument
 
     commission = db.get_or_404(Commission, commission_id)
+    entries = commission_work_report_entries(commission)
+    fingerprint = work_report_fingerprint(
+        commission, entries, WORK_REPORT_SCOPE_ALL,
+    )
+
     stored_document = (
         DmsDocument.query
         .filter_by(
@@ -2597,18 +2600,21 @@ def commission_work_report(commission_id: int) -> Any:
         )
         .filter(
             DmsDocument.context["scope"].as_string()
-            == WORK_REPORT_SCOPE_ALL
+            == WORK_REPORT_SCOPE_ALL,
+            DmsDocument.context["content_fingerprint"].as_string()
+            == fingerprint,
         )
         .order_by(DmsDocument.created_at.desc())
         .first()
     )
+
     try:
         if stored_document is not None:
             document = document_path(stored_document)
         else:
             document = create_work_report_pdf(
                 commission,
-                commission_work_report_entries(commission),
+                entries,
                 WORK_REPORT_SCOPE_ALL,
             )
             db.session.commit()
@@ -2621,6 +2627,7 @@ def commission_work_report(commission_id: int) -> Any:
                 commission_id=commission.id,
             )
         )
+
     return send_file(
         document,
         mimetype="application/pdf",
