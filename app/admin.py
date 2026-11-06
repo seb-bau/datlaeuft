@@ -683,13 +683,13 @@ def tenant_notification_sync_context():
         if last_seen_at else None
     )
 
-    worker_label, worker_color = (
-        ("Keine aktuelle Rückmeldung", "danger")
-        if worker_age is None or worker_age > 600
-        else ("Rückmeldung verzögert", "warning")
-        if worker_age > 180
-        else ("Aktuelle Rückmeldung", "success")
-    )
+    from .health_rules import evaluate_health_metrics
+
+    worker_check = evaluate_health_metrics(
+        {"worker_age_seconds": -1 if worker_age is None else int(worker_age)},
+        settings.get(SettingKeys.HEALTH_RULES),
+    )["checks"][0]
+    worker_label, worker_color = worker_check["status"], worker_check["color"]
 
     return {
         "rows": [
@@ -771,6 +771,7 @@ def sync_health_retry_tenant_notification(notification_id: int) -> Any:
 @admin_bp.get("/admin/sync-health")
 @admin_required
 def sync_health() -> Any:
+    from .health import full_snapshot
     outbox_items = (
         ErpOutboxOperation.query
         .filter(
@@ -834,6 +835,46 @@ def sync_health() -> Any:
         commission_items=commission_items,
         outbox_status_labels=outbox_status_labels,
         tenant_sync=tenant_notification_sync_context(),
+        health=full_snapshot(),
+    )
+
+
+@admin_bp.route("/admin/settings/health", methods=["GET", "POST"])
+@admin_required
+def health_settings() -> Any:
+    from .health import full_snapshot
+    from .health_rules import DEFAULT_HEALTH_RULES
+
+    if request.method == "POST":
+        try:
+            rules = {}
+            for key in DEFAULT_HEALTH_RULES:
+                rule = {
+                    "enabled": request.form.get(f"health.{key}.enabled") == "true"
+                }
+                for name in ("warning", "error"):
+                    raw_value = request.form.get(f"health.{key}.{name}", "").strip()
+                    try:
+                        rule[name] = int(raw_value) if raw_value else None
+                    except ValueError as exc:
+                        raise ValueError(
+                            "Die Health-Grenzen müssen ganze Zahlen sein."
+                        ) from exc
+                rules[key] = rule
+            settings.set(SettingKeys.HEALTH_RULES, rules)
+            audit("health.settings.update")
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return redirect(url_for("admin.health_settings"))
+        flash("Health-Grenzen gespeichert.", "success")
+        return redirect(url_for("admin.health_settings"))
+
+    return render_template(
+        "admin/health_settings.html",
+        health=full_snapshot(),
+        checked_at=_tenant_sync_time(utc_now()),
     )
 
 
@@ -843,7 +884,7 @@ def settings_page() -> Any:
     if request.method == "POST":
         try:
             for definition in all_definitions():
-                if definition.key.startswith("dms."):
+                if definition.key.startswith("dms.") or definition.key == SettingKeys.HEALTH_RULES.key:
                     continue
                 if definition.key == SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS.key:
                     try:

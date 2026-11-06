@@ -31,6 +31,15 @@
           Eine Bestätigung im Ticket entfällt.
           Angezeigt werden lokal synchronisierte und bereits ausgewählte Quellen.
         </div>
+                {% elif definition.key == "health.rules" %}
+        <div>
+          <a class="btn btn-outline-primary" href="{{ url_for('admin.health_settings') }}">
+            Health-Grenzen bearbeiten
+          </a>
+          <div class="form-text">
+            Aktuelle Werte, Alarmgründe und Grenzen je Prüfung anzeigen und bearbeiten.
+          </div>
+        </div>
         {% elif definition.value_type.value == "bool" %}
         <div class="form-check">
           <input class="form-check-input" type="checkbox" name="{{ definition.key }}" value="true" {% if value %}checked{% endif %}>

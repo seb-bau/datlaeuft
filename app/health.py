@@ -26,47 +26,13 @@ from .models import (
 from .settings import SettingKeys, settings
 from .utils import ensure_utc
 from .webhooks import valid_bearer_token
+from .health_rules import CHANNELS, evaluate_health_metrics, health_sensor_text
 
 
 health_bp = Blueprint(
     "health",
     __name__,
     url_prefix="/health",
-)
-
-CHANNELS = (
-    ("status_code", "Gesamtzustand"),
-    ("worker_age_seconds", "Worker-Alter"),
-    ("webhooks_unprocessed", "Webhooks offen"),
-    ("webhooks_failed", "Webhooks fehlerhaft"),
-    ("webhooks_oldest_seconds", "Ältester Webhook"),
-    ("erp_pending", "ERP-Aufträge offen"),
-    ("erp_processing", "ERP-Aufträge in Arbeit"),
-    ("erp_failed", "ERP-Aufträge fehlerhaft"),
-    ("erp_oldest_seconds", "Ältester ERP-Auftrag"),
-    ("synchronizations_failed", "Synchronisierungen fehlerhaft"),
-    ("commissions_failed", "Auftragsabgleich fehlerhaft"),
-    ("documents_failed", "Dokumentabgleich fehlerhaft"),
-    ("media_failed", "Medienabgleich fehlerhaft"),
-    ("dms_enabled", "DMS aktiviert"),
-    ("documents_in_queue", "Dokumente in Warteschlange"),
-    ("dms_pending", "DMS ausstehend"),
-    ("dms_processing", "DMS in Arbeit"),
-    ("dms_failed", "DMS Wiederholungen"),
-    ("dms_uncertain", "DMS unklare Uploads"),
-    ("dms_blocked", "DMS blockiert"),
-    ("dms_upload_errors", "DMS-Uploadfehler"),
-    ("dms_oldest_seconds", "Ältestes DMS-Dokument"),
-    ("push_pending", "Push ausstehend"),
-    ("push_failed", "Push fehlerhaft"),
-    ("push_discarded", "Push verworfen"),
-    ("tenant_mail_failed", "Mieter-Mails fehlerhaft"),
-    ("completion_mail_failed", "Abschluss-Mails fehlerhaft"),
-    ("external_mail_failed", "Handwerker-Mails fehlerhaft"),
-    ("process_delivery_failed", "Vorgangs-Meldungen fehlerhaft"),
-    ("process_sync_failed", "Vorgangsabgleich fehlerhaft"),
-    ("ticket_ai_failed", "Ticketanalyse fehlerhaft"),
-    ("safety_archive_failed", "Prüfarchive fehlerhaft"),
 )
 
 
@@ -166,21 +132,14 @@ def status_text(status_code):
 
 def live_snapshot():
     now = utc_now()
-    worker_age = worker_age_seconds(now)
-
-    if worker_age < 0 or worker_age > 600:
-        status_code = 2
-    elif worker_age > 180:
-        status_code = 1
-    else:
-        status_code = 0
-
-    return {
+    metrics = {
         "checked_at": now.isoformat(),
-        "status": status_text(status_code),
-        "status_code": status_code,
-        "worker_age_seconds": worker_age,
+        "worker_age_seconds": worker_age_seconds(now),
     }
+    metrics.update(evaluate_health_metrics(
+        metrics, settings.get(SettingKeys.HEALTH_RULES)
+    ))
+    return metrics
 
 
 def full_snapshot():
@@ -361,51 +320,9 @@ def full_snapshot():
         ),
     }
 
-    warning_fields = (
-        "webhooks_failed",
-        "erp_failed",
-        "synchronizations_failed",
-        "dms_upload_errors",
-        "push_failed",
-        "tenant_mail_failed",
-        "completion_mail_failed",
-        "external_mail_failed",
-        "process_delivery_failed",
-        "process_sync_failed",
-        "ticket_ai_failed",
-        "safety_archive_failed",
-    )
-
-    if (
-        worker_age < 0
-        or worker_age > 600
-        or metrics["webhooks_oldest_seconds"] > 3600
-        or metrics["erp_oldest_seconds"] > 7200
-        or (
-            metrics["dms_enabled"]
-            and (
-                metrics["dms_blocked"] > 0
-                or metrics["dms_oldest_seconds"] > 7200
-            )
-        )
-    ):
-        status_code = 2
-    elif (
-        worker_age > 180
-        or any(metrics[field] > 0 for field in warning_fields)
-        or metrics["webhooks_oldest_seconds"] > 900
-        or metrics["erp_oldest_seconds"] > 1800
-        or (
-            metrics["dms_enabled"]
-            and metrics["dms_oldest_seconds"] > 3600
-        )
-    ):
-        status_code = 1
-    else:
-        status_code = 0
-
-    metrics["status_code"] = status_code
-    metrics["status"] = status_text(status_code)
+    metrics.update(evaluate_health_metrics(
+        metrics, settings.get(SettingKeys.HEALTH_RULES)
+    ))
     return metrics
 
 
@@ -438,7 +355,7 @@ def prtg_response(metrics):
     return jsonify({
         "prtg": {
             "result": results,
-            "text": metrics["status"],
+            "text": health_sensor_text(metrics),
         }
     })
 

@@ -3,6 +3,29 @@
 {% block content %}
 <h1 class="h3 mb-4">Synchronisierung</h1>
 
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex flex-wrap justify-content-between gap-2 align-items-center">
+    <span class="fw-semibold">Health-Bewertung</span>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.health_settings') }}">
+      Werte und Grenzen
+    </a>
+  </div>
+  <div class="card-body">
+    <span class="badge text-bg-{{ ('success', 'warning', 'danger')[health.status_code] }}">
+      {{ health.status }}
+    </span>
+    {% if health.issues %}
+    <ul class="mt-2 mb-0">
+      {% for issue in health.issues %}
+      <li>{{ issue }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="text-muted mt-2">Keine aktive Health-Prüfung meldet ein Problem.</div>
+    {% endif %}
+  </div>
+</div>
+
 <div class="card shadow-sm mb-4" id="tenant-notifications">
   <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
     <span class="fw-semibold">Mieterbenachrichtigungen bei Beauftragung</span>

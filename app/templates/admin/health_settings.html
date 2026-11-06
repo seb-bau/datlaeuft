@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Health-Grenzen{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h3 mb-0">Health-Grenzen und aktuelle Werte</h1>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('admin.sync_health') }}">Synchronisierung</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('admin.health_settings') }}">Neu laden</a>
+  </div>
+</div>
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <span class="badge text-bg-{{ ('success', 'warning', 'danger')[health.status_code] }}">
+      {{ health.status }}
+    </span>
+    <span class="small text-muted ms-2">
+      Stand: {{ checked_at.strftime('%d.%m.%Y %H:%M:%S') }} · Deutsche Ortszeit
+    </span>
+    {% if health.issues %}
+    <ul class="mt-2 mb-0">
+      {% for issue in health.issues %}
+      <li>{{ issue }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="text-muted mt-2">Keine aktive Health-Prüfung meldet ein Problem.</div>
+    {% endif %}
+  </div>
+</div>
+<form method="post" class="card shadow-sm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card-body">
+    <p class="mb-1">
+      Eine Grenze greift erst, wenn der Wert größer als die eingetragene Zahl ist.
+      Bei Zählern bedeutet 0 eine Meldung ab dem ersten Eintrag.
+    </p>
+    <p class="small text-muted mb-0">
+      Leere Grenzen sind deaktiviert. Zeitgrenzen werden in Minuten eingegeben.
+      DMS-Prüfungen pausieren bei deaktiviertem DMS. Bei fehlender Worker-Rückmeldung
+      gilt die höchste für diese Prüfung aktivierte Alarmstufe.
+      Die angezeigte Bewertung verwendet die zuletzt gespeicherten Grenzen.
+    </p>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-striped align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Prüfen</th><th>Prüfung</th><th>Aktueller Wert</th>
+          <th>Warnung über</th><th>Störung über</th><th>Bewertung</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for check in health.checks %}
+        <tr>
+          <td>
+            <input class="form-check-input" type="checkbox"
+                   name="health.{{ check.key }}.enabled" value="true"
+                   aria-label="{{ check.label }} prüfen" {% if check.enabled %}checked{% endif %}>
+          </td>
+          <td>
+            <div>{{ check.label }}</div>
+            <div class="small text-muted">Grenzen: {{ check.unit }}</div>
+          </td>
+          <td class="text-nowrap fw-semibold">{{ check.value_text }}</td>
+          <td>
+            <input class="form-control" type="number" min="0" step="1"
+                   name="health.{{ check.key }}.warning"
+                   aria-label="Warnungsgrenze für {{ check.label }}"
+                   value="{{ check.warning if check.warning is not none else '' }}">
+          </td>
+          <td>
+            <input class="form-control" type="number" min="0" step="1"
+                   name="health.{{ check.key }}.error"
+                   aria-label="Störungsgrenze für {{ check.label }}"
+                   value="{{ check.error if check.error is not none else '' }}">
+          </td>
+          <td>
+            <span class="badge text-bg-{{ check.color }}">{{ check.status }}</span>
+            <div class="small mt-1">{{ check.reason or 'Innerhalb der Grenzen.' }}</div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer text-end">
+    <button class="btn btn-primary" type="submit">Health-Grenzen speichern</button>
+  </div>
+</form>
+{% endblock %}

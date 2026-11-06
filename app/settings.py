@@ -10,6 +10,7 @@ from .extensions import db
 from .models import AppSetting, SettingValueType
 from email.errors import HeaderParseError
 from email.headerregistry import Address
+from .health_rules import DEFAULT_HEALTH_RULES, normalize_health_rules
 
 T = TypeVar("T")
 
@@ -50,6 +51,10 @@ def normalize_ticket_source_ids(value: Any) -> list[int]:
 
 
 class SettingKeys:
+    HEALTH_RULES = SettingDefinition[dict[str, Any]](
+        "health.rules", SettingValueType.JSON, DEFAULT_HEALTH_RULES,
+        "Health-Grenzen und aktuelle Bewertung", "Health",
+    )
     APP_SECRET_KEY = SettingDefinition[str](
         "security.secret_key", SettingValueType.SECRET, "change-me", "Flask Secret Key", "Sicherheit", True)
     JWT_SECRET_KEY = SettingDefinition[str](
@@ -796,6 +801,8 @@ class SettingsService:
         return cast(T, self._deserialize(row.value_text, definition.value_type))
 
     def set(self, definition: SettingDefinition[T], value: T) -> None:
+        if definition.key == SettingKeys.HEALTH_RULES.key:
+            value = cast(T, normalize_health_rules(value))
         if definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key:
             value = cast(T, validate_debug_email_address(cast(str, value)))
         if definition.key == SettingKeys.TENANT_TICKET_REPLY_TO.key:
