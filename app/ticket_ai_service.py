@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from time import sleep
+from time import monotonic, sleep
 from uuid import uuid4
 
 from flask import current_app
@@ -12,7 +12,7 @@ from sqlalchemy.exc import OperationalError
 from .audit import audit
 from .extensions import db
 from .models import (
-    CommissionTicketLink, TicketAiJob, TicketAiState,
+    CommissionTicketLink, HealthHeartbeat, TicketAiJob, TicketAiState,
     TicketMirror, TicketMirrorState, utc_now,
 )
 from .settings import SettingKeys, settings
@@ -125,10 +125,14 @@ def enqueue_ticket_ai(
     return True
 
 
-def claim_ticket_ai() -> TicketAiClaim | None:
-    lease_seconds = max(
+def ticket_ai_lease_seconds() -> float:
+    return max(
         600, float(settings.get(SettingKeys.OPENAI_TIMEOUT_SECONDS)) * 4 + 120
     )
+
+
+def claim_ticket_ai() -> TicketAiClaim | None:
+    lease_seconds = ticket_ai_lease_seconds()
     ticket = (
         TicketMirror.query.join(TicketAiJob, TicketAiJob.ticket_id == TicketMirror.id)
         .filter(
@@ -300,8 +304,17 @@ def process_ticket_ai() -> bool:
 
 
 def run_ticket_ai_worker(poll_seconds: int = 2, once: bool = False) -> None:
+    last_heartbeat = None
     while True:
         try:
+            if last_heartbeat is None or monotonic() - last_heartbeat >= 60:
+                heartbeat = db.session.get(HealthHeartbeat, "ticket_ai_worker")
+                if heartbeat is None:
+                    heartbeat = HealthHeartbeat(name="ticket_ai_worker")
+                    db.session.add(heartbeat)
+                heartbeat.last_seen_at = utc_now()
+                db.session.commit()
+                last_heartbeat = monotonic()
             processed = process_ticket_ai()
         except Exception:
             db.session.rollback()

@@ -51,6 +51,7 @@ from .object_directory import (
 )
 from sqlalchemy import (
     and_,
+    case,
     or_,
     select,
 )
@@ -214,7 +215,7 @@ from .offer_service import (
     release_offer,
     replace_offer_positions,
 )
-from datetime import date, time
+from datetime import date, time, timedelta
 from uuid import uuid4
 
 from .commission_priority import set_manual_commission_priority
@@ -246,7 +247,10 @@ from .catalog import (
 from .appointment_service import format_manual_appointment
 from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
 from .document_articles import attach_article_fields
-from .ticket_ai_service import enqueue_ticket_ai, ticket_ai_is_current
+from .ticket_ai_service import (
+    enqueue_ticket_ai, ticket_ai_enabled, ticket_ai_is_current,
+    ticket_ai_lease_seconds,
+)
 
 from math import ceil
 from zoneinfo import ZoneInfo
@@ -769,6 +773,128 @@ def sync_health_retry_tenant_notification(notification_id: int) -> Any:
     ))
 
 
+TICKET_AI_SYNC_STATES = {
+    "queued": ("Wartend", "secondary"),
+    "processing": ("In Bearbeitung", "info"),
+    "stalled": ("Überfällig", "warning"),
+    "failed": ("Fehlgeschlagen", "danger"),
+    "missing": ("Nicht eingeplant", "warning"),
+}
+
+
+def ticket_ai_sync_context():
+    now = ensure_utc(utc_now())
+    lease_seconds = ticket_ai_lease_seconds()
+    selected_filter = request.args.get("ai_state", "all")
+    if selected_filter not in TICKET_AI_SYNC_STATES:
+        selected_filter = "all"
+
+    queue_state = case(
+        (
+            TicketAiJob.ticket_id.is_(None),
+            case(
+                (TicketMirror.ai_state == TicketAiState.FAILED.value, "failed"),
+                else_="missing",
+            ),
+        ),
+        (
+            TicketAiJob.locked_at < now - timedelta(seconds=lease_seconds),
+            "stalled",
+        ),
+        (TicketAiJob.locked_at.is_not(None), "processing"),
+        (TicketAiJob.attempt_count >= 3, "failed"),
+        else_="queued",
+    )
+    query = TicketMirror.query.outerjoin(
+        TicketAiJob, TicketAiJob.ticket_id == TicketMirror.id
+    ).filter(or_(
+        TicketAiJob.ticket_id.is_not(None),
+        TicketMirror.ai_state.in_((
+            TicketAiState.QUEUED.value,
+            TicketAiState.PROCESSING.value,
+            TicketAiState.FAILED.value,
+        )),
+    ))
+    counts = dict(query.with_entities(
+        queue_state, func.count(TicketMirror.id)
+    ).group_by(queue_state).all())
+    if selected_filter != "all":
+        query = query.filter(queue_state == selected_filter)
+
+    query = query.add_entity(TicketAiJob).add_columns(
+        queue_state.label("queue_state")
+    ).order_by(TicketAiJob.available_at.asc(), TicketMirror.id.asc())
+    pagination = query.paginate(
+        page=max(1, request.args.get("ai_page", 1, type=int)),
+        per_page=25,
+        error_out=False,
+    )
+    if pagination.pages and pagination.page > pagination.pages:
+        pagination = query.paginate(
+            page=pagination.pages, per_page=25, error_out=False
+        )
+
+    heartbeat = db.session.get(HealthHeartbeat, "ticket_ai_worker")
+    last_seen_at = ensure_utc(heartbeat.last_seen_at) if heartbeat else None
+    if last_seen_at is None:
+        worker_label, worker_color = "Noch keine Rückmeldung", "warning"
+    elif (now - last_seen_at).total_seconds() > lease_seconds:
+        worker_label, worker_color = "Rückmeldung überfällig", "danger"
+    else:
+        worker_label, worker_color = "Rückmeldung aktuell", "success"
+
+    def page_url(page):
+        return url_for(
+            "admin.sync_health",
+            ai_state=selected_filter,
+            ai_page=page,
+            tenant_state=request.args.get("tenant_state", "active"),
+            tenant_page=max(1, request.args.get("tenant_page", 1, type=int)),
+            _anchor="ticket-ai",
+        )
+
+    return {
+        "rows": [
+            {
+                "ticket": ticket,
+                "label": TICKET_AI_SYNC_STATES[state][0],
+                "color": TICKET_AI_SYNC_STATES[state][1],
+                "attempt_count": job.attempt_count if job else None,
+                "mode": ("Automatisch" if job.automatic else "Manuell") if job else "–",
+                "locked_at": _tenant_sync_time(job.locked_at) if job else None,
+                "due": (
+                    job is not None and state == "queued"
+                    and ensure_utc(job.available_at) <= now
+                ),
+                "next_attempt_at": (
+                    _tenant_sync_time(job.available_at)
+                    if job and state == "queued" else None
+                ),
+                "can_open": (
+                    ticket.deleted_at is None
+                    and ticket.state != TicketMirrorState.IGNORED.value
+                ),
+            }
+            for ticket, job, state in pagination.items
+        ],
+        "summary": [
+            (label, counts.get(state, 0))
+            for state, (label, color) in TICKET_AI_SYNC_STATES.items()
+        ],
+        "filter_choices": {
+            "all": "Alle offenen und fehlgeschlagenen",
+            **{state: label for state, (label, color) in TICKET_AI_SYNC_STATES.items()},
+        },
+        "selected_filter": selected_filter,
+        "pagination": pagination,
+        "page_url": page_url,
+        "worker_label": worker_label,
+        "worker_color": worker_color,
+        "worker_seen_at": _tenant_sync_time(last_seen_at),
+        "enabled": ticket_ai_enabled(),
+    }
+
+
 @admin_bp.get("/admin/sync-health")
 @admin_required
 def sync_health() -> Any:
@@ -836,6 +962,7 @@ def sync_health() -> Any:
         commission_items=commission_items,
         outbox_status_labels=outbox_status_labels,
         tenant_sync=tenant_notification_sync_context(),
+        ticket_ai_sync=ticket_ai_sync_context(),
         health=full_snapshot(),
     )
 

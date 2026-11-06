@@ -26,6 +26,121 @@
   </div>
 </div>
 
+<div class="card shadow-sm mb-4" id="ticket-ai">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <span class="fw-semibold">KI-Ticketanalysen</span>
+    <a class="btn btn-sm btn-outline-primary"
+       href="{{ ticket_ai_sync.page_url(ticket_ai_sync.pagination.page) }}">
+      Anzeige aktualisieren
+    </a>
+  </div>
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      {% for label, count in ticket_ai_sync.summary %}
+      <span class="badge text-bg-light border">{{ label }}: {{ count }}</span>
+      {% endfor %}
+    </div>
+    <div class="small mb-3">
+      KI-Worker:
+      <span class="badge text-bg-{{ ticket_ai_sync.worker_color }}">
+        {{ ticket_ai_sync.worker_label }}
+      </span>
+      <div class="text-muted">
+        Letzte Rückmeldung:
+        {{ ticket_ai_sync.worker_seen_at.strftime('%d.%m.%Y %H:%M:%S') if ticket_ai_sync.worker_seen_at else 'Noch keine gespeichert' }}
+        · Deutsche Ortszeit
+      </div>
+    </div>
+    {% if not ticket_ai_sync.enabled %}
+    <div class="alert alert-warning">
+      Die KI-Analyse ist deaktiviert oder nicht vollständig konfiguriert.
+    </div>
+    {% endif %}
+    <form method="get" action="{{ url_for('admin.sync_health', _anchor='ticket-ai') }}"
+          class="d-flex flex-wrap align-items-end gap-2">
+      <input type="hidden" name="tenant_state" value="{{ tenant_sync.selected_filter }}">
+      <input type="hidden" name="tenant_page" value="{{ tenant_sync.pagination.page }}">
+      <div>
+        <label class="form-label mb-1" for="ticketAiState">Anzeige</label>
+        <select class="form-select form-select-sm" id="ticketAiState" name="ai_state">
+          {% for value, label in ticket_ai_sync.filter_choices.items() %}
+          <option value="{{ value }}" {% if value == ticket_ai_sync.selected_filter %}selected{% endif %}>
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-sm btn-outline-secondary" type="submit">Filtern</button>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Ticket</th><th>Status</th><th>Auslösung</th>
+          <th>Versuche</th><th>Nächster Versuch</th><th>Letzter Fehler</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in ticket_ai_sync.rows %}
+        <tr>
+          <td>
+            {% if row.can_open %}
+            <a href="{{ url_for('admin.ticket_analysis_status', ticket_id=row.ticket.id) }}">
+              {{ row.ticket.id_num or row.ticket.erp_id }}
+            </a>
+            {% else %}
+            {{ row.ticket.id_num or row.ticket.erp_id }}
+            <div class="small text-muted">{{ 'Gelöscht' if row.ticket.deleted_at else 'Ignoriert' }}</div>
+            {% endif %}
+            <div class="small text-break">{{ row.ticket.subject or 'Ohne Betreff' }}</div>
+          </td>
+          <td>
+            <span class="badge text-bg-{{ row.color }}">{{ row.label }}</span>
+            {% if row.locked_at %}
+            <div class="small text-muted">
+              Seit {{ row.locked_at.strftime('%d.%m.%Y %H:%M:%S') }}
+            </div>
+            {% endif %}
+          </td>
+          <td>{{ row.mode }}</td>
+          <td>{{ row.attempt_count if row.attempt_count is not none else '–' }}</td>
+          <td>
+            {% if row.due %}Sofort{% elif row.next_attempt_at %}
+            {{ row.next_attempt_at.strftime('%d.%m.%Y %H:%M:%S') }}
+            {% else %}–{% endif %}
+          </td>
+          <td class="small text-danger text-break"
+              style="white-space: pre-wrap; min-width: 12rem; max-width: 28rem;">{{ row.ticket.ai_error or '–' }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="text-center text-muted py-4">
+            Keine KI-Ticketanalysen in dieser Ansicht.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <span class="small text-muted">
+      {{ ticket_ai_sync.pagination.total }} Einträge ·
+      Seite {{ ticket_ai_sync.pagination.page }} von {{ ticket_ai_sync.pagination.pages or 1 }}
+    </span>
+    <nav aria-label="Seiten der KI-Ticketanalysen" class="d-flex gap-2">
+      {% if ticket_ai_sync.pagination.has_prev %}
+      <a class="btn btn-sm btn-outline-secondary"
+         href="{{ ticket_ai_sync.page_url(ticket_ai_sync.pagination.prev_num) }}">Zurück</a>
+      {% endif %}
+      {% if ticket_ai_sync.pagination.has_next %}
+      <a class="btn btn-sm btn-outline-secondary"
+         href="{{ ticket_ai_sync.page_url(ticket_ai_sync.pagination.next_num) }}">Weiter</a>
+      {% endif %}
+    </nav>
+  </div>
+</div>
+
 <div class="card shadow-sm mb-4" id="tenant-notifications">
   <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
     <span class="fw-semibold">Mieterbenachrichtigungen bei Beauftragung</span>
