@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from flask import current_app
 from sqlalchemy import or_
+from sqlalchemy.exc import OperationalError
 
 from .audit import audit
 from .extensions import db
@@ -179,29 +180,40 @@ def claim_ticket_ai() -> TicketAiClaim | None:
 def validate_ticket_ai(
     claim: TicketAiClaim, ticket_id: int, input_hash: str,
 ) -> TicketMirror:
-    ticket = (
-        TicketMirror.query.filter_by(id=ticket_id)
-        .populate_existing().with_for_update().one_or_none()
-    )
-    job = (
-        TicketAiJob.query.filter_by(ticket_id=ticket_id)
-        .populate_existing().with_for_update().one_or_none()
-    )
-    if (
-        ticket is None or job is None
-        or job.lock_token != claim.token or job.revision != claim.revision
-    ):
-        raise TicketAiChanged()
-    if (
-        not ticket_ai_enabled()
-        or ticket.deleted_at is not None
-        or ticket.state == TicketMirrorState.IGNORED.value
-        or (job.automatic and not automatic_ticket_ai_allowed(ticket))
-    ):
-        raise TicketAiCancelled()
-    if ticket_analysis_input_hash(ticket) != input_hash:
-        raise TicketAiChanged()
-    return ticket
+    retry_count = 0
+    while True:
+        db.session.rollback()
+        try:
+            ticket = (
+                TicketMirror.query.filter_by(id=ticket_id)
+                .populate_existing().with_for_update().one_or_none()
+            )
+            job = (
+                TicketAiJob.query.filter_by(ticket_id=ticket_id)
+                .populate_existing().with_for_update().one_or_none()
+            )
+            if (
+                ticket is None or job is None
+                or job.lock_token != claim.token or job.revision != claim.revision
+            ):
+                raise TicketAiChanged()
+            if (
+                not ticket_ai_enabled()
+                or ticket.deleted_at is not None
+                or ticket.state == TicketMirrorState.IGNORED.value
+                or (job.automatic and not automatic_ticket_ai_allowed(ticket))
+            ):
+                raise TicketAiCancelled()
+            if ticket_analysis_input_hash(ticket) != input_hash:
+                raise TicketAiChanged()
+            return ticket
+        except OperationalError as error:
+            db.session.rollback()
+            error_code = error.orig.args[0] if error.orig.args else None
+            if error_code != 1020 or retry_count >= 2:
+                raise
+            sleep(0.05 * 2 ** retry_count)
+            retry_count += 1
 
 
 def settle_ticket_ai(
