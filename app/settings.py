@@ -38,6 +38,17 @@ def normalize_external_portal_name(value: Any) -> str:
     return name or SettingKeys.EXTERNAL_PORTAL_NAME.default
 
 
+def normalize_ticket_source_ids(value: Any) -> list[int]:
+    if not isinstance(value, list) or any(
+        type(source_id) is not int or source_id <= 0
+        for source_id in value
+    ):
+        raise ValueError(
+            "Ticketquellen müssen als Liste positiver Wowiport-IDs angegeben werden."
+        )
+    return sorted(set(value))
+
+
 class SettingKeys:
     APP_SECRET_KEY = SettingDefinition[str](
         "security.secret_key", SettingValueType.SECRET, "change-me", "Flask Secret Key", "Sicherheit", True)
@@ -395,6 +406,13 @@ class SettingKeys:
     TENANT_TICKET_WRITEBACK_ENABLED = SettingDefinition[bool](
         "commissions.ticket_writeback_enabled", SettingValueType.BOOL, True,
         "Beauftragungsmails in Wowiport-Tickets dokumentieren", "E-Mail",
+    )
+    TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS = SettingDefinition[list[int]](
+        "commissions.ticket_writeback_excluded_source_ids",
+        SettingValueType.JSON,
+        [],
+        "Ticketquellen ohne Bestätigung im Ticket",
+        "E-Mail",
     )
     TENANT_TICKET_REPLY_DELIMITER = SettingDefinition[str](
         "commissions.ticket_reply_delimiter", SettingValueType.STRING,
@@ -785,6 +803,8 @@ class SettingsService:
                 value = cast(T, validate_debug_email_address(cast(str, value)))
             except ValueError as exc:
                 raise ValueError("Bitte eine gültige mail2ticket-Antwortadresse ohne Anzeigenamen eingeben.") from exc
+        if definition.key == SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS.key:
+            value = cast(T, normalize_ticket_source_ids(value))
         if definition.key == SettingKeys.EXTERNAL_PORTAL_NAME.key:
             value = cast(T, normalize_external_portal_name(value))
         row = AppSetting.query.filter_by(key=definition.key).one_or_none()

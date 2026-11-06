@@ -12,7 +12,26 @@
       <div class="col-md-6">
         <label class="form-label">{{ definition.label }}</label>
         {% set value = settings.get(definition) %}
-        {% if definition.value_type.value == "bool" %}
+        {% if definition.key == "commissions.ticket_writeback_excluded_source_ids" %}
+        {% for source_id, source_label in tenant_ticket_source_choices %}
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox"
+                 id="ticket-writeback-source-{{ source_id }}"
+                 name="{{ definition.key }}" value="{{ source_id }}"
+                 {% if source_id in value %}checked{% endif %}>
+          <label class="form-check-label" for="ticket-writeback-source-{{ source_id }}">
+            {{ source_label }} (ID {{ source_id }})
+          </label>
+        </div>
+        {% else %}
+        <div class="text-muted">Noch keine Ticketquellen lokal synchronisiert.</div>
+        {% endfor %}
+        <div class="form-text">
+          Für ausgewählte Quellen wird nur die Mieter-Mail verschickt.
+          Eine Bestätigung im Ticket entfällt.
+          Angezeigt werden lokal synchronisierte und bereits ausgewählte Quellen.
+        </div>
+        {% elif definition.value_type.value == "bool" %}
         <div class="form-check">
           <input class="form-check-input" type="checkbox" name="{{ definition.key }}" value="true" {% if value %}checked{% endif %}>
           <label class="form-check-label">Aktiv</label>

@@ -164,7 +164,9 @@
             </span>
             {% if row.ticket_count %}
             <div class="small text-muted mt-1">
-              {{ row.documented_count }} von {{ row.ticket_count }} Kommentaren gespeichert
+              {{ row.documented_count }} dokumentiert ·
+              {{ row.skipped_count }} ausgenommen ·
+              {{ row.ticket_count - row.documented_count - row.skipped_count }} offen
             </div>
             {% endif %}
           </td>

@@ -537,10 +537,19 @@ def _tenant_notification_sync_row(item, now, writeback_enabled):
         for ticket in tickets or []
         if isinstance(ticket, dict)
     )
+    skipped_count = sum(
+        ticket.get("writeback_skipped") is True and not ticket.get("comment_id")
+        for ticket in tickets or []
+        if isinstance(ticket, dict)
+    )
     ticket_count = len(tickets) if tickets is not None else None
 
     if ticket_count and documented_count == ticket_count:
         ticket_label, ticket_color = "Dokumentiert", "success"
+    elif ticket_count and skipped_count == ticket_count:
+        ticket_label, ticket_color = "Per Einstellung ausgenommen", "secondary"
+    elif ticket_count and documented_count + skipped_count == ticket_count:
+        ticket_label, ticket_color = "Abgeschlossen mit Ausnahmen", "success"
     elif not writeback_enabled:
         ticket_label, ticket_color = "Derzeit deaktiviert", "secondary"
     elif tickets is None:
@@ -596,6 +605,7 @@ def _tenant_notification_sync_row(item, now, writeback_enabled):
         "ticket_color": ticket_color,
         "ticket_count": ticket_count,
         "documented_count": documented_count,
+        "skipped_count": skipped_count,
         "attempt_count": item.attempt_count,
         "next_attempt_at": _tenant_sync_time(available_at) if waiting else None,
         "remaining_minutes": remaining_minutes,
@@ -835,6 +845,18 @@ def settings_page() -> Any:
             for definition in all_definitions():
                 if definition.key.startswith("dms."):
                     continue
+                if definition.key == SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS.key:
+                    try:
+                        source_ids = [
+                            int(value)
+                            for value in request.form.getlist(definition.key)
+                        ]
+                    except ValueError as exc:
+                        raise ValueError(
+                            "Bitte gültige Ticketquellen auswählen."
+                        ) from exc
+                    settings.set(definition, source_ids)
+                    continue
                 settings.set_from_form(
                     definition,
                     request.form.get(definition.key),
@@ -849,6 +871,19 @@ def settings_page() -> Any:
         configure_logging(current_app._get_current_object())
         flash("Einstellungen gespeichert.", "success")
         return redirect(url_for("admin.settings_page"))
+
+    source_choices = {
+        source_id: source_code or "Ticketquelle"
+        for source_id, source_code in (
+            db.session.query(TicketMirror.source_erp_id, TicketMirror.source_code)
+            .filter(TicketMirror.source_erp_id > 0)
+            .order_by(TicketMirror.source_erp_id, TicketMirror.source_code)
+            .distinct()
+            .all()
+        )
+    }
+    for source_id in settings.get(SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS):
+        source_choices.setdefault(source_id, "Nicht mehr lokal vorhanden")
 
     return render_template(
         "admin/settings.html",
@@ -865,6 +900,10 @@ def settings_page() -> Any:
             )
         },
         settings=settings,
+        tenant_ticket_source_choices=sorted(
+            source_choices.items(),
+            key=lambda choice: (choice[1].casefold(), choice[0]),
+        ),
     )
 
 

@@ -18,7 +18,7 @@ from .models import (
     CommissionTenantNotification, CommissionTicketLink, CraftActivity,
     ExternalCraftsman, TicketMirror, User, utc_now,
 )
-from .settings import SettingKeys, settings
+from .settings import SettingKeys, normalize_ticket_source_ids, settings
 from .user_sync import extract_craftsman_display_name
 
 
@@ -209,6 +209,9 @@ def tenant_notification_tickets(commission: Commission, service: Any) -> list[di
 def document_tenant_notification(item: CommissionTenantNotification, service: Any) -> None:
     if not settings.get(SettingKeys.TENANT_TICKET_WRITEBACK_ENABLED):
         return
+    excluded_source_ids = set(normalize_ticket_source_ids(
+        settings.get(SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS)
+    ))
     payload = item.payload
     if "tickets" not in payload:
         item.payload = {**payload, "tickets": tenant_notification_tickets(item.commission, service)}
@@ -249,6 +252,25 @@ def document_tenant_notification(item: CommissionTenantNotification, service: An
         row = next((row for row in rows if read_value(row, "id_") == ticket["ticket_id"]), None)
         if row is None:
             raise RuntimeError(f"Das Ticket {ticket['ticket_id']} konnte nicht dokumentiert werden.")
+        source = read_value(row, "source")
+        source_id = read_value(source, "id_")
+        if type(source_id) is not int or source_id <= 0:
+            if excluded_source_ids:
+                raise RuntimeError(
+                    f"Die Ticketquelle von Ticket {ticket['ticket_id']} konnte nicht ermittelt werden."
+                )
+            source_id = None
+        tickets = [dict(entry) for entry in item.payload["tickets"]]
+        tickets[index].update({
+            "ticket_source_id": source_id,
+            "ticket_source_code": read_value(source, "code"),
+            "writeback_skipped": source_id in excluded_source_ids,
+        })
+        item.payload = {**item.payload, "tickets": tickets}
+        item.locked_at = utc_now()
+        db.session.commit()
+        if tickets[index]["writeback_skipped"]:
+            continue
         content = item.payload["comment_content"]
         existing = next((
             comment for comment in read_value(row, "comments") or []
