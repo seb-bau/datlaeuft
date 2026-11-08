@@ -134,7 +134,7 @@ WantedBy=multi-user.target
 ````
 
 # Webhooks
-URL: https://wattnu-tst.wbg-luenen.de/webhooks/wowiport
+URL: https://example.com/webhooks/wowiport
 3x Webhook (Vorgang, Auftrag, Nachricht)
 Bearer
 
