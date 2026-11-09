@@ -255,11 +255,9 @@ def document_tenant_notification(item: CommissionTenantNotification, service: An
         source = read_value(row, "source")
         source_id = read_value(source, "id_")
         if type(source_id) is not int or source_id <= 0:
-            if excluded_source_ids:
-                raise RuntimeError(
-                    f"Die Ticketquelle von Ticket {ticket['ticket_id']} konnte nicht ermittelt werden."
-                )
-            source_id = None
+            raise RuntimeError(
+                f"Die Ticketquelle von Ticket {ticket['ticket_id']} konnte nicht ermittelt werden."
+            )
         tickets = [dict(entry) for entry in item.payload["tickets"]]
         tickets[index].update({
             "ticket_source_id": source_id,
@@ -297,6 +295,7 @@ def document_tenant_notification(item: CommissionTenantNotification, service: An
             result = service.client.create_ticket_comment(
                 ticket_id=ticket["ticket_id"],
                 content=content,
+                ticket_source_id=source_id,
             )
             if result.status_code not in (200, 201):
                 raise RuntimeError(f"Die Ticketantwort konnte nicht gespeichert werden: {result.message}")
