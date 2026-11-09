@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
-import re
-from html import escape
 
 from jinja2 import StrictUndefined, TemplateError, meta, nodes
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
+from .email_layout import DEFAULT_EMAIL_LAYOUT, render_email_html
 from .models import AppSetting, SettingValueType
 from .settings import SettingDefinition, SettingKeys, normalize_external_portal_name, settings
+
+
+EMAIL_LAYOUT_TEMPLATE_KEY = "layout"
 
 
 ORDER_FIELDS = "commission_number commission_title description damage_location address location tenant_name positions commission_url"
@@ -192,6 +194,19 @@ TEMPLATE_ENV.filters = {
 }
 
 
+def email_layout_definition():
+    return SettingDefinition(
+        "email.layout", SettingValueType.STRING, DEFAULT_EMAIL_LAYOUT,
+        "Gemeinsames HTML-Layout", "E-Mail-Vorlagen",
+    )
+
+
+def get_email_layout():
+    definition = email_layout_definition()
+    row = AppSetting.query.filter_by(key=definition.key).one_or_none()
+    return row.value_text if row is not None else definition.default
+
+
 def email_template_definition(key):
     definition = EMAIL_TEMPLATES[key]
     return SettingDefinition(
@@ -275,17 +290,10 @@ def render_email_template(key, context):
     return render_email_value(key, template, context)
 
 
-def email_body_html(body):
-    parts = []
-    offset = 0
-    for match in re.finditer(r"https?://[^\s<>]+", body):
-        parts.append(escape(body[offset:match.start()]))
-        url = escape(match.group(), quote=True)
-        parts.append(f'<a href="{url}">{url}</a>')
-        offset = match.end()
-    parts.append(escape(body[offset:]))
-    content = "".join(parts).replace("\n", "<br>\n")
-    return '<!doctype html><html lang="de"><body style="font-family:Arial,sans-serif;line-height:1.5">' + content + "</body></html>"
+def email_body_html(body, subject="", *, layout=None):
+    return render_email_html(
+        body, subject, get_email_layout() if layout is None else layout,
+    )
 
 
 def set_email_content(message, subject, body):
@@ -294,7 +302,7 @@ def set_email_content(message, subject, body):
     else:
         message["Subject"] = subject
     message.set_content(body)
-    message.add_alternative(email_body_html(body), subtype="html")
+    message.add_alternative(email_body_html(body, subject), subtype="html")
 
 
 def apply_email_template(message, key, context):

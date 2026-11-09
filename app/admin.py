@@ -1009,10 +1009,13 @@ def health_settings() -> Any:
 @admin_bp.route("/admin/settings/email-templates", methods=["GET", "POST"])
 @admin_required
 def email_templates_page() -> Any:
+    from .email_layout import EMAIL_LAYOUT_FIELDS, validate_email_layout
     from .email_templates import (
+        EMAIL_LAYOUT_TEMPLATE_KEY,
         EMAIL_TEMPLATES, EXAMPLE_CONTEXT, FIELD_LABELS,
-        email_template_definition, get_email_template,
-        render_email_value, validate_email_template,
+        email_body_html, email_layout_definition, email_template_definition,
+        get_email_layout, get_email_template, render_email_value,
+        validate_email_template,
     )
 
     template_key = (
@@ -1020,47 +1023,83 @@ def email_templates_page() -> Any:
         if request.method == "POST"
         else request.args.get("template", next(iter(EMAIL_TEMPLATES)))
     )
-    if template_key not in EMAIL_TEMPLATES:
+    is_layout = template_key == EMAIL_LAYOUT_TEMPLATE_KEY
+    if not is_layout and template_key not in EMAIL_TEMPLATES:
         abort(404)
-    definition = email_template_definition(template_key)
-    value = get_email_template(template_key)
+    definition = email_layout_definition() if is_layout else email_template_definition(template_key)
+    value = {"html": get_email_layout()} if is_layout else get_email_template(template_key)
+    preview_options = [
+        (key, item["label"])
+        for key, item in EMAIL_TEMPLATES.items()
+        if key != "appointment_calendar"
+    ]
+    preview_key = request.values.get("preview_template", preview_options[0][0])
+    if preview_key not in dict(preview_options):
+        abort(400)
     preview = None
+    preview_html = None
     if request.method == "POST":
         action = request.form.get("action", "save")
         if action not in {"save", "preview", "reset"}:
             abort(400)
-        value = (
-            dict(definition.default) if action == "reset"
-            else {
-                "subject": request.form.get("subject", ""),
-                "body": request.form.get("body", ""),
-            }
-        )
+        if is_layout:
+            value = {"html": definition.default if action == "reset" else request.form.get("html", "")}
+        else:
+            value = (
+                dict(definition.default) if action == "reset"
+                else {
+                    "subject": request.form.get("subject", ""),
+                    "body": request.form.get("body", ""),
+                }
+            )
         try:
-            value = validate_email_template(template_key, value)
-            if action == "preview":
-                preview = render_email_value(template_key, value, EXAMPLE_CONTEXT)
+            if is_layout:
+                value["html"] = validate_email_layout(value["html"])
             else:
-                settings.set(definition, value)
+                value = validate_email_template(template_key, value)
+            if action == "preview":
+                preview = render_email_value(
+                    preview_key if is_layout else template_key,
+                    get_email_template(preview_key) if is_layout else value,
+                    EXAMPLE_CONTEXT,
+                )
+                if is_layout or template_key != "appointment_calendar":
+                    preview_html = email_body_html(
+                        preview["body"], preview["subject"],
+                        layout=value["html"] if is_layout else None,
+                    )
+            else:
+                settings.set(definition, value["html"] if is_layout else value)
                 audit(f"email_template.{action}", "app_setting", definition.key)
                 db.session.commit()
-                flash("E-Mail-Vorlage gespeichert.", "success")
-                return redirect(url_for("admin.email_templates_page", template=template_key))
+                flash("HTML-Layout gespeichert." if is_layout else "E-Mail-Vorlage gespeichert.", "success")
+                return redirect(url_for(
+                    "admin.email_templates_page", template=template_key,
+                    preview_template=preview_key,
+                ))
         except ValueError as exc:
+            preview = None
+            preview_html = None
             db.session.rollback()
             flash(str(exc), "danger")
     return render_template(
         "admin/email_templates.html",
-        template_options=[(key, item["label"]) for key, item in EMAIL_TEMPLATES.items()],
+        template_options=[
+            (EMAIL_LAYOUT_TEMPLATE_KEY, "Gemeinsames HTML-Layout"),
+            *[(key, item["label"]) for key, item in EMAIL_TEMPLATES.items()],
+        ],
         template_key=template_key,
         template_value=value,
-        fields={
+        is_layout=is_layout,
+        preview_options=preview_options,
+        preview_key=preview_key,
+        fields=EMAIL_LAYOUT_FIELDS if is_layout else {
             name: FIELD_LABELS[name]
             for name in EMAIL_TEMPLATES[template_key]["fields"].split()
         },
         preview=preview,
+        preview_html=preview_html,
     )
-
 
 @admin_bp.route("/admin/settings", methods=["GET", "POST"])
 @admin_required
