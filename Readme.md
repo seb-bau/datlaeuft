@@ -161,3 +161,5 @@ Bearer
   * Vertragsdaten ohne personenbezogene Details
 
 Dateien vorerst auf Blacklist stellen, damit alle Typen erlaubt sind.
+
+Dies ist ein Testsatz in der README-Datei von datlaeuft.
