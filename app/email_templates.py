@@ -27,7 +27,9 @@ Leistungspositionen:
 
 GREETING = "Guten Tag{% if recipient_name %} {{ recipient_name }}{% endif %},\n\n"
 
-APPOINTMENT_LINE = "{{ appointment.date }}, {% if appointment.custom %}Beginn {{ appointment.start }} Uhr{% else %}{{ appointment.start }} bis {{ appointment.end }} Uhr ({{ appointment.window_name }}){% endif %}"
+SIGNATURE = "\n\nViele Grüße\nIhr Team der WBG Lünen\n"
+
+APPOINTMENT_LINE = "{{ appointment.date }}, {% if appointment.custom %}Beginn {{ appointment.start }} Uhr{% else %}{{ appointment.start }} bis {{ appointment.end }} Uhr{% if appointment.window_name %} ({{ appointment.window_name }}){% endif %}{% endif %}"
 
 APPOINTMENT_DETAILS = "Handwerker: {{ craftsman_name or 'Ihr Handwerker' }}{% if topic %}\nThema: {{ topic }}{% endif %}"
 
@@ -35,82 +37,82 @@ EMAIL_TEMPLATES = {
     "tenant_assignment": {
         "label": "Mieter: Beauftragung",
         "fields": ORDER_FIELDS + " craft_names craftsman_name",
-        "subject": "Information zur Beauftragung",
-        "body": "Guten Tag,\n\nfür Ihr Mietverhältnis wurde eine Beauftragung erteilt.\n\nGewerk: {{ craft_names|join('; ') }}\nBeauftragt: {{ craftsman_name }}\n\nFreundliche Grüße\n",
+        "subject": "WBG Lünen – Beauftragung zu Auftrag {{ commission_number }}",
+        "body": "Guten Tag,\n\nfür Ihr Mietverhältnis wurde folgender Auftrag erteilt:\n\nAuftrag: {{ commission_number }}\nTitel: {{ commission_title }}{% if address %}\nAdresse: {{ address }}{% endif %}\nGewerk: {{ craft_names|join('; ') }}\nBeauftragt: {{ craftsman_name }}" + SIGNATURE,
     },
     "completion": {
         "label": "Sachbearbeitung: Auftrag abgeschlossen",
         "fields": ORDER_FIELDS + " review_pending",
-        "subject": "Auftrag {{ commission_number }} abgeschlossen",
-        "body": "Guten Tag,\n\nder von Ihnen angelegte Auftrag {{ commission_number }} wurde als abgeschlossen gemeldet.\n\nAuftrag: {{ commission_title }}{% if address %}\nObjekt: {{ address }}{% endif %}{% if review_pending %}\n\nDie Mieterbelastung befindet sich noch in Prüfung.{% endif %}{% if commission_url %}\n\n{{ commission_url }}{% endif %}\n\nFreundliche Grüße\n",
+        "subject": "WBG Lünen – Auftrag {{ commission_number }} abgeschlossen",
+        "body": "Guten Tag,\n\nder von Ihnen angelegte Auftrag wurde als abgeschlossen gemeldet.\n\nAuftrag: {{ commission_number }}\nTitel: {{ commission_title }}{% if address %}\nObjekt: {{ address }}{% endif %}{% if review_pending %}\n\nDie Mieterbelastung befindet sich noch in Prüfung.{% endif %}{% if commission_url %}\n\nAuftrag öffnen:\n{{ commission_url }}{% endif %}" + SIGNATURE,
     },
     "external_invitation": {
         "label": "Handwerkerportal: Einladung",
         "fields": "portal_name recipient_name username invitation_url valid_hours",
         "required": ("invitation_url",),
         "subject": "{{ portal_name }} – Einladung",
-        "body": GREETING + "für Sie wurde ein Zugang zum {{ portal_name }}-Auftragnehmerportal eingerichtet.\n\nBenutzername: {{ username }}\n\nÜber den folgenden Link vergeben Sie Ihr persönliches Kennwort:\n{{ invitation_url }}\n\nDer Link ist {{ valid_hours }} Stunden gültig.",
+        "body": GREETING + "für Sie wurde ein Zugang zum Auftragnehmerportal {{ portal_name }} eingerichtet.\n\nBenutzername: {{ username }}\n\nBitte öffnen Sie den folgenden Link und vergeben Sie Ihr persönliches Kennwort:\n{{ invitation_url }}\n\nDer Link ist {{ valid_hours }} Stunden gültig." + SIGNATURE,
     },
     "external_assignment": {
         "label": "Handwerkerportal: Neuer Auftrag",
         "fields": ORDER_FIELDS + " portal_name recipient_name",
-        "subject": "{{ portal_name }} – Neuer Auftrag: {{ commission_number }}",
-        "body": GREETING + "Ihnen wurde ein Auftrag zugewiesen.\n\n" + ORDER_DETAILS + "\nAuftrag im Portal öffnen:\n{{ commission_url }}",
+        "subject": "{{ portal_name }} – Neuer Auftrag {{ commission_number }}",
+        "body": GREETING + "Ihnen wurde folgender Auftrag zugewiesen:\n\n" + ORDER_DETAILS + "\nAuftrag im Portal öffnen:\n{{ commission_url }}" + SIGNATURE,
     },
     "appointment_request": {
         "label": "Termin: Vorschläge an Bewohner",
         "fields": ORDER_FIELDS + " recipient_name craftsman_name topic message proposals public_url",
         "required": ("public_url",),
-        "subject": "Terminvorschläge zu Auftrag {{ commission_number }}",
-        "body": GREETING + "zu Ihrem Auftrag {{ commission_number }} stehen folgende Terminvorschläge zur Auswahl:\n\n" + APPOINTMENT_DETAILS + "\n\n{% for proposal in proposals %}- " + APPOINTMENT_LINE.replace("appointment.", "proposal.") + "\n{% endfor %}{% if message %}\nNachricht des Handwerkers:\n{{ message }}{% endif %}\n\nBitte öffnen Sie den folgenden Link, um einen Termin anzunehmen oder alle Vorschläge abzulehnen:\n\n{{ public_url }}\n\nFür die Terminbestätigung ist keine Anmeldung erforderlich.",
+        "subject": "WBG Lünen – Terminvorschläge zu Auftrag {{ commission_number }}",
+        "body": GREETING + "zu Ihrem Auftrag stehen folgende Terminvorschläge zur Auswahl:\n\nAuftrag: {{ commission_number }}\n" + APPOINTMENT_DETAILS + "\n\n{% for proposal in proposals %}- " + APPOINTMENT_LINE.replace("appointment.", "proposal.") + "\n{% endfor %}{% if message %}\nNachricht des Handwerkers:\n{{ message }}\n{% endif %}\nBitte öffnen Sie den folgenden Link, um einen Termin anzunehmen oder alle Vorschläge abzulehnen:\n{{ public_url }}\n\nFür die Terminbestätigung ist keine Anmeldung erforderlich." + SIGNATURE,
     },
     "appointment_confirmation": {
         "label": "Termin: Bestätigung an Bewohner",
         "fields": ORDER_FIELDS + " recipient_name craftsman_name topic appointment custom_appointment calendar_duration_minutes",
-        "subject": "Terminbestätigung – Auftrag {{ commission_number }}",
-        "body": GREETING + "Ihr Termin wurde bestätigt:\n\n" + APPOINTMENT_LINE + "\n\nAuftrag: {{ commission_number }}\n" + APPOINTMENT_DETAILS + "{% if address %}\nAdresse: {{ address }}{% endif %}\n\n{% if custom_appointment %}Die Kalenderdatei reserviert ab dem Terminbeginn {{ calendar_duration_minutes }} Minuten. Die tatsächliche Arbeitsdauer kann davon abweichen.{% else %}Öffnen Sie die Kalenderdatei im Anhang, um den Termin in Ihren Kalender zu übernehmen.{% endif %}\n",
+        "subject": "WBG Lünen – Terminbestätigung zu Auftrag {{ commission_number }}",
+        "body": GREETING + "Ihr Termin wurde bestätigt:\n\n" + APPOINTMENT_LINE + "\n\nAuftrag: {{ commission_number }}\n" + APPOINTMENT_DETAILS + "{% if address %}\nAdresse: {{ address }}{% endif %}\n\nÖffnen Sie die Kalenderdatei im Anhang, um den Termin in Ihren Kalender zu übernehmen.{% if custom_appointment %}\n\nDie Kalenderdatei reserviert ab dem Terminbeginn {{ calendar_duration_minutes }} Minuten. Die tatsächliche Arbeitsdauer kann davon abweichen.{% endif %}" + SIGNATURE,
     },
     "appointment_accepted": {
         "label": "Termin: Zusage an Handwerker",
         "fields": ORDER_FIELDS + " recipient_name appointment tenant_comment",
-        "subject": "Termin bestätigt – Auftrag {{ commission_number }}",
-        "body": GREETING + "der Bewohner hat folgenden Termin bestätigt:\n\n" + APPOINTMENT_LINE + "\n\nAuftrag: {{ commission_number }}{% if address %}\nAdresse: {{ address }}{% endif %}{% if tenant_comment %}\n\nKommentar des Bewohners:\n{{ tenant_comment }}{% endif %}",
+        "subject": "WBG Lünen – Terminzusage zu Auftrag {{ commission_number }}",
+        "body": GREETING + "der Bewohner hat folgenden Termin bestätigt:\n\n" + APPOINTMENT_LINE + "\n\nAuftrag: {{ commission_number }}{% if address %}\nAdresse: {{ address }}{% endif %}{% if tenant_comment %}\n\nKommentar des Bewohners:\n{{ tenant_comment }}{% endif %}" + SIGNATURE,
     },
     "appointment_rejected": {
         "label": "Termin: Absage an Handwerker",
         "fields": ORDER_FIELDS + " recipient_name tenant_comment",
-        "subject": "Terminvorschläge abgelehnt – Auftrag {{ commission_number }}",
-        "body": GREETING + "der Bewohner hat alle Terminvorschläge abgelehnt.\n\nAuftrag: {{ commission_number }}{% if address %}\nAdresse: {{ address }}{% endif %}{% if tenant_comment %}\n\nKommentar des Bewohners:\n{{ tenant_comment }}{% endif %}",
+        "subject": "WBG Lünen – Terminvorschläge zu Auftrag {{ commission_number }} abgelehnt",
+        "body": GREETING + "der Bewohner hat alle Terminvorschläge abgelehnt.\n\nAuftrag: {{ commission_number }}{% if address %}\nAdresse: {{ address }}{% endif %}{% if tenant_comment %}\n\nKommentar des Bewohners:\n{{ tenant_comment }}{% endif %}" + SIGNATURE,
     },
     "commission_rejected": {
         "label": "Auftragsstatus: Auftrag abgelehnt",
         "fields": ORDER_FIELDS + " craftsman_name reason",
-        "subject": "Auftrag abgelehnt: {{ commission_number }}",
-        "body": "Auftrag abgelehnt\n\n" + ORDER_DETAILS + "Mieter: {{ tenant_name }}\nHandwerker: {{ craftsman_name }}\n\nBegründung / Kommentar:\n{{ reason }}",
+        "subject": "WBG Lünen – Auftrag {{ commission_number }} abgelehnt",
+        "body": "Guten Tag,\n\nder folgende Auftrag wurde abgelehnt:\n\n" + ORDER_DETAILS + "Mieter: {{ tenant_name }}\nHandwerker: {{ craftsman_name }}\n\nBegründung / Kommentar:\n{{ reason }}{% if commission_url %}\n\nAuftrag öffnen:\n{{ commission_url }}{% endif %}" + SIGNATURE,
     },
     "commission_unsuccessful": {
         "label": "Auftragsstatus: Nicht erfolgreich abgeschlossen",
         "fields": ORDER_FIELDS + " craftsman_name reason",
-        "subject": "Auftrag nicht erfolgreich abgeschlossen: {{ commission_number }}",
-        "body": "Auftrag nicht erfolgreich abgeschlossen\n\n" + ORDER_DETAILS + "Mieter: {{ tenant_name }}\nHandwerker: {{ craftsman_name }}\n\nBegründung / Kommentar:\n{{ reason }}",
+        "subject": "WBG Lünen – Auftrag {{ commission_number }} nicht erfolgreich abgeschlossen",
+        "body": "Guten Tag,\n\nder folgende Auftrag wurde als nicht erfolgreich abgeschlossen gemeldet:\n\n" + ORDER_DETAILS + "Mieter: {{ tenant_name }}\nHandwerker: {{ craftsman_name }}\n\nBegründung / Kommentar:\n{{ reason }}{% if commission_url %}\n\nAuftrag öffnen:\n{{ commission_url }}{% endif %}" + SIGNATURE,
     },
     "process_internal": {
         "label": "Vorgang: Neue Information an Sachbearbeitung",
         "fields": "process_id author_name commission_numbers message",
-        "subject": "Neue Information zu Vorgang {{ process_id }}",
-        "body": "Handwerker: {{ author_name or 'Unbekannt' }}\nVorgang: {{ process_id }}\nAufträge: {{ commission_numbers|join(', ') }}\n\n{{ message }}",
+        "subject": "WBG Lünen – Neue Information zu Vorgang {{ process_id }}",
+        "body": "Guten Tag,\n\nzu folgendem Vorgang liegt eine neue Information vor:\n\nVorgang: {{ process_id }}{% if commission_numbers %}\nAufträge: {{ commission_numbers|join(', ') }}{% endif %}\nAbsender: {{ author_name or 'Unbekannt' }}\n\nNachricht:\n{{ message }}" + SIGNATURE,
     },
     "process_external": {
         "label": "Handwerkerportal: Neue Zusatzinformation",
         "fields": ORDER_FIELDS + " portal_name recipient_name author_name message",
-        "subject": "{{ portal_name }} – Neue Zusatzinformation zu Auftrag {{ commission_number }}",
-        "body": GREETING + "zu Ihrem Auftrag wurde eine neue Zusatzinformation erfasst.\n\nAuftrag: {{ commission_number }}\nTitel: {{ commission_title }}\nAbsender: {{ author_name or 'Sachbearbeitung' }}\n\n{{ message }}\n\nDen vollständigen Verlauf finden Sie hier:\n{{ commission_url }}",
+        "subject": "{{ portal_name }} – Neue Information zu Auftrag {{ commission_number }}",
+        "body": GREETING + "zu Ihrem Auftrag liegt eine neue Zusatzinformation vor.\n\nAuftrag: {{ commission_number }}\nTitel: {{ commission_title }}\nAbsender: {{ author_name or 'Sachbearbeitung' }}\n\nNachricht:\n{{ message }}\n\nDen vollständigen Verlauf finden Sie im Portal:\n{{ commission_url }}" + SIGNATURE,
     },
     "appointment_calendar": {
         "label": "Termin: Kalendereintrag im Anhang",
         "fields": ORDER_FIELDS + " recipient_name craftsman_name topic appointment custom_appointment calendar_duration_minutes",
         "subject": "Handwerkertermin – Auftrag {{ commission_number }}",
-        "body": "Auftrag: {{ commission_number }}\n" + APPOINTMENT_DETAILS + "{% if address %}\nAdresse: {{ address }}{% endif %}",
+        "body": "Auftrag: {{ commission_number }}\n" + APPOINTMENT_DETAILS + "{% if address %}\nAdresse: {{ address }}{% endif %}{% if custom_appointment %}\n\nDie Kalenderdatei reserviert ab dem Terminbeginn {{ calendar_duration_minutes }} Minuten. Die tatsächliche Arbeitsdauer kann davon abweichen.{% endif %}\n",
     },
 }
 
@@ -276,16 +278,51 @@ def render_email_template(key, context):
 
 
 def email_body_html(body):
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
     parts = []
     offset = 0
     for match in re.finditer(r"https?://[^\s<>]+", body):
         parts.append(escape(body[offset:match.start()]))
         url = escape(match.group(), quote=True)
-        parts.append(f'<a href="{url}">{url}</a>')
+        parts.append(
+            f'<a href="{url}" style="color:#007f96;text-decoration:underline;'
+            f'overflow-wrap:anywhere;word-break:break-word;">{url}</a>'
+        )
         offset = match.end()
     parts.append(escape(body[offset:]))
-    content = "".join(parts).replace("\n", "<br>\n")
-    return '<!doctype html><html lang="de"><body style="font-family:Arial,sans-serif;line-height:1.5">' + content + "</body></html>"
+    content = "".join(parts).strip()
+    content = "".join(
+        '<p style="margin:0 0 16px;">'
+        + paragraph.replace("\n", "<br>\n")
+        + "</p>"
+        for paragraph in re.split(r"\n[ \t]*\n+", content)
+    )
+    return (
+        '<!doctype html><html lang="de"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>WBG Lünen</title></head>'
+        '<body style="margin:0;padding:0;background:#f6f6f6;'
+        'font-family:Arial,sans-serif;color:#222;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"'
+        ' style="border-collapse:collapse;background:#f6f6f6;"><tr>'
+        '<td align="center" style="padding:24px 12px;">'
+        '<table role="presentation" width="580" cellpadding="0" cellspacing="0"'
+        ' style="width:100%;max-width:580px;table-layout:fixed;border-collapse:collapse;">'
+        '<tr><td align="right" style="padding:24px;background:#fff;">'
+        '<img src="https://static.wbg-luenen-dev.de/wbglogo.jpg"'
+        ' alt="WBG Lünen – Gemeinsam zuhause" width="256" height="59"'
+        ' style="display:block;width:256px;max-width:100%;height:auto;border:0;">'
+        '</td></tr><tr><td style="padding:0 24px 8px;background:#fff;'
+        'font-family:Arial,sans-serif;font-size:14px;line-height:1.5;'
+        'overflow-wrap:anywhere;word-break:break-word;">'
+        + content
+        + '</td></tr><tr><td align="center" style="padding:16px 8px;'
+        'font-family:Arial,sans-serif;font-size:12px;line-height:1.5;color:#666;">'
+        'WBG Lünen Bau- und Verwaltungs-GmbH<br>'
+        'Wohnungsbaugenossenschaft Lünen eG<br>'
+        'Kurt-Schumacher-Str. 11, 44534 Lünen'
+        '</td></tr></table></td></tr></table></body></html>'
+    )
 
 
 def set_email_content(message, subject, body):
