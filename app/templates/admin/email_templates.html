@@ -24,6 +24,24 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="template_key" value="{{ template_key }}">
       <div class="card-body">
+        {% if is_layout %}
+        <label class="form-label" for="emailLayout">HTML-Layout</label>
+        <textarea class="form-control font-monospace" id="emailLayout" name="html"
+                  rows="24" maxlength="50000" required>{{ template_value.html }}</textarea>
+        <div class="form-text mb-3">
+          Dieses Layout gilt für alle E-Mail-Typen. Logo, Farben und Fußzeile können
+          Sie hier für Ihre Installation festlegen. Der vollständige Mailtext wird
+          über <code>{{ '{{ content }}' }}</code> eingesetzt.
+          Klartextansicht und Kalendereinträge verwenden dieses Layout nicht.
+          Änderungen gelten für künftig erzeugte HTML-Mailansichten.
+        </div>
+        <label class="form-label" for="previewTemplate">Mailtyp für die Vorschau</label>
+        <select class="form-select" id="previewTemplate" name="preview_template">
+          {% for key, label in preview_options %}
+          <option value="{{ key }}" {% if key == preview_key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
         <label class="form-label" for="emailSubject">Betreff</label>
         <input class="form-control mb-3" id="emailSubject" name="subject"
                value="{{ template_value.subject }}" maxlength="500" required>
@@ -35,6 +53,7 @@
           Links werden automatisch anklickbar. Änderungen gelten für künftig
           vorbereitete Nachrichten. Bereits gespeicherte Mailinhalte bleiben erhalten.
         </div>
+        {% endif %}
       </div>
       <div class="card-footer d-flex flex-wrap gap-2">
         <button class="btn btn-primary" name="action" value="save">Speichern</button>
@@ -47,6 +66,13 @@
       <div class="card-header">Vorschau mit Beispieldaten</div>
       <div class="card-body">
         <div class="fw-semibold mb-3">{{ preview.subject }}</div>
+        {% if preview_html %}
+        <div class="small text-muted mb-2">HTML-Ansicht</div>
+        <iframe class="w-100 border rounded mb-3" title="HTML-Vorschau"
+                sandbox referrerpolicy="no-referrer" srcdoc="{{ preview_html }}"
+                style="height:520px;"></iframe>
+        {% endif %}
+        <div class="small text-muted mb-2">Textansicht</div>
         <pre class="mb-0" style="white-space:pre-wrap;font-family:inherit">{{ preview.body }}</pre>
       </div>
     </div>
@@ -56,18 +82,23 @@
     <div class="card shadow-sm">
       <div class="card-header">Verfügbare Platzhalter</div>
       <div class="card-body small">
-        <p>Platzhalter werden beim Vorbereiten der Nachricht durch die aktuellen Werte ersetzt.</p>
+        <p>{% if is_layout %}Platzhalter werden beim Erzeugen der HTML-Ansicht ersetzt.
+          Der Mailtext wird sicher für HTML aufbereitet, der Betreff wird maskiert.
+          Im Layout sind HTML und die beiden Platzhalter erlaubt.
+          {% else %}Platzhalter werden beim Vorbereiten der Nachricht durch die aktuellen Werte ersetzt.{% endif %}</p>
         {% for name, label in fields.items() %}
         <div class="mb-2">
           <code>{{ '{{ ' ~ name ~ ' }}' }}</code>
           <div>{{ label }}</div>
         </div>
         {% endfor %}
+        {% if not is_layout %}
         <hr>
         <div class="fw-semibold">Optionaler Abschnitt</div>
         <pre class="small">{{ '{% if address %}Adresse: {{ address }}{% endif %}' }}</pre>
         <div class="fw-semibold">Liste von Positionen</div>
         <pre class="small">{{ '{% for position in positions %}\n{{ position.text }} · {{ position.units }}\n{% endfor %}' }}</pre>
+        {% endif %}
       </div>
     </div>
   </div>
