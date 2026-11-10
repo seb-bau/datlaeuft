@@ -4,14 +4,19 @@ import sys
 import tempfile
 import types
 import unittest
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
+from threading import Barrier
+from time import monotonic
 from unittest.mock import Mock, patch
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 
@@ -210,6 +215,71 @@ class TicketWebhookTransactionTests(unittest.TestCase):
         self.assertEqual(claim.ticket_id, self.ticket_id)
         ticket = self.db.session.get(self.models.TicketMirror, self.ticket_id)
         self.assertEqual(ticket.ai_state, self.models.TicketAiState.PROCESSING.value)
+
+    def test_concurrent_claims_and_requeues_do_not_raise_database_conflicts(self):
+        if self.db.engine.dialect.name not in {"mysql", "mariadb"}:
+            self.skipTest("Dieser Test benötigt InnoDB-Zeilensperren.")
+        tickets = [self.db.session.get(self.models.TicketMirror, self.ticket_id)]
+        for index in range(15):
+            ticket = self.models.TicketMirror(
+                erp_id=20000 + index, subject="Parallel verarbeiten",
+                source_signature=f"source-{index}",
+                state=self.models.TicketMirrorState.NEW.value,
+                ai_state=self.models.TicketAiState.QUEUED.value,
+            )
+            self.db.session.add(ticket)
+            tickets.append(ticket)
+        self.db.session.flush()
+        ticket_ids = [ticket.id for ticket in tickets]
+        for ticket in tickets:
+            self.db.session.add(self.models.TicketAiJob(
+                ticket_id=ticket.id, source_signature=ticket.source_signature,
+            ))
+        self.db.session.commit()
+        self.db.session.remove()
+        barrier = Barrier(3)
+        deadline = monotonic() + 4
+
+        def exercise_queue(publish):
+            actions = 0
+            failures = []
+            with self.app.app_context():
+                try:
+                    self.db.session.execute(text("SET SESSION innodb_lock_wait_timeout=1"))
+                    barrier.wait(timeout=10)
+                    while monotonic() < deadline:
+                        try:
+                            if publish:
+                                self.db.session.rollback()
+                                ticket = (
+                                    self.models.TicketMirror.query
+                                    .filter_by(id=ticket_ids[actions % len(ticket_ids)])
+                                    .populate_existing().with_for_update().one()
+                                )
+                                ticket.source_signature = f"changed-{actions}"
+                                self.ai_service.enqueue_ticket_ai(ticket)
+                                self.db.session.commit()
+                            else:
+                                claim = self.ai_service.claim_ticket_ai()
+                                if claim is not None:
+                                    self.ai_service.settle_ticket_ai(
+                                        claim, self.ai_service.TicketAiChanged(),
+                                    )
+                            actions += 1
+                        except OperationalError as error:
+                            self.db.session.rollback()
+                            failures.append((error.orig.args[0], str(error.orig)))
+                finally:
+                    self.db.session.remove()
+            return actions, failures
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(exercise_queue, role) for role in (True, False, False)]
+            results = [future.result(timeout=20) for future in futures]
+        failures = [failure for _, errors in results for failure in errors]
+        counts = dict(Counter(code for code, _ in failures))
+        self.assertTrue(all(actions > 0 for actions, _ in results))
+        self.assertEqual(len(failures), 0, f"Datenbankkonflikte: {counts}; {failures[:3]}")
 
     def test_new_ticket_and_ai_job_are_saved_together(self):
         ticket = self.db.session.get(self.models.TicketMirror, self.ticket_id)
