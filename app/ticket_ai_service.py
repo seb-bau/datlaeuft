@@ -133,6 +133,7 @@ def ticket_ai_lease_seconds() -> float:
 
 def claim_ticket_ai() -> TicketAiClaim | None:
     lease_seconds = ticket_ai_lease_seconds()
+    db.session.rollback()
     ticket = (
         TicketMirror.query.join(TicketAiJob, TicketAiJob.ticket_id == TicketMirror.id)
         .filter(

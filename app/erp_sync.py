@@ -38,7 +38,7 @@ from .process_info_service import (
     process_process_info_work,
     sync_process_infos,
 )
-from .ticket_service import sync_ticket_mirror
+from .ticket_service import fetch_ticket_row, sync_ticket_mirror, upsert_ticket_row
 
 from .external_craftsman_service import (
     process_external_assignment_mail_batch,
@@ -638,19 +638,23 @@ def process_webhook_event(event_id: int) -> None:
                 "Webhook enthält keine Ticket-ID."
             )
 
+        ticket_erp_id = event.entity_id
+        action = event.action
+        deleted = (action or "").casefold() == "deleted"
         service = WowiportService()
-        deleted = (
-                          event.action or ""
-                  ).casefold() == "deleted"
-
-        sync_ticket_mirror(
-            event.entity_id,
-            service,
-            deleted=deleted,
+        ticket_row = (
+            None if deleted else fetch_ticket_row(ticket_erp_id, service)
         )
 
+        db.session.rollback()
+        if deleted:
+            sync_ticket_mirror(ticket_erp_id, service, deleted=True)
+        else:
+            upsert_ticket_row(ticket_row)
+        db.session.commit()
+
         count = sync_ticket_commission_priorities(
-            event.entity_id,
+            ticket_erp_id,
             service,
             deleted=deleted,
         )
@@ -663,10 +667,10 @@ def process_webhook_event(event_id: int) -> None:
         audit(
             "webhook.wowiport",
             "ticket",
-            event.entity_id,
+            ticket_erp_id,
             {
-                "action": event.action,
-                "event_id": event.id,
+                "action": action,
+                "event_id": event_id,
             },
         )
         return

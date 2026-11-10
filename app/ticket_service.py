@@ -35,17 +35,24 @@ def sync_ticket_mirror(
     *,
     deleted: bool = False,
 ) -> TicketMirror | None:
-    ticket = TicketMirror.query.filter_by(
-        erp_id=ticket_erp_id
-    ).one_or_none()
-
     if deleted:
+        ticket = (
+            TicketMirror.query.filter_by(erp_id=ticket_erp_id)
+            .populate_existing().with_for_update().one_or_none()
+        )
         if ticket is not None:
             ticket.deleted_at = utc_now()
             ticket.synced_at = utc_now()
 
         return ticket
 
+    return upsert_ticket_row(fetch_ticket_row(ticket_erp_id, service))
+
+
+def fetch_ticket_row(
+    ticket_erp_id: int,
+    service: WowiportService | None = None,
+) -> dict[str, Any]:
     wowiport = service or WowiportService()
     rows = wowiport.get_ticket_rows(
         ticket_erp_id=ticket_erp_id,
@@ -67,7 +74,7 @@ def sync_ticket_mirror(
             "wurde nicht gefunden."
         )
 
-    return upsert_ticket_row(row)
+    return row
 
 
 def sync_all_ticket_mirrors(
@@ -750,9 +757,10 @@ def upsert_ticket_row(
         value(row, "Id"),
         "Ticket-ID",
     )
-    ticket = TicketMirror.query.filter_by(
-        erp_id=ticket_erp_id
-    ).one_or_none()
+    ticket = (
+        TicketMirror.query.filter_by(erp_id=ticket_erp_id)
+        .populate_existing().with_for_update().one_or_none()
+    )
     signature = ticket_signature(row)
     is_new = ticket is None
     changed = ticket is not None and ticket.source_signature != signature
