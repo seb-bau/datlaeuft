@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, timezone
 from hashlib import sha256
 import json
 import re
@@ -229,7 +229,7 @@ def offline_operation():
 def delivery_issues():
     from .api import current_api_user
     user = current_api_user()
-    rows = MobileSyncDelivery.query.filter_by(user_id=user.id, state="failed").order_by(MobileSyncDelivery.created_at.desc()).limit(100).all()
+    rows = MobileSyncDelivery.query.filter(MobileSyncDelivery.user_id == user.id, MobileSyncDelivery.state.in_(["failed", "expired"])).order_by(MobileSyncDelivery.created_at.desc()).limit(100).all()
     return jsonify(items=[{"id": row.id, "module": "commissions", "message": row.error, "created_at": row.created_at.isoformat()} for row in rows])
 
 
@@ -275,6 +275,14 @@ def process_mobile_deliveries(limit=20):
                 if appointment is None or appointment.status != "pending":
                     row.state = "cancelled"
                 else:
+                    expires_at = appointment.expires_at
+                    if expires_at is not None and expires_at.replace(tzinfo=expires_at.tzinfo or timezone.utc) <= now:
+                        row.state = "expired"
+                        row.error = "Die Terminvorschläge sind vor dem Versand abgelaufen. Bitte neue Vorschläge erstellen."
+                        row.payload = {}
+                        db.session.commit()
+                        processed += 1
+                        continue
                     send_appointment_request_email(appointment, row.payload["public_token"])
                     row.state = "sent"
             else:

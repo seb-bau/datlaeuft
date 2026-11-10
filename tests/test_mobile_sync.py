@@ -164,7 +164,8 @@ class MobileSynchronizationTests(unittest.TestCase):
         self.assertEqual(self.models.MobileSyncOperation.query.count(), 0)
 
     def test_exception_rolls_back_even_after_inner_commit(self):
-        response = self.post(self.operation(body={"minutes": 60, "raise_after_commit": True}))
+        with self.assertLogs(self.app.logger, level="ERROR"):
+            response = self.post(self.operation(body={"minutes": 60, "raise_after_commit": True}))
         self.assertEqual(response.status_code, 503)
         self.assertEqual(self.models.TimeEntry.query.count(), 0)
 
