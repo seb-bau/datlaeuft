@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .mobile_transaction import commit_mobile_changes, mobile_transaction_active, mobile_snapshot_read
+from .mobile_transaction import commit_mobile_changes, defer_mobile_delivery, mobile_transaction_active, mobile_snapshot_read
 
 from typing import Any
 
@@ -159,10 +159,13 @@ def create_commission_info(
             body=data.get("body"),
         )
 
-        if item.state != "synced" and not mobile_transaction_active():
-            item = write_outgoing_info(
-                item.id
-            )
+        if item.state != "synced":
+            if mobile_transaction_active():
+                defer_mobile_delivery("process_info", {"info_id": item.id})
+            else:
+                item = write_outgoing_info(
+                    item.id
+                )
 
     except ValueError as exc:
         db.session.rollback()

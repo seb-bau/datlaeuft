@@ -6,8 +6,9 @@ import types
 import unittest
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from flask import Flask, abort, jsonify, request
@@ -112,7 +113,7 @@ class MobileSynchronizationTests(unittest.TestCase):
             viewable(commission_id, current_user())
             return jsonify(items=[{"id": entry.id, "minutes": entry.minutes} for entry in cls.models.TimeEntry.query.filter_by(commission_id=commission_id).all()])
 
-        cls.tables = [model.__table__ for model in (cls.models.User, cls.models.Commission, cls.models.TimeEntry, cls.models.MobileSyncOperation, cls.models.MobileSyncDelivery)]
+        cls.tables = [model.__table__ for model in (cls.models.User, cls.models.Commission, cls.models.TimeEntry, cls.models.MobileSyncOperation, cls.models.MobileSyncDelivery, cls.models.ErpOutboxOperation, cls.models.ProcessInfo)]
 
     def setUp(self):
         self.context = self.app.app_context()
@@ -131,7 +132,7 @@ class MobileSynchronizationTests(unittest.TestCase):
         self.db.session.commit()
         self.headers = {"Authorization": "Bearer " + create_access_token(identity="1")}
         self.client = self.app.test_client()
-        self.base = {"path": "/api/commissions/10", "query": [], "value": {"local_status": "waiting_for_acceptance", "assigned_user": {"id": 1}, "can_edit": True, "is_actionable": True, "accepted_appointment_from": None, "accepted_appointment_to": None, "accepted_appointment_comment": None, "accepted_appointment_is_manual": None}}
+        self.base = {"path": "/api/commissions/10", "query": [], "value": {"local_status": "waiting_for_acceptance", "assigned_user": {"id": 1}, "can_edit": True, "is_actionable": True, "accepted_appointment_from": None, "accepted_appointment_to": None, "accepted_appointment_comment": None, "accepted_appointment_is_manual": None, "accepted_appointment_has_time": None}}
 
     def operation(self, **values):
         result = {"id": str(uuid4()), "path": "/api/commissions/10/time", "method": "POST", "body": {"minutes": 60}, "base": self.base}
@@ -291,6 +292,74 @@ class MobileSynchronizationTests(unittest.TestCase):
         self.db.session.commit()
         self.assertEqual(self.post(operation).status_code, 200)
         self.assertEqual(self.models.TimeEntry.query.count(), 1)
+
+    def test_additive_booking_still_waits_for_its_predecessor(self):
+        operation = self.operation(predecessor_id=str(uuid4()))
+        operation.pop("base")
+        response = self.post(operation)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json["code"], "dependency_pending")
+        self.assertEqual(self.models.TimeEntry.query.count(), 0)
+
+    def test_server_issues_and_retries_are_scoped_to_user(self):
+        self.db.session.add(self.models.Commission(id=11, user_id=2))
+        self.db.session.flush()
+        for user_id, commission_id in [(1, 10), (2, 11)]:
+            self.db.session.add(self.models.ErpOutboxOperation(commission_id=commission_id, operation_type="create_commission", idempotency_key=str(uuid4()), state="failed", last_error=f"ERP {user_id}", available_at=self.sync.utc_now() + timedelta(hours=1)))
+            self.db.session.add(self.models.ProcessInfo(id=str(uuid4()), process_erp_id=commission_id, sender_user_id=user_id, direction="craftsman", body="Text", erp_body="Text", state="uncertain", last_error=f"Info {user_id}"))
+        self.db.session.commit()
+        response = self.client.get("/api/mobile/delivery-issues", headers=self.headers)
+        messages = [item["message"] for item in response.json["items"]]
+        self.assertEqual(len(messages), 2)
+        self.assertTrue(any("ERP 1" in message for message in messages))
+        self.assertTrue(any("Info 1" in message for message in messages))
+        self.assertFalse(any("ERP 2" in message or "Info 2" in message for message in messages))
+        self.assertEqual(self.client.post("/api/mobile/delivery-issues/retry", headers=self.headers).status_code, 200)
+        self.db.session.expire_all()
+        own = self.models.ErpOutboxOperation.query.filter_by(commission_id=10).one()
+        other = self.models.ErpOutboxOperation.query.filter_by(commission_id=11).one()
+        self.assertLess(own.available_at, other.available_at)
+
+    def test_message_delivery_survives_service_commits(self):
+        service = types.ModuleType(self.package_name + ".process_info_service")
+        def write(info_id):
+            self.assertEqual(info_id, "message")
+            row = self.db.session.get(self.models.MobileSyncDelivery, "delivery")
+            self.assertEqual(row.state, "processing")
+            self.db.session.commit()
+        service.write_outgoing_info = Mock(side_effect=write)
+        self.db.session.add(self.models.MobileSyncDelivery(id="delivery", user_id=1, kind="process_info", payload={"info_id": "message"}))
+        self.db.session.commit()
+        with patch.dict(sys.modules, {service.__name__: service}):
+            self.assertEqual(self.sync.process_mobile_deliveries(), 1)
+            self.assertEqual(self.sync.process_mobile_deliveries(), 0)
+        service.write_outgoing_info.assert_called_once_with("message")
+        row = self.db.session.get(self.models.MobileSyncDelivery, "delivery")
+        self.assertEqual(row.state, "sent")
+        self.assertEqual(row.payload, {})
+
+    def test_failed_message_delivery_is_retained_for_retry(self):
+        service = types.ModuleType(self.package_name + ".process_info_service")
+        service.write_outgoing_info = Mock(side_effect=RuntimeError("Wowiport nicht erreichbar"))
+        self.db.session.add(self.models.MobileSyncDelivery(id="delivery", user_id=1, kind="process_info", payload={"info_id": "message"}))
+        self.db.session.commit()
+        with patch.dict(sys.modules, {service.__name__: service}):
+            self.assertEqual(self.sync.process_mobile_deliveries(), 1)
+        row = self.db.session.get(self.models.MobileSyncDelivery, "delivery")
+        self.assertEqual(row.state, "failed")
+        self.assertEqual(row.attempts, 1)
+        self.assertEqual(row.payload, {"info_id": "message"})
+        self.assertEqual(row.error, "Wowiport nicht erreichbar")
+
+    def test_interrupted_delivery_is_reclaimed_after_lease_expires(self):
+        service = types.ModuleType(self.package_name + ".process_info_service")
+        service.write_outgoing_info = Mock()
+        self.db.session.add(self.models.MobileSyncDelivery(id="delivery", user_id=1, kind="process_info", payload={"info_id": "message"}, state="processing", available_at=self.sync.utc_now() - timedelta(seconds=1)))
+        self.db.session.commit()
+        with patch.dict(sys.modules, {service.__name__: service}):
+            self.assertEqual(self.sync.process_mobile_deliveries(), 1)
+        service.write_outgoing_info.assert_called_once_with("message")
+        self.assertEqual(self.db.session.get(self.models.MobileSyncDelivery, "delivery").state, "sent")
 
 
 if __name__ == "__main__":

@@ -6,11 +6,12 @@ from uuid import UUID
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import jwt_required
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import HTTPException
 
 from .extensions import db
-from .models import Commission, MobileSyncOperation, MobileSyncDelivery, User, utc_now
+from .models import Commission, ErpOutboxOperation, MobileSyncOperation, MobileSyncDelivery, ProcessInfo, User, utc_now
 from .mobile_transaction import current_mobile_transaction
 
 
@@ -41,12 +42,13 @@ def normalized_value(resource, payload, target_id=None):
             "local_status", "assigned_user", "can_edit", "is_actionable",
             "accepted_appointment_from", "accepted_appointment_to",
             "accepted_appointment_comment", "accepted_appointment_is_manual",
+            "accepted_appointment_has_time",
         )}
     if target_id is not None:
         item = next((item for item in payload.get("items", []) if item.get("id") == target_id), None)
         if item is None:
             return None
-        keys = ("id", "user", "task_template", "service_date", "minutes", "note", "work_minutes", "waiting_minutes", "material_minutes", "travel_minutes", "documentation_minutes", "extra_minutes", "review_status", "review_level", "quantity", "usage_status", "cancelled", "caption", "source", "updated_at")
+        keys = ("id", "user", "task_template", "service_date", "minutes", "note", "deviation_reason", "work_minutes", "waiting_minutes", "material_minutes", "travel_minutes", "documentation_minutes", "extra_minutes", "review_status", "review_level", "quantity", "usage_status", "is_cancelled", "can_cancel", "caption", "source", "updated_at")
         return {key: item.get(key) for key in keys if key in item}
     return payload
 
@@ -108,6 +110,11 @@ def offline_operation():
         path, method = operation.get("path", ""), operation.get("method", "")
         if not isinstance(path, str) or not write_pattern.fullmatch(path) or method not in {"POST", "PATCH", "DELETE"}:
             raise ValueError("Dieser Vorgang ist nicht freigegeben.")
+        if not isinstance(operation.get("body", {}), dict):
+            raise ValueError("Ungültige Vorgangsdaten.")
+        predecessor_id = operation.get("predecessor_id")
+        if predecessor_id is not None:
+            predecessor_id = str(UUID(predecessor_id))
         upload = request.files.get("request_body")
         raw_body = upload.read(80 * 1024 * 1024 + 1) if upload else canonical(operation.get("body") or {}).encode()
         if len(raw_body) > 80 * 1024 * 1024:
@@ -148,6 +155,9 @@ def offline_operation():
             db.session.get(Commission, int(match.group(1)), populate_existing=True, with_for_update=True)
             if not commission.is_actionable and not re.search(r"/photos(?:/\d+)?$", path):
                 return jsonify(message="Der Auftrag wartet noch auf die Wowiport-Bestätigung.", code="awaiting_erp"), 503
+        predecessor = db.session.get(MobileSyncOperation, (user.id, predecessor_id)) if predecessor_id else None
+        if predecessor_id and predecessor is None:
+            return jsonify(message="Ein vorheriger Vorgang steht noch aus.", code="dependency_pending"), 409
         base = operation.get("base")
         if base is not None:
             if not isinstance(base, dict) or not isinstance(base.get("path"), str) or not read_pattern.fullmatch(base["path"]) or not valid_query(base.get("query", [])):
@@ -159,11 +169,7 @@ def offline_operation():
                 return current
             current_value = normalized_value(base["path"], current.get_json(), base.get("target_id"))
             expected_value = base.get("value")
-            predecessor_id = operation.get("predecessor_id")
-            if predecessor_id:
-                predecessor = db.session.get(MobileSyncOperation, (user.id, str(UUID(predecessor_id))))
-                if predecessor is None:
-                    return jsonify(message="Ein vorheriger Vorgang steht noch aus.", code="dependency_pending"), 409
+            if predecessor is not None:
                 key = base["path"] + (f"#{base['target_id']}" if base.get("target_id") is not None else "")
                 if key in predecessor.response_payload.get("baselines", {}):
                     expected_value = predecessor.response_payload["baselines"][key]
@@ -237,7 +243,20 @@ def delivery_issues():
     from .api import current_api_user
     user = current_api_user()
     rows = MobileSyncDelivery.query.filter(MobileSyncDelivery.user_id == user.id, MobileSyncDelivery.state.in_(["failed", "expired"])).order_by(MobileSyncDelivery.created_at.desc()).limit(100).all()
-    return jsonify(items=[{"id": row.id, "module": "commissions", "message": row.error, "created_at": row.created_at.isoformat()} for row in rows])
+    items = [{"id": row.id, "module": "commissions", "message": row.error, "created_at": row.created_at.isoformat()} for row in rows]
+    failures = ErpOutboxOperation.query.join(Commission).filter(
+        or_(Commission.user_id == user.id, Commission.created_by_user_id == user.id),
+        ErpOutboxOperation.state == "failed",
+    ).order_by(ErpOutboxOperation.created_at.desc()).limit(100).all()
+    for row in failures:
+        items.append({"id": f"erp:{row.id}", "module": "commissions", "message": f"Auftrag {row.commission.erp_idnum or row.commission.id} · Wowiport: {row.last_error or 'Übertragung fehlgeschlagen.'}", "created_at": row.created_at.isoformat()})
+    messages = ProcessInfo.query.filter(
+        ProcessInfo.sender_user_id == user.id,
+        or_(ProcessInfo.state.in_(["failed", "uncertain"]), ProcessInfo.mail_state == "failed"),
+    ).order_by(ProcessInfo.updated_at.desc()).limit(100).all()
+    for row in messages:
+        items.append({"id": f"info:{row.id}", "module": "commissions", "message": "Vorgangsinformation: " + (row.last_error or "Die Übertragung wird erneut geprüft."), "created_at": row.created_at.isoformat()})
+    return jsonify(items=items)
 
 
 @mobile_sync_bp.get("/offline-operations/<operation_id>")
@@ -262,6 +281,14 @@ def retry_deliveries():
     user = current_api_user()
     for row in MobileSyncDelivery.query.filter_by(user_id=user.id, state="failed").all():
         row.available_at = utc_now()
+    failures = ErpOutboxOperation.query.join(Commission).filter(
+        or_(Commission.user_id == user.id, Commission.created_by_user_id == user.id),
+        ErpOutboxOperation.state == "failed",
+    ).all()
+    for row in failures:
+        row.available_at = utc_now()
+    for row in ProcessInfo.query.filter_by(sender_user_id=user.id, mail_state="failed").all():
+        row.mail_available_at = utc_now()
     db.session.commit()
     return jsonify(queued=True)
 
@@ -270,12 +297,19 @@ def process_mobile_deliveries(limit=20):
     processed = 0
     for _ in range(limit):
         now = utc_now()
-        row = MobileSyncDelivery.query.filter(MobileSyncDelivery.state.in_(["pending", "failed"]), MobileSyncDelivery.available_at <= now).order_by(MobileSyncDelivery.created_at).with_for_update(skip_locked=True).first()
+        row = MobileSyncDelivery.query.filter(MobileSyncDelivery.state.in_(["pending", "failed", "processing"]), MobileSyncDelivery.available_at <= now).order_by(MobileSyncDelivery.created_at).with_for_update(skip_locked=True).first()
         if row is None:
             db.session.rollback()
             break
+        row.state = "processing"
+        row.available_at = now + timedelta(minutes=10)
+        db.session.commit()
         try:
-            if row.kind == "appointment":
+            if row.kind == "process_info":
+                from .process_info_service import write_outgoing_info
+                write_outgoing_info(row.payload["info_id"])
+                row.state = "sent"
+            elif row.kind == "appointment":
                 from .appointment_service import send_appointment_request_email
                 from .models import CommissionAppointmentRequest
                 appointment = db.session.get(CommissionAppointmentRequest, row.payload["appointment_id"])
@@ -307,7 +341,7 @@ def process_mobile_deliveries(limit=20):
             row_id = row.id
             db.session.rollback()
             row = db.session.get(MobileSyncDelivery, row_id, populate_existing=True, with_for_update=True)
-            if row is None or row.state not in {"pending", "failed"}:
+            if row is None or row.state != "processing":
                 db.session.rollback()
                 continue
             row.attempts += 1
