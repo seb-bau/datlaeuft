@@ -79,4 +79,6 @@ jobs:
       - name: Gleichzeitige Zugriffe mit MariaDB prüfen
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
-        run: python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v
+        run: |
+          python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v
+          python -m unittest discover -s tests -p test_mobile_sync.py -v

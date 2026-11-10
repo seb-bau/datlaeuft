@@ -4,6 +4,8 @@ import sys
 import tempfile
 import types
 import unittest
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -11,6 +13,8 @@ from uuid import uuid4
 from flask import Flask, abort, jsonify, request
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
 
 
 class MobileSynchronizationTests(unittest.TestCase):
@@ -20,7 +24,11 @@ class MobileSynchronizationTests(unittest.TestCase):
         cls.addClassCleanup(cls.directory.cleanup)
         cls.db = SQLAlchemy()
         cls.app = Flask(__name__)
-        cls.app.config.update(SQLALCHEMY_DATABASE_URI="sqlite:///" + str(Path(cls.directory.name) / "mobile.sqlite"), JWT_SECRET_KEY="mobile-test-secret-at-least-thirty-two-characters", TESTING=True)
+        database_url = os.environ.get("DATLAEUFT_TEST_DATABASE_URL", "sqlite:///" + str(Path(cls.directory.name) / "mobile.sqlite"))
+        database = make_url(database_url)
+        if database.get_backend_name() != "sqlite" and not (database.database or "").startswith("datlaeuft_test_"):
+            raise ValueError("Für diese Tests ist eine eigene Testdatenbank erforderlich.")
+        cls.app.config.update(SQLALCHEMY_DATABASE_URI=database_url, JWT_SECRET_KEY="mobile-test-secret-at-least-thirty-two-characters", TESTING=True)
         cls.db.init_app(cls.app)
         JWTManager(cls.app)
         cls.package_name = "_mobile_sync_test_app"
@@ -88,6 +96,17 @@ class MobileSynchronizationTests(unittest.TestCase):
             cls.transactions.commit_mobile_changes()
             return jsonify(item={"id": commission.id, "local_status": commission.local_status})
 
+        @cls.app.post("/api/commissions/<int:commission_id>/materials")
+        def material(commission_id):
+            commission = viewable(commission_id, current_user())
+            quantity = request.get_json()["quantity"]
+            stock = (commission.raw_payload or {}).get("stock", 10)
+            if stock < quantity:
+                return jsonify(message="Nicht genügend Bestand."), 409
+            commission.raw_payload = {"stock": stock - quantity}
+            cls.transactions.commit_mobile_changes()
+            return jsonify(item={"id": 20, "quantity": quantity})
+
         @cls.app.get("/api/commissions/<int:commission_id>/time")
         def times(commission_id):
             viewable(commission_id, current_user())
@@ -101,8 +120,12 @@ class MobileSynchronizationTests(unittest.TestCase):
         self.addCleanup(self.context.pop)
         self.addCleanup(self.db.session.remove)
         with self.db.engine.begin() as connection:
+            if connection.dialect.name in {"mysql", "mariadb"}:
+                connection.execute(text("SET FOREIGN_KEY_CHECKS=0"))
             self.db.metadata.drop_all(connection, tables=self.tables)
             self.db.metadata.create_all(connection, tables=self.tables)
+            if connection.dialect.name in {"mysql", "mariadb"}:
+                connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
         self.db.session.add_all([self.models.User(id=1, email="one@example.invalid", display_name="One"), self.models.User(id=2, email="two@example.invalid", display_name="Two")])
         self.db.session.add(self.models.Commission(id=10, user_id=1, local_status="waiting_for_acceptance"))
         self.db.session.commit()
@@ -208,6 +231,42 @@ class MobileSynchronizationTests(unittest.TestCase):
         response = self.post(operation)
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.models.TimeEntry.query.count(), 1)
+
+    def test_material_is_not_booked_twice(self):
+        operation = self.operation(path="/api/commissions/10/materials", body={"quantity": 3})
+        self.assertEqual(self.post(operation).status_code, 200)
+        self.assertEqual(self.post(operation).status_code, 200)
+        self.db.session.expire_all()
+        self.assertEqual(self.db.session.get(self.models.Commission, 10).raw_payload["stock"], 7)
+
+    def test_concurrent_retries_create_only_one_booking(self):
+        operation = self.operation()
+        def submit():
+            with self.app.test_client() as client:
+                return client.post("/api/mobile/offline-operations", json=operation, headers=self.headers).status_code
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = list(executor.map(lambda _: submit(), range(2)))
+        for status in statuses:
+            if status == 503:
+                self.assertEqual(self.post(operation).status_code, 200)
+            else:
+                self.assertEqual(status, 200)
+        self.db.session.expire_all()
+        self.assertEqual(self.models.TimeEntry.query.count(), 1)
+        self.assertEqual(self.models.MobileSyncOperation.query.count(), 1)
+
+    def test_receipt_query_does_not_expose_other_users(self):
+        operation = self.operation()
+        self.assertEqual(self.post(operation).status_code, 200)
+        response = self.client.get("/api/mobile/offline-operations/" + operation["id"], headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        other = {"Authorization": "Bearer " + create_access_token(identity="2")}
+        response = self.client.get("/api/mobile/offline-operations/" + operation["id"], headers=other)
+        self.assertEqual(response.status_code, 404)
+
+    def test_numeric_versions_allow_json_number_roundtrips(self):
+        self.assertTrue(self.sync.same_value({"quantity": 1.0}, {"quantity": 1}))
+        self.assertFalse(self.sync.same_value({"can_edit": True}, {"can_edit": 1}))
 
 
 if __name__ == "__main__":
