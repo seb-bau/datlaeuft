@@ -304,6 +304,7 @@ def process_mobile_deliveries(limit=20):
         if row is None:
             db.session.rollback()
             break
+        row_id = row.id
         row.state = "processing"
         row.available_at = now + timedelta(minutes=10)
         db.session.commit()
@@ -341,7 +342,6 @@ def process_mobile_deliveries(limit=20):
                 row.payload = {}
             db.session.commit()
         except Exception as error:
-            row_id = row.id
             db.session.rollback()
             row = db.session.get(MobileSyncDelivery, row_id, populate_existing=True, with_for_update=True)
             if row is None or row.state != "processing":
