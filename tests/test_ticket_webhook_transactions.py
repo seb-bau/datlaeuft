@@ -14,10 +14,10 @@ from unittest.mock import Mock, patch
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
 
 class TicketWebhookTransactionTests(unittest.TestCase):
@@ -103,6 +103,9 @@ class TicketWebhookTransactionTests(unittest.TestCase):
             cls.models.WebhookEvent, cls.models.AuditLog,
             cls.models.CommissionTicketLink,
             cls.models.BlacklistEntry,
+            cls.models.User, cls.models.ExternalCraftsman,
+            cls.models.WowiResponsibleOfficial, cls.models.WowiEconomicUnit,
+            cls.models.WowiEconomicUnitJurisdiction,
         )]
 
     def setUp(self):
@@ -314,6 +317,79 @@ class TicketWebhookTransactionTests(unittest.TestCase):
             claim = self.ai_service.claim_ticket_ai()
         self.assertIsNotNone(claim)
         self.assertEqual(claim.ticket_id, self.ticket_id)
+
+    def seed_blacklisted_user(self):
+        allowed = self.models.User(email="allowed@example.test", display_name="Freigegeben")
+        blocked = self.models.User(email="blocked@example.test", display_name="Gesperrt")
+        self.db.session.add_all([allowed, blocked])
+        self.db.session.flush()
+        allowed_id, blocked_id = allowed.id, blocked.id
+        self.db.session.add(self.models.BlacklistEntry(
+            target_type="user", target_id=blocked_id, name_snapshot="Gesperrt",
+        ))
+        ticket = self.db.session.get(self.models.TicketMirror, self.ticket_id)
+        ticket.ai_assigned_user_id = blocked_id
+        self.db.session.commit()
+        return allowed_id, blocked_id
+
+    def test_ticket_lock_does_not_load_blacklist_data(self):
+        with patch.object(self.blacklist, "blacklist_ids", side_effect=AssertionError("Zusätzliche Leseabfrage")):
+            ticket = (
+                self.models.TicketMirror.query.filter_by(id=self.ticket_id)
+                .with_for_update().one()
+            )
+            self.assertEqual(ticket.id, self.ticket_id)
+
+    def test_blacklist_still_filters_users_aliases_joins_and_subqueries(self):
+        allowed_id, _ = self.seed_blacklisted_user()
+        user_alias = aliased(self.models.User)
+        queries = [
+            (select(self.models.User.id), [allowed_id]),
+            (select(user_alias.id), [allowed_id]),
+            (
+                select(self.models.TicketMirror.id).join(
+                    self.models.User,
+                    self.models.TicketMirror.ai_assigned_user_id == self.models.User.id,
+                ), [],
+            ),
+            (
+                select(self.models.TicketMirror.id).where(
+                    self.models.TicketMirror.ai_assigned_user_id.in_(select(self.models.User.id)),
+                ), [],
+            ),
+        ]
+        for query, expected in queries:
+            with self.subTest(query=str(query)):
+                self.db.session.rollback()
+                self.assertEqual(list(self.db.session.scalars(query)), expected)
+
+    def test_blacklist_still_filters_selectin_and_lazy_relationships(self):
+        self.seed_blacklisted_user()
+        for loader in (None, selectinload):
+            with self.subTest(loader=loader):
+                self.db.session.remove()
+                query = select(self.models.TicketMirror).filter_by(id=self.ticket_id)
+                if loader is not None:
+                    query = query.options(loader(self.models.TicketMirror.ai_assigned_user))
+                ticket = self.db.session.scalars(query).one()
+                self.assertIsNone(ticket.ai_assigned_user)
+
+    def test_joined_relationship_keeps_existing_blacklist_hook(self):
+        self.seed_blacklisted_user()
+        self.db.session.remove()
+        with patch.object(self.blacklist, "blacklist_ids", wraps=self.blacklist.blacklist_ids) as load_ids:
+            self.db.session.scalars(
+                select(self.models.TicketMirror).options(
+                    joinedload(self.models.TicketMirror.ai_assigned_user),
+                )
+            ).one()
+        self.assertTrue(load_ids.called)
+
+    def test_explicit_blacklist_bypass_is_preserved(self):
+        allowed_id, blocked_id = self.seed_blacklisted_user()
+        with self.blacklist.include_blacklisted():
+            ids = list(self.db.session.scalars(select(self.models.User.id).order_by(self.models.User.id)))
+        self.assertEqual(ids, [allowed_id, blocked_id])
 
     def test_new_ticket_and_ai_job_are_saved_together(self):
         ticket = self.db.session.get(self.models.TicketMirror, self.ticket_id)
