@@ -46,7 +46,7 @@ def normalized_value(resource, payload, target_id=None):
         item = next((item for item in payload.get("items", []) if item.get("id") == target_id), None)
         if item is None:
             return None
-        keys = ("id", "task_template", "service_date", "minutes", "note", "work_minutes", "waiting_minutes", "material_minutes", "travel_minutes", "documentation_minutes", "extra_minutes", "review_status", "review_level", "quantity", "usage_status", "cancelled", "caption", "source", "updated_at")
+        keys = ("id", "user", "task_template", "service_date", "minutes", "note", "work_minutes", "waiting_minutes", "material_minutes", "travel_minutes", "documentation_minutes", "extra_minutes", "review_status", "review_level", "quantity", "usage_status", "cancelled", "caption", "source", "updated_at")
         return {key: item.get(key) for key in keys if key in item}
     return payload
 
@@ -144,8 +144,10 @@ def offline_operation():
         match = parent_pattern.match(path)
         parent = f"/api/commissions/{match.group(1)}" if match else None
         if match:
-            viewable_commission(int(match.group(1)), user)
+            commission = viewable_commission(int(match.group(1)), user)
             db.session.get(Commission, int(match.group(1)), populate_existing=True, with_for_update=True)
+            if not commission.is_actionable and not re.search(r"/photos(?:/\d+)?$", path):
+                return jsonify(message="Der Auftrag wartet noch auf die Wowiport-Bestätigung.", code="awaiting_erp"), 503
         base = operation.get("base")
         if base is not None:
             if not isinstance(base, dict) or not isinstance(base.get("path"), str) or not read_pattern.fullmatch(base["path"]) or not valid_query(base.get("query", [])):
@@ -167,7 +169,7 @@ def offline_operation():
                     expected_value = predecessor.response_payload["baselines"][key]
             if not same_value(current_value, expected_value):
                 return jsonify(message="Der Serverstand wurde zwischenzeitlich geändert.", code="conflict", current=current_value, local=operation.get("body"), base=expected_value), 409
-        elif parent and not path.endswith(("/infos", "/infos/read")):
+        elif parent and not path.endswith(("/infos", "/infos/read")) and not (method == "POST" and path.endswith(("/time", "/materials", "/photos"))):
             return jsonify(message="Der Vergleichsstand fehlt.", code="missing_base"), 409
         response = dispatch(path, method, body=raw_body, content_type=content_type)
         payload = response.get_json(silent=True)
@@ -191,6 +193,11 @@ def offline_operation():
                     current = dispatch(resource)
                     if current.status_code < 400:
                         baselines[f"{resource}#{entity_id}"] = normalized_value(resource, current.get_json(), entity_id)
+            if "/appointments" in path:
+                resource = parent + "/appointments"
+                current = dispatch(resource)
+                if current.status_code < 400:
+                    baselines[resource] = current.get_json()
         time_days = {}
         if parent and re.match(r"^/api/commissions/\d+/time(?:/\d+)?$", path):
             dates = {operation.get("body", {}).get("service_date")}
@@ -299,7 +306,10 @@ def process_mobile_deliveries(limit=20):
         except Exception as error:
             row_id = row.id
             db.session.rollback()
-            row = db.session.get(MobileSyncDelivery, row_id)
+            row = db.session.get(MobileSyncDelivery, row_id, populate_existing=True, with_for_update=True)
+            if row is None or row.state not in {"pending", "failed"}:
+                db.session.rollback()
+                continue
             row.attempts += 1
             row.state = "failed"
             row.error = str(error)

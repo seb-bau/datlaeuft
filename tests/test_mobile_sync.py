@@ -127,7 +127,7 @@ class MobileSynchronizationTests(unittest.TestCase):
             if connection.dialect.name in {"mysql", "mariadb"}:
                 connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
         self.db.session.add_all([self.models.User(id=1, email="one@example.invalid", display_name="One"), self.models.User(id=2, email="two@example.invalid", display_name="Two")])
-        self.db.session.add(self.models.Commission(id=10, user_id=1, local_status="waiting_for_acceptance"))
+        self.db.session.add(self.models.Commission(id=10, user_id=1, erp_id=100, erp_idnum="100", local_status="waiting_for_acceptance"))
         self.db.session.commit()
         self.headers = {"Authorization": "Bearer " + create_access_token(identity="1")}
         self.client = self.app.test_client()
@@ -192,7 +192,7 @@ class MobileSynchronizationTests(unittest.TestCase):
         self.assertEqual(self.models.TimeEntry.query.count(), 0)
 
     def test_comparison_stand_is_required(self):
-        operation = self.operation()
+        operation = self.operation(path="/api/commissions/10/start", body={})
         operation.pop("base")
         self.assertEqual(self.post(operation).status_code, 409)
         self.assertEqual(self.models.TimeEntry.query.count(), 0)
@@ -268,6 +268,29 @@ class MobileSynchronizationTests(unittest.TestCase):
     def test_numeric_versions_allow_json_number_roundtrips(self):
         self.assertTrue(self.sync.same_value({"quantity": 1.0}, {"quantity": 1}))
         self.assertFalse(self.sync.same_value({"can_edit": True}, {"can_edit": 1}))
+
+    def test_additive_booking_does_not_require_unchanged_parent(self):
+        commission = self.db.session.get(self.models.Commission, 10)
+        commission.local_status = "in_progress"
+        self.db.session.commit()
+        operation = self.operation()
+        operation.pop("base")
+        self.assertEqual(self.post(operation).status_code, 200)
+        self.assertEqual(self.models.TimeEntry.query.count(), 1)
+
+    def test_booking_waits_for_erp_confirmation_and_can_retry(self):
+        commission = self.db.session.get(self.models.Commission, 10)
+        commission.erp_idnum = None
+        self.db.session.commit()
+        operation = self.operation()
+        response = self.post(operation)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["code"], "awaiting_erp")
+        self.assertEqual(self.models.MobileSyncOperation.query.count(), 0)
+        commission.erp_idnum = "100"
+        self.db.session.commit()
+        self.assertEqual(self.post(operation).status_code, 200)
+        self.assertEqual(self.models.TimeEntry.query.count(), 1)
 
 
 if __name__ == "__main__":

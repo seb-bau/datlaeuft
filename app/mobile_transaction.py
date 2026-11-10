@@ -12,8 +12,13 @@ def mobile_transaction_active():
     return current_mobile_transaction.get() is not None
 
 
+def mobile_snapshot_read():
+    transaction = current_mobile_transaction.get()
+    return transaction is not None and transaction.get("read_only", False)
+
+
 def commit_mobile_changes():
-    if mobile_transaction_active():
+    if mobile_transaction_active() and not mobile_snapshot_read():
         db.session.flush()
     else:
         db.session.commit()

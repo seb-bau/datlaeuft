@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .mobile_transaction import commit_mobile_changes, mobile_transaction_active
+from .mobile_transaction import commit_mobile_changes, mobile_transaction_active, mobile_snapshot_read
 
 from typing import Any
 
@@ -71,7 +71,7 @@ def commission_infos(
 
     sync_error = None
 
-    if not mobile_transaction_active():
+    if not mobile_transaction_active() or mobile_snapshot_read():
         try:
             sync_process_infos(
                 process_erp_id,
@@ -85,12 +85,14 @@ def commission_infos(
                 "process_erp_id=%s exception=%s",
                 process_erp_id, str(e)
             )
-            return jsonify(
-                {
-                    "items": [],
-                    "sync_error": None,
-                }
-            ), 200
+            if not mobile_snapshot_read():
+                return jsonify(
+                    {
+                        "items": [],
+                        "sync_error": None,
+                    }
+                ), 200
+            sync_error = "Vorgangsinformationen konnten nicht aktualisiert werden. Der gespeicherte Stand wird angezeigt."
 
     items = (
         ProcessInfo.query.filter(
