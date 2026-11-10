@@ -57,6 +57,7 @@ def get_inventory_stock(
             item_id=item.id,
             location_id=location.id,
         )
+        .with_for_update()
         .one_or_none()
     )
 

@@ -163,6 +163,8 @@ def process_due_work(
     webhook_limit: int = 50,
     push_limit: int = 50,
 ) -> dict[str, int]:
+    from .mobile_sync import process_mobile_deliveries
+    mobile_delivery_count = process_mobile_deliveries()
     requeue_stale_work()
     enqueue_pending_commission_photo_uploads()
     webhook_count = process_webhook_batch(webhook_limit)
@@ -178,6 +180,7 @@ def process_due_work(
     completion_notification_count = process_completion_notification_batch()
     dms_count = process_dms_batch()
     return {
+        "mobile_deliveries": mobile_delivery_count,
         "webhooks": webhook_count,
         "outbox": outbox_count,
         "process_infos": process_info_count,
@@ -819,7 +822,8 @@ def run_worker(
         result = process_due_work()
 
         if (
-            result["webhooks"] == 0
+            result["mobile_deliveries"] == 0
+            and result["webhooks"] == 0
             and result["outbox"] == 0
             and result["process_infos"] == 0
             and result["push"] == 0

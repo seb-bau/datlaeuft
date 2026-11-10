@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .mobile_transaction import commit_mobile_changes
+
 from datetime import date, timedelta
 from email.headerregistry import Address
 from email.message import EmailMessage
@@ -578,7 +580,7 @@ def _create_outgoing_info(
 
     db.session.add(item)
     ensure_process_thread(process_erp_id)
-    db.session.commit()
+    commit_mobile_changes()
     return item
 
 

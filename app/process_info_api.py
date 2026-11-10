@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .mobile_transaction import commit_mobile_changes, mobile_transaction_active
+
 from typing import Any
 
 from flask import (
@@ -69,25 +71,26 @@ def commission_infos(
 
     sync_error = None
 
-    try:
-        sync_process_infos(
-            process_erp_id,
-            notify=True,
-        )
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.exception(
-            "process_info_api_sync_failed "
-            "process_erp_id=%s exception=%s",
-            process_erp_id, str(e)
-        )
-        return jsonify(
-            {
-                "items": [],
-                "sync_error": None,
-            }
-        ), 200
+    if not mobile_transaction_active():
+        try:
+            sync_process_infos(
+                process_erp_id,
+                notify=True,
+            )
+            commit_mobile_changes()
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.exception(
+                "process_info_api_sync_failed "
+                "process_erp_id=%s exception=%s",
+                process_erp_id, str(e)
+            )
+            return jsonify(
+                {
+                    "items": [],
+                    "sync_error": None,
+                }
+            ), 200
 
     items = (
         ProcessInfo.query.filter(
@@ -154,7 +157,7 @@ def create_commission_info(
             body=data.get("body"),
         )
 
-        if item.state != "synced":
+        if item.state != "synced" and not mobile_transaction_active():
             item = write_outgoing_info(
                 item.id
             )
@@ -224,7 +227,7 @@ def read_commission_infos(
                 "office",
                 user_id=user.id,
             )
-            db.session.commit()
+            commit_mobile_changes()
         except ValueError as exc:
             db.session.rollback()
             return jsonify({"message": str(exc)}), 400
@@ -265,7 +268,7 @@ def read_commission_infos(
             {"message": str(exc)}
         ), 403
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify(
         unread_summary_for_user(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .mobile_transaction import defer_mobile_delivery
+
 from datetime import date, datetime, time, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -518,6 +520,8 @@ def send_appointment_request_email(
     appointment_request: CommissionAppointmentRequest,
     public_token: str,
 ) -> None:
+    if defer_mobile_delivery("appointment", {"appointment_id": appointment_request.id, "public_token": public_token}):
+        return
     smtp_host = settings.get(
         SettingKeys.SMTP_HOST
     ).strip()

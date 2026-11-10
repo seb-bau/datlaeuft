@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .mobile_transaction import commit_mobile_changes, defer_mobile_delivery, record_mobile_photo_references
+
 from typing import Any
 
 from flask import (
@@ -262,7 +264,7 @@ def update_push_preferences() -> Any:
 
     preferences.update(events)
     user.push_event_preferences = preferences
-    db.session.commit()
+    commit_mobile_changes()
     return jsonify({"preferences": serialize_push_preferences(user)})
 
 
@@ -288,7 +290,7 @@ def register_device_for_push() -> Any:
         db.session.rollback()
         return jsonify({"message": str(exc)}), 400
 
-    db.session.commit()
+    commit_mobile_changes()
     return jsonify(
         {
             "device": {
@@ -318,7 +320,7 @@ def unregister_device_for_push() -> Any:
         db.session.rollback()
         return jsonify({"message": str(exc)}), 400
 
-    db.session.commit()
+    commit_mobile_changes()
     return jsonify({"unregistered": device is not None})
 
 
@@ -799,6 +801,8 @@ def create_simple_commission() -> Any:
         )
 
         photos = []
+        photo_references = []
+        photos_by_hash = {}
         content_hashes = set()
 
         for upload in request.files.getlist("photos"):
@@ -806,6 +810,7 @@ def create_simple_commission() -> Any:
             stored_photos.append(stored_photo)
 
             if stored_photo.content_sha256 in content_hashes:
+                photo_references.append(photos_by_hash[stored_photo.content_sha256])
                 _remove_simple_commission_photo_files([stored_photo])
                 continue
 
@@ -831,8 +836,11 @@ def create_simple_commission() -> Any:
 
             db.session.add(photo)
             photos.append(photo)
+            photo_references.append(photo)
+            photos_by_hash[stored_photo.content_sha256] = photo
 
         db.session.flush()
+        record_mobile_photo_references(photo_references)
 
         audit("commission.create.ios", "commission", commission.id, {
             "public_id": commission.public_id,
@@ -848,7 +856,7 @@ def create_simple_commission() -> Any:
                 "caption": photo.caption,
             })
 
-        db.session.commit()
+        commit_mobile_changes()
 
     except IntegrityError:
         db.session.rollback()
@@ -908,7 +916,7 @@ def create_commission() -> Any:
             },
         )
 
-        db.session.commit()
+        commit_mobile_changes()
     except ValueError as exc:
         db.session.rollback()
 
@@ -1132,7 +1140,7 @@ def start_commission(commission_id: int) -> Any:
             exc
         )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_commission(commission),
@@ -1186,7 +1194,7 @@ def reject_commission(
             exc
         )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     send_commission_status_notification(
         commission,
@@ -1210,6 +1218,8 @@ def send_commission_status_notification(
     reason: str,
     submitted_by_name: str,
 ) -> None:
+    if defer_mobile_delivery("commission_status", {"commission_id": commission.id, "event_name": event_name, "reason": reason, "submitted_by_name": submitted_by_name}):
+        return
     try:
         send_commission_status_email(
             commission,
@@ -1217,7 +1227,7 @@ def send_commission_status_notification(
             reason=reason,
             submitted_by_name=submitted_by_name,
         )
-        db.session.commit()
+        commit_mobile_changes()
     except Exception:
         db.session.rollback()
         current_app.logger.exception(
@@ -1323,7 +1333,7 @@ def complete_commission(
             exc
         )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     if not completed:
         send_commission_status_notification(
@@ -1477,7 +1487,7 @@ def commission_appointment_create(
             },
         )
 
-        db.session.commit()
+        commit_mobile_changes()
 
     except ValueError as exc:
         db.session.rollback()
@@ -1557,7 +1567,7 @@ def commission_appointment_enter(commission_id: int) -> Any:
             "tenant_comment": comment,
         },
     )
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_commission(commission, viewer=user)
@@ -1640,7 +1650,7 @@ def commission_appointment_cancel(
         },
     )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_commission(
@@ -2105,7 +2115,7 @@ def commission_photo_upload(
         },
     )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_commission_photo(photo),
@@ -2165,7 +2175,7 @@ def commission_photo_update(
         },
     )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_commission_photo(photo)
@@ -2225,7 +2235,7 @@ def commission_photo_delete(
         },
     )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "message": "Foto entfernt."
@@ -2585,7 +2595,7 @@ def inventory_transfer() -> Any:
         },
     )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_inventory_movement(movement),
@@ -2652,7 +2662,7 @@ def inventory_receipt() -> Any:
         },
     )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_inventory_movement(movement),
@@ -2860,7 +2870,7 @@ def add_commission_material(
         },
     )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_inventory_movement(movement),
@@ -2973,7 +2983,7 @@ def cancel_commission_material(
         },
     )
 
-    db.session.commit()
+    commit_mobile_changes()
 
     cancelled_ids = cancelled_inventory_movement_ids(
         commission.id
@@ -3191,7 +3201,7 @@ def add_free_time_entry() -> Any:
             "minutes": entry.minutes,
         },
     )
-    db.session.commit()
+    commit_mobile_changes()
 
     return jsonify({
         "item": serialize_time_entry(
@@ -3264,7 +3274,7 @@ def add_time_entry(commission_id: int) -> Any:
             ),
         },
     )
-    db.session.commit()
+    commit_mobile_changes()
     return jsonify({"item": serialize_time_entry(entry, viewer=user)}), 201
 
 
@@ -3320,7 +3330,7 @@ def update_time_entry(commission_id: int, entry_id: int) -> Any:
             ),
         },
     )
-    db.session.commit()
+    commit_mobile_changes()
     return jsonify({"item": serialize_time_entry(entry, viewer=user)})
 
 
@@ -3336,7 +3346,7 @@ def delete_time_entry(commission_id: int, entry_id: int) -> Any:
         {"commission_id": commission.id, "minutes": entry.minutes, "task_template_id": entry.task_template_id}
     )
     db.session.delete(entry)
-    db.session.commit()
+    commit_mobile_changes()
     return jsonify({})
 
 
@@ -3505,7 +3515,7 @@ def _issue_token(user: User, action: str) -> Any:
         },
     )
     audit(action, "user", user.id)
-    db.session.commit()
+    commit_mobile_changes()
     return jsonify({"access_token": access_token, "user": serialize_user(user)})
 
 

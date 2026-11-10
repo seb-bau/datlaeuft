@@ -7315,6 +7315,30 @@ class SafetyInspectionMobileOperation(db.Model):
     )
 
 
+class MobileSyncOperation(db.Model):
+    __tablename__ = "mobile_sync_operation"
+
+    user_id: Mapped[int] = mapped_column(db.Integer, primary_key=True)
+    operation_id: Mapped[str] = mapped_column(db.String(36), primary_key=True)
+    request_sha256: Mapped[str] = mapped_column(db.String(64), nullable=False)
+    response_payload: Mapped[dict] = mapped_column(db.JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class MobileSyncDelivery(db.Model):
+    __tablename__ = "mobile_sync_delivery"
+
+    id: Mapped[str] = mapped_column(db.String(200), primary_key=True)
+    user_id: Mapped[int] = mapped_column(db.Integer, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(db.String(40), nullable=False)
+    payload: Mapped[dict] = mapped_column(db.JSON, nullable=False)
+    state: Mapped[str] = mapped_column(db.String(20), default="pending", nullable=False)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(db.Text)
+    available_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class TicketAiJob(db.Model):
     __tablename__ = "ticket_ai_job"
 
