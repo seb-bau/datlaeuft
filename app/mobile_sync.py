@@ -244,6 +244,7 @@ def delivery_issues():
     user = current_api_user()
     rows = MobileSyncDelivery.query.filter(MobileSyncDelivery.user_id == user.id, MobileSyncDelivery.state.in_(["failed", "expired"])).order_by(MobileSyncDelivery.created_at.desc()).limit(100).all()
     items = [{"id": row.id, "module": "commissions", "message": row.error, "created_at": row.created_at.isoformat()} for row in rows]
+    failed_info_ids = {row.payload.get("info_id") for row in rows if row.kind == "process_info"}
     failures = ErpOutboxOperation.query.join(Commission).filter(
         or_(Commission.user_id == user.id, Commission.created_by_user_id == user.id),
         ErpOutboxOperation.state == "failed",
@@ -255,6 +256,8 @@ def delivery_issues():
         or_(ProcessInfo.state.in_(["failed", "uncertain"]), ProcessInfo.mail_state == "failed"),
     ).order_by(ProcessInfo.updated_at.desc()).limit(100).all()
     for row in messages:
+        if row.id in failed_info_ids:
+            continue
         items.append({"id": f"info:{row.id}", "module": "commissions", "message": "Vorgangsinformation: " + (row.last_error or "Die Übertragung wird erneut geprüft."), "created_at": row.created_at.isoformat()})
     return jsonify(items=items)
 

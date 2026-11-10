@@ -1,4 +1,5 @@
 import importlib
+import io
 import json
 import sys
 import tempfile
@@ -107,6 +108,15 @@ class MobileSynchronizationTests(unittest.TestCase):
             commission.raw_payload = {"stock": stock - quantity}
             cls.transactions.commit_mobile_changes()
             return jsonify(item={"id": 20, "quantity": quantity})
+
+        @cls.app.post("/api/commissions/<int:commission_id>/photos")
+        def photo(commission_id):
+            user = current_user()
+            viewable(commission_id, user)
+            content = request.files["photo"].read()
+            cls.db.session.add(cls.models.TimeEntry(user_id=user.id, commission_id=commission_id, minutes=1))
+            cls.transactions.commit_mobile_changes()
+            return jsonify(item={"id": 50, "content": content.hex(), "caption": request.form["caption"]}), 201
 
         @cls.app.get("/api/commissions/<int:commission_id>/time")
         def times(commission_id):
@@ -360,6 +370,20 @@ class MobileSynchronizationTests(unittest.TestCase):
             self.assertEqual(self.sync.process_mobile_deliveries(), 1)
         service.write_outgoing_info.assert_called_once_with("message")
         self.assertEqual(self.db.session.get(self.models.MobileSyncDelivery, "delivery").state, "sent")
+
+    def test_multipart_retries_preserve_binary_photo_and_metadata(self):
+        content = bytes([0, 255, 128, 13, 10, 1, 2])
+        raw = b'--sample\r\nContent-Disposition: form-data; name="caption"\r\n\r\nFoto\r\n--sample\r\nContent-Disposition: form-data; name="photo"; filename="foto.jpg"\r\nContent-Type: image/jpeg\r\n\r\n' + content + b'\r\n--sample--\r\n'
+        operation = self.operation(path="/api/commissions/10/photos", body={}, content_type="multipart/form-data; boundary=sample")
+        operation.pop("base")
+        def submit():
+            return self.client.post("/api/mobile/offline-operations", data={"operation": json.dumps(operation), "request_body": (io.BytesIO(raw), "request.bin")}, headers=self.headers)
+        first = submit()
+        self.assertEqual(first.status_code, 200, first.json)
+        self.assertEqual(first.json["payload"]["item"]["content"], content.hex())
+        self.assertEqual(first.json["payload"]["item"]["caption"], "Foto")
+        self.assertEqual(submit().json, first.json)
+        self.assertEqual(self.models.TimeEntry.query.count(), 1)
 
 
 if __name__ == "__main__":
