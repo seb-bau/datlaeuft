@@ -7,6 +7,8 @@ on:
       - app/ticket_ai_service.py
       - app/erp_sync.py
       - app/models.py
+      - app/mobile_sync.py
+      - app/mobile_transaction.py
       - app/commission_priority.py
       - tests/**
       - .github/workflows/ticket-webhook-transactions.yml
@@ -17,6 +19,8 @@ on:
       - app/ticket_ai_service.py
       - app/erp_sync.py
       - app/models.py
+      - app/mobile_sync.py
+      - app/mobile_transaction.py
       - app/commission_priority.py
       - tests/**
       - .github/workflows/ticket-webhook-transactions.yml
@@ -52,7 +56,7 @@ jobs:
         run: >-
           python -m pip install
           "SQLAlchemy>=2.0,<3" "Flask>=3.1,<4" "Flask-SQLAlchemy>=3.1,<4"
-          "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
+          "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
       - name: Tests mit SQLite ausführen
         run: python -m unittest discover -s tests -v
       - name: MariaDB-Einstellungen prüfen
@@ -75,4 +79,6 @@ jobs:
       - name: Gleichzeitige Zugriffe mit MariaDB prüfen
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
-        run: python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v
+        run: |
+          python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v
+          python -m unittest discover -s tests -p test_mobile_sync.py -v

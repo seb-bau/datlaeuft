@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from . import models
 from .admin import admin_bp
 from .api import api_bp
+from .mobile_sync import mobile_sync_bp
 from .auth import auth_bp
 from .process_info_api import process_info_api_bp
 from .cli import register_cli
@@ -82,6 +83,7 @@ def create_app() -> Flask:
         safety_inspection_jobs_admin_bp
     )
     app.register_blueprint(api_bp)
+    app.register_blueprint(mobile_sync_bp)
     app.register_blueprint(process_info_api_bp)
     app.register_blueprint(process_info_web_bp)
     app.register_blueprint(
@@ -94,6 +96,7 @@ def create_app() -> Flask:
         safety_inspection_protocol_admin_bp
     )
     csrf.exempt(api_bp)
+    csrf.exempt(mobile_sync_bp)
     csrf.exempt(process_info_api_bp)
     csrf.exempt(
         safety_inspection_api_bp

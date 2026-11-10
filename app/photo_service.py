@@ -12,6 +12,7 @@ from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from .models import Commission
+from .mobile_transaction import track_mobile_files
 
 
 MAX_PHOTO_BYTES = 15 * 1024 * 1024
@@ -233,6 +234,8 @@ def store_commission_photo_bytes(
         secure_filename(original_filename)
         or "foto.jpg"
     )
+
+    track_mobile_files(original_path, thumbnail_path)
 
     return StoredCommissionPhoto(
         original_filename=safe_filename,
