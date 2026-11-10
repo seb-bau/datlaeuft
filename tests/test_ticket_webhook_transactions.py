@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -46,7 +46,7 @@ class TicketWebhookTransactionTests(unittest.TestCase):
             "OPENAI_TIMEOUT_SECONDS", "TICKET_AI_PREFETCH_ENABLED",
         )
         dependencies = {
-            "extensions": {"db": cls.db},
+            "extensions": {"db": cls.db, "jwt": Mock()},
             "settings": {
                 "settings": cls.settings,
                 "SettingKeys": types.SimpleNamespace(**{
@@ -90,6 +90,11 @@ class TicketWebhookTransactionTests(unittest.TestCase):
         cls.models = importlib.import_module(cls.package_name + ".models")
         cls.ticket_service = importlib.import_module(cls.package_name + ".ticket_service")
         cls.ai_service = importlib.import_module(cls.package_name + ".ticket_ai_service")
+        cls.blacklist = importlib.import_module(cls.package_name + ".blacklist")
+        cls.blacklist.init_blacklist(cls.app)
+        cls.addClassCleanup(event.remove, Session, "do_orm_execute", cls.blacklist.apply_blacklist_filter)
+        for event_name in ("after_flush", "after_commit", "after_rollback"):
+            cls.addClassCleanup(event.remove, Session, event_name, cls.blacklist.clear_blacklist_cache)
         sys.modules["app"] = package
         sys.modules["app.models"] = cls.models
         cls.erp_sync = importlib.import_module(cls.package_name + ".erp_sync")
@@ -97,6 +102,7 @@ class TicketWebhookTransactionTests(unittest.TestCase):
             cls.models.TicketMirror, cls.models.TicketAiJob,
             cls.models.WebhookEvent, cls.models.AuditLog,
             cls.models.CommissionTicketLink,
+            cls.models.BlacklistEntry,
         )]
 
     def setUp(self):
@@ -146,7 +152,7 @@ class TicketWebhookTransactionTests(unittest.TestCase):
         self.db.session.remove()
 
     def complete_ai(self):
-        with Session(self.db.engine) as writer:
+        with self.app.app_context(), Session(self.db.engine) as writer:
             if writer.bind.dialect.name in {"mysql", "mariadb"}:
                 writer.execute(text("SET SESSION innodb_lock_wait_timeout=1"))
             ticket = writer.get(self.models.TicketMirror, self.ticket_id)
@@ -280,6 +286,34 @@ class TicketWebhookTransactionTests(unittest.TestCase):
         counts = dict(Counter(code for code, _ in failures))
         self.assertTrue(all(actions > 0 for actions, _ in results))
         self.assertEqual(len(failures), 0, f"Datenbankkonflikte: {counts}; {failures[:3]}")
+
+    def test_queue_change_after_blacklist_read_does_not_abort_claim(self):
+        if self.db.engine.dialect.name not in {"mysql", "mariadb"}:
+            self.skipTest("Dieser Test benötigt InnoDB-Snapshot-Isolation.")
+        self.db.session.add(self.models.TicketAiJob(
+            ticket_id=self.ticket_id, source_signature="initial",
+        ))
+        self.db.session.commit()
+        load_ids = self.blacklist.blacklist_ids
+        changed = False
+
+        def concurrent_change(target_type):
+            nonlocal changed
+            blocked = load_ids(target_type)
+            if not changed:
+                changed = True
+                with self.db.engine.begin() as writer:
+                    writer.execute(
+                        self.db.update(self.models.TicketAiJob.__table__)
+                        .where(self.models.TicketAiJob.ticket_id == self.ticket_id)
+                        .values(revision=2)
+                    )
+            return blocked
+
+        with patch.object(self.blacklist, "blacklist_ids", side_effect=concurrent_change):
+            claim = self.ai_service.claim_ticket_ai()
+        self.assertIsNotNone(claim)
+        self.assertEqual(claim.ticket_id, self.ticket_id)
 
     def test_new_ticket_and_ai_job_are_saved_together(self):
         ticket = self.db.session.get(self.models.TicketMirror, self.ticket_id)
