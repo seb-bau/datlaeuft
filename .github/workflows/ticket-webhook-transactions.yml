@@ -5,6 +5,11 @@ on:
     paths:
       - app/blacklist.py
       - app/ticket_service.py
+      - app/ticket_filters.py
+      - app/admin.py
+      - app/templates/admin/dashboard.html
+      - app/templates/admin/tickets.html
+      - app/templates/base.html
       - app/ticket_ai_service.py
       - app/erp_sync.py
       - app/models.py
@@ -20,6 +25,11 @@ on:
     paths:
       - app/blacklist.py
       - app/ticket_service.py
+      - app/ticket_filters.py
+      - app/admin.py
+      - app/templates/admin/dashboard.html
+      - app/templates/admin/tickets.html
+      - app/templates/base.html
       - app/ticket_ai_service.py
       - app/erp_sync.py
       - app/models.py
@@ -64,6 +74,7 @@ jobs:
           "SQLAlchemy>=2.0,<3" "Flask>=3.1,<4" "Flask-SQLAlchemy>=3.1,<4"
           "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
           "requests>=2.32,<3"
+          "qrcode>=8,<9"
       - name: Tests mit SQLite ausführen
         run: python -m unittest discover -s tests -v
       - name: MariaDB-Einstellungen prüfen

@@ -3,6 +3,20 @@
 {% block content %}
 <h1 class="h3 mb-4">Dashboard</h1>
 <div class="row g-3">
+  {% if current_user.is_admin or current_user.is_foreman %}
+  <div class="col-md-4">
+    <a
+      class="card shadow-sm text-decoration-none text-body h-100"
+      href="{{ url_for('admin.tickets', owner='mine', state='open') }}"
+    >
+      <div class="card-body">
+        <div class="text-muted">Meine offenen Tickets</div>
+        <div class="display-6">{{ my_open_ticket_count }}</div>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+
     <div class="col-md-4">
     <a
       class="card shadow-sm text-decoration-none text-body h-100"
