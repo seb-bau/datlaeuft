@@ -11,6 +11,8 @@ on:
       - app/mobile_sync.py
       - app/mobile_transaction.py
       - app/commission_priority.py
+      - app/push_service.py
+      - app/push_preferences.py
       - tests/**
       - .github/workflows/ticket-webhook-transactions.yml
   push:
@@ -24,6 +26,8 @@ on:
       - app/mobile_sync.py
       - app/mobile_transaction.py
       - app/commission_priority.py
+      - app/push_service.py
+      - app/push_preferences.py
       - tests/**
       - .github/workflows/ticket-webhook-transactions.yml
 
@@ -59,6 +63,7 @@ jobs:
           python -m pip install
           "SQLAlchemy>=2.0,<3" "Flask>=3.1,<4" "Flask-SQLAlchemy>=3.1,<4"
           "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
+          "requests>=2.32,<3"
       - name: Tests mit SQLite ausführen
         run: python -m unittest discover -s tests -v
       - name: MariaDB-Einstellungen prüfen
@@ -84,3 +89,4 @@ jobs:
         run: |
           python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v
           python -m unittest discover -s tests -p test_mobile_sync.py -v
+

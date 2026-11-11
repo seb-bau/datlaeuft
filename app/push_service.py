@@ -162,7 +162,11 @@ def enqueue_commission_push(
     if target_user is None or not target_user.is_active:
         return PushBatch(batch_id=str(uuid4()), queued_count=0)
 
-    if not _event_enabled(target_user, event_type):
+    if not _event_enabled(
+        target_user,
+        event_type,
+        is_high_priority=bool(commission.is_high_priority),
+    ):
         return PushBatch(batch_id=str(uuid4()), queued_count=0)
 
     if commission.id is None:
@@ -468,7 +472,11 @@ def _enqueue_for_user(
         SafetyInspectionJob | None
     ) = None,
 ) -> PushBatch:
-    if not user.is_active or not _event_enabled(user, event_type):
+    if not user.is_active or not _event_enabled(
+        user,
+        event_type,
+        is_high_priority=bool(payload.get("is_high_priority")),
+    ):
         return PushBatch(batch_id=str(uuid4()), queued_count=0)
     devices = PushDevice.query.filter_by(
         user_id=user.id,
@@ -507,7 +515,11 @@ def _enqueue_for_user(
 def _event_enabled(
     user: User,
     event_type: PushEventType,
+    *,
+    is_high_priority: bool = False,
 ) -> bool:
+    if event_type == PushEventType.NEW_COMMISSION and is_high_priority:
+        event_type = PushEventType.COMMISSION_PRIORITY_RAISED
     return is_push_event_enabled(user, event_type)
 
 
@@ -657,7 +669,11 @@ def _deliver(delivery_id: int) -> None:
         )
         return
 
-    if not _event_enabled(user, event_type):
+    if not _event_enabled(
+        user,
+        event_type,
+        is_high_priority=bool(delivery.payload.get("is_high_priority")),
+    ):
         _discard_delivery(
             delivery,
             "Der Benutzer hat diese Mitteilung deaktiviert.",
