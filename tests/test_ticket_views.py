@@ -102,7 +102,8 @@ class TicketViewTests(unittest.TestCase):
         ])
         self.next_erp_id = 100
         self.first_open_ticket = self.ticket(subject="Eigenes offenes Ticket")
-        self.second_open_ticket = self.ticket(subject="Eigene offene Rückfrage", state="ignored")
+        self.second_open_ticket = self.ticket(subject="Eigene offene Rückfrage")
+        self.ignored_ticket = self.ticket(subject="Ticket ohne gewünschten Auftrag", state="ignored")
         self.ticket(subject="Erledigtes Ticket", status_code="Erledigt")
         self.ticket(subject="Beauftragtes Ticket", status_code="Beauftragt")
         self.ticket(subject="Fremdes Ticket", assigned_user_erp_id=12)
@@ -181,6 +182,28 @@ class TicketViewTests(unittest.TestCase):
         self.assertEqual(view["pagination"].total, 0)
         view, _ = self.get("/admin/tickets?q=Rückfrage")
         self.assertEqual([ticket.id for ticket in view["pagination"].items], [self.second_open_ticket.id])
+
+    def test_ignore_and_restore_update_the_ticket_list_and_dashboard_count(self):
+        response = self.client.post(f"/admin/tickets/{self.first_open_ticket.id}/ignore")
+        self.assertEqual(response.status_code, 302)
+        dashboard, _ = self.get("/admin")
+        view, _ = self.get("/admin/tickets")
+        self.assertEqual(dashboard["my_open_ticket_count"], 1)
+        self.assertEqual([ticket.id for ticket in view["pagination"].items], [self.second_open_ticket.id])
+
+        response = self.client.post(f"/admin/tickets/{self.first_open_ticket.id}/restore")
+        self.assertEqual(response.status_code, 302)
+        dashboard, _ = self.get("/admin")
+        view, _ = self.get("/admin/tickets")
+        self.assertEqual(dashboard["my_open_ticket_count"], 2)
+        self.assertEqual(
+            {ticket.id for ticket in view["pagination"].items},
+            {self.first_open_ticket.id, self.second_open_ticket.id},
+        )
+
+    def test_ignored_tickets_remain_available_through_the_explicit_filter(self):
+        view, _ = self.get("/admin/tickets?state=ignored")
+        self.assertEqual([ticket.id for ticket in view["pagination"].items], [self.ignored_ticket.id])
 
     def test_pagination_links_keep_the_open_ticket_filters(self):
         for index in range(51):
