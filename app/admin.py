@@ -142,6 +142,7 @@ from .ticket_service import (
     mark_ticket_analyses_stale,
     ticket_analysis_input_hash,
 )
+from .ticket_filters import open_tickets_query
 from .work_time_service import (
     current_work_time_assignment,
     work_time_period_bounds,
@@ -372,6 +373,12 @@ def safe_next_url(
 @admin_bp.get("/admin")
 @login_required
 def dashboard() -> Any:
+    my_open_ticket_count = 0
+    if current_user.is_admin or current_user.is_foreman:
+        my_open_ticket_count = open_tickets_query(TicketMirror.query).filter(
+            TicketMirror.assigned_user_erp_id.in_(ticket_owner_erp_ids(current_user))
+        ).count()
+
     open_count = Commission.query.filter(
         Commission.deleted_at.is_(None),
         Commission.local_status
@@ -448,6 +455,7 @@ def dashboard() -> Any:
 
     return render_template(
         "admin/dashboard.html",
+        my_open_ticket_count=my_open_ticket_count,
         open_count=open_count,
         review_count=review_count,
         material_review_count=material_review_count,
@@ -3930,7 +3938,7 @@ def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
     }
     options = {
         "owner": {"mine": "Meine Tickets", "all": "Alle Sachbearbeiter", "unassigned": "Nicht zugewiesen"},
-        "state": {"all": "Alle Bearbeitungsstände", "new": "Zu prüfen", "ignored": "Kein Auftrag", "converted": "Auftrag erstellt"},
+        "state": {"open": "Offen ohne Auftrag", "all": "Alle Bearbeitungsstände", "new": "Zu prüfen", "ignored": "Kein Auftrag", "converted": "Auftrag erstellt"},
         "priority": {"all": "Alle Prioritäten", "unassigned": "Ohne Priorität"},
         "department": {"all": "Alle Abteilungen", "unassigned": "Ohne Abteilung"},
         "ai_state": {
@@ -3959,13 +3967,6 @@ def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
 @admin_bp.get("/admin/tickets")
 @foreman_required
 def tickets() -> Any:
-    selected_state = request.args.get(
-        "state",
-        TicketMirrorState.NEW.value,
-    )
-    selected_owner = request.args.get("owner", "mine")
-    if selected_owner not in {"mine", "all"}:
-        selected_owner = "mine"
     search_text = request.args.get(
         "q",
         "",
@@ -3994,7 +3995,7 @@ def tickets() -> Any:
     filter_options = ticket_filter_options(query)
     defaults = {
         "owner": "mine",
-        "state": "new",
+        "state": "open",
         "priority": "all",
         "department": "all",
         "ai_state": "all",
@@ -4029,7 +4030,9 @@ def tickets() -> Any:
             TicketMirror.assigned_user_erp_id == int(selected_owner[4:])
         )
 
-    if selected_state != "all":
+    if selected_state == "open":
+        query = open_tickets_query(query)
+    elif selected_state != "all":
         query = query.filter(TicketMirror.state == selected_state)
 
     for key, column in (
