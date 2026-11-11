@@ -135,9 +135,10 @@ class OpenTicketFilterTests(unittest.TestCase):
         self.ticket(deleted_at=self.models.utc_now())
         self.assertEqual(self.query().count(), 0)
 
-    def test_local_processing_state_does_not_replace_the_wowiport_status(self):
+    def test_local_processing_state_excludes_ignored_tickets(self):
+        self.ticket(state="ignored")
         expected = [self.ticket(state=state).id for state in (
-            "new", "ignored", "converted",
+            "new", "converted",
         )]
         self.assertCountEqual([ticket.id for ticket in self.query()], expected)
 
