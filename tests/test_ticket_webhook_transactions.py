@@ -4,15 +4,20 @@ import sys
 import tempfile
 import types
 import unittest
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
+from threading import Barrier
+from time import monotonic
 from unittest.mock import Mock, patch
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text
+from sqlalchemy import event, select, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
 
 class TicketWebhookTransactionTests(unittest.TestCase):
@@ -41,7 +46,7 @@ class TicketWebhookTransactionTests(unittest.TestCase):
             "OPENAI_TIMEOUT_SECONDS", "TICKET_AI_PREFETCH_ENABLED",
         )
         dependencies = {
-            "extensions": {"db": cls.db},
+            "extensions": {"db": cls.db, "jwt": Mock()},
             "settings": {
                 "settings": cls.settings,
                 "SettingKeys": types.SimpleNamespace(**{
@@ -85,6 +90,11 @@ class TicketWebhookTransactionTests(unittest.TestCase):
         cls.models = importlib.import_module(cls.package_name + ".models")
         cls.ticket_service = importlib.import_module(cls.package_name + ".ticket_service")
         cls.ai_service = importlib.import_module(cls.package_name + ".ticket_ai_service")
+        cls.blacklist = importlib.import_module(cls.package_name + ".blacklist")
+        cls.blacklist.init_blacklist(cls.app)
+        cls.addClassCleanup(event.remove, Session, "do_orm_execute", cls.blacklist.apply_blacklist_filter)
+        for event_name in ("after_flush", "after_commit", "after_rollback"):
+            cls.addClassCleanup(event.remove, Session, event_name, cls.blacklist.clear_blacklist_cache)
         sys.modules["app"] = package
         sys.modules["app.models"] = cls.models
         cls.erp_sync = importlib.import_module(cls.package_name + ".erp_sync")
@@ -92,6 +102,10 @@ class TicketWebhookTransactionTests(unittest.TestCase):
             cls.models.TicketMirror, cls.models.TicketAiJob,
             cls.models.WebhookEvent, cls.models.AuditLog,
             cls.models.CommissionTicketLink,
+            cls.models.BlacklistEntry,
+            cls.models.User, cls.models.ExternalCraftsman,
+            cls.models.WowiResponsibleOfficial, cls.models.WowiEconomicUnit,
+            cls.models.WowiEconomicUnitJurisdiction,
         )]
 
     def setUp(self):
@@ -141,7 +155,7 @@ class TicketWebhookTransactionTests(unittest.TestCase):
         self.db.session.remove()
 
     def complete_ai(self):
-        with Session(self.db.engine) as writer:
+        with self.app.app_context(), Session(self.db.engine) as writer:
             if writer.bind.dialect.name in {"mysql", "mariadb"}:
                 writer.execute(text("SET SESSION innodb_lock_wait_timeout=1"))
             ticket = writer.get(self.models.TicketMirror, self.ticket_id)
@@ -210,6 +224,172 @@ class TicketWebhookTransactionTests(unittest.TestCase):
         self.assertEqual(claim.ticket_id, self.ticket_id)
         ticket = self.db.session.get(self.models.TicketMirror, self.ticket_id)
         self.assertEqual(ticket.ai_state, self.models.TicketAiState.PROCESSING.value)
+
+    def test_concurrent_claims_and_requeues_do_not_raise_database_conflicts(self):
+        if self.db.engine.dialect.name not in {"mysql", "mariadb"}:
+            self.skipTest("Dieser Test benötigt InnoDB-Zeilensperren.")
+        tickets = [self.db.session.get(self.models.TicketMirror, self.ticket_id)]
+        for index in range(15):
+            ticket = self.models.TicketMirror(
+                erp_id=20000 + index, subject="Parallel verarbeiten",
+                source_signature=f"source-{index}",
+                state=self.models.TicketMirrorState.NEW.value,
+                ai_state=self.models.TicketAiState.QUEUED.value,
+            )
+            self.db.session.add(ticket)
+            tickets.append(ticket)
+        self.db.session.flush()
+        ticket_ids = [ticket.id for ticket in tickets]
+        for ticket in tickets:
+            self.db.session.add(self.models.TicketAiJob(
+                ticket_id=ticket.id, source_signature=ticket.source_signature,
+            ))
+        self.db.session.commit()
+        self.db.session.remove()
+        barrier = Barrier(3)
+        deadline = monotonic() + 4
+
+        def exercise_queue(publish):
+            actions = 0
+            failures = []
+            with self.app.app_context():
+                try:
+                    self.db.session.execute(text("SET SESSION innodb_lock_wait_timeout=1"))
+                    barrier.wait(timeout=10)
+                    while monotonic() < deadline:
+                        try:
+                            if publish:
+                                self.db.session.rollback()
+                                ticket = (
+                                    self.models.TicketMirror.query
+                                    .filter_by(id=ticket_ids[actions % len(ticket_ids)])
+                                    .populate_existing().with_for_update().one()
+                                )
+                                ticket.source_signature = f"changed-{actions}"
+                                self.ai_service.enqueue_ticket_ai(ticket)
+                                self.db.session.commit()
+                            else:
+                                claim = self.ai_service.claim_ticket_ai()
+                                if claim is not None:
+                                    self.ai_service.settle_ticket_ai(
+                                        claim, self.ai_service.TicketAiChanged(),
+                                    )
+                            actions += 1
+                        except OperationalError as error:
+                            self.db.session.rollback()
+                            failures.append((error.orig.args[0], str(error.orig)))
+                finally:
+                    self.db.session.remove()
+            return actions, failures
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(exercise_queue, role) for role in (True, False, False)]
+            results = [future.result(timeout=20) for future in futures]
+        failures = [failure for _, errors in results for failure in errors]
+        counts = dict(Counter(code for code, _ in failures))
+        self.assertTrue(all(actions > 0 for actions, _ in results))
+        self.assertEqual(len(failures), 0, f"Datenbankkonflikte: {counts}; {failures[:3]}")
+
+    def test_queue_change_after_blacklist_read_does_not_abort_claim(self):
+        if self.db.engine.dialect.name not in {"mysql", "mariadb"}:
+            self.skipTest("Dieser Test benötigt InnoDB-Snapshot-Isolation.")
+        self.db.session.add(self.models.TicketAiJob(
+            ticket_id=self.ticket_id, source_signature="initial",
+        ))
+        self.db.session.commit()
+        load_ids = self.blacklist.blacklist_ids
+        changed = False
+
+        def concurrent_change(target_type):
+            nonlocal changed
+            blocked = load_ids(target_type)
+            if not changed:
+                changed = True
+                with self.db.engine.begin() as writer:
+                    writer.execute(
+                        self.db.update(self.models.TicketAiJob.__table__)
+                        .where(self.models.TicketAiJob.ticket_id == self.ticket_id)
+                        .values(revision=2)
+                    )
+            return blocked
+
+        with patch.object(self.blacklist, "blacklist_ids", side_effect=concurrent_change):
+            claim = self.ai_service.claim_ticket_ai()
+        self.assertIsNotNone(claim)
+        self.assertEqual(claim.ticket_id, self.ticket_id)
+
+    def seed_blacklisted_user(self):
+        allowed = self.models.User(email="allowed@example.test", display_name="Freigegeben")
+        blocked = self.models.User(email="blocked@example.test", display_name="Gesperrt")
+        self.db.session.add_all([allowed, blocked])
+        self.db.session.flush()
+        allowed_id, blocked_id = allowed.id, blocked.id
+        self.db.session.add(self.models.BlacklistEntry(
+            target_type="user", target_id=blocked_id, name_snapshot="Gesperrt",
+        ))
+        ticket = self.db.session.get(self.models.TicketMirror, self.ticket_id)
+        ticket.ai_assigned_user_id = blocked_id
+        self.db.session.commit()
+        return allowed_id, blocked_id
+
+    def test_ticket_lock_does_not_load_blacklist_data(self):
+        with patch.object(self.blacklist, "blacklist_ids", side_effect=AssertionError("Zusätzliche Leseabfrage")):
+            ticket = (
+                self.models.TicketMirror.query.filter_by(id=self.ticket_id)
+                .with_for_update().one()
+            )
+            self.assertEqual(ticket.id, self.ticket_id)
+
+    def test_blacklist_still_filters_users_aliases_joins_and_subqueries(self):
+        allowed_id, _ = self.seed_blacklisted_user()
+        user_alias = aliased(self.models.User)
+        queries = [
+            (select(self.models.User.id), [allowed_id]),
+            (select(user_alias.id), [allowed_id]),
+            (
+                select(self.models.TicketMirror.id).join(
+                    self.models.User,
+                    self.models.TicketMirror.ai_assigned_user_id == self.models.User.id,
+                ), [],
+            ),
+            (
+                select(self.models.TicketMirror.id).where(
+                    self.models.TicketMirror.ai_assigned_user_id.in_(select(self.models.User.id)),
+                ), [],
+            ),
+        ]
+        for query, expected in queries:
+            with self.subTest(query=str(query)):
+                self.db.session.rollback()
+                self.assertEqual(list(self.db.session.scalars(query)), expected)
+
+    def test_blacklist_still_filters_selectin_and_lazy_relationships(self):
+        self.seed_blacklisted_user()
+        for loader in (None, selectinload):
+            with self.subTest(loader=loader):
+                self.db.session.remove()
+                query = select(self.models.TicketMirror).filter_by(id=self.ticket_id)
+                if loader is not None:
+                    query = query.options(loader(self.models.TicketMirror.ai_assigned_user))
+                ticket = self.db.session.scalars(query).one()
+                self.assertIsNone(ticket.ai_assigned_user)
+
+    def test_joined_relationship_keeps_existing_blacklist_hook(self):
+        self.seed_blacklisted_user()
+        self.db.session.remove()
+        with patch.object(self.blacklist, "blacklist_ids", wraps=self.blacklist.blacklist_ids) as load_ids:
+            self.db.session.scalars(
+                select(self.models.TicketMirror).options(
+                    joinedload(self.models.TicketMirror.ai_assigned_user),
+                )
+            ).one()
+        self.assertTrue(load_ids.called)
+
+    def test_explicit_blacklist_bypass_is_preserved(self):
+        allowed_id, blocked_id = self.seed_blacklisted_user()
+        with self.blacklist.include_blacklisted():
+            ids = list(self.db.session.scalars(select(self.models.User.id).order_by(self.models.User.id)))
+        self.assertEqual(ids, [allowed_id, blocked_id])
 
     def test_new_ticket_and_ai_job_are_saved_together(self):
         ticket = self.db.session.get(self.models.TicketMirror, self.ticket_id)

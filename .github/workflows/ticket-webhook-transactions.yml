@@ -3,6 +3,7 @@ name: Ticket-Webhooks prüfen
 on:
   pull_request:
     paths:
+      - app/blacklist.py
       - app/ticket_service.py
       - app/ticket_ai_service.py
       - app/erp_sync.py
@@ -15,6 +16,7 @@ on:
   push:
     branches: [master]
     paths:
+      - app/blacklist.py
       - app/ticket_service.py
       - app/ticket_ai_service.py
       - app/erp_sync.py

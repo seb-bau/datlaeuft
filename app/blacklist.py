@@ -8,6 +8,8 @@ from flask import has_app_context, jsonify, session
 from flask_login import logout_user
 from sqlalchemy import event, or_, select
 from sqlalchemy.orm import Session, with_loader_criteria
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.selectable import FromClause
 
 from .extensions import db, jwt
 from .models import (
@@ -130,6 +132,27 @@ def is_blacklisted(target_type, target_id):
     return target_id is not None and target_id in blacklist_ids(target_type)
 
 
+def blacklist_filter_needed(execute_state):
+    models = (
+        User, ExternalCraftsman, WowiResponsibleOfficial,
+        UserJurisdictionPersonMapping, WowiEconomicUnitJurisdiction,
+    )
+    if any(mapper.class_ in models for mapper in execute_state.all_mappers):
+        return True
+
+    statement = execute_state.statement
+    if not hasattr(statement, "get_final_froms"):
+        return True
+    clauses = (statement, *statement.get_final_froms())
+    return any(
+        element.is_derived_from(model.__table__)
+        for clause in clauses
+        for element in visitors.iterate(clause)
+        if isinstance(element, FromClause)
+        for model in models
+    )
+
+
 def apply_blacklist_filter(execute_state):
     if (
         not has_app_context()
@@ -137,6 +160,7 @@ def apply_blacklist_filter(execute_state):
         or not execute_state.is_orm_statement
         or execute_state.is_column_load
         or _blacklist_bypass.get()
+        or not blacklist_filter_needed(execute_state)
     ):
         return
 
