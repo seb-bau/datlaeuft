@@ -3,6 +3,7 @@ import importlib
 import sys
 import types
 import unittest
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -166,6 +167,28 @@ class TicketViewTests(unittest.TestCase):
         self.assertEqual(view["selected_owner"], "mine")
         self.assertEqual(view["selected_state"], "open")
         self.assertEqual(view["pagination"].total, 2)
+
+    def test_commission_list_shows_sortable_dates_instead_of_the_erp_id(self):
+        commission = self.models.Commission(
+            erp_id=987654321, erp_idnum="A-123", title="Auftrag mit Datum",
+            recording_date=datetime(2026, 10, 31, tzinfo=timezone.utc),
+            status_changed_at=datetime(2026, 11, 5, 14, 30, tzinfo=timezone.utc),
+        )
+        self.db.session.add(commission)
+        self.db.session.commit()
+        response = self.client.get("/admin/commissions")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertNotIn("<th>ERP-ID</th>", html)
+        self.assertNotIn("987654321", html)
+        self.assertIn("A-123", html)
+        self.assertIn("<th>Erstellungsdatum</th>", html)
+        self.assertIn("<th>Letzter Statuswechsel</th>", html)
+        self.assertIn('data-order="2026-10-31T00:00:00"', html)
+        self.assertIn('data-order="2026-11-05T14:30:00"', html)
+        self.assertIn("31.10.2026", html)
+        self.assertIn("05.11.2026", html)
+        self.assertIn('data-order=""', html)
 
     def test_explicit_filters_still_allow_closed_and_assigned_tickets(self):
         view, _ = self.get("/admin/tickets?owner=all&state=all")

@@ -51,6 +51,7 @@ def accept_commission(
     commission.local_status = (
         CommissionLocalStatus.IN_PROGRESS.value
     )
+    commission.status_changed_at = utc_now()
     commission.erp_sync_state = (
         CommissionSyncState.PENDING.value
     )
@@ -117,6 +118,7 @@ def reject_commission(
     commission.local_status = (
         CommissionLocalStatus.COMPLETION_REVIEW.value
     )
+    commission.status_changed_at = now
     commission.erp_sync_state = (
         CommissionSyncState.PENDING.value
     )
@@ -213,6 +215,7 @@ def complete_commission(
         CommissionSyncState.PENDING.value
     )
     commission.erp_sync_message = None
+    commission.status_changed_at = now
 
     if not completed:
         commission.local_status = (

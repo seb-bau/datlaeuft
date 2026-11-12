@@ -2896,6 +2896,8 @@ def sync_commission_from_erp(
             sync_signature,
     ):
         if existing is not None:
+            if existing.status_changed_at is None:
+                existing.status_changed_at = _commission_status_date(payload)
             sync_commission_documents_safely(
                 commission=existing,
                 service=service,
@@ -3319,6 +3321,8 @@ def sync_commission_payload_from_erp(
             sync_signature,
     ):
         if existing is not None:
+            if existing.status_changed_at is None:
+                existing.status_changed_at = _commission_status_date(payload)
             sync_commission_priority(existing, service)
         return "unchanged"
 
@@ -3429,6 +3433,8 @@ def mark_missing_regular_sync_commissions_deleted(
         )
 
     for commission in query.all():
+        if commission.local_status != CommissionLocalStatus.DELETED.value:
+            commission.status_changed_at = utc_now()
         commission.local_status = CommissionLocalStatus.DELETED.value
         commission.deleted_at = utc_now()
         commission.synced_at = utc_now()
@@ -3441,6 +3447,12 @@ def upsert_commission(
 ) -> Commission:
     erp_id = int(_read_first(payload, "id_", "id", "Id"))
     commission = Commission.query.filter_by(erp_id=erp_id).one_or_none()
+
+    previous_status = (
+        (commission.status_id, commission.status_code, commission.local_status)
+        if commission is not None
+        else None
+    )
 
     previous_craftsman_erp_id = (
         commission.craftsman_erp_id
@@ -3633,6 +3645,16 @@ def upsert_commission(
             commission.status_id,
             CommissionLocalStatus.OPEN.value,
         )
+
+        current_status = (
+            commission.status_id, commission.status_code, commission.local_status,
+        )
+        status_date = _commission_status_date(payload)
+
+        if previous_status is not None and current_status != previous_status:
+            commission.status_changed_at = status_date or commission.synced_at
+        elif commission.status_changed_at is None:
+            commission.status_changed_at = status_date
 
     replace_commission_positions(
         commission,
@@ -3842,6 +3864,19 @@ def _commission_status_id(payload: Any) -> int | None:
     )
 
 
+def _commission_status_date(payload: Any) -> datetime | None:
+    status_date_fields = {
+        12: ("placing_date", "PlacingDate"),
+        7: ("acceptance_date", "AcceptanceDate"),
+        9: ("completion_date", "CompletionDate"),
+        11: ("completion_date", "CompletionDate"),
+    }.get(_commission_status_id(payload))
+    return (
+        parse_datetime(_read_first(payload, *status_date_fields))
+        if status_date_fields else None
+    )
+
+
 def _commission_type_id(payload: Any) -> int | None:
     commission_type = _read_first(
         payload,
@@ -3907,6 +3942,8 @@ def mark_commission_deleted(erp_id: int) -> Commission | None:
     if commission is None:
         return None
 
+    if commission.local_status != CommissionLocalStatus.DELETED.value:
+        commission.status_changed_at = utc_now()
     commission.local_status = CommissionLocalStatus.DELETED.value
     commission.deleted_at = utc_now()
     commission.synced_at = utc_now()

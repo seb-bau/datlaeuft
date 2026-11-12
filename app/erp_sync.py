@@ -286,6 +286,7 @@ def execute_outbox_operation(
         raise RuntimeError("ERP-Outbox-Eintrag wurde nicht gefunden.")
 
     commission = operation.commission
+    previous_local_status = commission.local_status
 
     if (
             operation.operation_type
@@ -476,6 +477,8 @@ def execute_outbox_operation(
         )
 
     commission.synced_at = utc_now()
+    if commission.local_status != previous_local_status:
+        commission.status_changed_at = commission.synced_at
 
 
 def finish_outbox_operation(operation_id: int) -> None:
