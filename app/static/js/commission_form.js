@@ -97,6 +97,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const companyCode = document.getElementById(
         "companyCode"
     );
+    const notifyTenants = document.getElementById("notifyTenants");
+    let tenantNotificationPreference = notifyTenants.value;
     const assignmentStatus = document.getElementById(
         "assignmentStatus"
     );
@@ -333,6 +335,27 @@ document.addEventListener("DOMContentLoaded", () => {
     let objectSearchTimer = null;
     let objectSearchRequestId = 0;
 
+    function objectTypeLabel(item) {
+        return {
+            license_agreement: "Mietvertrag",
+            use_unit: "Wohnung / Nutzungseinheit",
+            building: "Gebäude",
+            economic_unit: "Wirtschaftseinheit"
+        }[item.object_type] || "Objekt";
+    }
+
+    function updateTenantNotificationOptions(item) {
+        const available = Boolean(item?.license_agreement?.erp_id && !item.is_vacancy);
+        notifyTenants.disabled = !available;
+        notifyTenants.value = available ? tenantNotificationPreference : "false";
+        notifyTenants.title = available ? "" : "Eine Mieter-Mitteilung benötigt einen belegten Mietvertrag.";
+        updateFieldState(notifyTenants);
+    }
+
+    notifyTenants.addEventListener("change", () => {
+        tenantNotificationPreference = notifyTenants.value;
+    });
+
     function objectText(item) {
         const values = [
             item.tenant_name,
@@ -349,6 +372,10 @@ document.addEventListener("DOMContentLoaded", () => {
             item.building?.id_num
                 ? `Gebäude ${item.building.id_num}`
                 : null,
+            item.economic_unit?.id_num
+                ? `WE ${item.economic_unit.id_num}`
+                : null,
+            item.economic_unit?.name,
         ];
 
         return values
@@ -362,6 +389,7 @@ document.addEventListener("DOMContentLoaded", () => {
     ) {
         objectType.value = item.object_type;
         objectId.value = item.object_id;
+        updateTenantNotificationOptions(item);
                 if (resetAssignments) {
             delete objectSummary.dataset
                 .automaticValue;
@@ -402,7 +430,7 @@ document.addEventListener("DOMContentLoaded", () => {
             "div"
         );
         heading.className = "fw-semibold text-truncate";
-        heading.textContent = item.label;
+        heading.textContent = `${objectTypeLabel(item)} · ${item.label}`;
 
         const details = document.createElement(
             "div"
@@ -553,7 +581,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     "div"
                 );
                 title.className = "fw-semibold";
-                title.textContent = item.label;
+                title.textContent = `${objectTypeLabel(item)} · ${item.label}`;
 
                 const details = document.createElement(
                     "div"
@@ -1585,6 +1613,24 @@ document.addEventListener("DOMContentLoaded", () => {
     objectSearchContext.addEventListener(
         "change",
         () => {
+            const expectedType = {
+                tenant: "license_agreement",
+                agreement: "license_agreement",
+                use_unit: "use_unit",
+                address: "building",
+                economic_unit: "economic_unit"
+            }[objectSearchContext.value];
+            if (objectType.value && expectedType && objectType.value !== expectedType) {
+                objectType.value = "";
+                objectId.value = "";
+                delete objectSummary.dataset.automaticValue;
+                objectSummary.textContent = "Noch kein Objekt ausgewählt.";
+                objectSummary.classList.add("d-flex", "align-items-center", "justify-content-center", "text-center");
+                submitCommission.disabled = true;
+                updateTenantNotificationOptions(null);
+                updateObjectState();
+                updateAssignmentPreview({forceCraftsman: true});
+            }
             scheduleObjectSearch(0);
         }
     );
@@ -1735,8 +1781,15 @@ document.addEventListener("DOMContentLoaded", () => {
     updateAssignmentControls();
 
     if (initialObject) {
+        objectSearchContext.value = {
+            license_agreement: "agreement",
+            use_unit: "use_unit",
+            building: "address",
+            economic_unit: "economic_unit"
+        }[initialObject.object_type] || "tenant";
         selectObject(initialObject, false);
     } else {
+        updateTenantNotificationOptions(null);
         updateAssignmentPreview();
     }
     updateAllFieldStates();

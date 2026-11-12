@@ -137,6 +137,7 @@ def ensure_tenant_notifications(limit: int = 200) -> int:
         )
         .filter(
             Commission.notify_tenants.is_(True),
+            Commission.license_agreement_id.is_not(None),
             Commission.erp_id.is_not(None),
             Commission.craftsman_erp_id.is_not(None),
             Commission.erp_sync_state == CommissionSyncState.SYNCED.value,
@@ -319,7 +320,8 @@ def execute_tenant_notification(item_id: int) -> None:
         address in item.payload.get("delivered", []) for address in item.payload["recipients"]
     )
     if not mail_complete and (
-        not commission.notify_tenants or commission.deleted_at is not None or commission.status_id not in (7, 12)
+        not commission.notify_tenants or commission.license_agreement_id is None
+        or commission.deleted_at is not None or commission.status_id not in (7, 12)
     ):
         item.state = "discarded"
         item.locked_at = None

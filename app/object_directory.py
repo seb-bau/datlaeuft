@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from itertools import zip_longest
 from typing import Any, Iterable
 from flask import current_app
 from sqlalchemy import or_
@@ -1194,6 +1195,7 @@ def resolve_commission_object(
     agreement = None
     use_unit = None
     building = None
+    economic_unit = None
 
     if object_type and object_id:
         if object_type == "license_agreement":
@@ -1251,6 +1253,11 @@ def resolve_commission_object(
                     "Das ausgewählte Gebäude "
                     "ist nicht mehr verfügbar."
                 )
+
+        elif object_type == "economic_unit":
+            economic_unit = db.session.get(WowiEconomicUnit, object_id)
+            if economic_unit is None or not economic_unit.active:
+                raise ValueError("Die ausgewählte Wirtschaftseinheit ist nicht mehr verfügbar.")
 
         else:
             raise ValueError(
@@ -1324,7 +1331,7 @@ def resolve_commission_object(
                 "nicht mehr verfügbar."
             )
 
-    economic_unit = (
+    economic_unit = economic_unit or (
         use_unit.economic_unit
         if (
             use_unit is not None
@@ -1848,36 +1855,13 @@ def search_commission_objects(
 
     if search_context in {
         "use_unit",
-        "address",
         "all",
     }:
-        if search_context == "use_unit":
-            use_unit_match = or_(
-                WowiUseUnit.id_num.ilike(
-                    pattern
-                ),
-                WowiUseUnit
-                .description_of_position
-                .ilike(pattern),
-            )
-        elif search_context == "address":
-            use_unit_match = (
-                WowiUseUnit.address.ilike(
-                    pattern
-                )
-            )
-        else:
-            use_unit_match = or_(
-                WowiUseUnit.id_num.ilike(
-                    pattern
-                ),
-                WowiUseUnit.address.ilike(
-                    pattern
-                ),
-                WowiUseUnit
-                .description_of_position
-                .ilike(pattern),
-            )
+        use_unit_match = or_(
+            WowiUseUnit.id_num.ilike(pattern),
+            WowiUseUnit.address.ilike(pattern),
+            WowiUseUnit.description_of_position.ilike(pattern),
+        )
 
         use_units = (
             WowiUseUnit.query
@@ -1896,35 +1880,11 @@ def search_commission_objects(
         )
 
         for use_unit in use_units:
-            agreements = [
-                agreement
-                for agreement
-                in use_unit.license_agreements
-                if agreement.active
-            ]
-            keys = (
-                [
-                    (
-                        "license_agreement",
-                        agreement.id,
-                    )
-                    for agreement in agreements
-                ]
-                if agreements
-                else [
-                    (
-                        "use_unit",
-                        use_unit.id,
-                    )
-                ]
-            )
-
-            for key in keys:
-                _append_choice(
-                    choices,
-                    seen,
-                    key,
-                )
+            _append_choice(choices, seen, ("use_unit", use_unit.id))
+            if search_context == "all":
+                for agreement in use_unit.license_agreements:
+                    if agreement.active:
+                        _append_choice(choices, seen, ("license_agreement", agreement.id))
 
     if search_context in {
         "address",
@@ -1934,9 +1894,6 @@ def search_commission_objects(
             WowiBuilding.query
             .filter(
                 WowiBuilding.active.is_(True),
-                WowiBuilding.use_units.any(
-                    WowiUseUnit.active.is_(True)
-                ),
                 or_(
                     WowiBuilding.id_num.ilike(
                         pattern
@@ -1963,6 +1920,25 @@ def search_commission_objects(
                 seen,
                 key,
             )
+
+    if search_context in {"economic_unit", "all"}:
+        economic_units = WowiEconomicUnit.query.filter(
+            WowiEconomicUnit.active.is_(True),
+            or_(
+                WowiEconomicUnit.id_num.ilike(pattern),
+                WowiEconomicUnit.name.ilike(pattern),
+                WowiEconomicUnit.location.ilike(pattern),
+            ),
+        ).order_by(WowiEconomicUnit.id_num.asc()).limit(limit).all()
+        for economic_unit in economic_units:
+            _append_choice(choices, seen, ("economic_unit", economic_unit.id))
+
+    if search_context == "all":
+        groups = [
+            [item for item in choices if item["object_type"] == object_type]
+            for object_type in ("license_agreement", "use_unit", "building", "economic_unit")
+        ]
+        choices = [item for group in zip_longest(*groups) for item in group if item is not None]
 
     return choices[:limit]
 
@@ -1998,6 +1974,7 @@ def _serialize_choice(
     object_type: str,
     object_id: int,
 ) -> dict[str, Any]:
+    economic_unit = None
     if object_type == "license_agreement":
         agreement = db.session.get(
             WowiLicenseAgreement,
@@ -2063,7 +2040,9 @@ def _serialize_choice(
 
         building = use_unit.building
         tenant_name = None
-        is_vacancy = True
+        is_vacancy = not any(
+            item.active and not item.is_vacancy for item in use_unit.license_agreements
+        )
 
     elif object_type == "building":
         agreement = None
@@ -2084,6 +2063,14 @@ def _serialize_choice(
         tenant_name = None
         is_vacancy = False
 
+    elif object_type == "economic_unit":
+        agreement = None
+        use_unit = None
+        building = None
+        economic_unit = db.session.get(WowiEconomicUnit, object_id)
+        tenant_name = None
+        is_vacancy = False
+
     else:
         raise ValueError(
             "Die Objektart ist ungültig."
@@ -2099,14 +2086,14 @@ def _serialize_choice(
         building = use_unit.building
 
     if (
-        building is None
-        or not building.active
+        object_type != "economic_unit"
+        and (building is None or not building.active)
     ):
         raise ValueError(
             "Das Gebäude ist nicht verfügbar."
         )
 
-    economic_unit = (
+    economic_unit = economic_unit or (
         use_unit.economic_unit
         if (
             use_unit is not None
@@ -2138,9 +2125,11 @@ def _serialize_choice(
             )
         )
     elif use_unit is not None:
-        label = "Nutzungseinheit / Leerstand"
+        label = use_unit.id_num or use_unit.description_of_position or "Wohnung / Nutzungseinheit"
+    elif building is not None:
+        label = building.address or building.id_num or "Gebäude"
     else:
-        label = "Gebäude"
+        label = economic_unit.name or economic_unit.id_num or "Wirtschaftseinheit"
 
     return {
         "object_type": object_type,

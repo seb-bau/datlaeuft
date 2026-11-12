@@ -203,6 +203,24 @@ class TicketViewTests(unittest.TestCase):
         self.assertNotIn('data-default-service-catalog-id="401"', html)
         self.assertNotIn('data-default-service-catalog-id="601"', html)
 
+    def test_commission_search_forwards_all_supported_object_levels(self):
+        for search_context in ("tenant", "agreement", "use_unit", "address", "economic_unit", "all"):
+            with self.subTest(search_context=search_context), patch.object(
+                self.admin, "search_commission_objects", return_value=[{"object_type": search_context}],
+            ) as search:
+                response = self.client.get(
+                    "/admin/commission-objects/search", query_string={"q": "Objekt", "context": search_context},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json["items"], [{"object_type": search_context}])
+                search.assert_called_once_with("Objekt", search_context=search_context, limit=30)
+
+    def test_commission_search_rejects_unknown_levels(self):
+        with patch.object(self.admin, "search_commission_objects") as search:
+            response = self.client.get("/admin/commission-objects/search?q=Objekt&context=unknown")
+        self.assertEqual(response.status_code, 400)
+        search.assert_not_called()
+
     def test_ticket_commission_form_keeps_the_ai_position_without_manual_defaults(self):
         self.prepare_commission_defaults()
         self.first_open_ticket.ai_state = "ready"

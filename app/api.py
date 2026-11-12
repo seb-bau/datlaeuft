@@ -1064,6 +1064,9 @@ def commission_objects_search() -> Any:
         "q",
         "",
     ).strip()
+    search_context = request.args.get("context", "tenant").strip()
+    if search_context not in {"tenant", "address", "agreement", "use_unit", "economic_unit", "all"}:
+        return jsonify({"message": "Der Suchkontext ist ungültig."}), 400
 
     try:
         limit = int(
@@ -1082,6 +1085,7 @@ def commission_objects_search() -> Any:
 
     items = search_commission_objects(
         search_text,
+        search_context=search_context,
         limit=limit,
     )
 

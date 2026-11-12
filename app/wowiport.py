@@ -2058,6 +2058,7 @@ class WowiportService:
                     commission.use_unit_id,
                     commission.building_erp_id,
                     commission.license_agreement_id,
+                    commission.economic_unit_erp_id,
                 ]
         ):
             raise RuntimeError(
