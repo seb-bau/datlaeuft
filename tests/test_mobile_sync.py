@@ -353,8 +353,9 @@ class MobileSynchronizationTests(unittest.TestCase):
         service.write_outgoing_info = Mock(side_effect=RuntimeError("Wowiport nicht erreichbar"))
         self.db.session.add(self.models.MobileSyncDelivery(id="delivery", user_id=1, kind="process_info", payload={"info_id": "message"}))
         self.db.session.commit()
-        with patch.dict(sys.modules, {service.__name__: service}):
+        with patch.dict(sys.modules, {service.__name__: service}), self.assertLogs(self.app.logger, level="ERROR") as logs:
             self.assertEqual(self.sync.process_mobile_deliveries(), 1)
+        self.assertIn("mobile_delivery_failed delivery_id=delivery", "\n".join(logs.output))
         row = self.db.session.get(self.models.MobileSyncDelivery, "delivery")
         self.assertEqual(row.state, "failed")
         self.assertEqual(row.attempts, 1)
