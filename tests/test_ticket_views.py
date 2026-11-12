@@ -79,6 +79,8 @@ class TicketViewTests(unittest.TestCase):
             cls.models.WowiEconomicUnitJurisdiction, cls.models.BlacklistEntry,
             cls.models.Commission, cls.models.TicketMirror, cls.models.CommissionTicketLink,
             cls.models.TimeEntry, cls.models.InventoryMovement, cls.models.InventoryItem,
+            cls.models.CraftActivity, cls.models.TimeTaskTemplate, cls.models.TicketCraftFallback,
+            cls.models.WowiCommissionType, cls.models.WowiCompanyCode,
         )]
 
     def setUp(self):
@@ -144,6 +146,86 @@ class TicketViewTests(unittest.TestCase):
         parser = LinkParser()
         parser.feed(response.get_data(as_text=True))
         return render.call_args.kwargs, parser.links
+
+    def prepare_commission_defaults(self):
+        crafts = {
+            craft_id: self.models.CraftActivity(
+                id=craft_id, erp_id=craft_id + 100, name=f"Gewerk {craft_id}",
+                active=True, app_enabled=True,
+            )
+            for craft_id in range(1, 7)
+        }
+        crafts[6].app_enabled = False
+        positions = [
+            self.models.TimeTaskTemplate(
+                id=position_id, code=f"P-{position_id}", title=f"Position {position_id}",
+                craft_activity=crafts[craft_id], erp_service_catalogue_id=catalog_id,
+                active=active, commission_type_erp_ids=[100],
+            )
+            for position_id, craft_id, catalog_id, active in (
+                (11, 1, 101, True), (12, 1, 102, True), (21, 2, 201, True),
+                (31, 3, 301, True), (41, 4, 401, False), (42, 4, 402, True),
+                (51, 5, None, True), (52, 5, 502, True), (61, 6, 601, True),
+            )
+        ]
+        self.db.session.add_all([
+            *crafts.values(), *positions,
+            self.models.WowiCommissionType(erp_id=100, code="Reparatur"),
+            *[
+                self.models.TicketCraftFallback(craft_activity_id=craft_id, task_template_id=position_id)
+                for craft_id, position_id in ((1, 11), (2, 21), (3, 12), (4, 41), (5, 51), (6, 61))
+            ],
+        ])
+        self.db.session.commit()
+
+    def commission_form_response(self, path="/admin/commissions/new", **values):
+        with (
+            patch.object(self.admin, "commission_service_positions", side_effect=lambda: (
+                self.models.TimeTaskTemplate.query.filter_by(active=True)
+            )),
+            patch.object(self.admin, "configured_commission_type_ids", return_value={100}),
+            patch.object(self.admin, "available_external_craftsmen", return_value=[]),
+            patch.object(self.admin, "ticket_license_agreement_local_id", return_value=None),
+            patch.object(self.admin, "render_template", wraps=render_template) as render,
+        ):
+            response = self.client.open(path, **values)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        return response, render.call_args.kwargs
+
+    def test_manual_commission_form_exposes_only_available_defaults_for_their_craft(self):
+        self.prepare_commission_defaults()
+        response, view = self.commission_form_response()
+        self.assertEqual(view["default_service_catalog_ids"], {1: 101, 2: 201})
+        html = response.get_data(as_text=True)
+        self.assertIn('data-default-service-catalog-id="101"', html)
+        self.assertIn('data-default-service-catalog-id="201"', html)
+        self.assertNotIn('data-default-service-catalog-id="401"', html)
+        self.assertNotIn('data-default-service-catalog-id="601"', html)
+
+    def test_ticket_commission_form_keeps_the_ai_position_without_manual_defaults(self):
+        self.prepare_commission_defaults()
+        self.first_open_ticket.ai_state = "ready"
+        self.first_open_ticket.ai_craft_activity_id = 1
+        self.first_open_ticket.ai_task_template_id = 12
+        self.db.session.commit()
+        response, view = self.commission_form_response(
+            f"/admin/commissions/new?ticket_id={self.first_open_ticket.id}",
+        )
+        self.assertEqual(view["default_service_catalog_ids"], {})
+        self.assertEqual(view["position_rows"][0]["service_catalog_id"], 102)
+        self.assertNotIn('data-default-service-catalog-id="101"', response.get_data(as_text=True))
+
+    def test_commission_form_retains_a_manual_position_after_validation_failure(self):
+        self.prepare_commission_defaults()
+        with patch.object(self.admin, "create_pending_commission", side_effect=ValueError("Bitte Angaben prüfen.")):
+            response, view = self.commission_form_response(method="POST", data={
+                "craft_activity_id": "1", "position_service_catalog_id": "102",
+                "position_text": "Manuell erfasster Text", "position_units": "2",
+                "commission_type_id": "100",
+            })
+        self.assertEqual(str(view["position_rows"][0]["service_catalog_id"]), "102")
+        self.assertEqual(view["position_rows"][0]["commission_text"], "Manuell erfasster Text")
+        self.assertIn("Manuell erfasster Text", response.get_data(as_text=True))
 
     def test_dashboard_tile_and_menu_show_the_same_open_tickets(self):
         dashboard, links = self.get("/admin")

@@ -5075,6 +5075,19 @@ def commission_create() -> Any:
     return render_template(
         "admin/commission_form.html",
         service_positions=service_positions,
+        default_service_catalog_ids=(
+            dict(db.session.query(
+                TicketCraftFallback.craft_activity_id,
+                TimeTaskTemplate.erp_service_catalogue_id,
+            ).join(
+                TimeTaskTemplate,
+                TicketCraftFallback.task_template_id == TimeTaskTemplate.id,
+            ).filter(
+                TicketCraftFallback.craft_activity_id == TimeTaskTemplate.craft_activity_id,
+                TimeTaskTemplate.id.in_([item.id for item in service_positions]),
+            ).all())
+            if source_ticket is None else {}
+        ),
         craft_activities=craft_activities,
         commission_types=commission_types,
         craftsman_users=craftsman_users,
