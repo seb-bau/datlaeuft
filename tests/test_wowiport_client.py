@@ -98,6 +98,81 @@ class WowiportClientTests(unittest.TestCase):
             with self.assertRaisesRegex(WowiPyException, "Ungültige OPENWOWI-Antwort"):
                 self.client()._rest_adapter.get("CommissioningRead/Commissions")
 
+    def test_economic_unit_rejection_includes_validation_details_from_the_actual_post(self):
+        rejected = response(400, {"Address": ["Ein Gebäude oder Grundstück muss angegeben werden."]})
+        with patch.object(transport.requests, "request", side_effect=[self.token_response(), rejected]) as request:
+            with self.assertRaisesRegex(WowiPyException, "Status 400.*Address: Ein Gebäude oder Grundstück"):
+                self.client().create_commissioning_commission_wait_for_craftsman_feedback(
+                    crafts_process_id=9100, economic_unit_id=1010, commission_type_id=100,
+                )
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(request.call_args.args[1].endswith("CommissioningEdit/Commission/WaitForCraftsmanFeedback"))
+        self.assertEqual(request.call_args.kwargs["json"], {
+            "CraftsProcessId": 9100, "CommissionTypeId": 100, "EconomicUnitId": 1010,
+        })
+
+    def test_validation_error_formats_preserve_the_field_and_message(self):
+        for payload, expected in (
+            ({"BuildingId": ["Gebäude fehlt.", "Gebäude fehlt."]}, "BuildingId: Gebäude fehlt."),
+            ({"Message": "Angaben prüfen.", "ModelState": {"Address": ["Adresse fehlt."]}}, "Address: Adresse fehlt."),
+            ({"title": "Ungültige Angaben", "errors": {"Address": ["Adresse fehlt."]}}, "Address: Adresse fehlt."),
+            ({"detail": "Auftragsart ist gesperrt.", "traceId": "trace-hidden"}, "Auftragsart ist gesperrt."),
+            (["Erster Fehler.", "Zweiter Fehler."], "Erster Fehler.; Zweiter Fehler."),
+            ("Adresse fehlt.", "Adresse fehlt."),
+        ):
+            with self.subTest(payload=payload), patch.object(
+                transport.requests, "request", side_effect=[self.token_response(), response(400, payload)],
+            ):
+                with self.assertRaises(WowiPyException) as error:
+                    self.client()._rest_adapter.post("CommissioningEdit/Commission", data={})
+                self.assertIn(expected, str(error.exception))
+                self.assertNotIn("trace-hidden", str(error.exception))
+                self.assertEqual(str(error.exception).count("BuildingId: Gebäude fehlt."), int("BuildingId" in payload))
+
+    def test_plain_text_validation_errors_are_shown_but_html_errors_are_omitted(self):
+        for content_type, text, expected in (
+            ("text/plain; charset=utf-8", "  Adresse\n fehlt.  ", "Adresse fehlt."),
+            ("text/html", "<html>Proxy-Fehler und interne Details</html>", None),
+        ):
+            rejected = response(400)
+            rejected.json.side_effect = ValueError("Kein JSON")
+            rejected.headers.get.return_value = content_type
+            rejected.text = text
+            with self.subTest(content_type=content_type), patch.object(
+                transport.requests, "request", side_effect=[self.token_response(), rejected],
+            ):
+                with self.assertRaises(WowiPyException) as error:
+                    self.client()._rest_adapter.post("CommissioningEdit/Commission", data={})
+                message = str(error.exception)
+                if expected:
+                    self.assertIn(expected, message)
+                else:
+                    self.assertNotIn("OPENWOWI-Details", message)
+                    self.assertNotIn("interne Details", message)
+
+    def test_validation_details_are_bounded_and_do_not_expose_credentials(self):
+        rejected = response(400, {
+            "Message": "test-key first-token refresh-token a&b=c test@example.invalid " + "x" * 3000,
+            "StackTrace": "internal-stack-hidden",
+        })
+        with patch.object(transport.requests, "request", side_effect=[self.token_response(), rejected]):
+            with self.assertRaises(WowiPyException) as error:
+                self.client()._rest_adapter.post("CommissioningEdit/Commission", data={})
+        message = str(error.exception)
+        for value in ("test-key", "first-token", "refresh-token", "a&b=c", "test@example.invalid", "internal-stack-hidden"):
+            self.assertNotIn(value, message)
+        self.assertLessEqual(len(message.split("OPENWOWI-Details: ", 1)[1]), 2000)
+
+    def test_authentication_and_server_errors_keep_the_response_body_private(self):
+        for status in (401, 403, 500):
+            with self.subTest(status=status), patch.object(transport.requests, "request", side_effect=[
+                self.token_response(), response(status, {"Message": "private-response-body"}),
+                self.token_response(), response(status, {"Message": "private-response-body"}),
+            ]):
+                with self.assertRaises(WowiPyException) as error:
+                    self.client()._rest_adapter.post("CommissioningEdit/Commission", data={})
+                self.assertNotIn("private-response-body", str(error.exception))
+
     def test_force_refresh_bypasses_the_http_cache(self):
         with patch.object(transport.requests, "request", side_effect=[self.token_response(), response()]):
             client = self.client()

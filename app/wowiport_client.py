@@ -14,6 +14,47 @@ REQUEST_TIMEOUT = (10, 60)
 
 
 class WowiportRestAdapter(RestAdapter):
+    def _validation_error_details(self, response):
+        if response.status_code not in (400, 409, 422):
+            return ""
+        try:
+            payload = response.json()
+        except ValueError:
+            content_type = response.headers.get("Content-Type", "").lower()
+            payload = response.text if content_type.startswith("text/plain") else None
+
+        messages = []
+
+        def collect(value, field="", depth=0):
+            if depth > 3:
+                return
+            if isinstance(value, str):
+                message = " ".join(value.split())
+                if message:
+                    entry = f"{field}: {message}" if field else message
+                    if entry not in messages:
+                        messages.append(entry)
+            elif isinstance(value, list):
+                for item in value[:10]:
+                    collect(item, field, depth + 1)
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    normalized_key = key.casefold()
+                    if normalized_key in {"message", "detail", "title", "description"}:
+                        collect(item, field, depth + 1)
+                    elif normalized_key in {"errors", "modelstate"}:
+                        collect(item, field, depth + 1)
+                    elif isinstance(item, list) and all(isinstance(entry, str) for entry in item):
+                        collect(item, str(key), depth + 1)
+
+        collect(payload)
+        details = "; ".join(messages)
+        for attribute in ("api_key", "access_token", "refresh_token", "password", "user"):
+            value = getattr(self, attribute, None)
+            if isinstance(value, str) and value:
+                details = details.replace(value, "[entfernt]")
+        return details[:2000]
+
     def _request(self, method, endpoint, *, token=False, **kwargs):
         url = (
             f"https://{self.host_base}/oauth2/token"
@@ -75,9 +116,11 @@ class WowiportRestAdapter(RestAdapter):
                 break
             self.access_token, self.refresh_token = self._create_token(self.refresh_token)
         if not 200 <= response.status_code < 300:
+            details = self._validation_error_details(response)
             raise WowiPyException(
                 f"OPENWOWI hat {http_method} {endpoint} "
                 f"mit Status {response.status_code} abgelehnt."
+                + (f" OPENWOWI-Details: {details}" if details else "")
             )
         try:
             result = response.json()
