@@ -211,21 +211,14 @@ def complete_commission(
         external_craftsman=external_craftsman,
     )
     commission.completion_submitted_at = now
-    commission.erp_sync_state = (
-        CommissionSyncState.PENDING.value
-    )
-    commission.erp_sync_message = None
     commission.status_changed_at = now
+    operation_type = None
 
     if not completed:
         commission.local_status = (
             CommissionLocalStatus.COMPLETION_REVIEW.value
         )
         commission.completed_at = None
-        operation_type = ErpOperationType.CANCEL_COMMISSION
-        operation_key = (
-            f"commission:canceled:{commission.id}"
-        )
     elif tenant_charge:
         commission.local_status = (
             CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
@@ -243,12 +236,15 @@ def complete_commission(
         operation_type = ErpOperationType.COMPLETE_COMMISSION
         operation_key = f"commission:done:{commission.id}"
 
-    enqueue_erp_operation(
-        commission,
-        operation_type,
-        operation_key,
-        actor_user_id=user.id if user else None,
-    )
+    if operation_type is not None:
+        commission.erp_sync_state = CommissionSyncState.PENDING.value
+        commission.erp_sync_message = None
+        enqueue_erp_operation(
+            commission,
+            operation_type,
+            operation_key,
+            actor_user_id=user.id if user else None,
+        )
 
     actor_user_id, actor_external_id = actor_ids(
         user,

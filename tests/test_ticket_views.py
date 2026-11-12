@@ -78,6 +78,7 @@ class TicketViewTests(unittest.TestCase):
             cls.models.WowiResponsibleOfficial, cls.models.WowiEconomicUnit,
             cls.models.WowiEconomicUnitJurisdiction, cls.models.BlacklistEntry,
             cls.models.Commission, cls.models.TicketMirror, cls.models.CommissionTicketLink,
+            cls.models.CommissionPosition,
             cls.models.TimeEntry, cls.models.InventoryMovement, cls.models.InventoryItem,
             cls.models.CraftActivity, cls.models.TimeTaskTemplate, cls.models.TicketCraftFallback,
             cls.models.WowiCommissionType, cls.models.WowiCompanyCode,
@@ -241,6 +242,19 @@ class TicketViewTests(unittest.TestCase):
             self.assertEqual(view["selected_state"], "open")
             self.assertEqual({ticket.id for ticket in view["pagination"].items}, expected)
             self.assertEqual(view["pagination"].total, dashboard["my_open_ticket_count"])
+
+    def test_incomplete_order_is_visible_to_its_creator_in_the_review_list_and_dashboard(self):
+        incomplete = self.models.Commission(
+            erp_id=9001, erp_idnum="A-9001", title="Nicht erledigter Auftrag",
+            created_by=self.user, completion_successful=False, completion_reason="Ersatzteil fehlt",
+            completion_submitted_at=self.models.utc_now(), local_status="completion_review", status_id=7,
+        )
+        self.db.session.add(incomplete)
+        self.db.session.commit()
+        view, _ = self.get("/admin/commission-reviews?status=completion_review")
+        self.assertEqual([item.id for item in view["items"]], [incomplete.id])
+        dashboard, _ = self.get("/admin")
+        self.assertEqual(dashboard["completion_review_count"], 1)
 
     def test_filter_reset_returns_to_my_open_tickets(self):
         _, links = self.get("/admin/tickets?owner=all&state=all")

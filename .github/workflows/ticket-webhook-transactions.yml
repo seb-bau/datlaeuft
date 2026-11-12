@@ -21,6 +21,9 @@ on:
       - app/commission_priority.py
       - app/commission_service.py
       - app/commission_workflow_service.py
+      - app/completion_notifications.py
+      - app/email_templates.py
+      - migrations/versions/*incomplete_commission_notifications.py
       - app/templates/admin/commissions.html
       - app/templates/admin/commission_form.html
       - app/static/js/commission_form.js
@@ -50,6 +53,9 @@ on:
       - app/commission_priority.py
       - app/commission_service.py
       - app/commission_workflow_service.py
+      - app/completion_notifications.py
+      - app/email_templates.py
+      - migrations/versions/*incomplete_commission_notifications.py
       - app/templates/admin/commissions.html
       - app/templates/admin/commission_form.html
       - app/static/js/commission_form.js
@@ -94,6 +100,7 @@ jobs:
           "requests>=2.32,<3"
           "qrcode>=8,<9"
           "wowipy>=1.1.91,<2"
+          "alembic>=1.16,<2"
       - name: Tests mit SQLite ausführen
         run: python -m unittest discover -s tests -v
       - name: MariaDB-Einstellungen prüfen
@@ -119,4 +126,5 @@ jobs:
         run: |
           python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v
           python -m unittest discover -s tests -p test_mobile_sync.py -v
+          python -m unittest discover -s tests -p test_completion_notifications.py -v
 

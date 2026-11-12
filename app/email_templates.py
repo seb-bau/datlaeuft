@@ -46,6 +46,12 @@ EMAIL_TEMPLATES = {
         "subject": "Auftrag {{ commission_number }} abgeschlossen",
         "body": "Guten Tag,\n\nder von Ihnen angelegte Auftrag {{ commission_number }} wurde als abgeschlossen gemeldet.\n\nAuftrag: {{ commission_title }}{% if address %}\nObjekt: {{ address }}{% endif %}{% if review_pending %}\n\nDie Mieterbelastung befindet sich noch in Prüfung.{% endif %}{% if commission_url %}\n\n{{ commission_url }}{% endif %}\n\nFreundliche Grüße\n",
     },
+    "incomplete": {
+        "label": "Sachbearbeitung: Auftrag nicht abgeschlossen",
+        "fields": ORDER_FIELDS + " completion_reason reported_by",
+        "subject": "Auftrag {{ commission_number }} nicht abgeschlossen",
+        "body": "Guten Tag,\n\nder von Ihnen angelegte Auftrag {{ commission_number }} konnte nicht abgeschlossen werden und wartet auf Ihre Prüfung.\n\nAuftrag: {{ commission_title }}{% if address %}\nObjekt: {{ address }}{% endif %}\nBegründung: {{ completion_reason }}\nGemeldet von: {{ reported_by }}{% if commission_url %}\n\n{{ commission_url }}{% endif %}\n\nFreundliche Grüße\n",
+    },
     "external_invitation": {
         "label": "Handwerkerportal: Einladung",
         "fields": "portal_name recipient_name username invitation_url valid_hours",
@@ -161,6 +167,8 @@ EXAMPLE_CONTEXT = {
     "craft_names": ["Sanitär"],
     "craftsman_name": "Petra Beispiel",
     "review_pending": True,
+    "completion_reason": "Ersatzteil fehlt.",
+    "reported_by": "Petra Beispiel",
     "portal_name": "Handwerkerportal",
     "recipient_name": "Max Mustermann",
     "username": "max.mustermann",

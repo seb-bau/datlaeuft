@@ -356,12 +356,15 @@ def execute_outbox_operation(
         service.mark_commission_accepted(commission.erp_id)
         commission.status_id = 7
         commission.status_code = "Accepted"
-        commission.local_status = CommissionLocalStatus.IN_PROGRESS.value
+        if not commission.needs_completion_review:
+            commission.local_status = CommissionLocalStatus.IN_PROGRESS.value
 
-    elif operation.operation_type in {
-        ErpOperationType.REFUSE_COMMISSION.value,
-        ErpOperationType.CANCEL_COMMISSION.value,
-    }:
+    elif operation.operation_type == ErpOperationType.CANCEL_COMMISSION.value:
+        if commission.completion_successful is False:
+            commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
+            commission.completed_at = None
+
+    elif operation.operation_type == ErpOperationType.REFUSE_COMMISSION.value:
         require_erp_id(commission)
 
         reason = str(
