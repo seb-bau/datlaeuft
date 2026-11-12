@@ -1,5 +1,6 @@
 import importlib
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -234,7 +235,8 @@ class CompletionNotificationMigrationTests(unittest.TestCase):
             current = sa.Table(old.name, sa.MetaData(), autoload_with=connection)
             item = connection.execute(sa.select(current)).one()
             self.assertEqual(item.notification_key, "completion")
-            self.assertEqual(item.payload, {"subject": "Erledigt"})
+            payload = json.loads(item.payload) if isinstance(item.payload, str) else item.payload
+            self.assertEqual(payload, {"subject": "Erledigt"})
             connection.execute(current.insert(), [
                 {"commission_id": 1, "notification_key": "incomplete:first", "state": "sent"},
                 {"commission_id": 1, "notification_key": "incomplete:second", "state": "pending"},
