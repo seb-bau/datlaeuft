@@ -5356,6 +5356,7 @@ def commission_object_search() -> Any:
         "address",
         "agreement",
         "use_unit",
+        "economic_unit",
         "all",
     }
 

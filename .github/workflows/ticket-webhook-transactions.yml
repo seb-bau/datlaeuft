@@ -7,6 +7,9 @@ on:
       - app/ticket_service.py
       - app/ticket_filters.py
       - app/admin.py
+      - app/api.py
+      - app/object_directory.py
+      - app/tenant_notifications.py
       - app/templates/admin/dashboard.html
       - app/templates/admin/tickets.html
       - app/static/js/ticket_filters.js
@@ -40,6 +43,9 @@ on:
       - app/ticket_service.py
       - app/ticket_filters.py
       - app/admin.py
+      - app/api.py
+      - app/object_directory.py
+      - app/tenant_notifications.py
       - app/templates/admin/dashboard.html
       - app/templates/admin/tickets.html
       - app/static/js/ticket_filters.js

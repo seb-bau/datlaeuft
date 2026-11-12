@@ -83,6 +83,11 @@ def create_pending_commission(
     object_context = resolve_commission_object(
         data
     )
+    notify_tenants = bool(
+        notify_tenants
+        and object_context.license_agreement is not None
+        and not object_context.license_agreement.is_vacancy
+    )
     position_data = data.get("positions")
     selected_craft_activity_id = optional_int(
         data.get("craft_activity_id"),
