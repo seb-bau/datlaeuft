@@ -41,10 +41,12 @@ from .logging_service import configure_logging
 from .settings import all_definitions, grouped_definitions, settings, SettingKeys
 from .catalog import sync_catalogs_from_wowiport
 from .object_directory import (
+    commission_address_buildings,
     commission_creation_tasks,
     get_commission_object_choice,
     resolve_commission_assignment,
     resolve_commission_object,
+    resolve_commission_address_building,
     search_commission_objects,
     sync_object_directory,
     commission_service_positions,
@@ -4836,6 +4838,7 @@ def commission_create() -> Any:
                         or ""
                     ),
                     object_id,
+                    address_building_id=form_data.get("address_building_id"),
                 )
             )
         except (
@@ -5173,7 +5176,9 @@ def commission_assignment_preview() -> Any:
             {
                 "object_type": object_type,
                 "object_id": object_id,
-            }
+                "address_building_id": request.args.get("address_building_id"),
+            },
+            require_address=True,
         )
         company_code = (
             WowiCompanyCode.query
@@ -7841,6 +7846,47 @@ def commission_priority(commission_id: int) -> Any:
     )
 
 
+@admin_bp.post("/admin/commissions/<int:commission_id>/address")
+@foreman_required
+def commission_address_update(commission_id: int) -> Any:
+    operation = ErpOutboxOperation.query.filter_by(
+        commission_id=commission_id, operation_type=ErpOperationType.CREATE_COMMISSION.value,
+    ).with_for_update().one_or_none()
+    item = db.get_or_404(Commission, commission_id)
+    next_url = url_for("admin.commission_detail", commission_id=item.id)
+    if operation is None or operation.state not in {ErpOutboxState.PENDING.value, ErpOutboxState.FAILED.value}:
+        db.session.rollback()
+        flash("Die Auftragsanlage wird gerade verarbeitet oder ist bereits abgeschlossen. Bitte die Seite aktualisieren.", "warning")
+        return redirect(next_url)
+    if item.erp_id is not None or item.deleted_at is not None or any((
+        item.building_erp_id, item.building_idnum, item.use_unit_id, item.use_unit_idnum,
+        item.license_agreement_id, item.license_agreement_idnum,
+    )):
+        db.session.rollback()
+        flash("Für diesen Auftrag kann keine WE-Gebäudeadresse ergänzt werden.", "warning")
+        return redirect(next_url)
+    try:
+        economic_unit = WowiEconomicUnit.query.filter_by(erp_id=item.economic_unit_erp_id).one_or_none()
+        building = resolve_commission_address_building(economic_unit, request.form.get("address_building_id"))
+        item.building_erp_id = building.erp_id
+        item.building_idnum = building.id_num
+        item.apartment_address = building.address
+        item.erp_sync_state = CommissionSyncState.PENDING.value
+        item.erp_sync_message = None
+        operation.state = ErpOutboxState.PENDING.value
+        operation.available_at = utc_now()
+        operation.locked_at = None
+        operation.last_error = None
+        audit("commission.address.web", "commission", item.id, {"building_erp_id": building.erp_id, "operation_id": operation.id})
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+        return redirect(next_url)
+    flash("Die Gebäudeadresse wurde ergänzt. Die vorhandene Auftragsanlage wird erneut übertragen.", "success")
+    return redirect(next_url)
+
+
 @admin_bp.get(
     "/admin/commissions/<int:commission_id>"
 )
@@ -7852,6 +7898,14 @@ def commission_detail(
         Commission,
         commission_id,
     )
+    address_buildings = []
+    if item.erp_id is None and item.deleted_at is None and item.economic_unit_erp_id and not any((
+        item.building_erp_id, item.building_idnum, item.use_unit_id, item.use_unit_idnum,
+        item.license_agreement_id, item.license_agreement_idnum,
+    )):
+        economic_unit = WowiEconomicUnit.query.filter_by(erp_id=item.economic_unit_erp_id, active=True).one_or_none()
+        if economic_unit is not None:
+            address_buildings = commission_address_buildings(economic_unit)
 
     process_infos: list[ProcessInfo] = []
     process_info_sync_error: str | None = None
@@ -7950,6 +8004,7 @@ def commission_detail(
     }
 
     history_titles = {
+        "commission.address.web": "Gebäudeadresse für WE-Auftrag ergänzt",
         "commission.create.web": "Auftrag im Web erfasst",
         "commission.create.ios": "Auftrag in der App erfasst",
         "commission.start": "Auftrag angenommen",
@@ -7970,6 +8025,7 @@ def commission_detail(
     return render_template(
         "admin/commission_detail.html",
         item=item,
+        address_buildings=address_buildings,
         manual_appointment_text=format_manual_appointment(item),
         photos=photos,
         appointment_requests=appointment_requests,
@@ -12127,6 +12183,7 @@ def read_commission_form() -> dict[str, Any]:
         "object_id": request.form.get(
             "object_id"
         ),
+        "address_building_id": request.form.get("address_building_id"),
         "commission_type_id": request.form.get(
             "commission_type_id"
         ),

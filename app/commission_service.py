@@ -81,7 +81,8 @@ def create_pending_commission(
         )
 
     object_context = resolve_commission_object(
-        data
+        data,
+        require_address=True,
     )
     notify_tenants = bool(
         notify_tenants

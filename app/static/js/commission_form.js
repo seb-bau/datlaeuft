@@ -85,6 +85,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const objectId = document.getElementById(
         "objectId"
     );
+    const addressBuildingId = document.getElementById("addressBuildingId");
     const submitCommission = document.getElementById(
         "submitCommission"
     );
@@ -236,7 +237,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const currentValue = String(
             objectId.value || ""
         );
-        const isMissing = !currentValue;
+        const isMissing = !hasCompleteObject();
         const isAutomatic = (
             !isMissing
             && automaticValue
@@ -344,6 +345,11 @@ document.addEventListener("DOMContentLoaded", () => {
         }[item.object_type] || "Objekt";
     }
 
+    function hasCompleteObject() {
+        return Boolean(objectType.value && objectId.value
+            && (objectType.value !== "economic_unit" || addressBuildingId.value));
+    }
+
     function updateTenantNotificationOptions(item) {
         const available = Boolean(item?.license_agreement?.erp_id && !item.is_vacancy);
         notifyTenants.disabled = !available;
@@ -387,8 +393,14 @@ document.addEventListener("DOMContentLoaded", () => {
         item,
         resetAssignments = true
     ) {
+        window.clearTimeout(objectSearchTimer);
+        objectSearchRequestId += 1;
         objectType.value = item.object_type;
         objectId.value = item.object_id;
+        const addressChoices = item.object_type === "economic_unit" ? item.address_buildings || [] : [];
+        const selectedAddress = item.object_type === "economic_unit"
+            ? item.address_building || (addressChoices.length === 1 ? addressChoices[0] : null) : null;
+        addressBuildingId.value = selectedAddress?.id || "";
         updateTenantNotificationOptions(item);
                 if (resetAssignments) {
             delete objectSummary.dataset
@@ -444,6 +456,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ? `Nutzungseinheit ${item.use_unit.id_num}`
                 : null,
             item.building?.address,
+            selectedAddress ? `Gebäudeadresse: ${selectedAddress.address}` : null,
             item.building?.id_num
                 ? `Gebäude ${item.building.id_num}`
                 : null,
@@ -484,9 +497,25 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         objectResults.replaceChildren();
+        if (item.object_type === "economic_unit" && !selectedAddress) {
+            showObjectSearchMessage(
+                addressChoices.length
+                    ? "OPENWOWI benötigt eine Gebäudeadresse für diesen WE-Auftrag. Bitte eine Adresse wählen."
+                    : "Für diese Wirtschaftseinheit ist keine aktive Gebäudeadresse hinterlegt. Bitte den Objektspiegel prüfen.",
+                "list-group-item text-warning"
+            );
+            addressChoices.forEach((address) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "list-group-item list-group-item-action py-2";
+                button.textContent = [address.address, address.id_num].filter(Boolean).join(" · ");
+                button.addEventListener("click", () => selectObject({...item, address_building: address}, resetAssignments));
+                objectResults.appendChild(button);
+            });
+        }
         submitCommission.disabled = (
             !canCreate
-            || !objectId.value
+            || !hasCompleteObject()
         );
 
         updateAssignmentPreview({
@@ -987,8 +1016,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const hasObject = Boolean(
-            objectType.value
-            && objectId.value
+            hasCompleteObject()
         );
         const hasCraft = Boolean(
             craftActivity.value
@@ -1050,10 +1078,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const selectedCraftId = (
             craftActivity.value
         );
-        const hasObject = Boolean(
-            objectType.value
-            && objectId.value
-        );
+        const hasObject = hasCompleteObject();
         const isInternal =
             isInternalAssignment();
 
@@ -1165,6 +1190,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 "craft_activity_id",
                 selectedCraftId
             );
+        }
+
+        if (addressBuildingId.value) {
+            parameters.set("address_building_id", addressBuildingId.value);
         }
 
         setAssignmentStatus(
@@ -1623,6 +1652,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (objectType.value && expectedType && objectType.value !== expectedType) {
                 objectType.value = "";
                 objectId.value = "";
+                addressBuildingId.value = "";
                 delete objectSummary.dataset.automaticValue;
                 objectSummary.textContent = "Noch kein Objekt ausgewählt.";
                 objectSummary.classList.add("d-flex", "align-items-center", "justify-content-center", "text-center");
@@ -1774,7 +1804,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     submitCommission.disabled = (
         !canCreate
-        || !objectId.value
+        || !hasCompleteObject()
     );
 
     filterExternalCraftsmen();

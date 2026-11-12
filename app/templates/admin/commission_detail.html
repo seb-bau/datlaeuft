@@ -112,6 +112,27 @@
   </div>
 </div>
 
+{% if address_buildings %}
+<div class="card card-body shadow-sm mb-4">
+  <h2 class="h6">Gebäudeadresse für WE-Auftrag ergänzen</h2>
+  <p class="small text-muted">
+    OPENWOWI benötigt eine Gebäudeadresse. Wählen Sie eine Adresse dieser Wirtschaftseinheit.
+    Anschließend wird die vorhandene Auftragsanlage erneut übertragen.
+  </p>
+  <div class="d-flex flex-wrap gap-2">
+    {% for building in address_buildings %}
+    <form method="post" action="{{ url_for('admin.commission_address_update', commission_id=item.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="address_building_id" value="{{ building.id }}">
+      <button class="btn btn-outline-primary" type="submit">
+        {{ building.address }}{% if building.id_num %} · {{ building.id_num }}{% endif %}
+      </button>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <form method="post"
       action="{{ url_for('admin.commission_priority', commission_id=item.id) }}"
       class="card card-body shadow-sm mb-4">

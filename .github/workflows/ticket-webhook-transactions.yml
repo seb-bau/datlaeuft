@@ -30,6 +30,7 @@ on:
       - migrations/versions/*incomplete_commission_notifications.py
       - app/templates/admin/commissions.html
       - app/templates/admin/commission_form.html
+      - app/templates/admin/commission_detail.html
       - app/static/js/commission_form.js
       - migrations/versions/*commission_status_changed_at.py
       - app/push_service.py
@@ -66,6 +67,7 @@ on:
       - migrations/versions/*incomplete_commission_notifications.py
       - app/templates/admin/commissions.html
       - app/templates/admin/commission_form.html
+      - app/templates/admin/commission_detail.html
       - app/static/js/commission_form.js
       - migrations/versions/*commission_status_changed_at.py
       - app/push_service.py
