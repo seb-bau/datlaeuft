@@ -11,11 +11,12 @@ from sqlalchemy.exc import IntegrityError
 from .extensions import db
 from .mail_service import send_email
 from .models import (
-    Commission, CommissionCompletionNotification, CommissionSource,
+    Commission, CommissionCompletionNotification, CommissionLocalStatus, CommissionSource,
     CommissionSyncState, utc_now,
 )
 from .settings import SettingKeys, settings, validate_debug_email_address
 from .email_templates import commission_email_context, render_email_template, set_email_content
+from .utils import ensure_utc
 
 
 def resolve_completion_notification_choice(source: CommissionSource, value: Any) -> bool:
@@ -29,8 +30,10 @@ def resolve_completion_notification_choice(source: CommissionSource, value: Any)
 
 
 def completion_is_reported(commission: Commission) -> bool:
-    return commission.status_id == 9 or (
-        commission.status_id == 11 and commission.completion_successful is True
+    return not commission.needs_completion_review and (
+        commission.status_id == 9 or (
+            commission.status_id == 11 and commission.completion_successful is True
+        )
     )
 
 
@@ -38,7 +41,10 @@ def ensure_completion_notifications(limit: int = 200) -> int:
     commissions = (
         Commission.query.outerjoin(
             CommissionCompletionNotification,
-            CommissionCompletionNotification.commission_id == Commission.id,
+            and_(
+                CommissionCompletionNotification.commission_id == Commission.id,
+                CommissionCompletionNotification.notification_key == "completion",
+            ),
         )
         .filter(
             Commission.source == CommissionSource.WEB.value,
@@ -46,6 +52,7 @@ def ensure_completion_notifications(limit: int = 200) -> int:
             Commission.erp_id.is_not(None),
             Commission.erp_sync_state == CommissionSyncState.SYNCED.value,
             Commission.deleted_at.is_(None),
+            Commission.local_status != CommissionLocalStatus.COMPLETION_REVIEW.value,
             or_(Commission.status_id == 9, and_(
                 Commission.status_id == 11,
                 Commission.completion_successful.is_(True),
@@ -56,7 +63,30 @@ def ensure_completion_notifications(limit: int = 200) -> int:
     )
     for commission in commissions:
         db.session.add(CommissionCompletionNotification(commission=commission))
-    return len(commissions)
+
+    incomplete_commissions = (
+        Commission.query.outerjoin(
+            CommissionCompletionNotification,
+            and_(
+                CommissionCompletionNotification.commission_id == Commission.id,
+                CommissionCompletionNotification.notification_key.like("incomplete:%"),
+                CommissionCompletionNotification.report_submitted_at == Commission.completion_submitted_at,
+            ),
+        ).filter(
+            Commission.local_status == CommissionLocalStatus.COMPLETION_REVIEW.value,
+            Commission.completion_successful.is_(False),
+            Commission.completion_submitted_at.is_not(None),
+            Commission.deleted_at.is_(None),
+            CommissionCompletionNotification.id.is_(None),
+        ).order_by(Commission.completion_submitted_at.asc(), Commission.id.asc()).limit(limit).all()
+    )
+    for commission in incomplete_commissions:
+        db.session.add(CommissionCompletionNotification(
+            commission=commission,
+            notification_key="incomplete:" + ensure_utc(commission.completion_submitted_at).isoformat(),
+            report_submitted_at=commission.completion_submitted_at,
+        ))
+    return len(commissions) + len(incomplete_commissions)
 
 
 def claim_completion_notification() -> int | None:
@@ -87,7 +117,7 @@ def claim_completion_notification() -> int | None:
     return item_id
 
 
-def completion_notification_payload(commission: Commission) -> dict[str, str]:
+def completion_notification_payload(commission: Commission, *, incomplete: bool = False) -> dict[str, str]:
     creator = commission.created_by
     try:
         recipient = validate_debug_email_address(creator.email if creator is not None else "")
@@ -101,8 +131,10 @@ def completion_notification_payload(commission: Commission) -> dict[str, str]:
             str(commission.erp_idnum or commission.erp_id or commission.id).split()
         ),
         "review_pending": commission.status_id == 11,
+        "completion_reason": commission.completion_reason or "–",
+        "reported_by": commission.completion_submitted_by_name or "–",
     })
-    content = render_email_template("completion", context)
+    content = render_email_template("incomplete" if incomplete else "completion", context)
     return {"recipient": recipient, **content}
 
 
@@ -111,20 +143,28 @@ def execute_completion_notification(item_id: int) -> None:
     if item is None or item.state != "sending":
         return
     commission = item.commission
-    if (
-        commission.source != CommissionSource.WEB.value
-        or not commission.notify_on_completion
-        or commission.deleted_at is not None
-        or not completion_is_reported(commission)
-    ):
+    incomplete = item.notification_key.startswith("incomplete:")
+    if incomplete:
+        should_send = bool(
+            commission.needs_completion_review
+            and item.report_submitted_at is not None
+            and ensure_utc(item.report_submitted_at) == ensure_utc(commission.completion_submitted_at)
+        )
+    else:
+        should_send = (
+            commission.source == CommissionSource.WEB.value
+            and commission.notify_on_completion
+            and completion_is_reported(commission)
+        )
+    if commission.deleted_at is not None or not should_send:
         item.state = "discarded"
         item.locked_at = None
         db.session.commit()
         return
-    if commission.erp_sync_state != CommissionSyncState.SYNCED.value:
+    if not incomplete and commission.erp_sync_state != CommissionSyncState.SYNCED.value:
         raise RuntimeError("Der Abschluss wurde noch nicht vollständig an Wowiport übertragen.")
     if item.payload is None:
-        item.payload = completion_notification_payload(commission)
+        item.payload = completion_notification_payload(commission, incomplete=incomplete)
         db.session.commit()
     smtp_host = settings.get(SettingKeys.SMTP_HOST).strip()
     smtp_sender = settings.get(SettingKeys.SMTP_SENDER).strip()

@@ -71,7 +71,6 @@ def _crafts_process_short_description(
 ERP_OPERATION_STATUS = {
     ErpOperationType.ACCEPT_COMMISSION.value: (7, "Accepted"),
     ErpOperationType.REFUSE_COMMISSION.value: (10, "Canceled"),
-    ErpOperationType.CANCEL_COMMISSION.value: (10, "Canceled"),
     ErpOperationType.COMPLETE_COMMISSION.value: (9, "Done"),
     ErpOperationType.AWAIT_INVOICE.value: (11, "AwaitInvoice"),
 }
@@ -3641,10 +3640,17 @@ def upsert_commission(
     }:
         commission.erp_sync_state = CommissionSyncState.SYNCED.value
         commission.erp_sync_message = None
-        commission.local_status = ERP_LOCAL_STATUS.get(
-            commission.status_id,
-            CommissionLocalStatus.OPEN.value,
+        preserve_completion_review = (
+            commission.needs_completion_review
+            and previous_status is not None
+            and commission.status_id == previous_status[0]
+            and commission.craftsman_erp_id == previous_craftsman_erp_id
         )
+        if not preserve_completion_review:
+            commission.local_status = ERP_LOCAL_STATUS.get(
+                commission.status_id,
+                CommissionLocalStatus.OPEN.value,
+            )
 
         current_status = (
             commission.status_id, commission.status_code, commission.local_status,

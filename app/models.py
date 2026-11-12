@@ -1463,6 +1463,14 @@ class Commission(db.Model):
         return "Ausstehender Auftrag"
 
     @property
+    def needs_completion_review(self) -> bool:
+        return (
+            self.local_status == CommissionLocalStatus.COMPLETION_REVIEW.value
+            and self.completion_successful is False
+            and self.completion_submitted_at is not None
+        )
+
+    @property
     def completion_submitted_by_name(
         self,
     ) -> str | None:
@@ -1512,7 +1520,7 @@ class CommissionTenantNotification(db.Model):
 class CommissionCompletionNotification(db.Model):
     __tablename__ = "commission_completion_notification"
     __table_args__ = (
-        UniqueConstraint("commission_id", name="uq_commission_completion_notification"),
+        UniqueConstraint("commission_id", "notification_key", name="uq_commission_completion_notification_event"),
         db.Index("ix_completion_notification_due", "state", "available_at"),
     )
 
@@ -1520,6 +1528,10 @@ class CommissionCompletionNotification(db.Model):
     commission_id: Mapped[int] = mapped_column(
         db.ForeignKey("commission.id", ondelete="CASCADE"), nullable=False,
     )
+    notification_key: Mapped[str] = mapped_column(
+        db.String(100), default="completion", server_default="completion", nullable=False,
+    )
+    report_submitted_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     state: Mapped[str] = mapped_column(
         db.String(30), default="pending", server_default="pending", nullable=False,
     )

@@ -211,6 +211,68 @@ class CommissionDateTests(unittest.TestCase):
                 self.assertEqual(commission.local_status, status)
                 self.assert_status_date(commission, self.now)
 
+    def test_incomplete_completion_does_not_enqueue_a_cancellation_or_change_erp_state(self):
+        for state in ("synced", "pending", "failed"):
+            with self.subTest(state=state):
+                commission = self.commission(erp_id={"synced": 301, "pending": 302, "failed": 303}[state], erp_sync_state=state)
+                with patch.object(self.workflow, "enqueue_erp_operation") as enqueue:
+                    self.workflow.complete_commission(commission, completed=False, reason="Kein Zugang", user=self.user)
+                self.db.session.commit()
+                enqueue.assert_not_called()
+                self.assertEqual(commission.erp_sync_state, state)
+                self.assertEqual(commission.status_id, 7)
+                self.assertTrue(commission.needs_completion_review)
+                self.assertIsNone(commission.completed_at)
+
+    def test_incomplete_review_survives_erp_sync_and_a_pending_acceptance(self):
+        commission = self.commission()
+        self.workflow.complete_commission(commission, completed=False, reason="Ersatzteil fehlt", user=self.user)
+        self.db.session.commit()
+        self.synchronize(Description="Aktualisierter Auftrag")
+        self.assertTrue(commission.needs_completion_review)
+        operation = self.models.ErpOutboxOperation(
+            commission=commission, operation_type="accept_commission", idempotency_key="late-acceptance",
+        )
+        self.db.session.add(operation)
+        self.db.session.commit()
+        self.outbox.execute_outbox_operation(operation.id, Mock())
+        self.db.session.commit()
+        self.assertTrue(commission.needs_completion_review)
+
+    def test_legacy_cancellation_is_finished_without_canceling_the_order(self):
+        commission = self.commission(
+            local_status="completion_review", completion_successful=False,
+            completion_submitted_at=self.now, completion_reason="Ersatzteil fehlt",
+        )
+        operation = self.models.ErpOutboxOperation(
+            commission=commission, operation_type="cancel_commission", idempotency_key="legacy-cancel",
+        )
+        self.db.session.add(operation)
+        self.db.session.commit()
+        service = Mock()
+        self.outbox.execute_outbox_operation(operation.id, service)
+        self.db.session.commit()
+        service.mark_commission_canceled.assert_not_called()
+        self.assertEqual(commission.status_id, 7)
+        self.assertTrue(commission.needs_completion_review)
+
+    def test_a_real_erp_status_change_can_resolve_the_incomplete_review(self):
+        commission = self.commission(
+            local_status="completion_review", completion_successful=False, completion_submitted_at=self.now,
+        )
+        self.synchronize(CommissionStatus={"Id": 9, "Code": "Done"}, CompletionDate="2026-11-12")
+        self.assertEqual(commission.local_status, "done")
+
+    def test_refusing_an_unaccepted_order_keeps_its_separate_erp_operation(self):
+        commission = self.commission(local_status="waiting_for_acceptance", status_id=12)
+        self.workflow.reject_commission(commission, "Nicht zuständig", user=self.user)
+        self.db.session.commit()
+        operation = self.models.ErpOutboxOperation.query.one()
+        self.assertEqual(operation.operation_type, "refuse_commission")
+        service = Mock()
+        self.outbox.execute_outbox_operation(operation.id, service)
+        service.mark_commission_canceled.assert_called_once_with(commission.erp_id)
+
     def test_repeated_deletion_does_not_move_the_status_date(self):
         commission = self.commission()
         with patch.object(self.wowiport, "utc_now", return_value=self.now):
