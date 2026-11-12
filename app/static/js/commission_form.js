@@ -637,6 +637,40 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    function applyCraftServicePositionDefault() {
+        const defaultServiceCatalogId = String(
+            craftActivity.selectedOptions[0]
+                ?.dataset.defaultServiceCatalogId
+            || ""
+        );
+        const select = positions.querySelector(
+            '[name="position_service_catalog_id"]'
+        );
+
+        if (
+            !defaultServiceCatalogId
+            || !select
+            || select.disabled
+            || select.value
+        ) {
+            return;
+        }
+
+        const defaultOption = Array.from(select.options)
+            .find((option) => {
+                return (
+                    option.value === defaultServiceCatalogId
+                    && option.dataset.craftId === craftActivity.value
+                    && !option.disabled
+                    && !option.hidden
+                );
+            });
+
+        if (defaultOption) {
+            applyAutomaticValue(select, defaultOption.value);
+        }
+    }
+
     function setAssignmentStatus(
         message,
         isError = false
@@ -1481,6 +1515,7 @@ document.addEventListener("DOMContentLoaded", () => {
         () => {
             applyCraftAssignmentDefault();
             filterServicePositions();
+            applyCraftServicePositionDefault();
             updateCommissionTypeOptions();
             filterExternalCraftsmen({
                 force: true
@@ -1688,6 +1723,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         updateRemoveButtons();
     filterServicePositions();
+    applyCraftServicePositionDefault();
     updateCommissionTypeOptions();
 
     submitCommission.disabled = (

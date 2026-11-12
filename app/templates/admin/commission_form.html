@@ -481,6 +481,7 @@
             value="{{ item.id }}"
             data-preferred-external-craftsman-id="{{ item.preferred_external_craftsman_id or '' }}"
             data-default-assignment-type="{{ item.default_assignment_type or 'internal' }}"
+            data-default-service-catalog-id="{{ default_service_catalog_ids.get(item.id, '') }}"
             {% if form_values.get('craft_activity_id')|int == item.id %}selected{% endif %}
           >
             {{ item.name }}
