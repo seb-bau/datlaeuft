@@ -9,6 +9,7 @@ on:
       - app/admin.py
       - app/templates/admin/dashboard.html
       - app/templates/admin/tickets.html
+      - app/static/js/ticket_filters.js
       - app/templates/base.html
       - app/ticket_ai_service.py
       - app/erp_sync.py
@@ -41,6 +42,7 @@ on:
       - app/admin.py
       - app/templates/admin/dashboard.html
       - app/templates/admin/tickets.html
+      - app/static/js/ticket_filters.js
       - app/templates/base.html
       - app/ticket_ai_service.py
       - app/erp_sync.py

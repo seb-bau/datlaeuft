@@ -218,15 +218,16 @@ class TicketViewTests(unittest.TestCase):
 
     def test_commission_form_retains_a_manual_position_after_validation_failure(self):
         self.prepare_commission_defaults()
+        text = "Manuell erfasster Text\nWeitere Details in der zweiten Zeile"
         with patch.object(self.admin, "create_pending_commission", side_effect=ValueError("Bitte Angaben prüfen.")):
             response, view = self.commission_form_response(method="POST", data={
                 "craft_activity_id": "1", "position_service_catalog_id": "102",
-                "position_text": "Manuell erfasster Text", "position_units": "2",
+                "position_text": text, "position_units": "2",
                 "commission_type_id": "100",
             })
         self.assertEqual(str(view["position_rows"][0]["service_catalog_id"]), "102")
-        self.assertEqual(view["position_rows"][0]["commission_text"], "Manuell erfasster Text")
-        self.assertIn("Manuell erfasster Text", response.get_data(as_text=True))
+        self.assertEqual(view["position_rows"][0]["commission_text"], text)
+        self.assertIn(text, response.get_data(as_text=True))
 
     def test_dashboard_tile_and_menu_show_the_same_open_tickets(self):
         dashboard, links = self.get("/admin")
@@ -267,6 +268,7 @@ class TicketViewTests(unittest.TestCase):
     def test_commission_list_shows_sortable_dates_instead_of_the_erp_id(self):
         commission = self.models.Commission(
             erp_id=987654321, erp_idnum="A-123", title="Auftrag mit Datum",
+            created_by=self.user, status_code="ERP-Status nicht anzeigen",
             recording_date=datetime(2026, 10, 31, tzinfo=timezone.utc),
             status_changed_at=datetime(2026, 11, 5, 14, 30, tzinfo=timezone.utc),
         )
@@ -284,7 +286,69 @@ class TicketViewTests(unittest.TestCase):
         self.assertIn('data-order="2026-11-05T14:30:00"', html)
         self.assertIn("31.10.2026", html)
         self.assertIn("05.11.2026", html)
-        self.assertIn('data-order=""', html)
+        self.assertNotIn("<th>Status</th>", html)
+        self.assertNotIn("ERP-Status nicht anzeigen", html)
+        self.assertIn("<th>Bearbeitungsstand</th>", html)
+
+    def test_commission_creator_filter_defaults_to_orders_created_by_the_current_user(self):
+        other = self.models.User(email="other@example.invalid", display_name="Andere Sachbearbeitung")
+        own = self.models.Commission(title="Von mir angelegt", created_by=self.user, local_official=other)
+        assigned = self.models.Commission(title="Mir zugewiesen", created_by=other, local_official=self.user)
+        imported = self.models.Commission(title="Import ohne Ersteller")
+        self.db.session.add_all([other, own, assigned, imported])
+        self.db.session.commit()
+        for path in ("/admin/commissions", "/admin/commissions?creator=invalid"):
+            view, _ = self.get(path)
+            self.assertEqual(view["creator_filter"], "mine")
+            self.assertEqual([item.id for item in view["items"]], [own.id])
+        view, links = self.get("/admin/commissions?creator=all")
+        self.assertTrue({own.id, assigned.id, imported.id}.issubset({item.id for item in view["items"]}))
+        reset = next(link for link in links if link["text"] == "Filter zurücksetzen")
+        reset_view, _ = self.get(reset["href"])
+        self.assertEqual(reset_view["creator_filter"], "mine")
+        self.assertEqual([item.id for item in reset_view["items"]], [own.id])
+
+    def test_ticket_filter_combines_multiple_employees_without_including_others(self):
+        self.ticket(subject="Weiterer Mitarbeiter", assigned_user_erp_id=13)
+        self.db.session.commit()
+        view, _ = self.get("/admin/tickets?owner=erp:11&owner=erp:12")
+        self.assertEqual(view["selected_owners"], ["erp:11", "erp:12"])
+        self.assertEqual({item.subject for item in view["pagination"].items}, {
+            "Eigenes offenes Ticket", "Eigene offene Rückfrage", "Fremdes Ticket",
+        })
+        single, _ = self.get("/admin/tickets?owner=erp:12")
+        self.assertEqual([item.subject for item in single["pagination"].items], ["Fremdes Ticket"])
+
+    def test_ticket_filter_can_combine_own_and_unassigned_tickets(self):
+        view, _ = self.get("/admin/tickets?owner=mine&owner=unassigned")
+        self.assertEqual({item.subject for item in view["pagination"].items}, {
+            "Eigenes offenes Ticket", "Eigene offene Rückfrage", "Nicht zugewiesenes Ticket",
+        })
+
+    def test_ticket_filter_normalizes_duplicates_invalid_values_and_all(self):
+        view, _ = self.get("/admin/tickets?owner=erp:12&owner=erp:12&owner=invalid")
+        self.assertEqual(view["selected_owners"], ["erp:12"])
+        self.assertEqual(view["pagination"].total, 1)
+        view, _ = self.get("/admin/tickets?owner=invalid")
+        self.assertEqual(view["selected_owners"], ["mine"])
+        view, _ = self.get("/admin/tickets?owner=all&owner=erp:12")
+        self.assertEqual(view["selected_owners"], ["all"])
+        self.assertIn(self.first_open_ticket.id, {item.id for item in view["pagination"].items})
+
+    def test_ticket_pagination_retains_multiple_employees_and_search(self):
+        for index in range(51):
+            self.ticket(subject=f"Gemeinsame Suche {index}", assigned_user_erp_id=11 if index % 2 else 12)
+        self.db.session.commit()
+        view, links = self.get("/admin/tickets?owner=erp:11&owner=erp:12&q=Gemeinsame&state=open")
+        self.assertEqual(view["pagination"].total, 51)
+        second_page = next(link for link in links if link["text"] == "2")
+        parameters = parse_qs(urlsplit(second_page["href"]).query)
+        self.assertEqual(parameters["owner"], ["erp:11", "erp:12"])
+        self.assertEqual(parameters["q"], ["Gemeinsame"])
+        self.assertEqual(parameters["state"], ["open"])
+        next_view, _ = self.get(second_page["href"])
+        self.assertEqual(len(next_view["pagination"].items), 1)
+        self.assertEqual(next_view["selected_owners"], ["erp:11", "erp:12"])
 
     def test_explicit_filters_still_allow_closed_and_assigned_tickets(self):
         view, _ = self.get("/admin/tickets?owner=all&state=all")

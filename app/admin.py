@@ -4009,26 +4009,30 @@ def tickets() -> Any:
         if value not in filter_options[key]:
             selected_filters[key] = "mine" if key == "owner" else "all"
 
-    selected_owner = selected_filters["owner"]
+    selected_owners = list(dict.fromkeys(
+        value.strip()
+        for value in request.args.getlist("owner")
+        if value.strip() in filter_options["owner"]
+    )) or ["mine"]
+    if "all" in selected_owners:
+        selected_owners = ["all"]
+    selected_owner = selected_owners[0] if len(selected_owners) == 1 else "multiple"
+    selected_filters["owner"] = selected_owner
     selected_state = selected_filters["state"]
     owner_ids = (
         ticket_owner_erp_ids(current_user)
-        if selected_owner == "mine"
+        if "mine" in selected_owners
         else set()
     )
 
-    if selected_owner == "mine":
-        query = query.filter(
-            TicketMirror.assigned_user_erp_id.in_(owner_ids)
-        )
-    elif selected_owner == "unassigned":
-        query = query.filter(
-            TicketMirror.assigned_user_erp_id.is_(None)
-        )
-    elif selected_owner != "all":
-        query = query.filter(
-            TicketMirror.assigned_user_erp_id == int(selected_owner[4:])
-        )
+    if "all" not in selected_owners:
+        selected_owner_ids = owner_ids | {
+            int(value[4:]) for value in selected_owners if value.startswith("erp:")
+        }
+        owner_conditions = [TicketMirror.assigned_user_erp_id.in_(selected_owner_ids)]
+        if "unassigned" in selected_owners:
+            owner_conditions.append(TicketMirror.assigned_user_erp_id.is_(None))
+        query = query.filter(or_(*owner_conditions))
 
     if selected_state == "open":
         query = open_tickets_query(query)
@@ -4102,6 +4106,11 @@ def tickets() -> Any:
         search_text=search_text,
         openai_configured=openai_configured,
         selected_owner=selected_owner,
+        selected_owners=selected_owners,
+        selected_owner_label=(
+            filter_options["owner"][selected_owners[0]]
+            if len(selected_owners) == 1 else f"{len(selected_owners)} ausgewählt"
+        ),
         owner_mapping_available=bool(owner_ids),
         ticket_filters=[
             (key, label, selected_filters[key], filter_options[key])
@@ -4114,7 +4123,7 @@ def tickets() -> Any:
             )
         ],
         ticket_owner_labels=filter_options["owner"],
-        pagination_filters={**selected_filters, "q": search_text},
+        pagination_filters={**selected_filters, "owner": selected_owners, "q": search_text},
     )
 
 
@@ -7654,6 +7663,9 @@ def commissions() -> Any:
         "done": "Erledigt",
         "deleted": "Gelöscht",
     }
+    creator_filter = str(request.args.get("creator") or "mine").strip()
+    if creator_filter not in {"mine", "all"}:
+        creator_filter = "mine"
     official_filter = str(
         request.args.get("official") or "all"
     ).strip()
@@ -7690,6 +7702,9 @@ def commissions() -> Any:
         selectinload(Commission.user),
         selectinload(Commission.local_official),
     )
+
+    if creator_filter == "mine":
+        query = query.filter(Commission.created_by_user_id == current_user.id)
 
     if view_mode == "done":
         query = query.filter(
@@ -7786,6 +7801,7 @@ def commissions() -> Any:
     return render_template(
         "admin/commissions.html",
         items=items,
+        creator_filter=creator_filter,
         view_mode=view_mode,
         assignment_type=assignment_type,
         external_craftsmen_by_erp_id=(
