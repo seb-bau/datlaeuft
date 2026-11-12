@@ -128,6 +128,36 @@ class CommissionDateTests(unittest.TestCase):
         self.synchronize(CommissionStatus={"Id": 10, "Code": "Canceled"})
         self.assert_status_date(commission, self.now)
 
+    def test_unchanged_single_and_regular_sync_fill_missing_historical_dates(self):
+        payload = types.SimpleNamespace(
+            id_=100, id_num="A-100", recording_date=datetime(2026, 10, 1),
+            acceptance_date=datetime(2026, 11, 5),
+            commission_status=types.SimpleNamespace(id_=7, code="Accepted"),
+            commission_type=types.SimpleNamespace(id_=1),
+            craftsman=types.SimpleNamespace(id_=101),
+        )
+        signature = self.wowiport._commission_sync_signature(payload)
+        commission = self.commission(status_changed_at=None, raw_payload={"sync_signature": signature})
+        service = Mock()
+        service.get_commission.return_value = payload
+        for mode in ("single", "regular"):
+            with self.subTest(mode=mode):
+                commission.status_changed_at = None
+                self.db.session.commit()
+                with patch.object(self.wowiport, "WowiportService", return_value=service):
+                    with patch.object(self.wowiport, "configured_commission_type_ids", return_value={1}):
+                        with patch.object(self.wowiport, "configured_commission_status_ids", return_value={7}):
+                            if mode == "single":
+                                self.assertIs(self.wowiport.sync_commission_from_erp(100), commission)
+                            else:
+                                result = self.wowiport.sync_commission_payload_from_erp(
+                                    payload, {7}, {1}, datetime(2026, 1, 1), datetime(2027, 1, 1),
+                                    "recording_date", {101}, service,
+                                )
+                                self.assertEqual(result, "unchanged")
+                self.db.session.commit()
+                self.assert_status_date(commission, datetime(2026, 11, 5, tzinfo=timezone.utc))
+
     def test_pending_and_failed_local_changes_keep_their_timestamp_during_sync(self):
         commission = self.commission()
         for state in ("pending", "failed"):

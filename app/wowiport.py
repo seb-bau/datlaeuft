@@ -2896,6 +2896,8 @@ def sync_commission_from_erp(
             sync_signature,
     ):
         if existing is not None:
+            if existing.status_changed_at is None:
+                existing.status_changed_at = _commission_status_date(payload)
             sync_commission_documents_safely(
                 commission=existing,
                 service=service,
@@ -3319,6 +3321,8 @@ def sync_commission_payload_from_erp(
             sync_signature,
     ):
         if existing is not None:
+            if existing.status_changed_at is None:
+                existing.status_changed_at = _commission_status_date(payload)
             sync_commission_priority(existing, service)
         return "unchanged"
 
@@ -3645,16 +3649,7 @@ def upsert_commission(
         current_status = (
             commission.status_id, commission.status_code, commission.local_status,
         )
-        status_date_fields = {
-            12: ("placing_date", "PlacingDate"),
-            7: ("acceptance_date", "AcceptanceDate"),
-            9: ("completion_date", "CompletionDate"),
-            11: ("completion_date", "CompletionDate"),
-        }.get(commission.status_id)
-        status_date = (
-            parse_datetime(_read_first(payload, *status_date_fields))
-            if status_date_fields else None
-        )
+        status_date = _commission_status_date(payload)
 
         if previous_status is not None and current_status != previous_status:
             commission.status_changed_at = status_date or commission.synced_at
@@ -3866,6 +3861,19 @@ def _commission_status_id(payload: Any) -> int | None:
     )
     return _as_int(
         _read_first(commission_status, "id_", "id", "Id")
+    )
+
+
+def _commission_status_date(payload: Any) -> datetime | None:
+    status_date_fields = {
+        12: ("placing_date", "PlacingDate"),
+        7: ("acceptance_date", "AcceptanceDate"),
+        9: ("completion_date", "CompletionDate"),
+        11: ("completion_date", "CompletionDate"),
+    }.get(_commission_status_id(payload))
+    return (
+        parse_datetime(_read_first(payload, *status_date_fields))
+        if status_date_fields else None
     )
 
 
