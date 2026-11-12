@@ -495,8 +495,8 @@
       <div id="positions" class="col-12">
         {% for position in position_rows %}
         <div class="position-row border rounded px-3 py-2 mb-2">
-          <div class="row g-2 align-items-end">
-            <div class="col-lg-5">
+          <div class="row g-2 align-items-start">
+            <div class="col-lg-4">
               <label class="form-label small fw-semibold mb-1">
                 Leistungsposition
               </label>
@@ -526,17 +526,17 @@
               </select>
             </div>
 
-            <div class="col-lg-5">
+            <div class="col-lg-6">
               <label class="form-label small fw-semibold mb-1">
                 Auftragstext
               </label>
-              <input
-                class="form-control form-control-sm"
+              <textarea
+                class="form-control"
                 name="position_text"
-                value="{{ position.get('commission_text', '') }}"
+                rows="4"
                 data-automatic-value="{% if has_automatic_source %}{{ position.get('commission_text', '') }}{% endif %}"
                 required
-              >
+              >{{ position.get('commission_text', '') }}</textarea>
               <input
                 type="hidden"
                 name="position_units"
@@ -549,7 +549,7 @@
               >
             </div>
 
-            <div class="col-lg-2">
+            <div class="col-lg-2 align-self-end">
               <button
                 class="btn btn-sm btn-outline-danger remove-position w-100{% if loop.first %} d-none{% endif %}"
                 type="button"
@@ -740,8 +740,8 @@
 
 <template id="positionTemplate">
   <div class="position-row border rounded px-3 py-2 mb-2">
-    <div class="row g-2 align-items-end">
-      <div class="col-lg-5">
+    <div class="row g-2 align-items-start">
+      <div class="col-lg-4">
         <label class="form-label small fw-semibold mb-1">
           Leistungsposition
         </label>
@@ -769,15 +769,16 @@
         </select>
       </div>
 
-      <div class="col-lg-5">
+      <div class="col-lg-6">
         <label class="form-label small fw-semibold mb-1">
           Auftragstext
         </label>
-        <input
-          class="form-control form-control-sm"
+        <textarea
+          class="form-control"
           name="position_text"
+          rows="4"
           required
-        >
+        ></textarea>
         <input
           type="hidden"
           name="position_units"
@@ -790,7 +791,7 @@
         >
       </div>
 
-      <div class="col-lg-2">
+      <div class="col-lg-2 align-self-end">
         <button
           class="btn btn-sm btn-outline-danger remove-position w-100 d-none"
           type="button"

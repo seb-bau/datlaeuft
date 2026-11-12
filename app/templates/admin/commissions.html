@@ -25,6 +25,20 @@
     >
       <select
         class="form-select form-select-sm"
+        name="creator"
+        onchange="this.form.submit()"
+        aria-label="Ersteller filtern"
+      >
+        <option value="mine" {% if creator_filter == "mine" %}selected{% endif %}>
+          Von mir angelegt
+        </option>
+        <option value="all" {% if creator_filter == "all" %}selected{% endif %}>
+          Alle Ersteller
+        </option>
+      </select>
+
+      <select
+        class="form-select form-select-sm"
         name="view"
         onchange="this.form.submit()"
         aria-label="Auftragsansicht"
@@ -166,7 +180,6 @@
           <th>Mieter</th>
           <th>Erstellungsdatum</th>
           <th>Letzter Statuswechsel</th>
-          <th>Status</th>
           <th>Sachbearbeiter</th>
           <th>Handwerker</th>
           <th>Ausführung</th>
@@ -197,7 +210,6 @@
           <td data-order="{{ item.status_changed_at.isoformat() if item.status_changed_at else '' }}">
             {{ item.status_changed_at.strftime("%d.%m.%Y") if item.status_changed_at else "–" }}
           </td>
-          <td>{{ item.status_code or item.status_id or "" }}</td>
           <td>{{ officials_by_commission_id[item.id][1] }}</td>
           <td>
             {% if item.assignment_type == "external" %}

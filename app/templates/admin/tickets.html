@@ -17,6 +17,32 @@
   #ticketFilters .btn {
     white-space: nowrap;
   }
+
+  .ticket-owner-filter {
+    position: relative;
+  }
+
+  .ticket-owner-filter summary {
+    list-style: none;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ticket-owner-filter summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .ticket-owner-options {
+    position: absolute;
+    top: calc(100% + .25rem);
+    left: 0;
+    z-index: 20;
+    width: min(19rem, calc(100vw - 2rem));
+    max-height: 24rem;
+    overflow-y: auto;
+  }
   .ticket-card-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(8.5rem, 22vw, 13.5rem);
@@ -51,6 +77,31 @@
 
 <form id="ticketFilters" method="get" class="d-flex flex-wrap align-items-center gap-1 mb-3">
   {% for filter_key, filter_label, filter_value, filter_choices in ticket_filters %}
+  {% if filter_key == "owner" %}
+  <details id="ticketOwnerFilter" class="ticket-owner-filter">
+    <summary class="form-select form-select-sm" aria-label="Tickets nach Sachbearbeitern filtern">
+      {{ selected_owner_label }}
+    </summary>
+    <div class="ticket-owner-options card shadow-sm p-3">
+      <fieldset>
+        <legend class="h6">Sachbearbeiter auswählen</legend>
+        {% for choice_key, choice_label in filter_choices.items() %}
+        <label class="form-check d-block mb-2">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            name="owner"
+            value="{{ choice_key }}"
+            {% if choice_key in selected_owners %}checked{% endif %}
+          >
+          <span class="form-check-label">{{ choice_label }}</span>
+        </label>
+        {% endfor %}
+      </fieldset>
+      <button class="btn btn-sm btn-primary mt-2" type="submit">Auswahl anwenden</button>
+    </div>
+  </details>
+  {% else %}
   <select
     class="form-select form-select-sm"
     name="{{ filter_key }}"
@@ -64,6 +115,7 @@
     </option>
     {% endfor %}
   </select>
+  {% endif %}
   {% endfor %}
 
   <input
@@ -89,7 +141,7 @@ Einstellungen findest du unter Einstellungen.
 </div>
 {% endif %}
 
-{% if selected_owner == "mine" and not owner_mapping_available %}
+{% if "mine" in selected_owners and not owner_mapping_available %}
 <div class="alert alert-info">
   Für dein Benutzerkonto konnte keine Wowiport-Sachbearbeiter-ID
   aus den bestehenden Zuordnungen ermittelt werden.
@@ -290,4 +342,8 @@ Einstellungen findest du unter Einstellungen.
   </ul>
 </nav>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/ticket_filters.js') }}"></script>
 {% endblock %}
