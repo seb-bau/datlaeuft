@@ -203,6 +203,7 @@ def create_pending_commission(
             selected_company_code.code
         )
 
+    now = utc_now()
     commission = Commission(
         company_code_erp_id=company_code_erp_id,
         company_code_code=company_code_code,
@@ -299,10 +300,11 @@ def create_pending_commission(
         contact_person=clean_text(
             data.get("contact_person")
         ),
-        recording_date=utc_now(),
+        recording_date=now,
+        status_changed_at=now,
         execution_from=execution_from,
         execution_to=execution_to,
-        synced_at=utc_now(),
+        synced_at=now,
     )
 
     db.session.add(commission)

@@ -1305,6 +1305,7 @@ class Commission(db.Model):
     )
     raw_payload: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     recording_date: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    status_changed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     release_date: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     execution_from: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     execution_to: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))

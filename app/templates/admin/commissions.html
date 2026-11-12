@@ -159,12 +159,13 @@
     <table class="table table-striped datatable">
       <thead>
         <tr>
-          <th>ERP-ID</th>
           <th>Nummer</th>
           <th>Titel</th>
           <th>Adresse</th>
           <th>Lage</th>
           <th>Mieter</th>
+          <th>Erstellungsdatum</th>
+          <th>Letzter Statuswechsel</th>
           <th>Status</th>
           <th>Sachbearbeiter</th>
           <th>Handwerker</th>
@@ -176,7 +177,6 @@
       <tbody>
         {% for item in items %}
         <tr>
-          <td>{{ item.erp_id or "Ausstehend" }}</td>
           <td>
   <a href="{{ url_for('admin.commission_detail', commission_id=item.id) }}">
     {{ item.erp_idnum or item.code or "Ausstehend" }}
@@ -191,6 +191,12 @@
           <td>{{ item.apartment_address or "" }}</td>
           <td>{{ item.apartment_location or "" }}</td>
           <td>{{ item.tenant_name or "" }}</td>
+          <td data-order="{{ item.recording_date.isoformat() if item.recording_date else '' }}">
+            {{ item.recording_date.strftime("%d.%m.%Y") if item.recording_date else "–" }}
+          </td>
+          <td data-order="{{ item.status_changed_at.isoformat() if item.status_changed_at else '' }}">
+            {{ item.status_changed_at.strftime("%d.%m.%Y") if item.status_changed_at else "–" }}
+          </td>
           <td>{{ item.status_code or item.status_id or "" }}</td>
           <td>{{ officials_by_commission_id[item.id][1] }}</td>
           <td>
