@@ -133,7 +133,16 @@ WantedBy=multi-user.target
 
 ````
 
+# Worker-Diagnose
+
+Der Hintergrund-Worker begrenzt OPENWOWI-Anfragen einschließlich Anmeldung und Token-Erneuerung auf 10 Sekunden Verbindungsaufbau und 60 Sekunden ohne Antwortdaten. Schreibanfragen werden bei Verbindungsfehlern oder Zeitüberschreitungen nicht unmittelbar erneut gesendet; die vorhandenen Warteschlangen behandeln den Fehler.
+
+Nach 120 Sekunden innerhalb eines Arbeitsschritts protokolliert der Worker `worker_step_slow` mit dem Namen des Schritts und dem Stacktrace des ausführenden Threads. Diese Diagnose läuft unabhängig vom blockierten Schritt und beendet ihn nicht. In Graylog nach `worker_step_slow`, `worker_step_failed`, `worker_iteration_failed` oder `mobile_delivery_failed` suchen. Eine langsame vollständige Batch-Verarbeitung kann ebenfalls diese Diagnose auslösen.
+
+Der Health-Heartbeat wird weiterhin höchstens einmal pro Minute und nur bei tatsächlichem Fortschritt geschrieben, jetzt auch zwischen den Arbeitsschritten. Unerwartete Fehler einer Arbeitsrunde werden protokolliert; die Datenbanksitzung wird freigegeben und nach dem Poll-Intervall beginnt eine neue Runde.
+
 # Webhooks
+
 URL: https://example.com/webhooks/wowiport
 3x Webhook (Vorgang, Auftrag, Nachricht)
 Bearer

@@ -12,6 +12,9 @@ on:
       - app/templates/base.html
       - app/ticket_ai_service.py
       - app/erp_sync.py
+      - app/worker_monitor.py
+      - app/wowiport_client.py
+      - app/wowiport.py
       - app/models.py
       - app/mobile_sync.py
       - app/mobile_transaction.py
@@ -32,6 +35,9 @@ on:
       - app/templates/base.html
       - app/ticket_ai_service.py
       - app/erp_sync.py
+      - app/worker_monitor.py
+      - app/wowiport_client.py
+      - app/wowiport.py
       - app/models.py
       - app/mobile_sync.py
       - app/mobile_transaction.py
@@ -75,6 +81,7 @@ jobs:
           "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
           "requests>=2.32,<3"
           "qrcode>=8,<9"
+          "wowipy>=1.1.91,<2"
       - name: Tests mit SQLite ausführen
         run: python -m unittest discover -s tests -v
       - name: MariaDB-Einstellungen prüfen

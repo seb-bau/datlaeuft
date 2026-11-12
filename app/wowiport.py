@@ -11,7 +11,7 @@ from typing import Any
 from flask import current_app
 from wowipy import wowipy
 from wowipy.models import CommissioningCommission, Communication, Contractor, LicenseAgreement, UseUnit
-from wowipy.wowipy import WowiPy
+from .wowiport_client import WowiportClient
 from wowipy.models import Result
 
 from .extensions import db
@@ -263,7 +263,7 @@ def _is_vacancy(license_agreement: LicenseAgreement) -> bool:
 
 class WowiportService:
     def __init__(self) -> None:
-        self.client = WowiPy(
+        self.client = WowiportClient(
             hostname=settings.get(SettingKeys.WOWI_HOSTNAME),
             user=settings.get(SettingKeys.WOWI_USERNAME),
             password=settings.get(SettingKeys.WOWI_PASSWORD),

@@ -342,6 +342,7 @@ def process_mobile_deliveries(limit=20):
                 row.payload = {}
             db.session.commit()
         except Exception as error:
+            current_app.logger.exception("mobile_delivery_failed delivery_id=%s", row_id)
             db.session.rollback()
             row = db.session.get(MobileSyncDelivery, row_id, populate_existing=True, with_for_update=True)
             if row is None or row.state != "processing":

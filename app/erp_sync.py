@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from time import sleep
-from typing import Any
+from typing import Any, Callable
 
 from flask import current_app
 from sqlalchemy import or_
@@ -46,6 +45,7 @@ from .external_craftsman_service import (
 from .tenant_notifications import process_tenant_notification_batch
 from .completion_notifications import process_completion_notification_batch
 from .dms_service import process_dms_batch
+from .worker_monitor import worker_step
 
 
 def enqueue_erp_operation(
@@ -162,35 +162,32 @@ def process_due_work(
     outbox_limit: int = 20,
     webhook_limit: int = 50,
     push_limit: int = 50,
+    *,
+    progress: Callable[[], None] | None = None,
 ) -> dict[str, int]:
     from .mobile_sync import process_mobile_deliveries
-    mobile_delivery_count = process_mobile_deliveries()
-    requeue_stale_work()
-    enqueue_pending_commission_photo_uploads()
-    webhook_count = process_webhook_batch(webhook_limit)
-    outbox_count = process_outbox_batch(outbox_limit)
-    process_info_count = (
-        process_process_info_work()
+    steps = (
+        ("mobile_deliveries", process_mobile_deliveries),
+        ("requeue_stale_work", requeue_stale_work),
+        ("commission_photo_uploads", enqueue_pending_commission_photo_uploads),
+        ("webhooks", lambda: process_webhook_batch(webhook_limit)),
+        ("outbox", lambda: process_outbox_batch(outbox_limit)),
+        ("process_infos", process_process_info_work),
+        ("external_assignment_emails", process_external_assignment_mail_batch),
+        ("push", lambda: process_push_batch(push_limit)),
+        ("tenant_notifications", process_tenant_notification_batch),
+        ("completion_notifications", process_completion_notification_batch),
+        ("dms", process_dms_batch),
     )
-    external_assignment_email_count = (
-        process_external_assignment_mail_batch()
-    )
-    push_count = process_push_batch(push_limit)
-    tenant_notification_count = process_tenant_notification_batch()
-    completion_notification_count = process_completion_notification_batch()
-    dms_count = process_dms_batch()
-    return {
-        "mobile_deliveries": mobile_delivery_count,
-        "webhooks": webhook_count,
-        "outbox": outbox_count,
-        "process_infos": process_info_count,
-        "push": push_count,
-        "tenant_notifications": tenant_notification_count,
-        "completion_notifications": completion_notification_count,
-        "external_assignment_emails":
-            external_assignment_email_count,
-        "dms": dms_count,
-    }
+    result = {}
+    for name, action in steps:
+        with worker_step(name):
+            count = action()
+        if name not in {"requeue_stale_work", "commission_photo_uploads"}:
+            result[name] = count
+        if progress is not None:
+            progress()
+    return result
 
 
 def requeue_stale_work() -> None:
@@ -795,41 +792,41 @@ def run_worker(
 ) -> None:
     last_heartbeat = None
 
-    while True:
+    def update_heartbeat():
+        nonlocal last_heartbeat
         current_time = monotonic()
 
         if (
             last_heartbeat is None
             or current_time - last_heartbeat >= 60
         ):
-            heartbeat = db.session.get(
-                HealthHeartbeat,
-                "worker",
-            )
-
-            if heartbeat is None:
-                heartbeat = HealthHeartbeat(
-                    name="worker",
-                    last_seen_at=utc_now(),
+            with worker_step("heartbeat"):
+                heartbeat = db.session.get(
+                    HealthHeartbeat,
+                    "worker",
                 )
-                db.session.add(heartbeat)
-            else:
-                heartbeat.last_seen_at = utc_now()
 
-            db.session.commit()
-            last_heartbeat = monotonic()
+                if heartbeat is None:
+                    heartbeat = HealthHeartbeat(
+                        name="worker",
+                        last_seen_at=utc_now(),
+                    )
+                    db.session.add(heartbeat)
+                else:
+                    heartbeat.last_seen_at = utc_now()
 
-        result = process_due_work()
+                db.session.commit()
+                last_heartbeat = monotonic()
 
-        if (
-            result["mobile_deliveries"] == 0
-            and result["webhooks"] == 0
-            and result["outbox"] == 0
-            and result["process_infos"] == 0
-            and result["push"] == 0
-            and result["external_assignment_emails"] == 0
-            and result["tenant_notifications"] == 0
-            and result["completion_notifications"] == 0
-            and result["dms"] == 0
-        ):
-            sleep(poll_seconds)
+    while True:
+        try:
+            update_heartbeat()
+            result = process_due_work(progress=update_heartbeat)
+        except Exception:
+            current_app.logger.exception("worker_iteration_failed")
+            result = {}
+        finally:
+            db.session.remove()
+
+        if not any(result.values()):
+            sleep(max(poll_seconds, 1))
