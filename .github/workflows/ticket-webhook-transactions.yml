@@ -122,6 +122,8 @@ jobs:
           "alembic>=1.16,<2"
       - name: Tests mit SQLite ausführen
         run: python -m unittest discover -s tests -v
+      - name: Objektauswahl mit JavaScript prüfen
+        run: node --test tests/test_commission_object_search.js
       - name: MariaDB-Einstellungen prüfen
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks

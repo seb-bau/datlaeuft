@@ -3,6 +3,7 @@ import importlib
 import sys
 import types
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -71,6 +72,9 @@ class CommissionObjectLevelTests(unittest.TestCase):
         context.push()
         self.addCleanup(context.pop)
         self.addCleanup(self.db.session.remove)
+        date_patch = patch.object(self.directory, "directory_today", return_value=date(2026, 11, 13))
+        date_patch.start()
+        self.addCleanup(date_patch.stop)
         self.db.metadata.drop_all(self.db.engine, tables=self.tables)
         self.db.metadata.create_all(self.db.engine, tables=self.tables)
         self.creator = self.models.User(email="creator@example.invalid", display_name="Sachbearbeitung", person_erp_id=101)
@@ -157,13 +161,147 @@ class CommissionObjectLevelTests(unittest.TestCase):
             self.assertEqual([item["object_type"] for item in choices], ["license_agreement"])
             self.assertEqual(choices[0]["tenant_name"], "Erika COMMON")
 
-    def test_building_search_returns_buildings_without_promoting_units_to_contracts(self):
+    def test_building_search_returns_the_building_and_its_contracts_as_separate_choices(self):
         choices = self.directory.search_commission_objects("COMMON", "address")
-        self.assertEqual([item["object_type"] for item in choices], ["building"])
+        self.assertEqual([item["object_type"] for item in choices], ["building", "license_agreement"])
         self.assertIsNone(choices[0]["use_unit"])
         self.assertIsNone(choices[0]["license_agreement"])
+        self.assertEqual(choices[1]["license_agreement"]["erp_id"], 4004)
+        selected = self.create_order(choices[1]["object_type"], choices[1]["object_id"])
+        self.assertEqual(selected.license_agreement_id, 4004)
+        self.assertEqual(selected.object_type, "license_agreement")
         empty = self.directory.search_commission_objects("GE-EMPTY", "address")
         self.assertEqual(empty[0]["object_id"], self.empty_building.id)
+
+    def test_future_contracts_show_the_tenant_and_start_date_and_can_be_commissioned(self):
+        self.agreement.start_date = date(2027, 1, 1)
+        self.tenant.contractual_use_from = date(2027, 1, 1)
+        self.db.session.commit()
+        for context, text in (("tenant", "Erika"), ("agreement", "MV-COMMON"), ("address", "GE-COMMON")):
+            choices = self.directory.search_commission_objects(text, context)
+            contract = next(item for item in choices if item["object_type"] == "license_agreement")
+            self.assertEqual(contract["tenant_name"], "Erika COMMON")
+            self.assertTrue(contract["is_future"])
+            self.assertEqual(contract["license_agreement"]["start_date"], "2027-01-01")
+        commission = self.create_order("license_agreement", self.agreement.id)
+        self.assertEqual(commission.license_agreement_id, 4004)
+        self.assertEqual(commission.tenant_name, "Erika COMMON")
+        gateway = self.gateway_with_mocked_client()
+        gateway.create_commission_waiting_for_acceptance(commission)
+        self.assertEqual(gateway.client.create_commissioning_commission_wait_for_craftsman_feedback.call_args.kwargs["license_agreement_id"], 4004)
+
+    def test_current_and_future_contracts_in_one_apartment_remain_distinct(self):
+        future = self.models.WowiLicenseAgreement(
+            erp_id=4005, id_num="MV-FUTURE", use_unit=self.unit, start_date=date(2027, 1, 1),
+        )
+        future.contractors.append(self.models.WowiContractor(
+            erp_id=5006, license_agreement_erp_id=4005, display_name="Künftiger Mieter", contractual_use_from=date(2027, 1, 1),
+        ))
+        self.db.session.add(future)
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("GE-COMMON", "address")
+        contracts = [item for item in choices if item["object_type"] == "license_agreement"]
+        self.assertEqual({item["license_agreement"]["erp_id"] for item in contracts}, {4004, 4005})
+        for contract in contracts:
+            commission = self.create_order(contract["object_type"], contract["object_id"])
+            self.assertEqual(commission.license_agreement_id, contract["license_agreement"]["erp_id"])
+            self.assertEqual(commission.tenant_name, contract["tenant_name"])
+        self.assertFalse(self.directory._serialize_choice("use_unit", self.unit.id)["is_vacancy"])
+
+    def test_a_future_tenancy_does_not_hide_the_current_vacancy(self):
+        self.agreement.start_date = date(2027, 1, 1)
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("COMMON", "tenant")
+        vacancy = next(item for item in choices if item["object_type"] == "use_unit")
+        self.assertTrue(vacancy["is_vacancy"])
+        self.assertIn("Leerstand", vacancy["label"])
+        self.assertIsNone(vacancy["license_agreement"])
+        commission = self.create_order(vacancy["object_type"], vacancy["object_id"])
+        self.assertEqual(commission.use_unit_id, 3003)
+        self.assertIsNone(commission.license_agreement_id)
+
+    def test_vacancy_contracts_are_searchable_without_a_tenant_and_disable_tenant_notifications(self):
+        self.agreement.is_vacancy = True
+        self.db.session.delete(self.tenant)
+        self.db.session.commit()
+        for context, text in (("tenant", "COMMON"), ("tenant", "Leerstand"), ("agreement", "MV-COMMON"), ("address", "GE-COMMON")):
+            choices = self.directory.search_commission_objects(text, context)
+            contract = next(item for item in choices if item["object_type"] == "license_agreement")
+            self.assertEqual(contract["label"], "Leerstand")
+            self.assertTrue(contract["is_vacancy"])
+            self.assertIsNone(contract["tenant_name"])
+            self.assertFalse(any(item["object_type"] == "use_unit" for item in choices))
+        commission = self.create_order("license_agreement", self.agreement.id)
+        self.assertEqual(commission.license_agreement_id, 4004)
+        self.assertIsNone(commission.tenant_name)
+        self.assertFalse(commission.notify_tenants)
+
+    def test_vacancy_without_a_contract_is_selectable_in_tenant_and_building_search(self):
+        self.agreement.active = False
+        self.db.session.commit()
+        for context, text in (("tenant", "COMMON"), ("tenant", "Leerstand"), ("address", "GE-COMMON")):
+            choices = self.directory.search_commission_objects(text, context)
+            vacancy = next(item for item in choices if item["object_type"] == "use_unit")
+            self.assertTrue(vacancy["is_vacancy"])
+            self.assertIn("Leerstand", vacancy["label"])
+        commission = self.create_order(vacancy["object_type"], vacancy["object_id"])
+        self.assertEqual(commission.use_unit_id, 3003)
+        self.assertIsNone(commission.license_agreement_id)
+        self.assertFalse(commission.notify_tenants)
+
+    def test_ended_contracts_are_excluded_even_if_the_mirror_has_not_synced_today(self):
+        self.agreement.end_date = date(2026, 11, 12)
+        self.db.session.commit()
+        for context in ("tenant", "agreement", "address", "all"):
+            choices = self.directory.search_commission_objects("COMMON", context)
+            self.assertFalse(any(item["object_type"] == "license_agreement" for item in choices))
+        for values in ({"object_type": "license_agreement", "object_id": self.agreement.id}, {"license_agreement_idnum": "MV-COMMON"}):
+            with self.assertRaisesRegex(ValueError, "nicht mehr verfügbar"):
+                self.directory.resolve_commission_object(values)
+
+    def test_contract_dates_are_inclusive_and_building_choices_survive_a_small_limit(self):
+        self.agreement.start_date = date(2026, 11, 13)
+        self.agreement.end_date = date(2026, 11, 13)
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("COMMON", "address", limit=2)
+        self.assertEqual([item["object_type"] for item in choices], ["building", "license_agreement"])
+        self.assertFalse(choices[1]["is_future"])
+        self.assertEqual(choices[1]["license_agreement"]["end_date"], "2026-11-13")
+
+    def test_object_sync_includes_future_contracts_and_vacancies_but_excludes_ended_tenancies(self):
+        service = Mock()
+        rows = {
+            "CommercialInventory/EconomicUnits": [{"Id": 1001, "IdNum": "WE-COMMON", "CompanyCode": {"Id": 77, "Code": "BW"}}],
+            "CommercialInventory/BuildingLands": [{"Id": 2002, "IdNum": "GE-COMMON", "EconomicUnit": {"Id": 1001}, "EstateAddress": {"StreetComplete": "COMMON Straße 1"}}],
+            "CommercialInventory/UseUnits": [{"Id": 3003, "IdNum": "NE-COMMON", "BuildingLand": {"Id": 2002}}],
+            "RentAccounting/LicenseAgreements": [
+                {"Id": 4004, "IdNum": "MV-COMMON", "UseUnit": {"Id": 3003}, "EndOfContract": "2026-11-12"},
+                {"Id": 4005, "IdNum": "MV-FUTURE", "UseUnit": {"Id": 3003}, "StartContract": "2027-01-01"},
+                {"Id": 4006, "IdNum": "MV-VACANT", "UseUnit": {"Id": 3003}, "EndOfContract": "2026-12-31", "RestrictionOfUse": {"IsVacancy": True}},
+            ],
+            "RentAccountingPersonDetails/Contractors": [
+                {"Id": 5005, "LicenseAgreementId": 4004, "Name": "Erika COMMON", "ContractualUseValidTo": "2026-11-12"},
+                {"Id": 5006, "LicenseAgreementId": 4005, "Name": "Künftiger Mieter", "ContractualUseValidFrom": "2027-01-01"},
+                {"Id": 5007, "LicenseAgreementId": 4005, "Name": "Früherer Beteiligter", "ContractualUseValidTo": "2026-11-12"},
+            ],
+            "CommercialInventory/ResponsibleOfficial": [{"Id": 900, "PersonId": 101}],
+        }
+        service.read_all_rows.side_effect = lambda endpoint, parameters: rows.get(endpoint, [])
+        with patch.object(self.directory, "WowiportService", return_value=service):
+            result = self.directory.sync_object_directory()
+        self.db.session.commit()
+        self.assertEqual(result["license_agreements"], 2)
+        self.assertFalse(self.agreement.active)
+        self.assertFalse(self.tenant.active)
+        choices = self.directory.search_commission_objects("Künftiger", "tenant")
+        self.assertEqual(len(choices), 1)
+        self.assertTrue(choices[0]["is_future"])
+        self.assertEqual(choices[0]["license_agreement"]["erp_id"], 4005)
+        self.assertFalse(self.models.WowiContractor.query.filter_by(erp_id=5007).count())
+        for call in service.read_all_rows.call_args_list:
+            if call.args[0] in {"RentAccounting/LicenseAgreements", "RentAccountingPersonDetails/Contractors"}:
+                self.assertNotIn("licenseAgreementActiveOn", call.args[1])
+                self.assertNotIn("contractualUseActiveOn", call.args[1])
 
     def test_economic_unit_search_accepts_units_without_buildings(self):
         for text in ("WE-EMPTY", "Freifläche", "Innenhof"):
@@ -247,6 +385,37 @@ class CommissionObjectLevelTests(unittest.TestCase):
         gateway.client.get_building_lands.return_value = [types.SimpleNamespace(id_=2002, id_num="GE-COMMON")]
         return gateway
 
+    def test_contact_resolution_prioritizes_the_explicit_future_contract_over_the_current_tenant(self):
+        gateway = self.gateway_with_mocked_client()
+        future = types.SimpleNamespace(
+            id_=4005, restriction_of_use=types.SimpleNamespace(is_vacancy=False),
+            contractors=[types.SimpleNamespace(person=types.SimpleNamespace(id_=10, name="Künftiger Mieter", communications=[]))],
+        )
+        current = types.SimpleNamespace(id_=4004, contractors=[])
+        gateway.client.get_license_agreements.side_effect = lambda **values: [future] if values.get("add_args") == {"licenseAgreementId": 4005} else [current]
+        contacts = gateway.get_commission_contact_items(9200, types.SimpleNamespace(
+            license_agreement={"id": 4005}, use_unit_id=3003,
+        ))
+        self.assertEqual([item["name"] for item in contacts], ["Künftiger Mieter"])
+        gateway.client.get_license_agreements.assert_called_once_with(
+            add_args={"licenseAgreementId": 4005}, add_contractors=True, limit=1,
+        )
+
+    def test_a_selected_vacancy_or_missing_contract_never_falls_back_to_another_tenant(self):
+        gateway = self.gateway_with_mocked_client()
+        vacancy = types.SimpleNamespace(restriction_of_use=types.SimpleNamespace(is_vacancy=True))
+        gateway.client.get_license_agreements.return_value = [vacancy]
+        self.assertEqual(gateway.get_commission_contact_items(9200, types.SimpleNamespace(
+            license_agreement={"id": 4006}, use_unit_id=3003,
+        )), [])
+        gateway.client.get_contractors.assert_not_called()
+        gateway.client.get_license_agreements.reset_mock()
+        gateway.client.get_license_agreements.return_value = []
+        self.assertIsNone(gateway._get_license_agreement(license_agreement_id=4006, use_unit_id=3003))
+        gateway.client.get_license_agreements.assert_called_once_with(
+            add_args={"licenseAgreementId": 4006}, add_contractors=True, limit=1,
+        )
+
     def test_erp_process_and_order_receive_the_selected_reference_ids(self):
         for object_type, object_id, expected in (
             ("license_agreement", 4, (1001, 2002, 3003, 4004)),
@@ -287,14 +456,14 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.assertEqual(self.notifications.ensure_tenant_notifications(), 0)
 
     def test_mobile_search_accepts_the_selected_context_and_rejects_unknown_contexts(self):
-        for context, object_type in (
-            ("tenant", "license_agreement"), ("agreement", "license_agreement"),
-            ("use_unit", "use_unit"), ("address", "building"), ("economic_unit", "economic_unit"),
+        for context, object_types in (
+            ("tenant", {"license_agreement"}), ("agreement", {"license_agreement"}),
+            ("use_unit", {"use_unit"}), ("address", {"building", "license_agreement"}), ("economic_unit", {"economic_unit"}),
         ):
             with self.subTest(context=context):
                 response = self.client.get(f"/api/commission-objects/search?q=COMMON&context={context}", headers=self.headers)
                 self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
-                self.assertEqual({item["object_type"] for item in response.get_json()["items"]}, {object_type})
+                self.assertEqual({item["object_type"] for item in response.get_json()["items"]}, object_types)
         response = self.client.get("/api/commission-objects/search?q=COMMON&context=invalid", headers=self.headers)
         self.assertEqual(response.status_code, 400)
 

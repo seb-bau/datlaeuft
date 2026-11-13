@@ -344,6 +344,17 @@ document.addEventListener("DOMContentLoaded", () => {
         }[item.object_type] || "Objekt";
     }
 
+    function futureContractBadge(item) {
+        if (!item.is_future || !item.license_agreement?.start_date) {
+            return null;
+        }
+        const startDate = item.license_agreement.start_date.split("-").reverse().join(".");
+        const badge = document.createElement("span");
+        badge.className = "badge rounded-pill bg-primary-subtle text-primary-emphasis fw-normal ms-2";
+        badge.textContent = `Vertrag ab ${startDate}`;
+        return badge;
+    }
+
     function updateTenantNotificationOptions(item) {
         const available = Boolean(item?.license_agreement?.erp_id && !item.is_vacancy);
         notifyTenants.disabled = !available;
@@ -429,8 +440,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const heading = document.createElement(
             "div"
         );
-        heading.className = "fw-semibold text-truncate";
+        heading.className = "fw-semibold";
         heading.textContent = `${objectTypeLabel(item)} · ${item.label}`;
+        const statusBadge = futureContractBadge(item);
+        if (statusBadge) {
+            heading.appendChild(statusBadge);
+        }
 
         const details = document.createElement(
             "div"
@@ -582,6 +597,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 );
                 title.className = "fw-semibold";
                 title.textContent = `${objectTypeLabel(item)} · ${item.label}`;
+                const statusBadge = futureContractBadge(item);
+                if (statusBadge) {
+                    title.appendChild(statusBadge);
+                }
 
                 const details = document.createElement(
                     "div"
@@ -1613,24 +1632,6 @@ document.addEventListener("DOMContentLoaded", () => {
     objectSearchContext.addEventListener(
         "change",
         () => {
-            const expectedType = {
-                tenant: "license_agreement",
-                agreement: "license_agreement",
-                use_unit: "use_unit",
-                address: "building",
-                economic_unit: "economic_unit"
-            }[objectSearchContext.value];
-            if (objectType.value && expectedType && objectType.value !== expectedType) {
-                objectType.value = "";
-                objectId.value = "";
-                delete objectSummary.dataset.automaticValue;
-                objectSummary.textContent = "Noch kein Objekt ausgewählt.";
-                objectSummary.classList.add("d-flex", "align-items-center", "justify-content-center", "text-center");
-                submitCommission.disabled = true;
-                updateTenantNotificationOptions(null);
-                updateObjectState();
-                updateAssignmentPreview({forceCraftsman: true});
-            }
             scheduleObjectSearch(0);
         }
     );

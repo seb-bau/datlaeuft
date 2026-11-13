@@ -17,7 +17,7 @@ from .mail_service import send_email
 from .models import (
     AppSetting, Commission, CommissionSource, CommissionSyncState,
     CommissionTenantNotification, CommissionTenantSmsNotification, CommissionTicketLink, CraftActivity,
-    ExternalCraftsman, TicketMirror, User, utc_now,
+    ExternalCraftsman, TicketMirror, User, WowiLicenseAgreement, utc_now,
 )
 from .settings import SettingKeys, normalize_ticket_source_ids, settings
 from .sms_service import sms_is_suppressed
@@ -96,6 +96,9 @@ def current_tenant_contractors(commission: Commission, service: Any) -> list[Any
         },
     )
     today = current_tenant_date()
+    agreement = WowiLicenseAgreement.query.filter_by(erp_id=commission.license_agreement_id).one_or_none()
+    if agreement is not None and agreement.start_date is not None:
+        today = max(today, agreement.start_date)
     return [item for item in contractors or [] if is_current_contractor(item, today)]
 
 
