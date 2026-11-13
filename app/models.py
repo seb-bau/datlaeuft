@@ -1463,6 +1463,31 @@ class Commission(db.Model):
         return "Ausstehender Auftrag"
 
     @property
+    def object_type(self) -> str | None:
+        payload = self.raw_payload if isinstance(self.raw_payload, dict) else {}
+        scope = payload.get("commission_scope")
+        if isinstance(scope, dict) and scope.get("object_type") in {
+            "license_agreement", "use_unit", "building", "economic_unit",
+        }:
+            return scope["object_type"]
+        for object_type, reference in (
+            ("license_agreement", self.license_agreement_id or self.license_agreement_idnum),
+            ("use_unit", self.use_unit_id or self.use_unit_idnum),
+            ("building", self.building_erp_id or self.building_idnum),
+            ("economic_unit", self.economic_unit_erp_id or self.economic_unit_idnum),
+        ):
+            if reference:
+                return object_type
+        return None
+
+    @property
+    def economic_unit_name(self) -> str | None:
+        payload = self.raw_payload if isinstance(self.raw_payload, dict) else {}
+        scope = payload.get("commission_scope")
+        value = scope.get("economic_unit_name") if isinstance(scope, dict) else None
+        return value.strip() or None if isinstance(value, str) else None
+
+    @property
     def needs_completion_review(self) -> bool:
         return (
             self.local_status == CommissionLocalStatus.COMPLETION_REVIEW.value

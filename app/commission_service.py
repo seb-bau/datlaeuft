@@ -81,7 +81,8 @@ def create_pending_commission(
         )
 
     object_context = resolve_commission_object(
-        data
+        data,
+        require_address=True,
     )
     notify_tenants = bool(
         notify_tenants
@@ -571,6 +572,12 @@ def create_pending_commission(
 
         commission.description = position_text
 
+    commission.raw_payload = {
+        "commission_scope": {
+            "object_type": str(data.get("object_type") or "").strip() or commission.object_type,
+            "economic_unit_name": object_context.economic_unit.name,
+        },
+    }
     db.session.flush()
 
     enqueue_erp_operation(

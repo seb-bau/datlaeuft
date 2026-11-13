@@ -1708,6 +1708,12 @@ class WowiportService:
             self,
             commission: Commission,
     ) -> Any:
+        if commission.economic_unit_erp_id and not any((
+            commission.building_erp_id, commission.building_idnum,
+            commission.use_unit_id, commission.use_unit_idnum,
+            commission.license_agreement_id, commission.license_agreement_idnum,
+        )):
+            self.resolve_commission_reference_ids(commission)
         if commission.responsible_official_repair_erp_id is None:
             from .object_directory import resolve_commission_creator_official_id
 
@@ -1947,6 +1953,30 @@ class WowiportService:
         license_agreement = None
         use_unit = None
         building = None
+
+        if commission.economic_unit_erp_id and not any((
+            commission.building_erp_id, commission.building_idnum,
+            commission.use_unit_id, commission.use_unit_idnum,
+            commission.license_agreement_id, commission.license_agreement_idnum,
+        )):
+            from .models import WowiEconomicUnit
+            from .object_directory import resolve_commission_address_building
+
+            economic_unit = WowiEconomicUnit.query.filter_by(erp_id=commission.economic_unit_erp_id).one_or_none()
+            try:
+                address_building = resolve_commission_address_building(economic_unit)
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+            raw_payload = dict(commission.raw_payload) if isinstance(commission.raw_payload, dict) else {}
+            scope = raw_payload.get("commission_scope")
+            scope = dict(scope) if isinstance(scope, dict) else {}
+            scope.setdefault("object_type", "economic_unit")
+            scope.setdefault("economic_unit_name", economic_unit.name)
+            raw_payload["commission_scope"] = scope
+            commission.raw_payload = raw_payload
+            commission.building_erp_id = address_building.erp_id
+            commission.building_idnum = address_building.id_num
+            commission.apartment_address = address_building.address
 
         if commission.license_agreement_idnum:
             license_agreements = (

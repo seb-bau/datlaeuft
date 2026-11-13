@@ -52,6 +52,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
         cls.gateway = importlib.import_module(cls.package_name + ".wowiport")
         cls.notifications = importlib.import_module(cls.package_name + ".tenant_notifications")
         cls.api = importlib.import_module(cls.package_name + ".api")
+        cls.api.serialize_accepted_appointment_from.return_value = None
         cls.app.register_blueprint(cls.api.api_bp)
         cls.tables = [model.__table__ for model in (
             cls.models.AppSetting, cls.models.BlacklistEntry, cls.models.User,
@@ -62,6 +63,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
             cls.models.WowiDepartment, cls.models.CraftActivity,
             cls.models.CraftActivityDepartmentMapping, cls.models.TimeTaskTemplate,
             cls.models.Commission, cls.models.CommissionPosition, cls.models.CommissionTenantNotification,
+            cls.models.ExternalCraftsman,
         )]
 
     def setUp(self):
@@ -209,7 +211,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
             ("license_agreement", 4, (1001, 2002, 3003, 4004)),
             ("use_unit", 3, (1001, 2002, 3003, None)),
             ("building", 2, (1001, 2002, None, None)),
-            ("economic_unit", 10, (1010, None, None, None)),
+            ("economic_unit", 1, (1001, 2002, None, None)),
         ):
             with self.subTest(object_type=object_type):
                 commission = self.create_order(object_type, object_id)
@@ -219,6 +221,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
                 ), expected)
                 self.assertEqual(commission.user_id, self.craftsman.id)
                 self.assertEqual(commission.company_code_erp_id, 77)
+                self.assertEqual(commission.object_type, object_type)
                 self.assertEqual(commission.notify_tenants, object_type == "license_agreement")
                 self.assertEqual(self.service.enqueue_erp_operation.call_args.kwargs["operation_type"].value, "create_commission")
 
@@ -249,7 +252,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
             ("license_agreement", 4, (1001, 2002, 3003, 4004)),
             ("use_unit", 3, (1001, 2002, 3003, None)),
             ("building", 2, (1001, 2002, None, None)),
-            ("economic_unit", 10, (1010, None, None, None)),
+            ("economic_unit", 1, (1001, 2002, None, None)),
         ):
             with self.subTest(object_type=object_type):
                 commission = self.create_order(object_type, object_id)
@@ -267,7 +270,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
                 if object_type == "economic_unit":
                     gateway.client.get_license_agreements.assert_not_called()
                     gateway.client.get_use_units.assert_not_called()
-                    gateway.client.get_building_lands.assert_not_called()
+                    gateway.client.get_building_lands.assert_called()
 
     def test_erp_reference_resolution_still_rejects_an_order_without_any_object(self):
         gateway = self.gateway_with_mocked_client()
@@ -275,7 +278,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
             gateway.resolve_commission_reference_ids(self.models.Commission())
 
     def test_contractless_orders_do_not_queue_tenant_notifications_even_with_a_legacy_opt_in(self):
-        commission = self.create_order("economic_unit", 10)
+        commission = self.create_order("economic_unit", 1)
         commission.notify_tenants = True
         commission.erp_id = 1234
         commission.erp_sync_state = "synced"
@@ -301,7 +304,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.assertEqual({item["object_type"] for item in response.json["items"]}, {"license_agreement"})
 
     def test_queued_contractless_notification_is_discarded_before_contacting_wowiport(self):
-        commission = self.create_order("economic_unit", 10)
+        commission = self.create_order("economic_unit", 1)
         commission.notify_tenants = True
         commission.status_id = 12
         notification = self.models.CommissionTenantNotification(commission=commission, state="sending")
@@ -311,6 +314,134 @@ class CommissionObjectLevelTests(unittest.TestCase):
             self.notifications.execute_tenant_notification(notification.id)
         self.assertEqual(notification.state, "discarded")
         gateway.assert_not_called()
+
+    def test_we_orders_use_the_first_building_number_without_requesting_an_address(self):
+        self.empty_building.id_num = "GE-0001"
+        self.db.session.commit()
+        commission = self.create_order("economic_unit", 1)
+        self.assertEqual(commission.building_erp_id, 2005)
+        self.assertEqual(commission.apartment_address, "Nebengebäude")
+        self.assertEqual(commission.economic_unit_erp_id, 1001)
+        self.assertIsNone(commission.use_unit_id)
+        self.assertIsNone(commission.license_agreement_id)
+        self.assertEqual(commission.object_type, "economic_unit")
+
+    def test_the_first_we_address_skips_empty_inactive_and_foreign_buildings(self):
+        self.building.address = " \t\n"
+        self.empty_building.active = False
+        self.db.session.add_all([
+            self.models.WowiBuilding(id=6, erp_id=2006, id_num="GE-Z", address="Gartenstraße 1", economic_unit=self.economic),
+            self.models.WowiBuilding(id=7, erp_id=2007, id_num="GE-0000", address="Fremde Straße 1", economic_unit=self.empty_economic),
+        ])
+        self.db.session.commit()
+        commission = self.create_order("economic_unit", 1)
+        self.assertEqual(commission.building_erp_id, 2006)
+        self.assertEqual(commission.apartment_address, "Gartenstraße 1")
+
+    def test_a_we_without_an_active_address_is_rejected_before_queuing(self):
+        with self.assertRaisesRegex(ValueError, "keine aktive Gebäudeadresse"):
+            self.create_order("economic_unit", 10)
+        self.service.enqueue_erp_operation.assert_not_called()
+        self.assertEqual(self.models.Commission.query.count(), 0)
+
+    def test_we_scope_and_name_are_persisted_and_supplied_to_the_app(self):
+        commission = self.create_order("economic_unit", 1)
+        commission_id = commission.id
+        self.db.session.expire_all()
+        stored = self.db.session.get(self.models.Commission, commission_id)
+        payload = self.api.serialize_commission(stored)
+        self.assertEqual(payload["object_type"], "economic_unit")
+        self.assertEqual(payload["economic_unit_idnum"], "WE-COMMON")
+        self.assertEqual(payload["economic_unit_name"], "COMMON Siedlung")
+        self.assertEqual(payload["apartment_address"], "COMMON Straße 1")
+        self.assertIsNone(payload["license_agreement_id"])
+        self.app.json.dumps(payload)
+
+    def test_existing_building_and_unit_orders_are_not_mislabeled_as_entire_we_orders(self):
+        for values, expected in (
+            ({"building_erp_id": 2002}, "building"),
+            ({"building_erp_id": 2002, "use_unit_id": 3003}, "use_unit"),
+            ({"building_erp_id": 2002, "license_agreement_idnum": "MV-1"}, "license_agreement"),
+        ):
+            with self.subTest(expected=expected):
+                commission = self.models.Commission(economic_unit_erp_id=1001, **values)
+                self.assertEqual(commission.object_type, expected)
+
+    def test_existing_we_orders_keep_scope_when_an_address_is_added_and_reuse_the_process(self):
+        commission = self.create_order("economic_unit", 1)
+        commission.building_erp_id = None
+        commission.building_idnum = None
+        commission.apartment_address = None
+        commission.crafts_process_erp_id = 9100
+        commission.raw_payload = {"sync_signature": "existing-signature", "push_sync_status": [12, "WaitForCraftsmanFeedback"]}
+        self.db.session.commit()
+        gateway = self.gateway_with_mocked_client()
+        gateway._find_crafts_process_by_id = Mock(return_value={"id": 9100})
+        gateway.create_commission_waiting_for_acceptance(commission)
+        self.db.session.commit()
+        self.db.session.expire_all()
+        self.assertEqual(commission.object_type, "economic_unit")
+        self.assertEqual(commission.economic_unit_name, "COMMON Siedlung")
+        self.assertEqual(commission.building_erp_id, 2002)
+        self.assertEqual(commission.raw_payload["sync_signature"], "existing-signature")
+        self.assertEqual(commission.raw_payload["push_sync_status"], [12, "WaitForCraftsmanFeedback"])
+        gateway.client.create_commissioning_crafts_process.assert_not_called()
+        self.assertEqual(gateway.client.create_commissioning_commission_wait_for_craftsman_feedback.call_args.kwargs["crafts_process_id"], 9100)
+
+    def test_retries_keep_the_previously_selected_address_if_building_order_changes(self):
+        commission = self.create_order("economic_unit", 1)
+        self.empty_building.id_num = "GE-0001"
+        self.db.session.commit()
+        gateway = self.gateway_with_mocked_client()
+        gateway.create_commission_waiting_for_acceptance(commission)
+        self.assertEqual(gateway.client.create_commissioning_commission_wait_for_craftsman_feedback.call_args.kwargs["building_id"], 2002)
+        self.assertEqual(commission.object_type, "economic_unit")
+
+    def test_erp_sync_keeps_the_explicit_we_scope_and_name(self):
+        commission = self.create_order("economic_unit", 1)
+        commission.erp_id = 100
+        self.db.session.commit()
+        with patch.object(self.gateway, "configured_commission_type_ids", return_value={100}), patch.object(
+            self.gateway, "configured_commission_status_ids", return_value={12},
+        ):
+            result = self.gateway.upsert_commission({
+                "Id": 100, "IdNum": "A-100", "CommissionStatus": {"Id": 12, "Code": "WaitForCraftsmanFeedback"},
+                "CommissionType": {"Id": 100}, "Craftsman": {"Id": 2020}, "RecordingDate": "2026-11-01",
+            }, sync_signature="updated-signature")
+        self.db.session.commit()
+        self.db.session.expire_all()
+        self.assertIsNotNone(result)
+        self.assertEqual(commission.object_type, "economic_unit")
+        self.assertEqual(commission.economic_unit_name, "COMMON Siedlung")
+        self.assertIn("sync_signature", commission.raw_payload)
+
+    def test_real_erp_json_contains_the_automatic_address_reference(self):
+        from test_wowiport_client import transport
+
+        commission = self.create_order("economic_unit", 1)
+        gateway = self.gateway_with_mocked_client()
+        lookups = gateway.client
+        with patch("wowipy.rest_adapter.requests_cache.install_cache"):
+            client = transport.WowiportClient(hostname="", user="test", password="test", api_key="test-key")
+        client._rest_adapter.access_token = "test-token"
+        client.get_license_agreements = lookups.get_license_agreements
+        client.get_use_units = lookups.get_use_units
+        client.get_building_lands = lookups.get_building_lands
+        replies = []
+        for erp_id, number in ((9100, "V-1"), (9200, "A-1")):
+            reply = Mock(status_code=200, reason="OK")
+            reply.json.return_value = {"Id": erp_id, "IdNum": number}
+            replies.append(reply)
+        client._rest_adapter._request = Mock(side_effect=replies)
+        gateway.client = client
+        gateway.create_commission_waiting_for_acceptance(commission)
+        requests = client._rest_adapter._request.call_args_list
+        self.assertEqual(len(requests), 2)
+        for request in requests:
+            self.assertEqual(request.kwargs["json"]["EconomicUnitId"], 1001)
+            self.assertEqual(request.kwargs["json"]["BuildingId"], 2002)
+            self.assertNotIn("UseUnitId", request.kwargs["json"])
+            self.assertNotIn("LicenseAgreementId", request.kwargs["json"])
 
 
 if __name__ == "__main__":

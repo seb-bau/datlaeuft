@@ -1185,6 +1185,7 @@ def sync_responsible_official_directory(
 
 def resolve_commission_object(
     data: dict[str, Any],
+    require_address: bool = False,
 ) -> CommissionObjectContext:
     object_type = _text(
         data.get("object_type")
@@ -1377,6 +1378,9 @@ def resolve_commission_object(
         )
 
     tenant_names = []
+
+    if object_type == "economic_unit" and require_address:
+        building = resolve_commission_address_building(economic_unit)
 
     if (
         agreement is not None
@@ -1941,6 +1945,20 @@ def search_commission_objects(
         choices = [item for group in zip_longest(*groups) for item in group if item is not None]
 
     return choices[:limit]
+
+
+def resolve_commission_address_building(economic_unit: WowiEconomicUnit | None) -> WowiBuilding:
+    if economic_unit is None or not economic_unit.active:
+        raise ValueError("Die Wirtschaftseinheit ist nicht mehr verfügbar.")
+    buildings = WowiBuilding.query.filter(
+        WowiBuilding.economic_unit_id == economic_unit.id,
+        WowiBuilding.active.is_(True),
+        WowiBuilding.address.is_not(None),
+    ).order_by(WowiBuilding.id_num.asc(), WowiBuilding.id.asc()).all()
+    for building in buildings:
+        if building.address.strip():
+            return building
+    raise ValueError("Für diese Wirtschaftseinheit ist keine aktive Gebäudeadresse hinterlegt. Bitte den Objektspiegel prüfen.")
 
 
 def get_commission_object_choice(
