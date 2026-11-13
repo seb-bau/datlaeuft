@@ -1379,8 +1379,8 @@ def resolve_commission_object(
 
     tenant_names = []
 
-    if object_type == "economic_unit" and (require_address or data.get("address_building_id")):
-        building = resolve_commission_address_building(economic_unit, data.get("address_building_id"))
+    if object_type == "economic_unit" and require_address:
+        building = resolve_commission_address_building(economic_unit)
 
     if (
         agreement is not None
@@ -1947,50 +1947,28 @@ def search_commission_objects(
     return choices[:limit]
 
 
-def commission_address_buildings(economic_unit: WowiEconomicUnit) -> list[WowiBuilding]:
-    return [
-        item for item in WowiBuilding.query.filter(
-            WowiBuilding.economic_unit_id == economic_unit.id,
-            WowiBuilding.active.is_(True),
-            WowiBuilding.address.is_not(None),
-        ).order_by(WowiBuilding.id_num.asc(), WowiBuilding.id.asc()).all()
-        if item.address.strip()
-    ]
-
-
-def resolve_commission_address_building(
-    economic_unit: WowiEconomicUnit,
-    building_id: Any = None,
-) -> WowiBuilding:
+def resolve_commission_address_building(economic_unit: WowiEconomicUnit | None) -> WowiBuilding:
     if economic_unit is None or not economic_unit.active:
         raise ValueError("Die Wirtschaftseinheit ist nicht mehr verfügbar.")
-    buildings = commission_address_buildings(economic_unit)
-    if building_id not in (None, ""):
-        selected_id = _as_int(building_id)
-        for building in buildings:
-            if building.id == selected_id:
-                return building
-        raise ValueError("Die Gebäudeadresse ist nicht verfügbar oder gehört nicht zur ausgewählten Wirtschaftseinheit.")
-    if len(buildings) == 1:
-        return buildings[0]
-    if not buildings:
-        raise ValueError("Für diese Wirtschaftseinheit ist keine aktive Gebäudeadresse hinterlegt. Bitte den Objektspiegel prüfen.")
-    raise ValueError("Für diesen WE-Auftrag muss eine Gebäudeadresse ausgewählt werden. Bitte eine der Adressen der Wirtschaftseinheit wählen.")
+    buildings = WowiBuilding.query.filter(
+        WowiBuilding.economic_unit_id == economic_unit.id,
+        WowiBuilding.active.is_(True),
+        WowiBuilding.address.is_not(None),
+    ).order_by(WowiBuilding.id_num.asc(), WowiBuilding.id.asc()).all()
+    for building in buildings:
+        if building.address.strip():
+            return building
+    raise ValueError("Für diese Wirtschaftseinheit ist keine aktive Gebäudeadresse hinterlegt. Bitte den Objektspiegel prüfen.")
 
 
 def get_commission_object_choice(
     object_type: str,
     object_id: int,
-    address_building_id: Any = None,
 ) -> dict[str, Any]:
-    choice = _serialize_choice(
+    return _serialize_choice(
         object_type,
         object_id,
     )
-    if object_type == "economic_unit" and address_building_id not in (None, ""):
-        building = resolve_commission_address_building(db.session.get(WowiEconomicUnit, object_id), address_building_id)
-        choice["address_building"] = next(item for item in choice["address_buildings"] if item["id"] == building.id)
-    return choice
 
 
 def _append_choice(
@@ -2171,19 +2149,12 @@ def _serialize_choice(
     else:
         label = economic_unit.name or economic_unit.id_num or "Wirtschaftseinheit"
 
-    address_buildings = [
-        {"id": item.id, "erp_id": item.erp_id, "id_num": item.id_num, "address": item.address}
-        for item in commission_address_buildings(economic_unit)
-    ] if object_type == "economic_unit" else []
-
     return {
         "object_type": object_type,
         "object_id": object_id,
         "label": label,
         "tenant_name": tenant_name,
         "is_vacancy": is_vacancy,
-        "address_buildings": address_buildings,
-        "address_building": address_buildings[0] if len(address_buildings) == 1 else None,
         "company_code": {
             "erp_id": (
                 economic_unit.company_code_erp_id

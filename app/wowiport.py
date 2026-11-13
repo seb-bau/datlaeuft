@@ -1966,7 +1966,14 @@ class WowiportService:
             try:
                 address_building = resolve_commission_address_building(economic_unit)
             except ValueError as exc:
-                raise RuntimeError(f"{exc} Adresse ergänzen: /admin/commissions/{commission.id}") from exc
+                raise RuntimeError(str(exc)) from exc
+            raw_payload = dict(commission.raw_payload) if isinstance(commission.raw_payload, dict) else {}
+            scope = raw_payload.get("commission_scope")
+            scope = dict(scope) if isinstance(scope, dict) else {}
+            scope.setdefault("object_type", "economic_unit")
+            scope.setdefault("economic_unit_name", economic_unit.name)
+            raw_payload["commission_scope"] = scope
+            commission.raw_payload = raw_payload
             commission.building_erp_id = address_building.erp_id
             commission.building_idnum = address_building.id_num
             commission.apartment_address = address_building.address
