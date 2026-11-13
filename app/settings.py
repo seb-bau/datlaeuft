@@ -404,6 +404,16 @@ class SettingKeys:
         "Mieter bei Beauftragung standardmäßig informieren",
         "E-Mail",
     )
+    SMS_ENABLED = SettingDefinition[bool](
+        "sms.enabled", SettingValueType.BOOL, False,
+        "SMS zusätzlich zu Mieter-E-Mails bei Beauftragung versenden", "SMS",
+    )
+    SMS_API_KEY = SettingDefinition[str](
+        "sms.api_key", SettingValueType.STRING, "", "seven API-Key (SMS und Lookup)", "SMS", secret=True,
+    )
+    SMS_SENDER = SettingDefinition[str](
+        "sms.sender", SettingValueType.STRING, "", "SMS-Absenderkennung (optional)", "SMS",
+    )
     TENANT_TICKET_REPLY_TO = SettingDefinition[str](
         "commissions.ticket_reply_to", SettingValueType.STRING, "",
         "Antwortadresse für Ticket-Mails (mail2ticket-Postfach)", "E-Mail",
@@ -801,6 +811,16 @@ class SettingsService:
         return cast(T, self._deserialize(row.value_text, definition.value_type))
 
     def set(self, definition: SettingDefinition[T], value: T) -> None:
+        if definition.key == SettingKeys.SMS_API_KEY.key:
+            key = str(value or "").strip()
+            if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in key):
+                raise ValueError("Der seven API-Key darf keine Leer- oder Steuerzeichen enthalten.")
+            value = cast(T, key)
+        if definition.key == SettingKeys.SMS_SENDER.key:
+            sender = str(value or "").strip()
+            if sender and not ((sender.isdigit() and len(sender) <= 16) or (sender.isalnum() and len(sender) <= 11)):
+                raise ValueError("Die SMS-Absenderkennung darf höchstens 11 alphanumerische Zeichen oder 16 Ziffern enthalten.")
+            value = cast(T, sender)
         if definition.key == SettingKeys.HEALTH_RULES.key:
             value = cast(T, normalize_health_rules(value))
         if definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key:

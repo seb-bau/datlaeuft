@@ -43,6 +43,7 @@ from .external_craftsman_service import (
     process_external_assignment_mail_batch,
 )
 from .tenant_notifications import process_tenant_notification_batch
+from .tenant_sms_notifications import process_tenant_sms_notification_batch
 from .completion_notifications import process_completion_notification_batch
 from .dms_service import process_dms_batch
 from .worker_monitor import worker_step
@@ -176,6 +177,7 @@ def process_due_work(
         ("external_assignment_emails", process_external_assignment_mail_batch),
         ("push", lambda: process_push_batch(push_limit)),
         ("tenant_notifications", process_tenant_notification_batch),
+        ("tenant_sms_notifications", process_tenant_sms_notification_batch),
         ("completion_notifications", process_completion_notification_batch),
         ("dms", process_dms_batch),
     )

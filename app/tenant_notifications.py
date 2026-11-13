@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.errors import HeaderParseError
 from email.headerregistry import Address
 from email.message import EmailMessage
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from flask import current_app
 from sqlalchemy import and_, or_
@@ -15,7 +16,7 @@ from .extensions import db
 from .mail_service import send_email
 from .models import (
     AppSetting, Commission, CommissionSource, CommissionSyncState,
-    CommissionTenantNotification, CommissionTicketLink, CraftActivity,
+    CommissionTenantNotification, CommissionTenantSmsNotification, CommissionTicketLink, CraftActivity,
     ExternalCraftsman, TicketMirror, User, utc_now,
 )
 from .settings import SettingKeys, normalize_ticket_source_ids, settings
@@ -56,7 +57,32 @@ def normalize_tenant_email(value: Any) -> str | None:
     return address.addr_spec
 
 
-def tenant_email_addresses(commission: Commission, service: Any) -> list[str]:
+def current_tenant_date() -> date:
+    return datetime.now(ZoneInfo("Europe/Berlin")).date()
+
+
+def is_current_contractor(contractor: Any, today: date) -> bool:
+    for name, fallback, is_start in (
+        ("contractual_use_valid_from", "valid_from", True),
+        ("contractual_use_valid_to", "valid_to", False),
+    ):
+        value = read_value(contractor, name)
+        if value in (None, ""):
+            value = read_value(contractor, fallback)
+        if value in (None, ""):
+            continue
+        try:
+            value = value.date() if isinstance(value, datetime) else (
+                value if isinstance(value, date) else date.fromisoformat(str(value)[:10])
+            )
+        except (ValueError, TypeError):
+            return False
+        if (is_start and value > today) or (not is_start and value < today):
+            return False
+    return True
+
+
+def current_tenant_contractors(commission: Commission, service: Any) -> list[Any]:
     if commission.license_agreement_id is None:
         return []
     contractors = service.client.get_contractors(
@@ -68,8 +94,13 @@ def tenant_email_addresses(commission: Commission, service: Any) -> list[str]:
             "includePersonBankAccounts": "false",
         },
     )
+    today = current_tenant_date()
+    return [item for item in contractors or [] if is_current_contractor(item, today)]
+
+
+def tenant_email_addresses(commission: Commission, service: Any) -> list[str]:
     addresses = {}
-    for contractor in contractors or []:
+    for contractor in current_tenant_contractors(commission, service):
         person = read_value(contractor, "person")
         communications = list(read_value(person, "communications") or [])
         preferred = read_value(person, "first_email_communication")
@@ -86,7 +117,7 @@ def tenant_email_addresses(commission: Commission, service: Any) -> list[str]:
     return list(addresses.values())
 
 
-def tenant_notification_content(commission: Commission, service: Any) -> str:
+def tenant_notification_context(commission: Commission, service: Any) -> dict[str, Any]:
     craft_ids = {position.craft_activity_erp_id for position in commission.positions
                  if position.craft_activity_erp_id is not None}
     craft_names = {item.erp_id: item.name for item in
@@ -122,7 +153,11 @@ def tenant_notification_content(commission: Commission, service: Any) -> str:
         "craft_names": sorted({" ".join(str(name).split()) for name in craft_names.values()}),
         "craftsman_name": " ".join(str(assignee_name).split()),
     })
-    return render_email_template("tenant_assignment", context)
+    return context
+
+
+def tenant_notification_content(commission: Commission, service: Any) -> dict[str, Any]:
+    return render_email_template("tenant_assignment", tenant_notification_context(commission, service))
 
 
 def ensure_tenant_notifications(limit: int = 200) -> int:
@@ -152,8 +187,11 @@ def ensure_tenant_notifications(limit: int = 200) -> int:
         )
         .order_by(Commission.id.asc()).limit(limit).all()
     )
+    sms_enabled = settings.get(SettingKeys.SMS_ENABLED)
     for commission in commissions:
         db.session.add(CommissionTenantNotification(commission=commission))
+        if sms_enabled:
+            db.session.add(CommissionTenantSmsNotification(commission=commission))
     return len(commissions)
 
 

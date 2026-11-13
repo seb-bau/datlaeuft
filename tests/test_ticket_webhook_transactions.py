@@ -75,6 +75,7 @@ class TicketWebhookTransactionTests(unittest.TestCase):
                 "process_process_info_work": Mock(), "sync_process_infos": Mock(),
             },
             "tenant_notifications": {"process_tenant_notification_batch": Mock()},
+            "tenant_sms_notifications": {"process_tenant_sms_notification_batch": Mock()},
             "completion_notifications": {"process_completion_notification_batch": Mock()},
             "dms_service": {"process_dms_batch": Mock()},
         }

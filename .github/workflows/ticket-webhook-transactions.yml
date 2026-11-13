@@ -10,6 +10,11 @@ on:
       - app/api.py
       - app/object_directory.py
       - app/tenant_notifications.py
+      - app/tenant_sms_notifications.py
+      - app/sms_service.py
+      - app/settings.py
+      - requirements.txt
+      - migrations/versions/*tenant_commission_sms_notifications.py
       - app/templates/admin/dashboard.html
       - app/templates/admin/tickets.html
       - app/static/js/ticket_filters.js
@@ -46,6 +51,11 @@ on:
       - app/api.py
       - app/object_directory.py
       - app/tenant_notifications.py
+      - app/tenant_sms_notifications.py
+      - app/sms_service.py
+      - app/settings.py
+      - requirements.txt
+      - migrations/versions/*tenant_commission_sms_notifications.py
       - app/templates/admin/dashboard.html
       - app/templates/admin/tickets.html
       - app/static/js/ticket_filters.js
@@ -106,6 +116,7 @@ jobs:
           "SQLAlchemy>=2.0,<3" "Flask>=3.1,<4" "Flask-SQLAlchemy>=3.1,<4"
           "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
           "requests>=2.32,<3"
+          "phonenumbers>=9,<10"
           "qrcode>=8,<9"
           "wowipy>=1.1.91,<2"
           "alembic>=1.16,<2"
@@ -132,6 +143,7 @@ jobs:
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
         run: |
+          python -m unittest discover -s tests -p test_tenant_sms_notifications.py -v
           python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v
           python -m unittest discover -s tests -p test_mobile_sync.py -v
           python -m unittest discover -s tests -p test_completion_notifications.py -v
