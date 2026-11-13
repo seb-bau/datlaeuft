@@ -8,13 +8,33 @@ from flask import current_app
 
 from .extensions import db
 from .models import Commission, CommissionSyncState, CommissionTenantSmsNotification, utc_now
-from .settings import SettingKeys, settings
-from .sms_service import SmsDeliveryUncertain, SmsDisabled, SmsSendError, normalize_phone_number, send_sms
+from .settings import SMS_DEBUG_SUPPRESSED_COMMISSION_ID, SettingKeys, settings
+from .sms_service import (
+    SmsDeliveryUncertain, SmsDisabled, SmsSendError, SmsSuppressed,
+    normalize_phone_number, send_sms, sms_is_suppressed,
+)
 from .tenant_notifications import current_tenant_contractors, read_value, tenant_notification_context
 
 
 TERMINAL_RECIPIENT_STATES = {"sent", "skipped", "simulated", "uncertain"}
 PHONE_TYPES = {"handynummer", "mobil", "mobiltelefon", "mobilfunk", "mobile", "festnetz", "telefon"}
+
+
+def discard_debug_tenant_sms_notifications() -> None:
+    query = CommissionTenantSmsNotification.query.filter(
+        CommissionTenantSmsNotification.state.in_(("pending", "failed", "sending")),
+    )
+    if not settings.get(SettingKeys.SMTP_DEBUG_RECIPIENT).strip():
+        commission_id = settings.get(SMS_DEBUG_SUPPRESSED_COMMISSION_ID)
+        if not commission_id:
+            return
+        query = query.filter(CommissionTenantSmsNotification.commission_id <= commission_id)
+    query.update({
+        CommissionTenantSmsNotification.state: "discarded",
+        CommissionTenantSmsNotification.locked_at: None,
+        CommissionTenantSmsNotification.last_error: "SMS wegen gesetzter Debug-E-Mail-Adresse dauerhaft verworfen.",
+    }, synchronize_session="fetch")
+    db.session.commit()
 
 
 def tenant_phone_numbers(commission: Commission, service: Any) -> list[str]:
@@ -118,6 +138,12 @@ def execute_tenant_sms_notification(item_id: int) -> None:
     item = db.session.get(CommissionTenantSmsNotification, item_id)
     if item is None or item.state != "sending":
         return
+    if sms_is_suppressed(item.commission_id):
+        item.state = "discarded"
+        item.locked_at = None
+        item.last_error = "SMS wegen gesetzter Debug-E-Mail-Adresse dauerhaft verworfen."
+        db.session.commit()
+        return
     if not settings.get(SettingKeys.SMS_ENABLED):
         item.state = "pending"
         item.available_at = utc_now() + timedelta(seconds=60)
@@ -159,6 +185,9 @@ def execute_tenant_sms_notification(item_id: int) -> None:
             result = {"state": "skipped"}
         else:
             def before_send():
+                db.session.commit()
+                if sms_is_suppressed(item.commission_id):
+                    raise SmsSuppressed("SMS wegen gesetzter Debug-E-Mail-Adresse dauerhaft verworfen.")
                 item.payload = {**item.payload, "submitting": number}
                 item.locked_at = utc_now()
                 db.session.commit()
@@ -170,6 +199,13 @@ def execute_tenant_sms_notification(item_id: int) -> None:
                     before_send=before_send,
                 )
                 result = {"state": outcome.state, "message_id": outcome.message_id}
+            except SmsSuppressed:
+                item.payload = {**item.payload, "submitting": None}
+                item.state = "discarded"
+                item.last_error = "SMS wegen gesetzter Debug-E-Mail-Adresse dauerhaft verworfen."
+                item.locked_at = None
+                db.session.commit()
+                return
             except SmsDisabled:
                 item.payload = {**item.payload, "submitting": None}
                 item.state = "pending"
@@ -195,6 +231,12 @@ def fail_tenant_sms_notification(item_id: int, error: Exception) -> None:
     item = db.session.get(CommissionTenantSmsNotification, item_id)
     if item is None:
         return
+    if sms_is_suppressed(item.commission_id) or item.state == "discarded":
+        item.state = "discarded"
+        item.last_error = "SMS wegen gesetzter Debug-E-Mail-Adresse dauerhaft verworfen."
+        item.locked_at = None
+        db.session.commit()
+        return
     if (item.payload or {}).get("submitting"):
         payload = dict(item.payload)
         number = payload["submitting"]
@@ -214,6 +256,9 @@ def fail_tenant_sms_notification(item_id: int, error: Exception) -> None:
 
 
 def process_tenant_sms_notification_batch(limit: int = 20) -> int:
+    discard_debug_tenant_sms_notifications()
+    if sms_is_suppressed():
+        return 0
     if not settings.get(SettingKeys.SMS_ENABLED):
         return 0
     recover_stale_tenant_sms_notifications()

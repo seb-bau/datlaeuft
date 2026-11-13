@@ -7,7 +7,7 @@ from typing import Callable
 import phonenumbers
 import requests
 
-from .settings import SettingKeys, settings
+from .settings import SMS_DEBUG_SUPPRESSED_COMMISSION_ID, SettingKeys, settings
 
 
 SEVEN_API_URL = "https://gateway.seven.io/api"
@@ -22,6 +22,10 @@ class SmsDisabled(SmsSendError):
     pass
 
 
+class SmsSuppressed(SmsSendError):
+    pass
+
+
 class SmsDeliveryUncertain(SmsSendError):
     pass
 
@@ -30,6 +34,12 @@ class SmsDeliveryUncertain(SmsSendError):
 class SmsResult:
     state: str
     message_id: str | None = None
+
+
+def sms_is_suppressed(commission_id: int | None = None) -> bool:
+    return bool(settings.get(SettingKeys.SMTP_DEBUG_RECIPIENT).strip()) or (
+        commission_id is not None and commission_id <= settings.get(SMS_DEBUG_SUPPRESSED_COMMISSION_ID)
+    )
 
 
 def normalize_phone_number(number: str, default_region: str = "DE") -> str | None:
@@ -56,6 +66,8 @@ def send_sms(
     foreign_id: str | None = None,
     before_send: Callable[[], None] | None = None,
 ) -> SmsResult:
+    if sms_is_suppressed():
+        raise SmsSuppressed("Der SMS-Versand ist durch die Debug-E-Mail-Adresse gesperrt.")
     if not settings.get(SettingKeys.SMS_ENABLED):
         raise SmsDisabled("Der SMS-Versand ist global deaktiviert.")
     api_key = settings.get(SettingKeys.SMS_API_KEY).strip()
@@ -92,6 +104,8 @@ def send_sms(
         payload["foreign_id"] = foreign_id
     if before_send is not None:
         before_send()
+    if sms_is_suppressed():
+        raise SmsSuppressed("Der SMS-Versand ist durch die Debug-E-Mail-Adresse gesperrt.")
     if not settings.get(SettingKeys.SMS_ENABLED):
         raise SmsDisabled("Der SMS-Versand ist global deaktiviert.")
     try:

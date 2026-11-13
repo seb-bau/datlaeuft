@@ -222,6 +222,123 @@ class TenantSmsTests(unittest.TestCase):
         self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
         self.sms_sender.assert_not_called()
 
+    def test_debug_email_allows_email_but_never_queues_or_backfills_sms(self):
+        self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "debug@example.invalid")
+        commission, item = self.enqueue()
+        self.assertIsNone(item)
+        self.assertEqual(self.mail.process_tenant_notification_batch(), 1)
+        self.assertEqual(self.models.CommissionTenantNotification.query.one().state, "sent")
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+        self.settings.set_from_form(self.keys.SMTP_DEBUG_RECIPIENT, "")
+        self.db.session.commit()
+        self.assertEqual(self.mail.ensure_tenant_notifications(), 0)
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+        self.assertEqual(self.models.CommissionTenantSmsNotification.query.count(), 0)
+        self.sms_sender.assert_not_called()
+        self.get.assert_not_called()
+        self.post.assert_not_called()
+
+    def test_debug_email_discards_pending_failed_and_interrupted_sms_even_when_sms_are_disabled(self):
+        items = []
+        for state in ("pending", "failed", "sending"):
+            commission, item = self.enqueue()
+            item.state = state
+            item.locked_at = self.models.utc_now() - timedelta(minutes=20)
+            items.append(item)
+        self.db.session.commit()
+        self.settings.set(self.keys.SMS_ENABLED, False)
+        self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "debug@example.invalid")
+        self.db.session.commit()
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+        for item in items:
+            self.assertEqual(item.state, "discarded")
+            self.assertIsNone(item.locked_at)
+        self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "")
+        self.settings.set(self.keys.SMS_ENABLED, True)
+        self.db.session.commit()
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+        self.sms_sender.assert_not_called()
+        self.get.assert_not_called()
+        self.post.assert_not_called()
+        commission, item = self.enqueue()
+        self.assertIsNotNone(item)
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 1)
+        self.assertEqual(item.state, "sent")
+
+    def test_debug_toggle_without_a_worker_run_permanently_blocks_existing_and_delayed_jobs(self):
+        commission, item = self.enqueue()
+        self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "debug@example.invalid")
+        self.db.session.commit()
+        delayed = self.commission(erp_sync_state="pending")
+        self.settings.set_from_form(self.keys.SMTP_DEBUG_RECIPIENT, "")
+        self.db.session.commit()
+        self.db.session.expire_all()
+        delayed.erp_sync_state = "synced"
+        self.db.session.commit()
+        self.assertEqual(self.mail.ensure_tenant_notifications(), 1)
+        self.db.session.commit()
+        self.assertIsNone(self.models.CommissionTenantSmsNotification.query.filter_by(commission_id=delayed.id).one_or_none())
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+        self.assertEqual(item.state, "discarded")
+        self.sms_sender.assert_not_called()
+        self.get.assert_not_called()
+        self.post.assert_not_called()
+
+    def test_debug_address_already_present_before_the_sms_feature_blocks_all_gateway_requests(self):
+        self.db.session.add(self.models.AppSetting(
+            key=self.keys.SMTP_DEBUG_RECIPIENT.key, value_text="debug@example.invalid",
+            value_type="string", label="Debug", group="E-Mail", is_secret=False,
+        ))
+        self.db.session.commit()
+        with self.assertRaises(self.provider.SmsSuppressed):
+            self.provider.send_sms(PHONE_A, "Beauftragung")
+        self.get.assert_not_called()
+        self.post.assert_not_called()
+
+    def test_debug_activation_during_lookup_stops_submission_and_discards_the_job(self):
+        commission, item = self.enqueue()
+        self.sms_sender.side_effect = self.provider.send_sms
+        response = self.get.return_value
+        def lookup(*args, **values):
+            self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "debug@example.invalid")
+            self.db.session.commit()
+            return response
+        self.get.side_effect = lookup
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 1)
+        self.assertEqual(item.state, "discarded")
+        self.post.assert_not_called()
+        self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "")
+        self.db.session.commit()
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+        self.post.assert_not_called()
+
+    def test_a_debug_toggle_during_lookup_still_blocks_submission_after_the_address_is_cleared(self):
+        commission, item = self.enqueue()
+        self.sms_sender.side_effect = self.provider.send_sms
+        response = self.get.return_value
+        def lookup(*args, **values):
+            self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "debug@example.invalid")
+            self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "")
+            self.db.session.commit()
+            return response
+        self.get.side_effect = lookup
+        self.sms.process_tenant_sms_notification_batch()
+        self.assertEqual(item.state, "discarded")
+        self.assertIsNone(item.payload["submitting"])
+        self.post.assert_not_called()
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+
+    def test_sms_failure_handling_cannot_requeue_a_debug_suppressed_job(self):
+        commission, item = self.enqueue()
+        item_id = self.sms.claim_tenant_sms_notification()
+        self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "debug@example.invalid")
+        self.settings.set(self.keys.SMTP_DEBUG_RECIPIENT, "")
+        self.db.session.commit()
+        self.sms.fail_tenant_sms_notification(item_id, self.provider.SmsSendError("Fehler"))
+        self.assertEqual(item.state, "discarded")
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+        self.sms_sender.assert_not_called()
+
     def test_global_disable_pauses_already_queued_sms(self):
         commission, item = self.enqueue()
         self.settings.set(self.keys.SMS_ENABLED, False)

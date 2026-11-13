@@ -7,7 +7,7 @@ from typing import Any, Generic, TypeVar, cast
 from sqlalchemy.exc import SQLAlchemyError
 
 from .extensions import db
-from .models import AppSetting, SettingValueType
+from .models import AppSetting, Commission, SettingValueType
 from email.errors import HeaderParseError
 from email.headerregistry import Address
 from .health_rules import DEFAULT_HEALTH_RULES, normalize_health_rules
@@ -23,6 +23,12 @@ class SettingDefinition(Generic[T]):
     label: str
     group: str
     secret: bool = False
+
+
+SMS_DEBUG_SUPPRESSED_COMMISSION_ID = SettingDefinition[int](
+    "sms.debug_suppressed_commission_id", SettingValueType.INT, 0,
+    "SMS durch Debug-E-Mail gesperrt bis Auftrag", "SMS",
+)
 
 
 def normalize_external_portal_name(value: Any) -> str:
@@ -835,6 +841,7 @@ class SettingsService:
         if definition.key == SettingKeys.EXTERNAL_PORTAL_NAME.key:
             value = cast(T, normalize_external_portal_name(value))
         row = AppSetting.query.filter_by(key=definition.key).one_or_none()
+        previous_value = row.value_text if row is not None else ""
         if row is None:
             row = AppSetting(key=definition.key, value_type=definition.value_type.value, label=definition.label,
                              group=definition.group, is_secret=definition.secret)
@@ -844,6 +851,11 @@ class SettingsService:
         row.label = definition.label
         row.group = definition.group
         row.is_secret = definition.secret
+        if definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key and (value or previous_value):
+            commission_id = db.session.query(Commission.id).order_by(Commission.id.desc()).limit(1).with_for_update().scalar() or 0
+            self.set(SMS_DEBUG_SUPPRESSED_COMMISSION_ID, max(
+                self.get(SMS_DEBUG_SUPPRESSED_COMMISSION_ID), commission_id,
+            ))
 
     def set_from_form(
         self,

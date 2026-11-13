@@ -20,6 +20,7 @@ from .models import (
     ExternalCraftsman, TicketMirror, User, utc_now,
 )
 from .settings import SettingKeys, normalize_ticket_source_ids, settings
+from .sms_service import sms_is_suppressed
 from .user_sync import extract_craftsman_display_name
 from .email_templates import commission_email_context, render_email_template, set_email_content
 
@@ -190,7 +191,7 @@ def ensure_tenant_notifications(limit: int = 200) -> int:
     sms_enabled = settings.get(SettingKeys.SMS_ENABLED)
     for commission in commissions:
         db.session.add(CommissionTenantNotification(commission=commission))
-        if sms_enabled:
+        if sms_enabled and not sms_is_suppressed(commission.id):
             db.session.add(CommissionTenantSmsNotification(commission=commission))
     return len(commissions)
 
