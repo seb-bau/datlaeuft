@@ -249,7 +249,9 @@ class CompletionNotificationMigrationTests(unittest.TestCase):
             columns = {column["name"] for column in sa.inspect(connection).get_columns(old.name)}
             self.assertNotIn("notification_key", columns)
             self.assertNotIn("report_submitted_at", columns)
-        self.assertEqual(ScriptDirectory(str(root / "migrations")).get_heads(), [migration.revision])
+        scripts = ScriptDirectory(str(root / "migrations"))
+        self.assertIn(migration.revision, {item.revision for item in scripts.walk_revisions()})
+        self.assertEqual(len(scripts.get_heads()), 1)
 
 
 if __name__ == "__main__":

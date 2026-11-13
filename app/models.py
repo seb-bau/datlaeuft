@@ -1542,6 +1542,27 @@ class CommissionTenantNotification(db.Model):
     commission: Mapped[Commission] = relationship()
 
 
+class CommissionTenantSmsNotification(db.Model):
+    __tablename__ = "commission_tenant_sms_notification"
+    __table_args__ = (
+        UniqueConstraint("commission_id", name="uq_commission_tenant_sms_notification"),
+        db.Index("ix_tenant_sms_notification_due", "state", "available_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    commission_id: Mapped[int] = mapped_column(
+        db.ForeignKey("commission.id", ondelete="CASCADE"), nullable=False,
+    )
+    state: Mapped[str] = mapped_column(db.String(30), default="pending", server_default="pending", nullable=False)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
+    attempt_count: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    available_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    locked_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(db.Text)
+    sent_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    commission: Mapped[Commission] = relationship()
+
+
 class CommissionCompletionNotification(db.Model):
     __tablename__ = "commission_completion_notification"
     __table_args__ = (
