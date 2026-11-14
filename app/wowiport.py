@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import base64
 import requests
 
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from flask import current_app
 from wowipy import wowipy
@@ -258,6 +259,19 @@ def _build_contact_item(contractor: Contractor) -> dict[str, Any] | None:
 def _is_vacancy(license_agreement: LicenseAgreement) -> bool:
     restriction_of_use = _attr(license_agreement, "restriction_of_use")
     return bool(_attr(restriction_of_use, "is_vacancy"))
+
+
+def _contact_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
 
 
 class WowiportService:
@@ -2399,6 +2413,89 @@ class WowiportService:
                 contact_items.append(contact_item)
 
         return contact_items
+
+    def get_object_contact_items(self, commission: Commission, *, on_date: date | None = None) -> list[dict[str, Any]]:
+        if commission.object_type == "use_unit":
+            use_units = self.client.get_use_units(
+                use_unit_id=commission.use_unit_id,
+                use_unit_idnum=commission.use_unit_idnum if commission.use_unit_id is None else None,
+                fetch_all=True,
+            ) if commission.use_unit_id or commission.use_unit_idnum else []
+        elif commission.object_type == "building":
+            use_units = self.client.get_use_units(
+                building_land_idnum=commission.building_idnum if commission.building_erp_id is None else None,
+                add_args={"buildingLandId": commission.building_erp_id} if commission.building_erp_id else None,
+                fetch_all=True,
+            ) if commission.building_erp_id or commission.building_idnum else []
+        else:
+            return []
+
+        today = on_date or datetime.now(ZoneInfo("Europe/Berlin")).date()
+        contact_items = []
+        seen = set()
+        for use_unit in use_units:
+            use_unit_id = _as_int(_attr(use_unit, "id_"))
+            if use_unit_id is None:
+                continue
+            if commission.object_type == "use_unit":
+                if commission.use_unit_id and use_unit_id != commission.use_unit_id:
+                    continue
+                if not commission.use_unit_id and _attr(use_unit, "id_num") != commission.use_unit_idnum:
+                    continue
+            else:
+                building = _attr(use_unit, "building_land")
+                if commission.building_erp_id and _as_int(_attr(building, "id_")) != commission.building_erp_id:
+                    continue
+                if not commission.building_erp_id and _attr(building, "id_num") != commission.building_idnum:
+                    continue
+            exit_date = _contact_date(_attr(use_unit, "exit_date"))
+            if exit_date is not None and exit_date < today:
+                continue
+
+            agreements = self.client.get_license_agreements(
+                add_args={"useUnitId": use_unit_id},
+                fetch_all=True,
+            )
+            for agreement in agreements:
+                if _as_int(_attr(_attr(agreement, "use_unit"), "id_")) != use_unit_id or _is_vacancy(agreement):
+                    continue
+                agreement_id = _as_int(_attr(agreement, "id_"))
+                if agreement_id is None:
+                    continue
+                start = _contact_date(_attr(agreement, "start_contract"))
+                end = _contact_date(_attr(agreement, "end_of_contract"))
+                if end is not None and (end < today or (start is not None and end < start)):
+                    continue
+                contractors = self.client.get_contractors(license_agreement_id=agreement_id, fetch_all=True)
+                for contractor in contractors:
+                    contractor_end = _contact_date(_attr(contractor, "contractual_use_valid_to"))
+                    if contractor_end is not None and contractor_end < today:
+                        continue
+                    item = _build_contact_item(contractor)
+                    if item is None:
+                        continue
+                    identity = item["person_id"] or _attr(contractor, "id_")
+                    key = (use_unit_id, agreement_id, identity)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    item.update({
+                        "contact_id": ":".join(str(value) for value in key),
+                        "use_unit_id": use_unit_id,
+                        "use_unit_number": _attr(use_unit, "id_num"),
+                        "use_unit_location": _format_use_unit_location(use_unit),
+                        "use_unit_address": _format_use_unit_address(use_unit),
+                        "license_agreement_id": agreement_id,
+                        "contract_start": start.isoformat() if start else None,
+                        "contract_end": end.isoformat() if end else None,
+                        "is_future_contract": start is not None and start > today,
+                    })
+                    contact_items.append(item)
+
+        return sorted(contact_items, key=lambda item: (
+            item["use_unit_number"] or "", item["use_unit_location"] or "",
+            item["is_future_contract"], item["contract_start"] or "", item["name"] or "",
+        ))
 
     def get_use_unit_contact_items(self, use_unit_id: int) -> list[dict[str, Any]]:
         license_agreement = self._get_license_agreement(
