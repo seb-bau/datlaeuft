@@ -3,7 +3,7 @@ import importlib
 import sys
 import types
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -544,6 +544,151 @@ class CommissionObjectLevelTests(unittest.TestCase):
                 self.assertEqual({item["object_type"] for item in response.get_json()["items"]}, object_types)
         response = self.client.get("/api/commission-objects/search?q=COMMON&context=invalid", headers=self.headers)
         self.assertEqual(response.status_code, 400)
+
+    def contact_service(self, units, agreements, contractors):
+        gateway = self.gateway.WowiportService.__new__(self.gateway.WowiportService)
+        gateway.client = Mock()
+        gateway.client.get_use_units.return_value = units
+        gateway.client.get_license_agreements.side_effect = lambda **kwargs: agreements.get(kwargs["add_args"]["useUnitId"], [])
+        gateway.client.get_contractors.side_effect = lambda **kwargs: contractors.get(kwargs["license_agreement_id"], [])
+        return gateway
+
+    def contact_unit(self, identity=3003, number="NE-1", location="links", building_id=2002):
+        return types.SimpleNamespace(
+            id_=identity, id_num=number, building_land=types.SimpleNamespace(id_=building_id, id_num="GE-COMMON"),
+            floor=types.SimpleNamespace(name="1. OG"), position=types.SimpleNamespace(name=location),
+            description_of_position=None, estate_address=None, exit_date=None,
+        )
+
+    def contact_agreement(self, identity, unit_id=3003, start="2020-01-01", end=None, vacancy=False):
+        return types.SimpleNamespace(
+            id_=identity, use_unit=types.SimpleNamespace(id_=unit_id),
+            start_contract=start, end_of_contract=end, restriction_of_use=types.SimpleNamespace(is_vacancy=vacancy),
+        )
+
+    def contact_tenant(self, person_id, name="Mieter", end=None):
+        communication = types.SimpleNamespace(id_=1, content="0123456789", explanation=None, communication_type=types.SimpleNamespace(id_=3))
+        return types.SimpleNamespace(
+            id_=person_id + 100, contractual_use_valid_to=end, contractor_type=types.SimpleNamespace(name="Mieter"),
+            person=types.SimpleNamespace(
+                id_=person_id, is_natural_person=False, legal_person=types.SimpleNamespace(long_name1=name),
+                communications=[communication],
+            ),
+        )
+
+    def test_unit_contacts_include_current_and_all_future_contracts_but_not_past_vacancies_or_foreign_units(self):
+        commission = self.create_order("use_unit", self.unit.id)
+        unit = self.contact_unit()
+        today = date(2026, 11, 14)
+        agreements = [
+            self.contact_agreement(1, end=today),
+            self.contact_agreement(2, start=today + timedelta(days=1)),
+            self.contact_agreement(3, start=datetime(2035, 1, 1)),
+            self.contact_agreement(4, end=today - timedelta(days=1)),
+            self.contact_agreement(5, vacancy=True),
+            self.contact_agreement(6, unit_id=9999),
+            self.contact_agreement(7, start="2030-01-01", end="2020-01-01"),
+        ]
+        gateway = self.contact_service([unit, self.contact_unit(identity=9999)], {3003: agreements}, {identity: [self.contact_tenant(identity)] for identity in range(1, 8)})
+
+        items = gateway.get_object_contact_items(commission, on_date=today)
+
+        self.assertEqual([item["license_agreement_id"] for item in items], [1, 2, 3])
+        self.assertEqual([item["is_future_contract"] for item in items], [False, True, True])
+        self.assertEqual(items[0]["use_unit_number"], "NE-1")
+        self.assertEqual(items[0]["use_unit_location"], "1. OG · links")
+        self.assertEqual(items[0]["mobile"], "0123456789")
+        gateway.client.get_license_agreements.assert_called_once_with(add_args={"useUnitId": 3003}, fetch_all=True)
+        self.assertEqual([call.kwargs for call in gateway.client.get_contractors.call_args_list], [
+            {"license_agreement_id": identity, "fetch_all": True} for identity in [1, 2, 3]
+        ])
+
+    def test_building_contacts_keep_units_and_contract_identities_separate(self):
+        commission = self.create_order("building", self.building.id)
+        units = [self.contact_unit(), self.contact_unit(identity=3004, number="NE-2", location="rechts"), self.contact_unit(identity=9999, building_id=999)]
+        gateway = self.contact_service(units, {
+            3003: [self.contact_agreement(1), self.contact_agreement(2, start="2030-01-01")],
+            3004: [self.contact_agreement(3, unit_id=3004)],
+        }, {identity: [self.contact_tenant(50)] for identity in [1, 2, 3]})
+
+        items = gateway.get_object_contact_items(commission, on_date=date(2026, 11, 14))
+
+        self.assertEqual([item["use_unit_id"] for item in items], [3003, 3003, 3004])
+        self.assertEqual(len({item["contact_id"] for item in items}), 3)
+        self.assertEqual({item["use_unit_location"] for item in items}, {"1. OG · links", "1. OG · rechts"})
+        gateway.client.get_use_units.assert_called_once_with(building_land_idnum=None, add_args={"buildingLandId": 2002}, fetch_all=True)
+        self.assertEqual(gateway.client.get_license_agreements.call_count, 2)
+
+    def test_former_contractors_and_duplicate_people_are_excluded_without_losing_other_contracts(self):
+        commission = self.create_order("use_unit", self.unit.id)
+        gateway = self.contact_service([self.contact_unit()], {3003: [self.contact_agreement(1), self.contact_agreement(2, start="2030-01-01")]}, {
+            1: [self.contact_tenant(1, end="2026-11-13"), self.contact_tenant(2, end="2026-11-14"), self.contact_tenant(2)],
+            2: [self.contact_tenant(2)],
+        })
+
+        items = gateway.get_object_contact_items(commission, on_date=date(2026, 11, 14))
+
+        self.assertEqual([(item["person_id"], item["license_agreement_id"]) for item in items], [(2, 1), (2, 2)])
+
+    def test_empty_buildings_and_retired_units_do_not_query_unrelated_contracts(self):
+        commission = self.create_order("building", self.building.id)
+        retired = self.contact_unit()
+        retired.exit_date = date(2026, 11, 13)
+        gateway = self.contact_service([retired], {}, {})
+        self.assertEqual(gateway.get_object_contact_items(commission, on_date=date(2026, 11, 14)), [])
+        gateway.client.get_license_agreements.assert_not_called()
+        gateway.client.get_use_units.return_value = []
+        self.assertEqual(gateway.get_object_contact_items(commission), [])
+        gateway.client.get_license_agreements.assert_not_called()
+
+    def test_mobile_object_contacts_are_available_without_an_erp_commission_number(self):
+        for object_type, identity in [("use_unit", self.unit.id), ("building", self.building.id)]:
+            commission = self.create_order(object_type, identity)
+            expected = [{"contact_id": "3003:1:50", "name": "Mieter", "additional_numbers": [], "is_future_contract": True}]
+            service = Mock()
+            service.get_object_contact_items.return_value = expected
+            with patch.object(self.api, "viewable_commission", return_value=commission), patch.object(self.api, "WowiportService", return_value=service):
+                response = self.client.get(f"/api/commissions/{commission.id}/contacts", headers=self.headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json["contact_items"], expected)
+            service.get_object_contact_items.assert_called_once_with(commission)
+            service.get_commission_contact_items.assert_not_called()
+
+    def test_contract_orders_keep_the_existing_contact_lookup(self):
+        commission = self.create_order("license_agreement", self.agreement.id)
+        commission.erp_id = 9000
+        service = Mock()
+        service.get_commission_contact_items.return_value = []
+        with patch.object(self.api, "viewable_commission", return_value=commission), patch.object(self.api, "WowiportService", return_value=service):
+            response = self.client.get(f"/api/commissions/{commission.id}/contacts", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        service.get_commission_contact_items.assert_called_once_with(9000)
+        service.get_object_contact_items.assert_not_called()
+
+    def test_explicit_future_contract_contacts_also_include_the_future_label_and_start_date(self):
+        gateway = self.gateway.WowiportService.__new__(self.gateway.WowiportService)
+        gateway.client = Mock()
+        start = (date.today() + timedelta(days=2)).isoformat()
+        agreement = self.contact_agreement(7, start=start)
+        agreement.contractors = [self.contact_tenant(50)]
+        gateway.client.get_license_agreements.return_value = [agreement]
+        commission_object = types.SimpleNamespace(use_unit_id=3003, license_agreement={"id": 7})
+
+        items = gateway.get_commission_contact_items(9000, commission_object=commission_object)
+
+        self.assertEqual(items[0]["license_agreement_id"], 7)
+        self.assertEqual(items[0]["contract_start"], start)
+        self.assertTrue(items[0]["is_future_contract"])
+        gateway.client.get_license_agreements.assert_called_once_with(add_args={"licenseAgreementId": 7}, add_contractors=True, limit=1)
+
+    def test_failed_contact_reads_report_an_error_instead_of_an_empty_success(self):
+        commission = self.create_order("building", self.building.id)
+        service = Mock()
+        service.get_object_contact_items.side_effect = RuntimeError("Connection interrupted")
+        with patch.object(self.api, "viewable_commission", return_value=commission), patch.object(self.api, "WowiportService", return_value=service):
+            response = self.client.get(f"/api/commissions/{commission.id}/contacts", headers=self.headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("contact_items", response.json)
 
     def test_mobile_search_keeps_tenant_search_as_the_default(self):
         response = self.client.get("/api/commission-objects/search?q=Erika", headers=self.headers)

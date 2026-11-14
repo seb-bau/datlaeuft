@@ -1102,20 +1102,22 @@ def commission_contacts(commission_id: int) -> Any:
     user = current_api_user()
     commission = viewable_commission(commission_id, user)
 
-    if commission.erp_id is None:
+    if commission.erp_id is None and commission.object_type not in {"use_unit", "building"}:
         return jsonify({"contact_items": []}), 200
 
     try:
-        contact_items = WowiportService().get_commission_contact_items(
-            commission.erp_id
-        )
+        service = WowiportService()
+        if commission.object_type in {"use_unit", "building"}:
+            contact_items = service.get_object_contact_items(commission)
+        else:
+            contact_items = service.get_commission_contact_items(commission.erp_id)
     except Exception:
         current_app.logger.exception(
             "commission_contacts_failed commission_id=%s erp_id=%s",
             commission.id,
             commission.erp_id,
         )
-        contact_items = []
+        return jsonify({"message": "Die Mieterkontakte konnten nicht geladen werden."}), 503
 
     return jsonify({"contact_items": contact_items}), 200
 
