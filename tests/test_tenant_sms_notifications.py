@@ -53,6 +53,7 @@ class TenantSmsTests(unittest.TestCase):
         cls.gateway = gateway
         cls.tables = [model.__table__ for model in (
             cls.models.AppSetting, cls.models.User, cls.models.ExternalCraftsman,
+            cls.models.WowiEconomicUnit, cls.models.WowiBuilding, cls.models.WowiUseUnit, cls.models.WowiLicenseAgreement,
             cls.models.CraftActivity, cls.models.Commission, cls.models.CommissionPosition,
             cls.models.CommissionTenantNotification, cls.models.CommissionTenantSmsNotification,
             cls.models.CommissionTicketLink, cls.models.TicketMirror,
@@ -377,6 +378,28 @@ class TenantSmsTests(unittest.TestCase):
         self.assertEqual(self.mail.tenant_email_addresses(commission, self.service), ["tenant@example.invalid"])
         self.assertTrue(self.service.client.get_contractors.call_args.kwargs["fetch_all"])
 
+    def test_an_explicit_future_contract_notifies_its_parties_before_the_tenancy_starts(self):
+        self.db.session.add(self.models.WowiLicenseAgreement(
+            erp_id=4004, id_num="MV-FUTURE", start_date=date(2027, 1, 1), active=True,
+        ))
+        self.db.session.commit()
+        self.service.client.get_contractors.return_value = [
+            self.contractor(ContractualUseValidFrom="2027-01-01"),
+            self.contractor(phone=PHONE_B, email="previous@example.invalid", ContractualUseValidTo="2026-12-31"),
+            self.contractor(phone=PHONE_B, email="later@example.invalid", ContractualUseValidFrom="2028-01-01"),
+        ]
+        commission, item = self.enqueue()
+        self.assertEqual(self.sms.tenant_phone_numbers(commission, self.service), [PHONE_A])
+        self.assertEqual(self.mail.tenant_email_addresses(commission, self.service), ["tenant@example.invalid"])
+        self.mail.process_tenant_notification_batch()
+        self.sms.process_tenant_sms_notification_batch()
+        self.assertEqual(self.models.CommissionTenantNotification.query.one().state, "sent")
+        self.assertEqual(item.state, "sent")
+        self.service.client.get_contractors.assert_called_with(
+            license_agreement_id=4004, fetch_all=True,
+            add_args={"includeMainCommunication": "true", "includePersonCommunications": "true", "includePersonBankAccounts": "false"},
+        )
+
     def test_contractor_date_boundaries_and_preferred_mobile_contact_are_supported(self):
         self.service.client.get_contractors.return_value = [{
             "valid_from": "2026-11-13", "valid_to": "2026-11-13",
@@ -554,6 +577,24 @@ class TenantSmsTests(unittest.TestCase):
         self.assertNotIn("test-seven-key", html)
         with self.assertRaises(ValueError):
             self.settings.set(self.keys.SMS_API_KEY, "key\nvalue")
+
+    def test_sms_sender_names_allow_spaces_within_the_eleven_character_limit(self):
+        for value, expected in (("WBG Luenen", "WBG Luenen"), ("  WBG Luenen  ", "WBG Luenen"),
+                                ("ABCDEFGHI J", "ABCDEFGHI J"), ("1234567890123456", "1234567890123456"), ("", "")):
+            with self.subTest(value=value):
+                self.settings.set_from_form(self.keys.SMS_SENDER, value)
+                self.db.session.commit()
+                self.assertEqual(self.settings.get(self.keys.SMS_SENDER), expected)
+        for value in ("ABCDEFGHI JK", "12345678901234567", "WBG\tLuenen", "WBG\nLuenen", "Sender$123"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.settings.set_from_form(self.keys.SMS_SENDER, value)
+
+    def test_a_sender_name_with_a_space_is_submitted_to_seven_unchanged(self):
+        self.settings.set_from_form(self.keys.SMS_SENDER, "WBG Luenen")
+        self.db.session.commit()
+        outcome = self.provider.send_sms(PHONE_A, "Beauftragung")
+        self.assertEqual(outcome.state, "sent")
+        self.assertEqual(self.post.call_args.kwargs["json"]["from"], "WBG Luenen")
 
 
 class TenantSmsMigrationTests(unittest.TestCase):

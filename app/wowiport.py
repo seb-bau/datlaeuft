@@ -2423,20 +2423,18 @@ class WowiportService:
             license_agreement_id: int | None,
             use_unit_id: int | None,
     ) -> LicenseAgreement | None:
+        if license_agreement_id:
+            agreement_list = self.client.get_license_agreements(
+                add_args={"licenseAgreementId": license_agreement_id},
+                add_contractors=True,
+                limit=1,
+            )
+            return agreement_list[0] if agreement_list else None
+
         if use_unit_id:
             agreement_list = self.client.get_license_agreements(
                 license_agreement_active_on=datetime.now(),
                 add_args={"useUnitId": use_unit_id},
-                add_contractors=True,
-                limit=1,
-            )
-
-            if agreement_list:
-                return agreement_list[0]
-
-        if license_agreement_id:
-            agreement_list = self.client.get_license_agreements(
-                add_args={"licenseAgreementId": license_agreement_id},
                 add_contractors=True,
                 limit=1,
             )

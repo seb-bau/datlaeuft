@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from itertools import zip_longest
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 from flask import current_app
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 
 from .extensions import db
 from .models import (
@@ -59,11 +60,15 @@ class CommissionAssignment:
     responsible_official_erp_id: int | None
 
 
+def directory_today() -> date:
+    return utc_now().astimezone(ZoneInfo("Europe/Berlin")).date()
+
+
 @include_blacklisted()
 def sync_object_directory() -> dict[str, int]:
     service = WowiportService()
     synced_at = utc_now()
-    active_on = date.today().isoformat()
+    today = directory_today()
     result = {
         "departments": 0,
         "economic_units": 0,
@@ -608,7 +613,6 @@ def sync_object_directory() -> dict[str, int]:
     agreement_rows = service.read_all_rows(
         "RentAccounting/LicenseAgreements",
         {
-            "licenseAgreementActiveOn": active_on,
             "showNullValues": "true",
         },
     )
@@ -616,6 +620,9 @@ def sync_object_directory() -> dict[str, int]:
     seen_agreement_ids = set()
 
     for row in agreement_rows:
+        end_date = _as_date(_value(row, "EndOfContract", "endOfContract", "EndDate", "endDate"))
+        if end_date is not None and end_date < today:
+            continue
         erp_id = _as_int(
             _value(row, "Id", "id")
         )
@@ -684,15 +691,7 @@ def sync_object_directory() -> dict[str, int]:
                 "startDate",
             )
         )
-        item.end_date = _as_date(
-            _value(
-                row,
-                "EndOfContract",
-                "endOfContract",
-                "EndDate",
-                "endDate",
-            )
-        )
+        item.end_date = end_date
         item.is_vacancy = _as_bool(
             _value(
                 restriction,
@@ -721,8 +720,6 @@ def sync_object_directory() -> dict[str, int]:
     contractor_rows = service.read_all_rows(
         "RentAccountingPersonDetails/Contractors",
         {
-            "licenseAgreementActiveOn": active_on,
-            "contractualUseActiveOn": active_on,
             "showNullValues": "true",
         },
     )
@@ -730,6 +727,11 @@ def sync_object_directory() -> dict[str, int]:
     seen_contractor_keys = set()
 
     for row in contractor_rows:
+        valid_to = _as_date(_value(
+            row, "ContractualUseValidTo", "contractualUseValidTo", "ContractualUseTo", "contractualUseTo",
+        ))
+        if valid_to is not None and valid_to < today:
+            continue
         erp_id = _as_int(
             _value(row, "Id", "id")
         )
@@ -827,15 +829,7 @@ def sync_object_directory() -> dict[str, int]:
                 "contractualUseFrom",
             )
         )
-        item.contractual_use_to = _as_date(
-            _value(
-                row,
-                "ContractualUseValidTo",
-                "contractualUseValidTo",
-                "ContractualUseTo",
-                "contractualUseTo",
-            )
-        )
+        item.contractual_use_to = valid_to
         item.active = agreement is not None
         item.synced_at = synced_at
 
@@ -1207,7 +1201,7 @@ def resolve_commission_object(
 
             if (
                 agreement is None
-                or not agreement.active
+                or not _agreement_is_available(agreement)
             ):
                 raise ValueError(
                     "Der ausgewählte Mietvertrag "
@@ -1310,6 +1304,9 @@ def resolve_commission_object(
                 "Gebäude",
             )
 
+    if agreement is not None and not _agreement_is_available(agreement):
+        raise ValueError("Der ausgewählte Mietvertrag ist nicht mehr verfügbar.")
+
     if use_unit is not None:
         if (
             building is not None
@@ -1389,7 +1386,7 @@ def resolve_commission_object(
         tenant_names = [
             contractor.display_name
             for contractor in agreement.contractors
-            if contractor.active
+            if contractor.active and (contractor.contractual_use_to is None or contractor.contractual_use_to >= directory_today())
         ]
 
     return CommissionObjectContext(
@@ -1772,6 +1769,29 @@ def commission_creation_tasks():
     )
 
 
+def _agreement_is_available(agreement: WowiLicenseAgreement, today: date | None = None) -> bool:
+    today = today or directory_today()
+    return agreement.active and (agreement.end_date is None or agreement.end_date >= today)
+
+
+def _available_agreement_filter(today: date):
+    return and_(
+        WowiLicenseAgreement.active.is_(True),
+        or_(WowiLicenseAgreement.end_date.is_(None), WowiLicenseAgreement.end_date >= today),
+    )
+
+
+def _current_agreement_filter(today: date):
+    return and_(
+        _available_agreement_filter(today),
+        or_(WowiLicenseAgreement.start_date.is_(None), WowiLicenseAgreement.start_date <= today),
+    )
+
+
+def _search_patterns_filter(patterns: list[str], *columns):
+    return and_(*(or_(*(column.ilike(pattern, escape="\\") for column in columns)) for pattern in patterns))
+
+
 def search_commission_objects(
     search_text: str,
     search_context: str = "tenant",
@@ -1784,9 +1804,20 @@ def search_commission_objects(
     if len(normalized) < 2:
         return []
 
-    pattern = f"%{normalized}%"
+    terms = normalized.split()
+    patterns = ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for term in terms]
+    today = directory_today()
     choices = []
     seen = set()
+
+    def unit_search_pattern(pattern):
+        return or_(
+            _search_patterns_filter([pattern], WowiUseUnit.id_num, WowiUseUnit.address,
+                                    WowiUseUnit.floor_name, WowiUseUnit.position_name, WowiUseUnit.description_of_position),
+            WowiUseUnit.building.has(_search_patterns_filter([pattern], WowiBuilding.id_num, WowiBuilding.address)),
+        )
+
+    unit_match = and_(*(unit_search_pattern(pattern) for pattern in patterns))
 
     if search_context in {
         "tenant",
@@ -1797,10 +1828,12 @@ def search_commission_objects(
             .join(WowiLicenseAgreement)
             .filter(
                 WowiContractor.active.is_(True),
-                WowiLicenseAgreement.active.is_(True),
-                WowiContractor.display_name.ilike(
-                    pattern
-                ),
+                _available_agreement_filter(today),
+                or_(WowiContractor.contractual_use_to.is_(None), WowiContractor.contractual_use_to >= today),
+                and_(*(or_(
+                    _search_patterns_filter([pattern], WowiContractor.display_name),
+                    WowiLicenseAgreement.use_unit.has(unit_search_pattern(pattern)),
+                ) for pattern in patterns)),
             )
             .order_by(
                 WowiContractor.display_name.asc()
@@ -1825,6 +1858,19 @@ def search_commission_objects(
                 key,
             )
 
+    vacancy_match = and_(*(or_(
+        _search_patterns_filter([pattern], WowiLicenseAgreement.id_num),
+        WowiLicenseAgreement.use_unit.has(unit_search_pattern(pattern)),
+        "leerstand".startswith(term.casefold()),
+    ) for term, pattern in zip(terms, patterns)))
+
+    if search_context in {"tenant", "agreement", "all"}:
+        vacancies = WowiLicenseAgreement.query.filter(
+            _available_agreement_filter(today), WowiLicenseAgreement.is_vacancy.is_(True), vacancy_match,
+        ).order_by(WowiLicenseAgreement.id_num.asc()).limit(limit).all()
+        for agreement in vacancies:
+            _append_choice(choices, seen, ("license_agreement", agreement.id))
+
     if search_context in {
         "agreement",
         "all",
@@ -1832,12 +1878,8 @@ def search_commission_objects(
         agreements = (
             WowiLicenseAgreement.query
             .filter(
-                WowiLicenseAgreement.active.is_(
-                    True
-                ),
-                WowiLicenseAgreement.id_num.ilike(
-                    pattern
-                ),
+                _available_agreement_filter(today),
+                _search_patterns_filter(patterns, WowiLicenseAgreement.id_num),
             )
             .order_by(
                 WowiLicenseAgreement.id_num.asc()
@@ -1861,12 +1903,6 @@ def search_commission_objects(
         "use_unit",
         "all",
     }:
-        use_unit_match = or_(
-            WowiUseUnit.id_num.ilike(pattern),
-            WowiUseUnit.address.ilike(pattern),
-            WowiUseUnit.description_of_position.ilike(pattern),
-        )
-
         use_units = (
             WowiUseUnit.query
             .filter(
@@ -1874,7 +1910,7 @@ def search_commission_objects(
                 WowiUseUnit.building.has(
                     WowiBuilding.active.is_(True)
                 ),
-                use_unit_match,
+                unit_match,
             )
             .order_by(
                 WowiUseUnit.id_num.asc()
@@ -1887,7 +1923,7 @@ def search_commission_objects(
             _append_choice(choices, seen, ("use_unit", use_unit.id))
             if search_context == "all":
                 for agreement in use_unit.license_agreements:
-                    if agreement.active:
+                    if _agreement_is_available(agreement, today):
                         _append_choice(choices, seen, ("license_agreement", agreement.id))
 
     if search_context in {
@@ -1898,14 +1934,7 @@ def search_commission_objects(
             WowiBuilding.query
             .filter(
                 WowiBuilding.active.is_(True),
-                or_(
-                    WowiBuilding.id_num.ilike(
-                        pattern
-                    ),
-                    WowiBuilding.address.ilike(
-                        pattern
-                    ),
-                ),
+                _search_patterns_filter(patterns, WowiBuilding.id_num, WowiBuilding.address),
             )
             .order_by(
                 WowiBuilding.id_num.asc()
@@ -1925,22 +1954,46 @@ def search_commission_objects(
                 key,
             )
 
+        if search_context == "address" and buildings:
+            building_ids = [building.id for building in buildings]
+            agreements = WowiLicenseAgreement.query.join(WowiUseUnit).filter(
+                _available_agreement_filter(today), WowiUseUnit.active.is_(True),
+                WowiUseUnit.building_id.in_(building_ids),
+            ).order_by(
+                WowiUseUnit.id_num.asc(), WowiLicenseAgreement.start_date.asc(), WowiLicenseAgreement.id.asc(),
+            ).limit(limit).all()
+            for agreement in agreements:
+                _append_choice(choices, seen, ("license_agreement", agreement.id))
+
+    if search_context in {"tenant", "address"}:
+        vacancy_unit_match = and_(*(or_(
+            unit_search_pattern(pattern), "leerstand".startswith(term.casefold()),
+        ) for term, pattern in zip(terms, patterns)))
+        if search_context == "address":
+            vacancy_unit_match = WowiUseUnit.building_id.in_([building.id for building in buildings])
+        vacant_units = WowiUseUnit.query.filter(
+            WowiUseUnit.active.is_(True), WowiUseUnit.building.has(WowiBuilding.active.is_(True)),
+            ~WowiUseUnit.license_agreements.any(_current_agreement_filter(today)), vacancy_unit_match,
+        ).order_by(WowiUseUnit.id_num.asc()).limit(limit).all()
+        for use_unit in vacant_units:
+            _append_choice(choices, seen, ("use_unit", use_unit.id))
+
     if search_context in {"economic_unit", "all"}:
         economic_units = WowiEconomicUnit.query.filter(
             WowiEconomicUnit.active.is_(True),
-            or_(
-                WowiEconomicUnit.id_num.ilike(pattern),
-                WowiEconomicUnit.name.ilike(pattern),
-                WowiEconomicUnit.location.ilike(pattern),
-            ),
+            _search_patterns_filter(patterns, WowiEconomicUnit.id_num, WowiEconomicUnit.name, WowiEconomicUnit.location),
         ).order_by(WowiEconomicUnit.id_num.asc()).limit(limit).all()
         for economic_unit in economic_units:
             _append_choice(choices, seen, ("economic_unit", economic_unit.id))
 
-    if search_context == "all":
+    if search_context in {"all", "address"}:
+        object_types = (
+            ("license_agreement", "use_unit", "building", "economic_unit")
+            if search_context == "all" else ("building", "license_agreement", "use_unit")
+        )
         groups = [
             [item for item in choices if item["object_type"] == object_type]
-            for object_type in ("license_agreement", "use_unit", "building", "economic_unit")
+            for object_type in object_types
         ]
         choices = [item for group in zip_longest(*groups) for item in group if item is not None]
 
@@ -1993,6 +2046,7 @@ def _serialize_choice(
     object_id: int,
 ) -> dict[str, Any]:
     economic_unit = None
+    today = directory_today()
     if object_type == "license_agreement":
         agreement = db.session.get(
             WowiLicenseAgreement,
@@ -2001,7 +2055,7 @@ def _serialize_choice(
 
         if (
             agreement is None
-            or not agreement.active
+            or not _agreement_is_available(agreement, today)
         ):
             raise ValueError(
                 "Der Mietvertrag ist nicht verfügbar."
@@ -2027,7 +2081,7 @@ def _serialize_choice(
                 contractor.display_name
                 for contractor
                 in agreement.contractors
-                if contractor.active
+                if contractor.active and (contractor.contractual_use_to is None or contractor.contractual_use_to >= today)
             ]
             if not agreement.is_vacancy
             else []
@@ -2059,7 +2113,9 @@ def _serialize_choice(
         building = use_unit.building
         tenant_name = None
         is_vacancy = not any(
-            item.active and not item.is_vacancy for item in use_unit.license_agreements
+            _agreement_is_available(item, today) and not item.is_vacancy
+            and (item.start_date is None or item.start_date <= today)
+            for item in use_unit.license_agreements
         )
 
     elif object_type == "building":
@@ -2144,6 +2200,8 @@ def _serialize_choice(
         )
     elif use_unit is not None:
         label = use_unit.id_num or use_unit.description_of_position or "Wohnung / Nutzungseinheit"
+        if is_vacancy:
+            label = f"Leerstand · {label}"
     elif building is not None:
         label = building.address or building.id_num or "Gebäude"
     else:
@@ -2155,6 +2213,7 @@ def _serialize_choice(
         "label": label,
         "tenant_name": tenant_name,
         "is_vacancy": is_vacancy,
+        "is_future": bool(agreement is not None and agreement.start_date is not None and agreement.start_date > today),
         "company_code": {
             "erp_id": (
                 economic_unit.company_code_erp_id
@@ -2198,6 +2257,8 @@ def _serialize_choice(
             {
                 "erp_id": agreement.erp_id,
                 "id_num": agreement.id_num,
+                "start_date": agreement.start_date.isoformat() if agreement.start_date else None,
+                "end_date": agreement.end_date.isoformat() if agreement.end_date else None,
             }
             if agreement is not None
             else None

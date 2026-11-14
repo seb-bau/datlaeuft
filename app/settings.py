@@ -824,8 +824,8 @@ class SettingsService:
             value = cast(T, key)
         if definition.key == SettingKeys.SMS_SENDER.key:
             sender = str(value or "").strip()
-            if sender and not ((sender.isdigit() and len(sender) <= 16) or (sender.isalnum() and len(sender) <= 11)):
-                raise ValueError("Die SMS-Absenderkennung darf höchstens 11 alphanumerische Zeichen oder 16 Ziffern enthalten.")
+            if sender and not ((sender.isdigit() and len(sender) <= 16) or (sender.replace(" ", "").isalnum() and len(sender) <= 11)):
+                raise ValueError("Die SMS-Absenderkennung darf maximal 11 Zeichen (Buchstaben, Ziffern und Leerzeichen) oder 16 Ziffern enthalten.")
             value = cast(T, sender)
         if definition.key == SettingKeys.HEALTH_RULES.key:
             value = cast(T, normalize_health_rules(value))

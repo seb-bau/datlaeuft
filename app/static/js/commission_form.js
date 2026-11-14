@@ -344,6 +344,27 @@ document.addEventListener("DOMContentLoaded", () => {
         }[item.object_type] || "Objekt";
     }
 
+    function objectHeading(item) {
+        const number = {
+            license_agreement: item.license_agreement?.id_num,
+            use_unit: item.use_unit?.id_num,
+            building: item.building?.id_num,
+            economic_unit: item.economic_unit?.id_num
+        }[item.object_type];
+        return [objectTypeLabel(item), number].filter(Boolean).join(" · ");
+    }
+
+    function futureContractBadge(item) {
+        if (!item.is_future || !item.license_agreement?.start_date) {
+            return null;
+        }
+        const startDate = item.license_agreement.start_date.split("-").reverse().join(".");
+        const badge = document.createElement("span");
+        badge.className = "badge rounded-pill bg-primary-subtle text-primary-emphasis fw-normal ms-2";
+        badge.textContent = `Vertrag ab ${startDate}`;
+        return badge;
+    }
+
     function updateTenantNotificationOptions(item) {
         const available = Boolean(item?.license_agreement?.erp_id && !item.is_vacancy);
         notifyTenants.disabled = !available;
@@ -357,25 +378,20 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     function objectText(item) {
+        const showUnitLocation = ["license_agreement", "use_unit"].includes(item.object_type);
+        const location = showUnitLocation ? [...new Set([
+            item.use_unit?.floor,
+            item.use_unit?.position,
+            item.use_unit?.description
+        ].filter(Boolean))].join(" · ") : null;
         const values = [
             item.tenant_name,
             item.is_vacancy
                 ? "Leerstand"
                 : null,
-            item.license_agreement?.id_num
-                ? `Vertrag ${item.license_agreement.id_num}`
-                : null,
-            item.use_unit?.id_num
-                ? `Nutzungseinheit ${item.use_unit.id_num}`
-                : null,
-            item.building?.address,
-            item.building?.id_num
-                ? `Gebäude ${item.building.id_num}`
-                : null,
-            item.economic_unit?.id_num
-                ? `WE ${item.economic_unit.id_num}`
-                : null,
-            item.economic_unit?.name,
+            location,
+            item.use_unit?.address || item.building?.address,
+            item.object_type === "economic_unit" ? item.economic_unit?.name : null,
         ];
 
         return values
@@ -429,58 +445,23 @@ document.addEventListener("DOMContentLoaded", () => {
         const heading = document.createElement(
             "div"
         );
-        heading.className = "fw-semibold text-truncate";
-        heading.textContent = `${objectTypeLabel(item)} · ${item.label}`;
+        heading.className = "fw-semibold";
+        heading.textContent = objectHeading(item);
+        const statusBadge = futureContractBadge(item);
+        if (statusBadge) {
+            heading.appendChild(statusBadge);
+        }
 
         const details = document.createElement(
             "div"
         );
-        details.className = "text-muted text-truncate";
-        details.textContent = [
-            item.license_agreement?.id_num
-                ? `Vertrag ${item.license_agreement.id_num}`
-                : null,
-            item.use_unit?.id_num
-                ? `Nutzungseinheit ${item.use_unit.id_num}`
-                : null,
-            item.building?.address,
-            item.building?.id_num
-                ? `Gebäude ${item.building.id_num}`
-                : null,
-        ]
-            .filter(Boolean)
-            .join(" · ");
-
-        const economicUnit = [
-            item.economic_unit?.id_num,
-            item.economic_unit?.name,
-        ]
-            .filter(Boolean)
-            .join(" · ");
-
-        const metadata = document.createElement(
-            "div"
-        );
-        metadata.className = "text-muted text-truncate";
-        metadata.textContent = [
-            economicUnit
-                ? `WE ${economicUnit}`
-                : null,
-            item.company_code?.code
-                ? `Buchwerk ${item.company_code.code}`
-                : null,
-        ]
-            .filter(Boolean)
-            .join(" · ");
+        details.className = "text-muted";
+        details.textContent = objectText(item);
 
         objectSummary.appendChild(heading);
 
         if (details.textContent) {
             objectSummary.appendChild(details);
-        }
-
-        if (metadata.textContent) {
-            objectSummary.appendChild(metadata);
         }
 
         objectResults.replaceChildren();
@@ -581,7 +562,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     "div"
                 );
                 title.className = "fw-semibold";
-                title.textContent = `${objectTypeLabel(item)} · ${item.label}`;
+                title.textContent = objectHeading(item);
+                const statusBadge = futureContractBadge(item);
+                if (statusBadge) {
+                    title.appendChild(statusBadge);
+                }
 
                 const details = document.createElement(
                     "div"
@@ -1613,24 +1598,6 @@ document.addEventListener("DOMContentLoaded", () => {
     objectSearchContext.addEventListener(
         "change",
         () => {
-            const expectedType = {
-                tenant: "license_agreement",
-                agreement: "license_agreement",
-                use_unit: "use_unit",
-                address: "building",
-                economic_unit: "economic_unit"
-            }[objectSearchContext.value];
-            if (objectType.value && expectedType && objectType.value !== expectedType) {
-                objectType.value = "";
-                objectId.value = "";
-                delete objectSummary.dataset.automaticValue;
-                objectSummary.textContent = "Noch kein Objekt ausgewählt.";
-                objectSummary.classList.add("d-flex", "align-items-center", "justify-content-center", "text-center");
-                submitCommission.disabled = true;
-                updateTenantNotificationOptions(null);
-                updateObjectState();
-                updateAssignmentPreview({forceCraftsman: true});
-            }
             scheduleObjectSearch(0);
         }
     );
