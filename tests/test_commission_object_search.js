@@ -75,14 +75,17 @@ const futureContract = {
     ...building, object_type: "license_agreement", object_id: 4, label: "Künftiger Mieter",
     tenant_name: "Künftiger Mieter", is_future: true, is_vacancy: false,
     license_agreement: {erp_id: 4004, id_num: "MV-1", start_date: "2027-01-01"},
-    use_unit: {id_num: "NE-1", floor: "1. OG", position: "links", address: "Musterstraße 1"},
+    use_unit: {id_num: "NE-1", floor: "1. OG", position: "links", description: "Wohnung am Innenhof", address: "Musterstraße 1"},
 };
 
 test("building search renders future tenants and selects the contract as the order target", async () => {
     const state = form([building, futureContract]);
     await state.loadObjects("Musterstraße", "address");
     const [buildingButton, contractButton] = state.objectResults.children;
-    assert.match(contractButton.textContent, /Künftiger Mieter/);
+    assert.ok(contractButton.children[0].textContent.startsWith("Künftiger Mieter"));
+    assert.match(contractButton.children[0].className, /fw-semibold/);
+    assert.doesNotMatch(contractButton.children[0].textContent, /MV-1/);
+    assert.match(contractButton.children[1].textContent, /Vertrag MV-1/);
     assert.match(contractButton.textContent, /Vertrag ab 01\.01\.2027/);
     const badge = contractButton.children[0].children[0];
     assert.match(badge.className, /bg-primary-subtle/);
@@ -91,6 +94,9 @@ test("building search renders future tenants and selects the contract as the ord
     assert.equal(state.objectId.value, "4");
     assert.equal(state.objectSearchContext.value, "address");
     assert.match(state.objectSummary.textContent, /Vertrag ab 01\.01\.2027/);
+    assert.ok(state.objectSummary.children[0].textContent.startsWith("Künftiger Mieter"));
+    assert.doesNotMatch(state.objectSummary.children[0].textContent, /MV-1/);
+    assert.match(state.objectSummary.children[1].textContent, /Vertrag MV-1/);
     assert.equal(state.notifyTenants.disabled, false);
     assert.equal(state.submitCommission.disabled, false);
     buildingButton.click();
@@ -123,6 +129,7 @@ test("vacancies remain selectable and never enable tenant notifications", async 
         state.objectResults.children[0].click();
         assert.equal(state.objectType.value, objectType);
         assert.match(state.objectSummary.textContent, /Leerstand/);
+        assert.equal(state.objectSummary.textContent.split("Leerstand").length - 1, 1);
         assert.equal(state.notifyTenants.disabled, true);
         assert.equal(state.notifyTenants.value, "false");
         assert.equal(state.submitCommission.disabled, false);
@@ -155,8 +162,9 @@ test("results and selected summaries display only the selected level number with
                 assert.ok(!element.textContent.includes(otherNumber));
             }
             if (["license_agreement", "use_unit"].includes(item.object_type)) {
-                assert.match(element.textContent, /1\. OG/);
-                assert.match(element.textContent, /links/);
+                assert.match(element.textContent, /Wohnung am Innenhof/);
+                assert.doesNotMatch(element.textContent, /1\. OG/);
+                assert.doesNotMatch(element.textContent, /links/);
             }
             if (item.object_type !== "economic_unit") {
                 assert.match(element.textContent, /Musterstraße 1/);
@@ -165,22 +173,27 @@ test("results and selected summaries display only the selected level number with
     }
 });
 
-test("the unit address is preferred and repeated location descriptions appear once", () => {
+test("only the location description is displayed alongside the unit address", () => {
     const state = form();
     state.selectObject({
         ...futureContract,
-        use_unit: {id_num: "NE-1", floor: "EG", position: "EG", description: "EG", address: "Wehrenboldstraße 94"},
+        use_unit: {id_num: "NE-1", floor: "EG", position: "rechts", description: "Hinterhaus", address: "Wehrenboldstraße 94"},
     });
     assert.match(state.objectSummary.textContent, /Wehrenboldstraße 94/);
     assert.doesNotMatch(state.objectSummary.textContent, /Musterstraße 1/);
-    assert.equal(state.objectSummary.textContent.split("EG").length - 1, 1);
+    assert.equal(state.objectSummary.textContent.split("Hinterhaus").length - 1, 1);
+    assert.doesNotMatch(state.objectSummary.textContent, /EG|rechts/);
 });
 
-test("a missing selected number never promotes an ancestor number into the display", () => {
+test("missing numbers and descriptions never promote ancestor numbers or other location fields", () => {
     const state = form();
-    state.selectObject({...futureContract, license_agreement: {...futureContract.license_agreement, id_num: null}});
+    state.selectObject({
+        ...futureContract, license_agreement: {...futureContract.license_agreement, id_num: null},
+        use_unit: {...futureContract.use_unit, description: null},
+    });
     assert.match(state.objectSummary.textContent, /Künftiger Mieter/);
     assert.match(state.objectSummary.textContent, /Musterstraße 1/);
+    assert.doesNotMatch(state.objectSummary.textContent, /1\. OG|links/);
     for (const number of ["NE-1", "GE-1", "WE-1"]) {
         assert.ok(!state.objectSummary.textContent.includes(number));
     }
