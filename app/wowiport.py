@@ -2406,10 +2406,19 @@ class WowiportService:
             return []
 
         contact_items = []
+        start = _contact_date(_attr(license_agreement, "start_contract"))
+        end = _contact_date(_attr(license_agreement, "end_of_contract"))
+        today = datetime.now(ZoneInfo("Europe/Berlin")).date()
 
         for contractor in contractors:
             contact_item = _build_contact_item(contractor)
             if contact_item:
+                contact_item.update({
+                    "license_agreement_id": _as_int(_attr(license_agreement, "id_")) or license_agreement_id,
+                    "contract_start": start.isoformat() if start else None,
+                    "contract_end": end.isoformat() if end else None,
+                    "is_future_contract": start is not None and start > today,
+                })
                 contact_items.append(contact_item)
 
         return contact_items

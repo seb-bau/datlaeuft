@@ -665,6 +665,22 @@ class CommissionObjectLevelTests(unittest.TestCase):
         service.get_commission_contact_items.assert_called_once_with(9000)
         service.get_object_contact_items.assert_not_called()
 
+    def test_explicit_future_contract_contacts_also_include_the_future_label_and_start_date(self):
+        gateway = self.gateway.WowiportService.__new__(self.gateway.WowiportService)
+        gateway.client = Mock()
+        start = (date.today() + timedelta(days=2)).isoformat()
+        agreement = self.contact_agreement(7, start=start)
+        agreement.contractors = [self.contact_tenant(50)]
+        gateway.client.get_license_agreements.return_value = [agreement]
+        commission_object = types.SimpleNamespace(use_unit_id=3003, license_agreement={"id": 7})
+
+        items = gateway.get_commission_contact_items(9000, commission_object=commission_object)
+
+        self.assertEqual(items[0]["license_agreement_id"], 7)
+        self.assertEqual(items[0]["contract_start"], start)
+        self.assertTrue(items[0]["is_future_contract"])
+        gateway.client.get_license_agreements.assert_called_once_with(add_args={"licenseAgreementId": 7}, add_contractors=True, limit=1)
+
     def test_failed_contact_reads_report_an_error_instead_of_an_empty_success(self):
         commission = self.create_order("building", self.building.id)
         service = Mock()
