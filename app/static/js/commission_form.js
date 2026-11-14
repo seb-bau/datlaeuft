@@ -345,8 +345,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function objectHeading(item) {
+        if (item.object_type === "license_agreement") {
+            return item.tenant_name || (item.is_vacancy ? "Leerstand" : "Mietvertrag");
+        }
         const number = {
-            license_agreement: item.license_agreement?.id_num,
             use_unit: item.use_unit?.id_num,
             building: item.building?.id_num,
             economic_unit: item.economic_unit?.id_num
@@ -379,14 +381,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function objectText(item) {
         const showUnitLocation = ["license_agreement", "use_unit"].includes(item.object_type);
-        const location = showUnitLocation ? [...new Set([
-            item.use_unit?.floor,
-            item.use_unit?.position,
-            item.use_unit?.description
-        ].filter(Boolean))].join(" · ") : null;
+        const location = showUnitLocation ? item.use_unit?.description : null;
         const values = [
-            item.tenant_name,
-            item.is_vacancy
+            item.object_type === "license_agreement" && item.license_agreement?.id_num
+                ? `Vertrag ${item.license_agreement.id_num}`
+                : null,
+            item.is_vacancy && item.object_type !== "license_agreement"
                 ? "Leerstand"
                 : null,
             location,
