@@ -161,6 +161,84 @@ class CommissionObjectLevelTests(unittest.TestCase):
             self.assertEqual([item["object_type"] for item in choices], ["license_agreement"])
             self.assertEqual(choices[0]["tenant_name"], "Erika COMMON")
 
+    def prepare_partial_address_search(self):
+        self.building.address = "Wehrenboldstraße 94, 44534 Lünen"
+        self.unit.address = self.building.address
+        self.tenant.display_name = "Erika Müller"
+        other_building = self.models.WowiBuilding(
+            erp_id=2006, id_num="GE-OTHER", address="Wehrenboldstraße 95, 44534 Lünen", economic_unit=self.economic,
+        )
+        other_unit = self.models.WowiUseUnit(
+            erp_id=3006, id_num="NE-OTHER", address=other_building.address, building=other_building, economic_unit=self.economic,
+        )
+        other_agreement = self.models.WowiLicenseAgreement(erp_id=4006, id_num="MV-OTHER", use_unit=other_unit)
+        other_agreement.contractors.append(self.models.WowiContractor(
+            erp_id=5006, license_agreement_erp_id=4006, display_name="Anderer Mieter",
+        ))
+        self.db.session.add_all([other_building, other_unit, other_agreement])
+        self.db.session.commit()
+
+    def test_partial_streets_and_house_numbers_match_independent_terms(self):
+        self.prepare_partial_address_search()
+        for text in ("Wehrenb 94", "94 Wehrenb", "wehrenb   94", "Wehrenboldstraße 94"):
+            for context, expected in (("address", "building"), ("use_unit", "use_unit"), ("tenant", "license_agreement"), ("all", "license_agreement")):
+                with self.subTest(text=text, context=context):
+                    choices = self.directory.search_commission_objects(text, context)
+                    self.assertTrue(any(item["object_type"] == expected for item in choices))
+                    self.assertTrue(all(item["building"]["erp_id"] == 2002 for item in choices))
+                    self.assertEqual(len({(item["object_type"], item["object_id"]) for item in choices}), len(choices))
+
+    def test_partial_address_search_requires_all_terms_and_uses_the_building_as_a_unit_fallback(self):
+        self.prepare_partial_address_search()
+        self.unit.address = None
+        self.unit.position_name = "links"
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("Wehrenb 94 links", "use_unit")
+        self.assertEqual([item["object_id"] for item in choices], [self.unit.id])
+        for context in ("address", "use_unit", "tenant", "all"):
+            self.assertEqual(self.directory.search_commission_objects("Wehrenb 999", context), [])
+
+    def test_tenant_search_combines_name_parts_with_address_parts(self):
+        self.prepare_partial_address_search()
+        for text in ("Müll Erika", "Erika Wehrenb 94"):
+            choices = self.directory.search_commission_objects(text, "tenant")
+            self.assertEqual([item["object_id"] for item in choices], [self.agreement.id])
+
+    def test_vacancy_keywords_can_be_combined_with_partial_addresses(self):
+        self.prepare_partial_address_search()
+        self.agreement.is_vacancy = True
+        self.db.session.delete(self.tenant)
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("Leerstand Wehrenb 94", "tenant")
+        self.assertEqual([(item["object_type"], item["object_id"]) for item in choices], [("license_agreement", self.agreement.id)])
+        self.agreement.active = False
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("Leer Wehrenb 94", "tenant")
+        self.assertEqual([(item["object_type"], item["object_id"]) for item in choices], [("use_unit", self.unit.id)])
+
+    def test_search_treats_percent_and_underscore_as_literal_characters(self):
+        for text in ("%%", "__"):
+            for context in ("tenant", "agreement", "use_unit", "address", "economic_unit", "all"):
+                self.assertEqual(self.directory.search_commission_objects(text, context), [])
+        self.building.id_num = "GE_94"
+        self.empty_building.id_num = "GEA94"
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("GE_94", "address")
+        self.assertEqual({item["building"]["erp_id"] for item in choices}, {2002})
+
+    def test_search_combines_economic_unit_name_and_location_terms(self):
+        self.economic.name = "Siedlung Altstadt"
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("Alt Lün", "economic_unit")
+        self.assertEqual([item["object_id"] for item in choices], [self.economic.id])
+
+    def test_partial_address_search_is_available_through_the_existing_api(self):
+        self.prepare_partial_address_search()
+        response = self.client.get("/api/commission-objects/search?q=Wehrenb+94&context=address", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({item["object_type"] for item in response.json["items"]}, {"building", "license_agreement"})
+        self.assertEqual({item["building"]["erp_id"] for item in response.json["items"]}, {2002})
+
     def test_building_search_returns_the_building_and_its_contracts_as_separate_choices(self):
         choices = self.directory.search_commission_objects("COMMON", "address")
         self.assertEqual([item["object_type"] for item in choices], ["building", "license_agreement"])

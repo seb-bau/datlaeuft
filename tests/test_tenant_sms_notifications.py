@@ -578,6 +578,24 @@ class TenantSmsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.settings.set(self.keys.SMS_API_KEY, "key\nvalue")
 
+    def test_sms_sender_names_allow_spaces_within_the_eleven_character_limit(self):
+        for value, expected in (("WBG Luenen", "WBG Luenen"), ("  WBG Luenen  ", "WBG Luenen"),
+                                ("ABCDEFGHI J", "ABCDEFGHI J"), ("1234567890123456", "1234567890123456"), ("", "")):
+            with self.subTest(value=value):
+                self.settings.set_from_form(self.keys.SMS_SENDER, value)
+                self.db.session.commit()
+                self.assertEqual(self.settings.get(self.keys.SMS_SENDER), expected)
+        for value in ("ABCDEFGHI JK", "12345678901234567", "WBG\tLuenen", "WBG\nLuenen", "Sender$123"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.settings.set_from_form(self.keys.SMS_SENDER, value)
+
+    def test_a_sender_name_with_a_space_is_submitted_to_seven_unchanged(self):
+        self.settings.set_from_form(self.keys.SMS_SENDER, "WBG Luenen")
+        self.db.session.commit()
+        outcome = self.provider.send_sms(PHONE_A, "Beauftragung")
+        self.assertEqual(outcome.state, "sent")
+        self.assertEqual(self.post.call_args.kwargs["json"]["from"], "WBG Luenen")
+
 
 class TenantSmsMigrationTests(unittest.TestCase):
     def test_sms_queue_migration_preserves_existing_commissions_and_enforces_uniqueness(self):

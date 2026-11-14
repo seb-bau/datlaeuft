@@ -344,6 +344,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }[item.object_type] || "Objekt";
     }
 
+    function objectHeading(item) {
+        const number = {
+            license_agreement: item.license_agreement?.id_num,
+            use_unit: item.use_unit?.id_num,
+            building: item.building?.id_num,
+            economic_unit: item.economic_unit?.id_num
+        }[item.object_type];
+        return [objectTypeLabel(item), number].filter(Boolean).join(" · ");
+    }
+
     function futureContractBadge(item) {
         if (!item.is_future || !item.license_agreement?.start_date) {
             return null;
@@ -368,25 +378,20 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     function objectText(item) {
+        const showUnitLocation = ["license_agreement", "use_unit"].includes(item.object_type);
+        const location = showUnitLocation ? [...new Set([
+            item.use_unit?.floor,
+            item.use_unit?.position,
+            item.use_unit?.description
+        ].filter(Boolean))].join(" · ") : null;
         const values = [
             item.tenant_name,
             item.is_vacancy
                 ? "Leerstand"
                 : null,
-            item.license_agreement?.id_num
-                ? `Vertrag ${item.license_agreement.id_num}`
-                : null,
-            item.use_unit?.id_num
-                ? `Nutzungseinheit ${item.use_unit.id_num}`
-                : null,
-            item.building?.address,
-            item.building?.id_num
-                ? `Gebäude ${item.building.id_num}`
-                : null,
-            item.economic_unit?.id_num
-                ? `WE ${item.economic_unit.id_num}`
-                : null,
-            item.economic_unit?.name,
+            location,
+            item.use_unit?.address || item.building?.address,
+            item.object_type === "economic_unit" ? item.economic_unit?.name : null,
         ];
 
         return values
@@ -441,7 +446,7 @@ document.addEventListener("DOMContentLoaded", () => {
             "div"
         );
         heading.className = "fw-semibold";
-        heading.textContent = `${objectTypeLabel(item)} · ${item.label}`;
+        heading.textContent = objectHeading(item);
         const statusBadge = futureContractBadge(item);
         if (statusBadge) {
             heading.appendChild(statusBadge);
@@ -450,52 +455,13 @@ document.addEventListener("DOMContentLoaded", () => {
         const details = document.createElement(
             "div"
         );
-        details.className = "text-muted text-truncate";
-        details.textContent = [
-            item.license_agreement?.id_num
-                ? `Vertrag ${item.license_agreement.id_num}`
-                : null,
-            item.use_unit?.id_num
-                ? `Nutzungseinheit ${item.use_unit.id_num}`
-                : null,
-            item.building?.address,
-            item.building?.id_num
-                ? `Gebäude ${item.building.id_num}`
-                : null,
-        ]
-            .filter(Boolean)
-            .join(" · ");
-
-        const economicUnit = [
-            item.economic_unit?.id_num,
-            item.economic_unit?.name,
-        ]
-            .filter(Boolean)
-            .join(" · ");
-
-        const metadata = document.createElement(
-            "div"
-        );
-        metadata.className = "text-muted text-truncate";
-        metadata.textContent = [
-            economicUnit
-                ? `WE ${economicUnit}`
-                : null,
-            item.company_code?.code
-                ? `Buchwerk ${item.company_code.code}`
-                : null,
-        ]
-            .filter(Boolean)
-            .join(" · ");
+        details.className = "text-muted";
+        details.textContent = objectText(item);
 
         objectSummary.appendChild(heading);
 
         if (details.textContent) {
             objectSummary.appendChild(details);
-        }
-
-        if (metadata.textContent) {
-            objectSummary.appendChild(metadata);
         }
 
         objectResults.replaceChildren();
@@ -596,7 +562,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     "div"
                 );
                 title.className = "fw-semibold";
-                title.textContent = `${objectTypeLabel(item)} · ${item.label}`;
+                title.textContent = objectHeading(item);
                 const statusBadge = futureContractBadge(item);
                 if (statusBadge) {
                     title.appendChild(statusBadge);

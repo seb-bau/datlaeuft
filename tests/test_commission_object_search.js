@@ -57,7 +57,7 @@ function form(items = []) {
     sandbox.scheduleObjectSearch = delay => sandbox.scheduled.push(delay);
     vm.createContext(sandbox);
     vm.runInContext([
-        "objectTypeLabel", "futureContractBadge", "updateTenantNotificationOptions", "objectText",
+        "objectTypeLabel", "objectHeading", "futureContractBadge", "updateTenantNotificationOptions", "objectText",
         "selectObject", "showObjectSearchMessage", "loadObjects",
     ].map(functionSource).join("\n"), sandbox);
     const listenerStart = source.indexOf("    objectSearchContext.addEventListener(");
@@ -75,7 +75,7 @@ const futureContract = {
     ...building, object_type: "license_agreement", object_id: 4, label: "Künftiger Mieter",
     tenant_name: "Künftiger Mieter", is_future: true, is_vacancy: false,
     license_agreement: {erp_id: 4004, id_num: "MV-1", start_date: "2027-01-01"},
-    use_unit: {id_num: "NE-1"},
+    use_unit: {id_num: "NE-1", floor: "1. OG", position: "links", address: "Musterstraße 1"},
 };
 
 test("building search renders future tenants and selects the contract as the order target", async () => {
@@ -134,4 +134,54 @@ test("the future hint is absent for current contracts and other object levels", 
     assert.equal(state.futureContractBadge(building), null);
     assert.equal(state.futureContractBadge({...futureContract, is_future: false}), null);
     assert.equal(state.futureContractBadge({...futureContract, license_agreement: null}), null);
+});
+
+test("results and selected summaries display only the selected level number with location and address", async () => {
+    const unit = {
+        ...futureContract, object_type: "use_unit", label: "NE-1", tenant_name: null,
+        license_agreement: null, is_future: false,
+    };
+    const economic = {
+        object_type: "economic_unit", object_id: 1, economic_unit: {id_num: "WE-1", name: "Siedlung"},
+    };
+    for (const [item, expectedNumber] of [[futureContract, "MV-1"], [unit, "NE-1"], [building, "GE-1"], [economic, "WE-1"]]) {
+        const state = form([item]);
+        await state.loadObjects("Musterstraße", "all");
+        const button = state.objectResults.children[0];
+        button.click();
+        for (const element of [button, state.objectSummary]) {
+            assert.equal(element.textContent.split(expectedNumber).length - 1, 1);
+            for (const otherNumber of ["MV-1", "NE-1", "GE-1", "WE-1"].filter(number => number !== expectedNumber)) {
+                assert.ok(!element.textContent.includes(otherNumber));
+            }
+            if (["license_agreement", "use_unit"].includes(item.object_type)) {
+                assert.match(element.textContent, /1\. OG/);
+                assert.match(element.textContent, /links/);
+            }
+            if (item.object_type !== "economic_unit") {
+                assert.match(element.textContent, /Musterstraße 1/);
+            }
+        }
+    }
+});
+
+test("the unit address is preferred and repeated location descriptions appear once", () => {
+    const state = form();
+    state.selectObject({
+        ...futureContract,
+        use_unit: {id_num: "NE-1", floor: "EG", position: "EG", description: "EG", address: "Wehrenboldstraße 94"},
+    });
+    assert.match(state.objectSummary.textContent, /Wehrenboldstraße 94/);
+    assert.doesNotMatch(state.objectSummary.textContent, /Musterstraße 1/);
+    assert.equal(state.objectSummary.textContent.split("EG").length - 1, 1);
+});
+
+test("a missing selected number never promotes an ancestor number into the display", () => {
+    const state = form();
+    state.selectObject({...futureContract, license_agreement: {...futureContract.license_agreement, id_num: null}});
+    assert.match(state.objectSummary.textContent, /Künftiger Mieter/);
+    assert.match(state.objectSummary.textContent, /Musterstraße 1/);
+    for (const number of ["NE-1", "GE-1", "WE-1"]) {
+        assert.ok(!state.objectSummary.textContent.includes(number));
+    }
 });
