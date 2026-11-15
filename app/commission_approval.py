@@ -1,5 +1,6 @@
 from flask import abort
 from sqlalchemy import or_
+from sqlalchemy.exc import OperationalError
 
 from .audit import audit
 from .extensions import db
@@ -86,7 +87,21 @@ def can_approve_commission(commission, user):
 
 
 def approve_commission(commission_id, reviewer):
-    reviewer = User.query.filter_by(id=reviewer.id).with_for_update(read=True).populate_existing().one()
+    reviewer_id = reviewer.id
+    for attempt in range(3):
+        try:
+            result = _approve_commission(commission_id, reviewer_id)
+            db.session.flush()
+            return result
+        except OperationalError as exc:
+            db.session.rollback()
+            error_code = exc.orig.args[0] if exc.orig.args else None
+            if error_code not in (1020, 1205, 1213) or attempt == 2:
+                raise
+
+
+def _approve_commission(commission_id, reviewer_id):
+    reviewer = User.query.filter_by(id=reviewer_id).with_for_update(read=True).populate_existing().one()
     if not reviewer.is_active or not reviewer.can_review_work:
         abort(403)
     commission = Commission.query.filter_by(id=commission_id).with_for_update().populate_existing().first_or_404()

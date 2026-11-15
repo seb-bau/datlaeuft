@@ -20,6 +20,7 @@ from flask_login import LoginManager, current_user, login_required
 from jinja2 import ChoiceLoader, DictLoader, FileSystemLoader
 import sqlalchemy as sa
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from werkzeug.exceptions import Forbidden
 
 import test_commission_object_levels as object_fixtures
@@ -172,6 +173,31 @@ class CommissionApprovalTests(unittest.TestCase):
         self.assertEqual(self.models.AuditLog.query.filter_by(action="commission.approval.approved").count(), 1)
         self.workflow.process_workflow_notification_batch()
         self.mail.assert_not_called()
+
+    def test_snapshot_conflicts_are_retried_from_a_fresh_transaction_with_a_bounded_limit(self):
+        order = self.create_order()
+        original = self.approvals._approve_commission
+        calls = []
+
+        def approve(commission_id, reviewer_id):
+            calls.append(commission_id)
+            if len(calls) == 1:
+                raise OperationalError("SELECT commission FOR UPDATE", {}, Exception(1020, "Record has changed"))
+            return original(commission_id, reviewer_id)
+
+        with patch.object(self.approvals, "_approve_commission", side_effect=approve):
+            self.approvals.approve_commission(order.id, self.reviewer)
+            self.db.session.commit()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.models.ErpOutboxOperation.query.count(), 1)
+        pending = self.create_order()
+        for code, expected_attempts in ((1020, 3), (2006, 1)):
+            with self.subTest(code=code), patch.object(self.approvals, "_approve_commission", side_effect=OperationalError("SELECT", {}, Exception(code, "database error"))) as attempt:
+                with self.assertRaises(OperationalError):
+                    self.approvals.approve_commission(pending.id, self.reviewer)
+                self.assertEqual(attempt.call_count, expected_attempts)
+        self.assertEqual(self.models.ErpOutboxOperation.query.count(), 1)
+        self.assertEqual(pending.approval_state, "pending")
 
     def test_creators_cannot_approve_even_after_their_policy_is_removed_or_they_become_admins(self):
         order = self.create_order()
