@@ -95,6 +95,7 @@ def run_migrations_online():
         conf_args["process_revision_directives"] = process_revision_directives
 
     connectable = get_engine()
+    target_db.session.remove()
 
     with connectable.connect() as connection:
         context.configure(

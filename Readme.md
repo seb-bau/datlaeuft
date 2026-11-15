@@ -133,6 +133,21 @@ WantedBy=multi-user.target
 
 ````
 
+# Aktualisierungen und Datenbankmigrationen
+
+Vor einer Datenbankmigration den Webdienst und den Hintergrundworker stoppen. Auch geplante Synchronisationsbefehle während der Migration pausieren, damit deren offene Transaktionen keine Tabellenänderungen blockieren. MariaDB bleibt dabei gestartet.
+
+Nach dem Aktualisieren des Anwendungscodes in der aktivierten Python-Umgebung ausführen:
+
+```bash
+flask db upgrade
+flask db current
+```
+
+Webdienst, Worker und geplante Synchronisationen erst wieder starten, wenn das Upgrade erfolgreich beendet wurde.
+
+Die Freigabemigration `a3c5e7f9b1d2` kann nach einem Abbruch erneut ausgeführt werden. Sie ergänzt nur fehlende Spalten, Indizes und Fremdschlüssel; bereits gespeicherte Benutzerzuordnungen und Freigaben bleiben erhalten. Nach einem Sperr-Timeout und anschließendem Fehler wegen einer bereits vorhandenen Spalte zuerst die korrigierte Anwendungsversion einspielen und dann `flask db upgrade` erneut ausführen. Es müssen dafür keine Spalten gelöscht oder Migrationsstände manuell umgestellt werden.
+
 # Worker-Diagnose
 
 Der Hintergrund-Worker begrenzt OPENWOWI-Anfragen einschließlich Anmeldung und Token-Erneuerung auf 10 Sekunden Verbindungsaufbau und 60 Sekunden ohne Antwortdaten. Schreibanfragen werden bei Verbindungsfehlern oder Zeitüberschreitungen nicht unmittelbar erneut gesendet; die vorhandenen Warteschlangen behandeln den Fehler.
