@@ -126,6 +126,9 @@ def craftsman_contact(commission):
 
 
 def notification_content(item):
+    if item.kind == "appointment_calendar":
+        from .appointment_calendar import appointment_calendar_content
+        return appointment_calendar_content(item)
     payload = dict(item.payload or {})
     if item.kind == "ticket_reply":
         content = render_email_template("ticket_declined", {
@@ -170,6 +173,9 @@ def notification_content(item):
 
 
 def notification_is_current(item):
+    if item.kind == "appointment_calendar":
+        from .appointment_calendar import appointment_calendar_is_current
+        return appointment_calendar_is_current(item)
     if item.kind == "ticket_reply":
         return item.ticket is not None and item.ticket.deleted_at is None
     commission = item.commission
@@ -271,6 +277,9 @@ def execute_workflow_notification(item_id):
             if reply_to:
                 message["Reply-To"] = validate_debug_email_address(reply_to)
         set_email_content(message, item.payload["subject"], item.payload["body"])
+        if item.kind == "appointment_calendar":
+            from .appointment_calendar import attach_appointment_calendar
+            attach_appointment_calendar(message, item)
         item.payload = {**item.payload, "submission_started": True}
         db.session.commit()
         if not notification_is_current(item):

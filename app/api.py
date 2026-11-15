@@ -203,6 +203,20 @@ def push_preferences() -> Any:
     return jsonify({"preferences": serialize_push_preferences(user)})
 
 
+@api_bp.route("/me/appointment-preferences", methods=["GET", "PATCH"])
+@jwt_required()
+def appointment_preferences() -> Any:
+    user = current_api_user()
+    if request.method == "PATCH":
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or set(data) != {"calendar_email_enabled"} or type(data["calendar_email_enabled"]) is not bool:
+            return jsonify({"message": "Bitte einen Wahrheitswert für Kalendereinladungen angeben."}), 400
+        user = User.query.filter_by(id=user.id).with_for_update().populate_existing().one()
+        user.appointment_calendar_email_enabled = data["calendar_email_enabled"]
+        db.session.commit()
+    return jsonify({"preferences": {"calendar_email_enabled": user.appointment_calendar_email_enabled}})
+
+
 @api_bp.patch("/push/preferences")
 @jwt_required()
 def update_push_preferences() -> Any:
@@ -959,6 +973,50 @@ def commission_detail(commission_id: int) -> Any:
     return jsonify({"item": serialize_commission(commission, include_details=True, viewer=user)})
 
 
+@api_bp.get("/commissions/<int:commission_id>/related")
+@jwt_required()
+def commission_related(commission_id: int) -> Any:
+    from .commission_related import related_commissions
+
+    user = current_api_user()
+    commission = viewable_commission(commission_id, user)
+    if not commission.is_actionable:
+        return jsonify({"items": [], "total": 0, "page": 1, "pages": 1, "counts": {}})
+    try:
+        page = int(request.args.get("page", "1"))
+        if page < 1:
+            raise ValueError
+    except ValueError:
+        return jsonify({"message": "Die Seite ist ungültig."}), 400
+    result, items = related_commissions(commission, page)
+    visible_ids = viewable_commission_user_ids(user)
+    result["items"] = []
+    for related, relationship in items:
+        direct_access = related.user_id in visible_ids
+        item = serialize_commission(related, viewer=user)
+        item["can_edit"] = direct_access and item["can_edit"]
+        result["items"].append({"commission": item, "relationship": relationship, "direct_access": direct_access})
+    return jsonify(result)
+
+
+@api_bp.get("/commissions/<int:commission_id>/related/<int:related_id>")
+@jwt_required()
+def commission_related_detail(commission_id: int, related_id: int) -> Any:
+    from .commission_related import related_commission_query
+
+    user = current_api_user()
+    commission = viewable_commission(commission_id, user)
+    if not commission.is_actionable:
+        abort(404)
+    query, _ = related_commission_query(commission)
+    related = query.filter(Commission.id == related_id).one_or_none()
+    if related is None:
+        abort(404)
+    item = serialize_commission(related, viewer=user)
+    item["can_edit"] = False
+    return jsonify({"item": item})
+
+
 @api_bp.get(
     "/commissions/<int:commission_id>/history"
 )
@@ -1566,6 +1624,9 @@ def commission_appointment_enter(commission_id: int) -> Any:
     commission.accepted_appointment_comment = comment
     commission.accepted_appointment_has_time = has_time
     commission.accepted_appointment_is_manual = True
+
+    from .appointment_calendar import enqueue_appointment_calendar
+    enqueue_appointment_calendar(commission)
 
     CommissionAppointmentRequest.query.filter(
         CommissionAppointmentRequest.commission_id == commission.id,

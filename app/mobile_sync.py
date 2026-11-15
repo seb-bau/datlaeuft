@@ -16,7 +16,7 @@ from .mobile_transaction import current_mobile_transaction
 
 
 mobile_sync_bp = Blueprint("mobile_sync", __name__, url_prefix="/api/mobile")
-read_pattern = re.compile(r"^/api/(?:commissions(?:/(?:simple-create-options|create-options|create-tasks|objects|users|[1-9]\d*(?:/(?:history|contacts|appointments|attachments|photos|materials|time|infos|completion-check))?))?|commission-objects/search|time-tasks(?:/search)?|inventory/(?:search|lookup|locations)|appointment-windows)$")
+read_pattern = re.compile(r"^/api/(?:commissions(?:/(?:simple-create-options|create-options|create-tasks|objects|users|[1-9]\d*(?:/(?:history|contacts|appointments|attachments|photos|materials|time|infos|completion-check|related(?:/[1-9]\d*)?))?))?|commission-objects/search|time-tasks(?:/search)?|inventory/(?:search|lookup|locations)|appointment-windows)$")
 write_pattern = re.compile(r"^/api/commissions(?:/simple|/[1-9]\d*/(?:start|reject|complete|time(?:/[1-9]\d*)?|materials(?:/[1-9]\d*/cancel)?|photos(?:/[1-9]\d*)?|appointments(?:/accepted)?|infos(?:/read)?))$")
 parent_pattern = re.compile(r"^/api/commissions/([1-9]\d*)(?:/|$)")
 

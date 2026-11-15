@@ -521,7 +521,9 @@ class CommissionApprovalMigrationTests(unittest.TestCase):
                 metadata.drop_all(connection)
         finally:
             engine.dispose()
-        self.assertEqual(ScriptDirectory(str(root / "migrations")).get_heads(), [migration.revision])
+        scripts = ScriptDirectory(str(root / "migrations"))
+        self.assertEqual(len(scripts.get_heads()), 1)
+        self.assertIn(migration.revision, {item.revision for item in scripts.walk_revisions()})
 
 
 if __name__ == "__main__":
