@@ -222,6 +222,7 @@ from uuid import uuid4
 
 from .commission_priority import set_manual_commission_priority
 from .commission_links import commission_wowiport_url
+from .commission_object_history import commission_object_history
 from .push_preferences import admin_push_preference_rows, save_admin_push_preferences
 from .workflow_notifications import overdue_commission_filter
 from .ticket_replies import enqueue_ticket_reply, ticket_reply_recipients
@@ -5377,6 +5378,28 @@ def commission_assignment_preview() -> Any:
         return jsonify(payload), 400
 
     return jsonify(payload)
+
+
+@admin_bp.get("/admin/commission-objects/commissions")
+@foreman_required
+def commission_object_commissions() -> Any:
+    object_type = request.args.get("object_type", "")
+    object_id = request.args.get("object_id", type=int)
+    view = request.args.get("view", "all")
+    page = request.args.get("page", type=int) if "page" in request.args else 1
+    if (
+        object_type not in {"license_agreement", "use_unit", "building", "economic_unit"}
+        or object_id is None or object_id <= 0
+        or view not in {"all", "open"} or page is None or page <= 0
+    ):
+        return jsonify({"message": "Die Auswahl für die Auftragsübersicht ist ungültig."}), 400
+    try:
+        choice = get_commission_object_choice(object_type, object_id)
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    return jsonify(commission_object_history(
+        choice, summary=request.args.get("summary") == "true", view=view, page=page,
+    ))
 
 
 @admin_bp.get(

@@ -32,9 +32,12 @@ class Element {
     set textContent(value) { this._text = String(value); this.children = []; }
     get textContent() { return this._text + this.children.map(child => child.textContent).join(""); }
     appendChild(child) { this.children.push(child); }
+    prepend(child) { this.children.unshift(child); }
     append(...children) { this.children.push(...children); }
     replaceChildren(...children) { this._text = ""; this.children = children; }
     addEventListener(name, handler) { this.listeners[name] = handler; }
+    setAttribute(name, value) { this[name] = value; }
+    dispatchEvent(event) { this.listeners[event.type]?.(event); }
     click() { this.listeners.click(); }
 }
 
@@ -42,7 +45,8 @@ function form(items = []) {
     const sandbox = {
         document: {createElement: tag => new Element(tag)},
         window: {location: {origin: "https://example.invalid"}},
-        URL, canCreate: true, objectSearchUrl: "/objects/search", objectSearchRequestId: 0,
+        URL, CustomEvent: class {constructor(type, options) {this.type = type; this.detail = options.detail;}},
+        canCreate: true, objectSearchUrl: "/objects/search", objectSearchRequestId: 0,
         fetch: async () => ({ok: true, json: async () => ({items})}),
         tenantNotificationPreference: "true", scheduled: [],
         updateFieldState() {}, updateObjectState() {}, updateAssignmentControls() {}, updateAssignmentPreview() {},
@@ -57,7 +61,7 @@ function form(items = []) {
     sandbox.scheduleObjectSearch = delay => sandbox.scheduled.push(delay);
     vm.createContext(sandbox);
     vm.runInContext([
-        "objectTypeLabel", "objectHeading", "futureContractBadge", "retrospectiveCommissionSelected", "updateTenantNotificationOptions", "objectText",
+        "objectTypeLabel", "objectHeading", "objectIcon", "groupedObjectResults", "futureContractBadge", "retrospectiveCommissionSelected", "updateTenantNotificationOptions", "objectText",
         "selectObject", "showObjectSearchMessage", "loadObjects",
     ].map(functionSource).join("\n"), sandbox);
     const listenerStart = source.indexOf("    objectSearchContext.addEventListener(");
@@ -69,7 +73,7 @@ function form(items = []) {
 
 const building = {
     object_type: "building", object_id: 2, label: "Musterstraße 1", company_code: {erp_id: 77},
-    building: {id_num: "GE-1", address: "Musterstraße 1"}, economic_unit: {id_num: "WE-1"},
+    building: {erp_id: 2002, id_num: "GE-1", address: "Musterstraße 1"}, economic_unit: {id_num: "WE-1"},
 };
 const futureContract = {
     ...building, object_type: "license_agreement", object_id: 4, label: "Künftiger Mieter",
@@ -87,7 +91,7 @@ test("building search renders future tenants and selects the contract as the ord
     assert.doesNotMatch(contractButton.children[0].textContent, /MV-1/);
     assert.match(contractButton.children[1].textContent, /Vertrag MV-1/);
     assert.match(contractButton.textContent, /Vertrag ab 01\.01\.2027/);
-    const badge = contractButton.children[0].children[0];
+    const badge = contractButton.children[0].children[1];
     assert.match(badge.className, /bg-primary-subtle/);
     contractButton.click();
     assert.equal(state.objectType.value, "license_agreement");
@@ -115,6 +119,26 @@ test("changing the search mode preserves the explicitly selected order target", 
     assert.equal(state.objectId.value, "4");
     assert.equal(state.submitCommission.disabled, false);
     assert.deepEqual(state.scheduled, [0]);
+});
+
+test("building results have distinct icons and keep each smaller contract below its own building", async () => {
+    const secondBuilding = {...building, object_id: 20, building: {erp_id: 2020, id_num: "GE-2"}};
+    const secondContract = {...futureContract, object_id: 40, building: secondBuilding.building, tenant_name: "Anderer Mieter"};
+    const state = form([building, secondContract, secondBuilding, futureContract]);
+    await state.loadObjects("Muster", "address");
+    const buttons = state.objectResults.children;
+    assert.match(buttons[0].children[0].children[0].className, /bi-house-door/);
+    assert.match(buttons[1].children[0].children[0].className, /bi-file-earmark-text/);
+    assert.match(buttons[1].textContent, /Künftiger Mieter/);
+    assert.match(buttons[1].className, /commission-object-child/);
+    assert.doesNotMatch(buttons[2].className, /commission-object-child/);
+    assert.match(buttons[3].textContent, /Anderer Mieter/);
+    assert.match(buttons[3]["aria-label"], /Mietvertrag/);
+    buttons[3].click();
+    assert.equal(state.objectId.value, "40");
+    const direct = form([futureContract]);
+    await direct.loadObjects("Künftiger", "tenant");
+    assert.doesNotMatch(direct.objectResults.children[0].className, /commission-object-child/);
 });
 
 test("vacancies remain selectable and never enable tenant notifications", async () => {
