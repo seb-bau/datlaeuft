@@ -10,6 +10,11 @@ on:
       - app/api.py
       - app/object_directory.py
       - app/commission_object_history.py
+      - app/commission_approval.py
+      - app/auth.py
+      - app/performance_review_service.py
+      - app/process_info_service.py
+      - migrations/versions/*commission_approval.py
       - app/static/js/commission_object_history.js
       - app/tenant_notifications.py
       - app/tenant_sms_notifications.py
@@ -60,6 +65,11 @@ on:
       - app/api.py
       - app/object_directory.py
       - app/commission_object_history.py
+      - app/commission_approval.py
+      - app/auth.py
+      - app/performance_review_service.py
+      - app/process_info_service.py
+      - migrations/versions/*commission_approval.py
       - app/static/js/commission_object_history.js
       - app/tenant_notifications.py
       - app/tenant_sms_notifications.py
@@ -163,6 +173,7 @@ jobs:
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
         run: |
+          python -m unittest discover -s tests -p test_commission_approval.py -v
           python -m unittest discover -s tests -p test_commission_object_history.py -v
           python -m unittest discover -s tests -p test_workflow_notifications.py -v
           python -m unittest discover -s tests -p test_tenant_sms_notifications.py -v

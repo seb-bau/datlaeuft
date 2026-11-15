@@ -262,6 +262,7 @@ def claim_outbox_operation() -> int | None:
             ]
         ),
         ErpOutboxOperation.available_at <= utc_now(),
+        ErpOutboxOperation.commission.has(Commission.approval_state != "pending"),
     ).order_by(
         ErpOutboxOperation.available_at.asc(),
         ErpOutboxOperation.id.asc(),
@@ -290,6 +291,8 @@ def execute_outbox_operation(
         raise RuntimeError("ERP-Outbox-Eintrag wurde nicht gefunden.")
 
     commission = operation.commission
+    if commission.approval_state == "pending":
+        raise RuntimeError("Der Auftrag wartet noch auf die Freigabe durch einen anderen Sachbearbeiter.")
     previous_local_status = commission.local_status
 
     if (

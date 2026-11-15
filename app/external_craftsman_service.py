@@ -467,6 +467,7 @@ def ensure_external_assignment_mails(
             ExternalCraftsman.email.is_not(None),
             Commission.deleted_at.is_(None),
             Commission.is_retrospective.is_(False),
+            Commission.approval_state != "pending",
             Commission.local_status.in_(
                 (
                     CommissionLocalStatus.OPEN.value,
@@ -600,7 +601,7 @@ def execute_external_assignment_mail(
         and bool(craftsman.email)
     )
 
-    if commission.is_retrospective or not assignment_is_current or not access_is_current:
+    if commission.approval_state == "pending" or commission.is_retrospective or not assignment_is_current or not access_is_current:
         item.state = "discarded"
         item.locked_at = None
         item.last_error = None

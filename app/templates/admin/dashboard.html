@@ -17,7 +17,8 @@
   </div>
   {% endif %}
 
-    <div class="col-md-4">
+  {% if current_user.can_review_work %}
+  <div class="col-md-4">
     <a
       class="card shadow-sm text-decoration-none text-body h-100"
       href="{{ url_for('admin.commission_reviews', status='completion_review') }}"
@@ -33,12 +34,21 @@
     </a>
   </div>
 
-  {% if current_user.is_admin or current_user.is_foreman %}
+  {% endif %}
+  {% if current_user.can_review_work %}
   <div class="col-md-4">
     <a class="card shadow-sm text-decoration-none text-body h-100" href="{{ url_for('admin.commission_reviews', status='overdue') }}">
       <div class="card-body">
         <div class="text-muted">Durchführungszeitraum überschritten</div>
         <div class="display-6 text-warning">{{ overdue_review_count }}</div>
+      </div>
+    </a>
+  </div>
+  <div class="col-md-4">
+    <a class="card shadow-sm text-decoration-none text-body h-100" href="{{ url_for('admin.commission_reviews', status='waiting_for_approval') }}">
+      <div class="card-body">
+        <div class="text-muted">Freigabe ausstehend</div>
+        <div class="display-6 text-warning">{{ approval_review_count }}</div>
       </div>
     </a>
   </div>
@@ -63,6 +73,7 @@
   </div>
   {% endif %}
 
+  {% if current_user.can_review_work %}
   <div class="col-md-4">
     <a
       class="card shadow-sm text-decoration-none text-body h-100"
@@ -78,6 +89,7 @@
       </div>
     </a>
   </div>
+  {% endif %}
   <div class="col-md-4">
     <div class="card shadow-sm">
       <div class="card-body">
@@ -86,6 +98,7 @@
       </div>
     </div>
   </div>
+  {% if current_user.can_review_work %}
   <div class="col-md-4">
     <div class="card shadow-sm">
       <div class="card-body">
@@ -102,6 +115,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
   <div class="col-md-4">
     <div class="card shadow-sm">
       <div class="card-body">

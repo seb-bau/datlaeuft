@@ -66,6 +66,7 @@ class SettingValueType(str, Enum):
 
 class CommissionLocalStatus(str, Enum):
     RECORDED = "recorded"
+    WAITING_FOR_APPROVAL = "waiting_for_approval"
     WAITING_FOR_ACCEPTANCE = "waiting_for_acceptance"
     OPEN = "open"
     IN_PROGRESS = "in_progress"
@@ -669,6 +670,8 @@ class User(UserMixin, db.Model):
     __tablename__ = "user_account"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    internal_commission_approver_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id", ondelete="RESTRICT"), index=True)
+    external_commission_approver_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id", ondelete="RESTRICT"), index=True)
     email: Mapped[str] = mapped_column(db.String(255), unique=True, nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(db.String(255), nullable=False)
     password_hash: Mapped[str | None] = mapped_column(db.String(255))
@@ -829,6 +832,14 @@ class User(UserMixin, db.Model):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def requires_commission_approval(self) -> bool:
+        return bool(self.internal_commission_approver_user_id or self.external_commission_approver_user_id)
+
+    @property
+    def can_review_work(self) -> bool:
+        return bool((self.is_admin or self.is_foreman) and not self.requires_commission_approval)
 
     @property
     def is_active(self) -> bool:
@@ -1174,6 +1185,14 @@ class UserJurisdictionPersonMapping(db.Model):
 class Commission(db.Model):
     __tablename__ = "commission"
 
+    approval_state: Mapped[str] = mapped_column(db.String(20), default="not_required", server_default="not_required", nullable=False, index=True)
+    approval_approver_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id", ondelete="RESTRICT"), index=True)
+    approval_requested_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    approved_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id", ondelete="RESTRICT"))
+    approved_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    approval_approver: Mapped[User | None] = relationship(foreign_keys=[approval_approver_user_id])
+    approved_by: Mapped[User | None] = relationship(foreign_keys=[approved_by_user_id])
+
     is_retrospective: Mapped[bool] = mapped_column(db.Boolean, default=False, server_default=false(), nullable=False)
     overdue_notification_deadline: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 
@@ -1448,7 +1467,8 @@ class Commission(db.Model):
     @property
     def is_actionable(self) -> bool:
         return (
-                self.erp_id is not None
+                self.approval_state != "pending"
+                and self.erp_id is not None
                 and bool(self.erp_idnum)
                 and self.local_status not in {
                     CommissionLocalStatus.RECORDED.value,

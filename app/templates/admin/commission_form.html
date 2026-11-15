@@ -136,6 +136,14 @@
 </div>
 {% endif %}
 
+{% if current_user.requires_commission_approval %}
+<div class="alert alert-info small py-2">
+  <strong>Vier-Augen-Prinzip:</strong>
+  Interne Beauftragungen: {{ 'Freigabe erforderlich' if current_user.internal_commission_approver_user_id else 'keine Freigabe erforderlich' }}.
+  Externe Beauftragungen: {{ 'Freigabe erforderlich' if current_user.external_commission_approver_user_id else 'keine Freigabe erforderlich' }}.
+</div>
+{% endif %}
+
 <form
   id="commissionForm"
   method="post"

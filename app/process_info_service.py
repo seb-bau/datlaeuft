@@ -89,6 +89,7 @@ def commissions_for_process(
         Commission.crafts_process_erp_id
         == process_erp_id,
         Commission.deleted_at.is_(None),
+        Commission.approval_state != "pending",
         Commission.local_status
         != CommissionLocalStatus.DELETED.value,
     )
@@ -119,6 +120,7 @@ def process_users(
             Commission.local_status
             != CommissionLocalStatus.DELETED.value,
             User.is_active_flag.is_(True),
+            Commission.approval_state != "pending",
         )
         .order_by(
             User.id.asc(),
@@ -162,6 +164,7 @@ def process_external_craftsmen(
             ExternalCraftsman.portal_enabled.is_(True),
             ExternalCraftsman.wowi_active.is_(True),
             ExternalCraftsman.email.is_not(None),
+            Commission.approval_state != "pending",
         )
         .order_by(
             ExternalCraftsman.id.asc(),
@@ -528,6 +531,8 @@ def _create_outgoing_info(
     origin_name: str,
     direction: str = CRAFTSMAN_DIRECTION,
 ) -> ProcessInfo:
+    if commission.approval_state == "pending":
+        raise ValueError("Vorgangsinformationen können erst nach der Auftragsfreigabe versendet werden.")
     process_erp_id = commission.crafts_process_erp_id
 
     if process_erp_id is None:

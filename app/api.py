@@ -350,7 +350,10 @@ def commissions() -> Any:
 
     if scope != "all":
         query = query.filter(
-            Commission.user_id == user.id
+            or_(
+                and_(Commission.approval_state != "pending", Commission.user_id == user.id),
+                and_(Commission.approval_state == "pending", Commission.created_by_user_id == user.id),
+            )
         )
     elif user_id_filter:
         if not user_id_filter.isdigit():
@@ -373,12 +376,14 @@ def commissions() -> Any:
 
         query = query.filter(
             Commission.user_id
-            == selected_user_id
+            == selected_user_id,
+            or_(Commission.approval_state != "pending", Commission.created_by_user_id == user.id),
         )
     else:
         query = query.filter(
-            Commission.user_id.in_(
-                allowed_user_ids
+            or_(
+                and_(Commission.approval_state != "pending", Commission.user_id.in_(allowed_user_ids)),
+                and_(Commission.approval_state == "pending", Commission.created_by_user_id == user.id),
             )
         )
 
@@ -386,6 +391,7 @@ def commissions() -> Any:
         query = query.filter(
             Commission.local_status.in_(
                 [
+                    CommissionLocalStatus.WAITING_FOR_APPROVAL.value,
                     CommissionLocalStatus
                     .WAITING_FOR_ACCEPTANCE
                     .value,
@@ -3586,7 +3592,7 @@ def viewable_commission_user_ids(
 
 
 def can_edit_commission(commission: Commission, user: User) -> bool:
-    return user.is_admin or user.is_foreman or commission.user_id == user.id
+    return commission.approval_state != "pending" and (user.is_admin or user.is_foreman or commission.user_id == user.id)
 
 
 def can_edit_time_entry(entry: TimeEntry, user: User) -> bool:
@@ -3597,6 +3603,10 @@ def viewable_commission(commission_id: int, user: User) -> Commission:
     commission = db.session.get(Commission, commission_id)
     if commission is None or commission.local_status == CommissionLocalStatus.DELETED.value:
         abort(404)
+    if commission.approval_state == "pending":
+        if commission.created_by_user_id != user.id:
+            abort(403)
+        return commission
     if (
         commission.user_id
         not in viewable_commission_user_ids(
@@ -3857,7 +3867,7 @@ def serialize_work_time_profile(
 
 
 def require_review_permission(user: User) -> None:
-    if not (user.is_admin or user.is_foreman):
+    if not user.can_review_work:
         abort(403)
 
 
@@ -4219,7 +4229,9 @@ def serialize_user(user: User) -> dict[str, Any]:
         "display_name": user.display_name,
         "craftsman_erp_id": user.craftsman_erp_id,
         "is_admin": user.is_admin,
-        "is_foreman": user.is_foreman
+        "is_foreman": user.is_foreman,
+        "can_review_work": user.can_review_work,
+        "requires_commission_approval": user.requires_commission_approval,
     }
 
 
@@ -4240,6 +4252,10 @@ def serialize_commission(
         "status_id": commission.status_id,
         "status_code": commission.status_code,
         "local_status": commission.local_status,
+        "approval_state": commission.approval_state,
+        "approval_approver": serialize_user(commission.approval_approver) if commission.approval_approver else None,
+        "approved_by": serialize_user(commission.approved_by) if commission.approved_by else None,
+        "approved_at": iso_datetime(commission.approved_at),
         "is_high_priority": bool(commission.is_high_priority),
         "craftsman_erp_id": commission.craftsman_erp_id,
         "object_type": commission.object_type,

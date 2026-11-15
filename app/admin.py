@@ -32,6 +32,7 @@ from .auth import (
     commission_creation_required,
     commission_planning_required,
     foreman_required,
+    office_review_required,
     invoice_required,
     offer_required,
 )
@@ -223,6 +224,7 @@ from uuid import uuid4
 from .commission_priority import set_manual_commission_priority
 from .commission_links import commission_wowiport_url
 from .commission_object_history import commission_object_history
+from .commission_approval import approve_commission, approval_user_choices, can_approve_commission, save_user_approval_settings
 from .push_preferences import admin_push_preference_rows, save_admin_push_preferences
 from .workflow_notifications import overdue_commission_filter
 from .ticket_replies import enqueue_ticket_reply, ticket_reply_recipients
@@ -340,9 +342,11 @@ def commission_review_query():
         or_(Commission.local_status.in_([
             CommissionLocalStatus.COMPLETION_REVIEW.value,
             CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
-        ]), overdue_commission_filter()),
+        ]), overdue_commission_filter(), Commission.approval_state == "pending"),
     )
 
+    if not current_user.can_review_work:
+        return query.filter(Commission.id.is_(None))
     if current_user.is_admin:
         return query
 
@@ -352,6 +356,7 @@ def commission_review_query():
                 Commission.created_by_user_id
                 == current_user.id,
                 Commission.created_by_user_id.is_(None),
+                and_(Commission.approval_state == "pending", Commission.approval_approver_user_id == current_user.id),
             )
         )
 
@@ -417,6 +422,7 @@ def dashboard() -> Any:
         == CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
     ).count()
     overdue_review_count = commission_reviews.filter(overdue_commission_filter()).count()
+    approval_review_count = commission_reviews.filter(Commission.approval_state == "pending").count()
 
     sync_problem_count = 0
 
@@ -471,6 +477,7 @@ def dashboard() -> Any:
         completion_review_count=completion_review_count,
         tenant_charge_review_count=tenant_charge_review_count,
         overdue_review_count=overdue_review_count,
+        approval_review_count=approval_review_count,
         sync_problem_count=sync_problem_count,
     )
 
@@ -3520,6 +3527,7 @@ def user_create() -> Any:
         **user_work_time_profile_context(item),
         **user_commission_visibility_context(item),
         push_preference_rows=admin_push_preference_rows(item),
+        approval_user_choices=approval_user_choices(item),
     )
 
 
@@ -3650,6 +3658,7 @@ def user_edit(user_id: int) -> Any:
         **user_work_time_profile_context(item),
         **user_commission_visibility_context(item),
         push_preference_rows=admin_push_preference_rows(item),
+        approval_user_choices=approval_user_choices(item),
     )
 
 
@@ -4169,6 +4178,7 @@ def ticket_commissions(
 
     local_status_labels = {
         "recorded": "Erfasst",
+        "waiting_for_approval": "Wartet auf Freigabe",
         "waiting_for_acceptance": (
             "Warte auf Annahme"
         ),
@@ -5092,6 +5102,8 @@ def commission_create() -> Any:
 
             if source_offer is not None:
                 flash(
+                    "Die Annahme wurde erfasst. Der Auftrag wartet auf die Freigabe."
+                    if commission.approval_state == "pending" else
                     "Die Annahme wurde erfasst. "
                     "Der Auftrag wurde angelegt und "
                     "zur Übertragung an Wowiport "
@@ -5107,6 +5119,8 @@ def commission_create() -> Any:
                 )
 
             flash(
+                "Der Auftrag wurde erfasst und wartet auf die Freigabe durch einen anderen Sachbearbeiter."
+                if commission.approval_state == "pending" else
                 "Der Auftrag wurde erfasst und "
                 "zur Übertragung an Wowiport "
                 "eingeplant.",
@@ -7721,6 +7735,7 @@ def commission_official_labels(
 def commissions() -> Any:
     local_status_labels = {
         "recorded": "Erfasst",
+        "waiting_for_approval": "Wartet auf Freigabe",
         "waiting_for_acceptance": "Warte auf Annahme",
         "open": "Beauftragt",
         "in_progress": "In Bearbeitung",
@@ -7998,6 +8013,7 @@ def commission_detail(
 
     local_status_labels = {
         "recorded": "Erfasst",
+        "waiting_for_approval": "Wartet auf Freigabe",
         "waiting_for_acceptance": "Warte auf Annahme",
         "open": "Beauftragt",
         "in_progress": "In Bearbeitung",
@@ -8020,6 +8036,8 @@ def commission_detail(
     history_titles = {
         "commission.create.web": "Auftrag im Web erfasst",
         "commission.create.ios": "Auftrag in der App erfasst",
+        "commission.approval.requested": "Auftrag zur Freigabe vorgelegt",
+        "commission.approval.approved": "Auftrag freigegeben",
         "commission.start": "Auftrag angenommen",
         "commission.complete": "Auftragsabschluss übermittelt",
         "commission.sync": "Auftrag synchronisiert",
@@ -8041,6 +8059,7 @@ def commission_detail(
         manual_appointment_text=format_manual_appointment(item),
         format_execution_datetime=format_local_datetime,
         wowiport_url=commission_wowiport_url(item),
+        can_approve=can_approve_commission(item, current_user),
         photos=photos,
         appointment_requests=appointment_requests,
         history_entries=history_entries,
@@ -8130,7 +8149,7 @@ def commission_info_create(
 
 
 @admin_bp.get("/admin/commission-reviews")
-@foreman_required
+@office_review_required
 def commission_reviews() -> Any:
     selected_status = request.args.get(
         "status",
@@ -8138,6 +8157,7 @@ def commission_reviews() -> Any:
     ).strip()
 
     status_labels = {
+        CommissionLocalStatus.WAITING_FOR_APPROVAL.value: "Freigabe ausstehend",
         CommissionLocalStatus.COMPLETION_REVIEW.value:
             "Nicht abgeschlossen",
         CommissionLocalStatus.TENANT_CHARGE_REVIEW.value:
@@ -8158,6 +8178,7 @@ def commission_reviews() -> Any:
         selected_status = ""
 
     items = query.order_by(
+        (Commission.approval_state == "pending").desc(),
         Commission.completion_submitted_at.desc(),
         Commission.id.desc(),
     ).all()
@@ -8169,6 +8190,19 @@ def commission_reviews() -> Any:
         selected_status=selected_status,
         status_labels=status_labels,
     )
+
+
+@admin_bp.post("/admin/commissions/<int:commission_id>/approve")
+@office_review_required
+def commission_approve(commission_id: int) -> Any:
+    try:
+        item, changed = approve_commission(commission_id, current_user)
+        db.session.commit()
+        flash("Der Auftrag wurde freigegeben und zur Übertragung an Wowiport eingeplant." if changed else "Der Auftrag ist bereits freigegeben.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("admin.commission_detail", commission_id=commission_id))
 
 
 def commission_photo_for_admin(
@@ -9343,7 +9377,7 @@ def work_time_profiles() -> Any:
 
 
 @admin_bp.get("/admin/work-time-reports")
-@foreman_required
+@office_review_required
 def work_time_reports() -> Any:
     period = request.args.get(
         "period",
@@ -9836,7 +9870,7 @@ def time_template_edit(item_id: int) -> Any:
 
 
 @admin_bp.get("/admin/performance-reviews")
-@foreman_required
+@office_review_required
 def performance_reviews() -> Any:
     status_filter = request.args.get(
         "status",
@@ -9915,7 +9949,7 @@ def performance_reviews() -> Any:
     "<int:commission_id>/<string:scope_key>/"
     "<string:decision>"
 )
-@foreman_required
+@office_review_required
 def performance_review_decision(
     commission_id: int,
     scope_key: str,
@@ -9960,7 +9994,7 @@ def performance_review_decision(
 
 
 @admin_bp.get("/admin/time-entries")
-@foreman_required
+@office_review_required
 def time_entries() -> Any:
     return redirect(
         url_for("admin.performance_reviews")
@@ -9968,7 +10002,7 @@ def time_entries() -> Any:
 
 
 @admin_bp.get("/admin/material-movements")
-@foreman_required
+@office_review_required
 def material_movements() -> Any:
     return redirect(
         url_for("admin.performance_reviews")
@@ -10351,6 +10385,7 @@ def save_user_form(item: User) -> None:
     password = request.form.get("password", "")
     if password:
         item.set_password(password)
+    save_user_approval_settings(item, request.form)
 
 
 def save_user_craft_activities(

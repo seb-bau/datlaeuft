@@ -506,6 +506,7 @@ def commissions() -> Any:
         Commission.craftsman_erp_id
         == craftsman.craftsman_erp_id,
         Commission.deleted_at.is_(None),
+        Commission.approval_state != "pending",
         Commission.local_status
         != CommissionLocalStatus.DELETED.value,
     )
@@ -998,6 +999,7 @@ def external_commission_or_404(
     craftsman = current_external_craftsman()
     commission = Commission.query.filter(
         Commission.public_id == public_id,
+        Commission.approval_state != "pending",
         Commission.craftsman_erp_id
         == craftsman.craftsman_erp_id,
         Commission.deleted_at.is_(None),

@@ -254,7 +254,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   </form>
   {% else %}
-  <span class="badge text-bg-warning">Übertragung ausstehend</span>
+  <span class="badge text-bg-warning">{{ 'Freigabe ausstehend' if item.approval_state == 'pending' else 'Übertragung ausstehend' }}</span>
   {% endif %}
 </td>
         </tr>

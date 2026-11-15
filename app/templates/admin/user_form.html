@@ -448,6 +448,31 @@
 
   <div class="card-body border-top">
     <div class="col-12 mb-3">
+      <h2 class="h5">Auftragsfreigabe · Vier-Augen-Prinzip</h2>
+      <input type="hidden" name="commission_approval_settings_present" value="1">
+      <div class="row g-3">
+        {% for assignment, label in [('internal', 'Interne Beauftragungen'), ('external', 'Externe Beauftragungen')] %}
+        {% set field = assignment ~ '_commission_approver_user_id' %}
+        {% set selected_approver = item|attr(field) %}
+        <div class="col-md-6">
+          <label class="form-label" for="{{ field }}">{{ label }}</label>
+          <select class="form-select" id="{{ field }}" name="{{ field }}">
+            <option value="">Keine Freigabe erforderlich</option>
+            {% if selected_approver and selected_approver not in approval_user_choices|map(attribute='id')|list %}
+            <option value="{{ selected_approver }}" selected>Freigeber nicht verfügbar (ID {{ selected_approver }})</option>
+            {% endif %}
+            {% for approver in approval_user_choices %}
+            <option value="{{ approver.id }}" {% if selected_approver == approver.id %}selected{% endif %}>Freigabe durch {{ approver.display_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="form-text mt-2">Der gewählte Benutzer wird per E-Mail informiert. Freigabepflichtige Aufträge bleiben bis zur Freigabe lokal; Handwerker und Mieter werden erst danach informiert. Sobald für eine Vergabeart eine Freigabe erforderlich ist, hat dieser Benutzer keinen Zugriff auf die Auftragsprüfung und die Zeit- und Materialprüfung einschließlich der Arbeitszeitenübersicht.</div>
+    </div>
+  </div>
+  <div class="card-body border-top">
+    <div class="col-12 mb-3">
       <h2 class="h5">Push-Mitteilungen</h2>
       <input type="hidden" name="push_preferences_present" value="1">
       <div class="row g-3">

@@ -5,7 +5,7 @@
   <div>
     <h1 class="h3 mb-1">Auftragsprüfung</h1>
     <div class="text-muted">
-      Nicht abgeschlossene Aufträge, überschrittene Durchführungszeiträume und angeforderte Mieterbelastungen
+      Ausstehende Freigaben, nicht abgeschlossene Aufträge, überschrittene Durchführungszeiträume und angeforderte Mieterbelastungen
     </div>
   </div>
 
@@ -97,6 +97,9 @@
               <span class="badge text-bg-warning">
                 Mieterbelastung
               </span>
+              {% elif item.approval_state == 'pending' %}
+              <span class="badge text-bg-warning">Freigabe ausstehend</span>
+              <div class="small mt-1">{{ item.approval_approver.display_name if item.approval_approver else 'Freigeber nicht verfügbar' }}</div>
               {% elif item.execution_to %}
               <span class="badge text-bg-warning">Durchführungszeitraum überschritten</span>
               {% endif %}
@@ -169,6 +172,9 @@
             </td>
 
             <td>
+              {% if item.approval_state == 'pending' %}
+              <a class="btn btn-sm btn-primary" href="{{ url_for('admin.commission_detail', commission_id=item.id) }}">Freigabe prüfen</a>
+              {% endif %}
               {% if item.erp_id %}
               <form
                 method="post"

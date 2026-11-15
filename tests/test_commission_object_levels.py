@@ -42,6 +42,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
                 for item in node.names:
                     setattr(module, item.name, Mock())
         modules[cls.package_name + ".completion_notifications"].resolve_completion_notification_choice.return_value = False
+        modules[cls.package_name + ".commission_approval"].prepare_commission_approval.return_value = False
         modules[cls.package_name + ".commission_priority"].parse_commission_priority.return_value = False
         module_patch = patch.dict(sys.modules, modules)
         module_patch.start()

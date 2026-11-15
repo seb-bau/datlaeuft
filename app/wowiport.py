@@ -1734,6 +1734,8 @@ class WowiportService:
             self,
             commission: Commission,
     ) -> Any:
+        if commission.approval_state == "pending":
+            raise ValueError("Der Auftrag wartet noch auf die Freigabe.")
         if commission.economic_unit_erp_id and not any((
             commission.building_erp_id, commission.building_idnum,
             commission.use_unit_id, commission.use_unit_idnum,
@@ -2941,7 +2943,7 @@ def enqueue_synced_commission_push(
     actor_user_id: int | None = None,
     priority_raised: bool = False,
 ) -> None:
-    if commission.is_retrospective:
+    if commission.approval_state == "pending" or commission.is_retrospective:
         return
 
     current_user_id = commission.user.id if commission.user is not None else None
