@@ -5,7 +5,8 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .appointment_service import appointment_timezone
 from .email_templates import commission_email_context, render_email_template
-from .models import utc_now
+from .extensions import db
+from .models import WorkflowNotification, utc_now
 from .settings import SettingKeys, settings, validate_debug_email_address
 
 
@@ -37,14 +38,23 @@ def enqueue_appointment_calendar(commission, event_key=None):
     from .workflow_notifications import enqueue_notification
 
     user = commission.user
+    event_key = event_key or str(uuid4())
+    key = f"appointment-calendar:{commission.id}:{user.id if user else 0}:{event_key}"
+    existing = WorkflowNotification.query.filter_by(notification_key=key).one_or_none()
+    if existing is not None:
+        return existing
+    WorkflowNotification.query.filter(
+        WorkflowNotification.commission_id == commission.id,
+        WorkflowNotification.kind == "appointment_calendar",
+        WorkflowNotification.state.in_(("pending", "failed")),
+    ).update({WorkflowNotification.state: "discarded"}, synchronize_session="fetch")
     if (user is None or not user.is_active or not user.appointment_calendar_email_enabled
             or not commission.is_actionable or commission.is_retrospective
             or commission.accepted_appointment_from is None):
         return None
     signature = appointment_calendar_signature(commission)
-    event_key = event_key or str(uuid4())
     return enqueue_notification(
-        f"appointment-calendar:{commission.id}:{user.id}:{event_key}",
+        key,
         "appointment_calendar", commission=commission,
         payload={"user_id": user.id, "appointment_signature": signature},
     )

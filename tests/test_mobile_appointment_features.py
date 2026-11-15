@@ -168,6 +168,16 @@ class MobileAppointmentFeaturesTests(unittest.TestCase):
         self.assertEqual(event.decoded("DTSTART"), date(2027, 1, 15))
         self.assertEqual(event.decoded("DTEND"), date(2027, 1, 16))
 
+    def test_reentering_the_same_appointment_discards_the_previous_pending_invitation(self):
+        commission = self.commission()
+        self.assertEqual(self.manual_appointment(commission).status_code, 201)
+        commission.accepted_appointment_from = None
+        self.db.session.commit()
+        self.assertEqual(self.manual_appointment(commission).status_code, 201)
+        self.process()
+        self.assertEqual(self.send.call_count, 1)
+        self.assertEqual(sorted(item.state for item in self.models.WorkflowNotification.query.all()), ["discarded", "sent"])
+
     def test_tenant_acceptance_preserves_local_timezone_and_does_not_duplicate(self):
         commission = self.commission()
         token = "test-tenant-token"
