@@ -34,6 +34,24 @@ APPOINTMENT_LINE = "{{ appointment.date }}, {% if appointment.custom %}Beginn {{
 APPOINTMENT_DETAILS = "Handwerker: {{ craftsman_name or 'Ihr Handwerker' }}{% if topic %}\nThema: {{ topic }}{% endif %}"
 
 EMAIL_TEMPLATES = {
+    "overdue": {
+        "label": "Auftrag: Durchführungszeitraum überschritten",
+        "fields": ORDER_FIELDS + " execution_from execution_to craftsman_name",
+        "subject": "Durchführungszeitraum überschritten: Auftrag {{ commission_number }}",
+        "body": "Guten Tag,\n\nder Auftrag {{ commission_number }} ist nach Ablauf des Durchführungszeitraums noch offen.\n\n" + ORDER_DETAILS + "\nAusführung von: {{ execution_from }}\nAusführung bis: {{ execution_to }}\nHandwerker: {{ craftsman_name }}\n\nBitte prüfen Sie den Auftrag.\n{{ commission_url }}",
+    },
+    "priority": {
+        "label": "Handwerker: Auftrag mit hoher Priorität",
+        "fields": ORDER_FIELDS + " execution_from execution_to craftsman_name",
+        "subject": "Hohe Priorität: Auftrag {{ commission_number }}",
+        "body": "Guten Tag,\n\nIhnen wurde ein Auftrag mit hoher Priorität neu zugewiesen oder geändert. Bitte bearbeiten Sie diesen bevorzugt.\n\n" + ORDER_DETAILS + "\n{{ commission_url }}",
+    },
+    "ticket_declined": {
+        "label": "Mieter: Kein Auftrag mit Antwort",
+        "fields": "ticket_number ticket_subject response_text",
+        "subject": "Antwort zu Ticket {{ ticket_number }}: {{ ticket_subject }}",
+        "body": "Guten Tag,\n\n{{ response_text }}\n\nFreundliche Grüße\n",
+    },
     "tenant_assignment": {
         "label": "Mieter: Beauftragung",
         "fields": ORDER_FIELDS + " craft_names craftsman_name",
@@ -123,6 +141,11 @@ EMAIL_TEMPLATES = {
 }
 
 FIELD_LABELS = {
+    "execution_from": "Beginn des Durchführungszeitraums",
+    "execution_to": "Ende des Durchführungszeitraums",
+    "ticket_number": "Ticketnummer",
+    "ticket_subject": "Ticketbetreff",
+    "response_text": "Antwort an den Mieter",
     "commission_number": "Auftragsnummer",
     "commission_title": "Kurztitel",
     "description": "Auftragstext",
@@ -155,6 +178,11 @@ FIELD_LABELS = {
 }
 
 EXAMPLE_CONTEXT = {
+    "execution_from": "16.11.2026 08:00",
+    "execution_to": "20.11.2026 16:00",
+    "ticket_number": "12345",
+    "ticket_subject": "Wasserhahn undicht",
+    "response_text": "Vielen Dank für Ihre Meldung. Bitte beachten Sie unsere Hinweise.",
     "commission_number": "2026-0042",
     "commission_title": "Wasserhahn undicht",
     "description": "Bitte den Wasserhahn in der Küche prüfen.",

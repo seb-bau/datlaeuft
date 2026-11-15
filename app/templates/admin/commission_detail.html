@@ -103,6 +103,12 @@
     </form>
     {% endif %}
 
+    {% if wowiport_url %}
+    <a class="btn btn-sm btn-outline-secondary align-self-center" href="{{ wowiport_url }}"
+       target="_blank" rel="noopener noreferrer" title="Auftrag in Wowiport öffnen">
+      <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i> Wowiport
+    </a>
+    {% endif %}
     <a
       class="btn btn-outline-secondary"
       href="{{ url_for('admin.commissions') }}"
@@ -254,11 +260,11 @@
           <tr>
             <th>Ausführung von</th>
             <td>
-              {{ item.execution_from.strftime("%d.%m.%Y %H:%M") if item.execution_from else "–" }}
+              {{ format_execution_datetime(item.execution_from) }}
             </td>
             <th>Ausführung bis</th>
             <td>
-              {{ item.execution_to.strftime("%d.%m.%Y %H:%M") if item.execution_to else "–" }}
+              {{ format_execution_datetime(item.execution_to) }}
             </td>
           </tr>
         </tbody>

@@ -80,11 +80,13 @@ ACTIVE_STATUSES = (
     CommissionLocalStatus.IN_PROGRESS.value,
 )
 COMPLETED_STATUSES = (
+    CommissionLocalStatus.AWAITING_INVOICE.value,
     CommissionLocalStatus.COMPLETION_REVIEW.value,
     CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
     CommissionLocalStatus.DONE.value,
 )
 STATUS_LABELS = {
+    CommissionLocalStatus.AWAITING_INVOICE.value: "Rechnungseingang erwartet",
     CommissionLocalStatus.RECORDED.value: "Erfasst",
     CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value:
         "Wartet auf Annahme",

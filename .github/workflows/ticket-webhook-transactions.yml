@@ -11,6 +11,13 @@ on:
       - app/object_directory.py
       - app/tenant_notifications.py
       - app/tenant_sms_notifications.py
+      - app/workflow_notifications.py
+      - app/ticket_replies.py
+      - app/commission_links.py
+      - app/push_preferences.py
+      - app/static/js/ticket_reply.js
+      - app/templates/admin/user_form.html
+      - migrations/versions/*commission_workflow_notifications.py
       - app/sms_service.py
       - app/settings.py
       - requirements.txt
@@ -52,6 +59,13 @@ on:
       - app/object_directory.py
       - app/tenant_notifications.py
       - app/tenant_sms_notifications.py
+      - app/workflow_notifications.py
+      - app/ticket_replies.py
+      - app/commission_links.py
+      - app/push_preferences.py
+      - app/static/js/ticket_reply.js
+      - app/templates/admin/user_form.html
+      - migrations/versions/*commission_workflow_notifications.py
       - app/sms_service.py
       - app/settings.py
       - requirements.txt
@@ -123,7 +137,7 @@ jobs:
       - name: Tests mit SQLite ausführen
         run: python -m unittest discover -s tests -v
       - name: Objektauswahl mit JavaScript prüfen
-        run: node --test tests/test_commission_object_search.js
+        run: node --test tests/test_*.js
       - name: MariaDB-Einstellungen prüfen
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
@@ -145,6 +159,7 @@ jobs:
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
         run: |
+          python -m unittest discover -s tests -p test_workflow_notifications.py -v
           python -m unittest discover -s tests -p test_tenant_sms_notifications.py -v
           python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v
           python -m unittest discover -s tests -p test_mobile_sync.py -v

@@ -48,6 +48,7 @@ def ensure_completion_notifications(limit: int = 200) -> int:
         )
         .filter(
             Commission.source == CommissionSource.WEB.value,
+            Commission.is_retrospective.is_(False),
             Commission.notify_on_completion.is_(True),
             Commission.erp_id.is_not(None),
             Commission.erp_sync_state == CommissionSyncState.SYNCED.value,
@@ -156,7 +157,7 @@ def execute_completion_notification(item_id: int) -> None:
             and commission.notify_on_completion
             and completion_is_reported(commission)
         )
-    if commission.deleted_at is not None or not should_send:
+    if commission.is_retrospective or commission.deleted_at is not None or not should_send:
         item.state = "discarded"
         item.locked_at = None
         db.session.commit()

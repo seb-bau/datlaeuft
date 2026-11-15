@@ -367,11 +367,17 @@ document.addEventListener("DOMContentLoaded", () => {
         return badge;
     }
 
+    function retrospectiveCommissionSelected() {
+        return document.getElementById?.("retrospectiveCommission")?.value === "true";
+    }
+
     function updateTenantNotificationOptions(item) {
-        const available = Boolean(item?.license_agreement?.erp_id && !item.is_vacancy);
+        const eligible = Boolean(item?.license_agreement?.erp_id && !item.is_vacancy);
+        notifyTenants.dataset.available = eligible ? "true" : "false";
+        const available = eligible && !retrospectiveCommissionSelected();
         notifyTenants.disabled = !available;
         notifyTenants.value = available ? tenantNotificationPreference : "false";
-        notifyTenants.title = available ? "" : "Eine Mieter-Mitteilung benötigt einen belegten Mietvertrag.";
+        notifyTenants.title = retrospectiveCommissionSelected() ? "Bei nachträglicher Beauftragung werden keine Mieter informiert." : (available ? "" : "Eine Mieter-Mitteilung benötigt einen belegten Mietvertrag.");
         updateFieldState(notifyTenants);
     }
 
@@ -1594,6 +1600,21 @@ document.addEventListener("DOMContentLoaded", () => {
             scheduleObjectSearch();
         }
     );
+
+    const retrospectiveControl = document.getElementById("retrospectiveCommission");
+    if (retrospectiveControl) {
+        retrospectiveControl.addEventListener("change", () => {
+            const retrospective = retrospectiveCommissionSelected();
+            notifyTenants.disabled = retrospective || notifyTenants.dataset.available !== "true";
+            notifyTenants.value = notifyTenants.disabled ? "false" : tenantNotificationPreference;
+            updateFieldState(notifyTenants);
+            const completionChoice = document.getElementById("notifyOnCompletion");
+            if (completionChoice) {
+                completionChoice.disabled = retrospective;
+                if (retrospective) completionChoice.checked = false;
+            }
+        });
+    }
 
     objectSearchContext.addEventListener(
         "change",

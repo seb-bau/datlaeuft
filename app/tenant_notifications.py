@@ -176,6 +176,7 @@ def ensure_tenant_notifications(limit: int = 200) -> int:
         )
         .filter(
             Commission.notify_tenants.is_(True),
+            Commission.is_retrospective.is_(False),
             Commission.license_agreement_id.is_not(None),
             Commission.erp_id.is_not(None),
             Commission.craftsman_erp_id.is_not(None),
@@ -358,6 +359,11 @@ def execute_tenant_notification(item_id: int) -> None:
     if item is None or item.state != "sending":
         return
     commission = item.commission
+    if commission.is_retrospective:
+        item.state = "discarded"
+        item.locked_at = None
+        db.session.commit()
+        return
     mail_complete = item.payload is not None and bool(item.payload.get("recipients")) and all(
         address in item.payload.get("delivered", []) for address in item.payload["recipients"]
     )

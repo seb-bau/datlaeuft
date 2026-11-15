@@ -5,7 +5,7 @@
   <div>
     <h1 class="h3 mb-1">Auftragsprüfung</h1>
     <div class="text-muted">
-      Nicht abgeschlossene Aufträge und angeforderte Mieterbelastungen
+      Nicht abgeschlossene Aufträge, überschrittene Durchführungszeiträume und angeforderte Mieterbelastungen
     </div>
   </div>
 
@@ -73,6 +73,7 @@
             <th>Mieter</th>
             <th>Monteur</th>
             <th>Erstellt von</th>
+            <th>Ausführung bis</th>
             <th>Abschluss</th>
             <th>Begründung</th>
             <th>Gemeldet von</th>
@@ -96,6 +97,8 @@
               <span class="badge text-bg-warning">
                 Mieterbelastung
               </span>
+              {% elif item.execution_to %}
+              <span class="badge text-bg-warning">Durchführungszeitraum überschritten</span>
               {% endif %}
             </td>
 
@@ -120,6 +123,7 @@
             <td>
               {{ item.created_by.display_name if item.created_by else "Wowiport" }}
             </td>
+            <td>{{ format_execution_datetime(item.execution_to) }}</td>
 
             <td>
               {% if item.completion_successful %}

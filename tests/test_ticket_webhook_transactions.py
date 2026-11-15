@@ -62,6 +62,7 @@ class TicketWebhookTransactionTests(unittest.TestCase):
                 "process_external_assignment_mail_batch": Mock(),
             },
             "object_directory": {"commission_service_positions": Mock()},
+            "workflow_notifications": {"process_workflow_notification_batch": Mock()},
             "openai_service": {
                 "TICKET_ANALYSIS_PROMPT_VERSION": "test",
                 "analyze_ticket_content": Mock(),

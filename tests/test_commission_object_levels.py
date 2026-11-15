@@ -139,11 +139,12 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.client = self.app.test_client()
         self.headers = {"Authorization": "Bearer " + create_access_token(identity=str(self.creator.id))}
 
-    def create_order(self, object_type, object_id):
+    def create_order(self, object_type, object_id, **extra):
         commission = self.service.create_pending_commission({
             "object_type": object_type, "object_id": object_id,
             "craft_activity_id": self.craft.id, "commission_type_id": 100, "notify_tenants": "true",
             "positions": [{"service_catalog_id": 600, "commission_text": "Bitte reparieren", "units": 1}],
+            **extra,
         }, self.creator, self.models.CommissionSource.WEB)
         self.db.session.commit()
         return commission
@@ -523,6 +524,75 @@ class CommissionObjectLevelTests(unittest.TestCase):
         gateway = self.gateway_with_mocked_client()
         with self.assertRaisesRegex(RuntimeError, "Objektangabe"):
             gateway.resolve_commission_reference_ids(self.models.Commission())
+
+    def test_retrospective_orders_are_created_directly_in_the_final_erp_status(self):
+        for assignment_type, status_id, local_status in (("internal", 9, "done"), ("external", 11, "awaiting_invoice")):
+            with self.subTest(assignment_type=assignment_type):
+                if assignment_type == "external":
+                    external = self.models.ExternalCraftsman(craftsman_erp_id=3030, display_name="Externe Firma", email="external@example.invalid")
+                    self.db.session.add(external)
+                    self.db.session.flush()
+                    self.service.resolve_external_craftsman.return_value = external
+                values = {"assignment_type": assignment_type, "is_retrospective": "true", "notify_on_completion": True}
+                if assignment_type == "external":
+                    values["external_craftsman_id"] = external.id
+                commission = self.create_order("license_agreement", self.agreement.id, **values)
+                self.assertTrue(commission.is_retrospective)
+                self.assertEqual(commission.local_status, local_status)
+                self.assertFalse(commission.notify_tenants)
+                self.assertFalse(commission.notify_on_completion)
+                self.assertTrue(commission.completion_successful)
+                self.assertIsNotNone(commission.completed_at)
+                gateway = self.gateway_with_mocked_client()
+                gateway.client.create_commissioning_commission.return_value = types.SimpleNamespace(status_code=200, data={"Id": 9200, "IdNum": "A-1"})
+                gateway.create_commission_waiting_for_acceptance(commission)
+                gateway.client.create_commissioning_commission_wait_for_craftsman_feedback.assert_not_called()
+                values = gateway.client.create_commissioning_commission.call_args.kwargs
+                self.assertEqual(values["commission_status_id"], status_id)
+                self.assertEqual(values["completion_date"], self.gateway.ensure_utc(commission.completed_at).astimezone(self.gateway.ZoneInfo("Europe/Berlin")).date())
+
+    def test_real_erp_json_for_a_retrospective_order_has_the_final_status_without_a_feedback_request(self):
+        from test_wowiport_client import transport
+
+        commission = self.create_order("license_agreement", self.agreement.id, is_retrospective=True)
+        gateway = self.gateway_with_mocked_client()
+        lookups = gateway.client
+        with patch("wowipy.rest_adapter.requests_cache.install_cache"):
+            client = transport.WowiportClient(hostname="", user="test", password="test", api_key="test-key")
+        client._rest_adapter.access_token = "test-token"
+        client.get_license_agreements = lookups.get_license_agreements
+        client.get_use_units = lookups.get_use_units
+        client.get_building_lands = lookups.get_building_lands
+        replies = []
+        for erp_id, number in ((9100, "V-1"), (9200, "A-1")):
+            reply = Mock(status_code=200, reason="OK")
+            reply.json.return_value = {"Id": erp_id, "IdNum": number}
+            replies.append(reply)
+        client._rest_adapter._request = Mock(side_effect=replies)
+        gateway.client = client
+        gateway.create_commission_waiting_for_acceptance(commission)
+        request = client._rest_adapter._request.call_args_list[-1]
+        self.assertNotIn("WaitForCraftsmanFeedback", str(request))
+        self.assertEqual(request.kwargs["json"]["CommissionStatusId"], 9)
+        self.assertIn("CompletionDate", request.kwargs["json"])
+
+    def test_web_execution_times_use_berlin_time_and_keep_their_precision_after_erp_sync(self):
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+
+        commission = self.create_order("license_agreement", self.agreement.id,
+            execution_from="2026-11-15T00:30", execution_to="2026-11-15T17:00")
+        self.assertEqual(commission.execution_to.hour, 16)
+        gateway = self.gateway_with_mocked_client()
+        gateway.create_commission_waiting_for_acceptance(commission)
+        values = gateway.client.create_commissioning_commission_wait_for_craftsman_feedback.call_args.kwargs
+        self.assertEqual(values["execution_from"].isoformat(), "2026-11-15")
+        restored = self.gateway.commission_execution_datetime("2026-11-15T00:00:00Z", current=commission.execution_to, end=True)
+        self.assertEqual(restored, commission.execution_to)
+        imported = self.gateway.commission_execution_datetime("2026-11-15T00:00:00Z", end=True).astimezone(ZoneInfo("Europe/Berlin"))
+        self.assertEqual((imported.hour, imported.minute, imported.second), (23, 59, 59))
+        summer = self.service.parse_local_datetime("2026-07-01T17:00")
+        self.assertEqual(summer, datetime(2026, 7, 1, 15, tzinfo=timezone.utc))
 
     def test_contractless_orders_do_not_queue_tenant_notifications_even_with_a_legacy_opt_in(self):
         commission = self.create_order("economic_unit", 1)

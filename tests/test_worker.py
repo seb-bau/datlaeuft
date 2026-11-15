@@ -76,6 +76,7 @@ class WorkerLoopTests(unittest.TestCase):
             "process_outbox_batch", "process_process_info_work",
             "process_external_assignment_mail_batch", "process_push_batch",
             "process_tenant_notification_batch", "process_tenant_sms_notification_batch", "process_completion_notification_batch",
+            "process_workflow_notification_batch",
             "process_dms_batch",
         )
         manager = Mock()
@@ -97,7 +98,7 @@ class WorkerLoopTests(unittest.TestCase):
         self.assertEqual(result, {
             "mobile_deliveries": 0, "webhooks": 3, "outbox": 4,
             "process_infos": 5, "external_assignment_emails": 6, "push": 7,
-            "tenant_notifications": 8, "tenant_sms_notifications": 9, "completion_notifications": 10, "dms": 11,
+            "tenant_notifications": 8, "tenant_sms_notifications": 9, "completion_notifications": 10, "workflow_notifications": 11, "dms": 12,
         })
         self.assertEqual(progress.call_count, len(names))
 
