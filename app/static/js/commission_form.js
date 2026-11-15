@@ -344,6 +344,11 @@ document.addEventListener("DOMContentLoaded", () => {
         }[item.object_type] || "Objekt";
     }
 
+    function ticketPhotosReady() {
+        const field = document.getElementById?.("ticketPhotoSelectionReady");
+        return !field || field.value === "true";
+    }
+
     function objectHeading(item) {
         if (item.object_type === "license_agreement") {
             return item.tenant_name || (item.is_vacancy ? "Leerstand" : "Mietvertrag");
@@ -353,7 +358,12 @@ document.addEventListener("DOMContentLoaded", () => {
             building: item.building?.id_num,
             economic_unit: item.economic_unit?.id_num
         }[item.object_type];
-        return [objectTypeLabel(item), number].filter(Boolean).join(" · ");
+        const address = item.object_type === "economic_unit"
+            ? item.economic_unit?.address
+            : item.use_unit?.address || item.building?.address;
+        const location = item.object_type === "use_unit" ? item.use_unit?.description : null;
+        return [number, address || item.economic_unit?.name || item.label || objectTypeLabel(item), location]
+            .filter(Boolean).join(" · ");
     }
 
     function objectIcon(item) {
@@ -415,7 +425,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     function objectText(item) {
-        const showUnitLocation = ["license_agreement", "use_unit"].includes(item.object_type);
+        const showUnitLocation = item.object_type === "license_agreement";
         const location = showUnitLocation ? item.use_unit?.description : null;
         const values = [
             item.object_type === "license_agreement" && item.license_agreement?.id_num
@@ -425,8 +435,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 ? "Leerstand"
                 : null,
             location,
-            item.use_unit?.address || item.building?.address,
-            item.object_type === "economic_unit" ? item.economic_unit?.name : null,
+            showUnitLocation ? item.use_unit?.address || item.building?.address : null,
+            item.object_type === "economic_unit" && item.economic_unit?.address ? item.economic_unit?.name : null,
         ];
 
         return values
@@ -505,6 +515,7 @@ document.addEventListener("DOMContentLoaded", () => {
         submitCommission.disabled = (
             !canCreate
             || !objectId.value
+            || !ticketPhotosReady()
         );
 
         updateAssignmentPreview({
@@ -1799,7 +1810,12 @@ document.addEventListener("DOMContentLoaded", () => {
     submitCommission.disabled = (
         !canCreate
         || !objectId.value
+        || !ticketPhotosReady()
     );
+
+    commissionForm.addEventListener("ticket-photos-updated", () => {
+        submitCommission.disabled = !canCreate || !objectId.value || !ticketPhotosReady();
+    });
 
     filterExternalCraftsmen();
     updateAssignmentControls();

@@ -2189,6 +2189,13 @@ def _serialize_choice(
             "ist nicht verfügbar."
         )
 
+    economic_address = None
+    if object_type == "economic_unit":
+        try:
+            economic_address = resolve_commission_address_building(economic_unit).address
+        except ValueError:
+            economic_address = economic_unit.location
+
     if agreement is not None:
         label = (
             tenant_name
@@ -2226,6 +2233,7 @@ def _serialize_choice(
             "erp_id": economic_unit.erp_id,
             "id_num": economic_unit.id_num,
             "name": economic_unit.name,
+            "address": economic_address,
         },
         "building": (
             {

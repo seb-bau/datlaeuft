@@ -150,6 +150,15 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.db.session.commit()
         return commission
 
+    def test_economic_search_exposes_the_first_address_without_changing_the_order_scope(self):
+        choice = self.directory.get_commission_object_choice("economic_unit", self.economic.id)
+        self.assertEqual(choice["economic_unit"]["address"], self.building.address)
+        self.assertEqual(choice["object_type"], "economic_unit")
+        self.assertIsNone(choice["building"])
+        self.assertIsNone(choice["use_unit"])
+        empty = self.directory.get_commission_object_choice("economic_unit", self.empty_economic.id)
+        self.assertEqual(empty["economic_unit"]["address"], self.empty_economic.location)
+
     def test_unit_search_keeps_an_occupied_unit_separate_from_its_contract(self):
         choices = self.directory.search_commission_objects("COMMON", "use_unit")
         self.assertEqual([(item["object_type"], item["object_id"]) for item in choices], [("use_unit", self.unit.id)])
