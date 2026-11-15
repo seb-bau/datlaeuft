@@ -15,6 +15,7 @@ on:
       - app/performance_review_service.py
       - app/process_info_service.py
       - migrations/versions/*commission_approval.py
+      - migrations/env.py
       - app/static/js/commission_object_history.js
       - app/tenant_notifications.py
       - app/tenant_sms_notifications.py
@@ -70,6 +71,7 @@ on:
       - app/performance_review_service.py
       - app/process_info_service.py
       - migrations/versions/*commission_approval.py
+      - migrations/env.py
       - app/static/js/commission_object_history.js
       - app/tenant_notifications.py
       - app/tenant_sms_notifications.py
@@ -173,6 +175,7 @@ jobs:
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
         run: |
+          python -m unittest discover -s tests -p test_approval_migration_recovery.py -v
           python -m unittest discover -s tests -p test_commission_approval.py -v
           python -m unittest discover -s tests -p test_commission_object_history.py -v
           python -m unittest discover -s tests -p test_workflow_notifications.py -v
