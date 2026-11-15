@@ -108,6 +108,12 @@ EMAIL_TEMPLATES = {
         "subject": "Termin bestätigt – Auftrag {{ commission_number }}",
         "body": GREETING + "der Bewohner hat folgenden Termin bestätigt:\n\n" + APPOINTMENT_LINE + "\n\nAuftrag: {{ commission_number }}{% if address %}\nAdresse: {{ address }}{% endif %}{% if tenant_comment %}\n\nKommentar des Bewohners:\n{{ tenant_comment }}{% endif %}",
     },
+    "appointment_worker_calendar": {
+        "label": "Termin: Kalendereinladung an Handwerker",
+        "fields": ORDER_FIELDS + " recipient_name appointment_text appointment_comment",
+        "subject": "Kalendereinladung – Auftrag {{ commission_number }}",
+        "body": GREETING + "für Ihren Auftrag ist folgender Termin bestätigt:\n\n{{ appointment_text }}\n\n" + ORDER_DETAILS + "{% if appointment_comment %}\nNotiz: {{ appointment_comment }}\n{% endif %}\nDie Kalendereinladung finden Sie im Anhang.",
+    },
     "appointment_rejected": {
         "label": "Termin: Absage an Handwerker",
         "fields": ORDER_FIELDS + " recipient_name tenant_comment",
@@ -147,6 +153,8 @@ EMAIL_TEMPLATES = {
 }
 
 FIELD_LABELS = {
+    "appointment_text": "Bestätigter Termin",
+    "appointment_comment": "Notiz zum Termin",
     "execution_from": "Beginn des Durchführungszeitraums",
     "execution_to": "Ende des Durchführungszeitraums",
     "ticket_number": "Ticketnummer",
@@ -184,6 +192,8 @@ FIELD_LABELS = {
 }
 
 EXAMPLE_CONTEXT = {
+    "appointment_text": "15.01.2027 10:30 Uhr",
+    "appointment_comment": "Bitte am Hauseingang klingeln.",
     "execution_from": "16.11.2026 08:00",
     "execution_to": "20.11.2026 16:00",
     "ticket_number": "12345",

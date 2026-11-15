@@ -751,6 +751,9 @@ class User(UserMixin, db.Model):
         default=dict,
         nullable=True,
     )
+    appointment_calendar_email_enabled: Mapped[bool] = mapped_column(
+        db.Boolean, default=True, server_default=true(), nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
 

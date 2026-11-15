@@ -346,6 +346,8 @@ def appointment_response(
             message_detail=message_detail,
         )
 
+        from .appointment_calendar import enqueue_appointment_calendar
+        enqueue_appointment_calendar(commission, event_key=f"request:{appointment_request.id}")
         db.session.commit()
 
         confirmation_email_sent = notify_tenant(
