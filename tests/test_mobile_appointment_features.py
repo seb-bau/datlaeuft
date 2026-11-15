@@ -292,12 +292,23 @@ class AppointmentCalendarMigrationTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("appointment_calendar_migration", path)
         migration = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
-        engine = sa.create_engine("sqlite://")
+        database_url = os.environ.get("DATLAEUFT_TEST_DATABASE_URL", "sqlite://")
+        database = make_url(database_url)
+        if database.get_backend_name() != "sqlite" and not (database.database or "").startswith("datlaeuft_test_"):
+            raise ValueError("Für diese Tests ist eine eigene Testdatenbank erforderlich.")
+        engine = sa.create_engine(database_url)
+        self.addCleanup(engine.dispose)
         with engine.begin() as connection:
+            if connection.dialect.name in {"mysql", "mariadb"}:
+                connection.execute(sa.text("SET FOREIGN_KEY_CHECKS=0"))
+            connection.execute(sa.text("DROP TABLE IF EXISTS user_account"))
             connection.execute(sa.text("CREATE TABLE user_account (id INTEGER PRIMARY KEY, email VARCHAR(255))"))
+            if connection.dialect.name in {"mysql", "mariadb"}:
+                connection.execute(sa.text("SET FOREIGN_KEY_CHECKS=1"))
             connection.execute(sa.text("INSERT INTO user_account VALUES (1, 'worker@example.invalid')"))
             with Operations.context(MigrationContext.configure(connection)):
                 migration.upgrade()
+                self.assertEqual(connection.execute(sa.text("SELECT appointment_calendar_email_enabled FROM user_account WHERE id = 1")).scalar(), 1)
                 connection.execute(sa.text("UPDATE user_account SET appointment_calendar_email_enabled = 0 WHERE id = 1"))
                 migration.upgrade()
                 connection.execute(sa.text("INSERT INTO user_account (id, email) VALUES (2, 'new@example.invalid')"))
