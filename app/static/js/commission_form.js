@@ -356,6 +356,35 @@ document.addEventListener("DOMContentLoaded", () => {
         return [objectTypeLabel(item), number].filter(Boolean).join(" · ");
     }
 
+    function objectIcon(item) {
+        const icon = document.createElement("i");
+        icon.className = "bi " + ({
+            license_agreement: "bi-file-earmark-text", use_unit: "bi-door-open",
+            building: "bi-house-door", economic_unit: "bi-buildings"
+        }[item.object_type] || "bi-geo-alt") + " me-2 text-secondary";
+        icon.setAttribute("aria-hidden", "true");
+        icon.title = objectTypeLabel(item);
+        return icon;
+    }
+
+    function groupedObjectResults(items, searchContext) {
+        if (searchContext !== "address") return items;
+        const buildings = items.filter(item => item.object_type === "building");
+        const grouped = [];
+        const included = new Set();
+        for (const building of buildings) {
+            grouped.push(building);
+            included.add(building);
+            for (const item of items) {
+                if (item.object_type !== "building" && item.building?.erp_id && item.building.erp_id === building.building?.erp_id) {
+                    grouped.push(item);
+                    included.add(item);
+                }
+            }
+        }
+        return [...grouped, ...items.filter(item => !included.has(item))];
+    }
+
     function futureContractBadge(item) {
         if (!item.is_future || !item.license_agreement?.start_date) {
             return null;
@@ -453,6 +482,7 @@ document.addEventListener("DOMContentLoaded", () => {
         );
         heading.className = "fw-semibold";
         heading.textContent = objectHeading(item);
+        heading.prepend(objectIcon(item));
         const statusBadge = futureContractBadge(item);
         if (statusBadge) {
             heading.appendChild(statusBadge);
@@ -470,6 +500,7 @@ document.addEventListener("DOMContentLoaded", () => {
             objectSummary.appendChild(details);
         }
 
+        objectSummary.dispatchEvent(new CustomEvent("commission-object-selected", {detail: item}));
         objectResults.replaceChildren();
         submitCommission.disabled = (
             !canCreate
@@ -554,7 +585,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            payload.items.forEach((item) => {
+            groupedObjectResults(payload.items, searchContext).forEach((item) => {
                 const button = document.createElement(
                     "button"
                 );
@@ -563,12 +594,17 @@ document.addEventListener("DOMContentLoaded", () => {
                     "list-group-item "
                     + "list-group-item-action py-2"
                 );
+                if (searchContext === "address" && item.object_type !== "building" && payload.items.some(parent => parent.object_type === "building" && item.building?.erp_id && parent.building?.erp_id === item.building.erp_id)) {
+                    button.className += " commission-object-child";
+                }
+                button.setAttribute("aria-label", `${objectTypeLabel(item)}: ${objectHeading(item)} · ${objectText(item)}`);
 
                 const title = document.createElement(
                     "div"
                 );
                 title.className = "fw-semibold";
                 title.textContent = objectHeading(item);
+                title.prepend(objectIcon(item));
                 const statusBadge = futureContractBadge(item);
                 if (statusBadge) {
                     title.appendChild(statusBadge);
