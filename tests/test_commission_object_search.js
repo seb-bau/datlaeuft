@@ -57,7 +57,7 @@ function form(items = []) {
     sandbox.scheduleObjectSearch = delay => sandbox.scheduled.push(delay);
     vm.createContext(sandbox);
     vm.runInContext([
-        "objectTypeLabel", "objectHeading", "futureContractBadge", "updateTenantNotificationOptions", "objectText",
+        "objectTypeLabel", "objectHeading", "futureContractBadge", "retrospectiveCommissionSelected", "updateTenantNotificationOptions", "objectText",
         "selectObject", "showObjectSearchMessage", "loadObjects",
     ].map(functionSource).join("\n"), sandbox);
     const listenerStart = source.indexOf("    objectSearchContext.addEventListener(");
@@ -141,6 +141,15 @@ test("the future hint is absent for current contracts and other object levels", 
     assert.equal(state.futureContractBadge(building), null);
     assert.equal(state.futureContractBadge({...futureContract, is_future: false}), null);
     assert.equal(state.futureContractBadge({...futureContract, license_agreement: null}), null);
+});
+
+test("a retrospective order keeps its object selection but disables tenant notifications", () => {
+    const state = form();
+    state.document.getElementById = () => ({value: "true"});
+    state.selectObject(futureContract);
+    assert.equal(state.objectType.value, "license_agreement");
+    assert.equal(state.notifyTenants.disabled, true);
+    assert.equal(state.notifyTenants.value, "false");
 });
 
 test("results and selected summaries display only the selected level number with location and address", async () => {

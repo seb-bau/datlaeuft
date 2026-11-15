@@ -10,6 +10,9 @@
   <div class="card-body">
     {% for group, definitions in groups.items() %}
     <h2 class="h5 mt-3">{{ group }}</h2>
+    {% if group == "Push-Standardwerte" %}
+    <div class="form-text mb-2">Diese Werte gelten, solange für den Benutzer keine abweichende Vorgabe gespeichert ist. Persönliche oder administrative Vorgaben haben Vorrang.</div>
+    {% endif %}
     <div class="row g-3">
       {% for definition in definitions %}
       <div class="col-md-6">

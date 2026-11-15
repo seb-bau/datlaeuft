@@ -26,10 +26,12 @@ from .external_craftsman_service import (
     resolve_external_craftsman,
 )
 from .settings import SettingKeys, settings
-from .utils import parse_datetime
+from .utils import parse_datetime, parse_local_datetime
 from .commission_priority import parse_commission_priority
 from .tenant_notifications import resolve_tenant_notification_choice
 from .completion_notifications import resolve_completion_notification_choice
+from .workflow_notifications import enqueue_priority_notification
+from .models import PushEventType
 
 
 def create_pending_commission(
@@ -45,6 +47,10 @@ def create_pending_commission(
             "Bitte die Personenzuordnung und den Objektspiegel prüfen."
         )
     notify_tenants = resolve_tenant_notification_choice(data.get("notify_tenants"))
+    retrospective_value = data.get("is_retrospective", False)
+    if not (type(retrospective_value) is bool or retrospective_value is None or isinstance(retrospective_value, str) and retrospective_value in {"true", "false", ""}):
+        raise ValueError("Die Auswahl zur nachträglichen Beauftragung ist ungültig.")
+    is_retrospective = retrospective_value is True or retrospective_value == "true"
     notify_on_completion = resolve_completion_notification_choice(
         source, data.get("notify_on_completion")
     )
@@ -112,12 +118,16 @@ def create_pending_commission(
             "ist erforderlich."
         )
 
-    execution_from = parse_datetime(
+    parse_execution = parse_local_datetime if source == CommissionSource.WEB else parse_datetime
+    execution_from = parse_execution(
         data.get("execution_from")
     )
-    execution_to = parse_datetime(
+    execution_to = parse_execution(
         data.get("execution_to")
     )
+
+    if data.get("execution_from") and execution_from is None or data.get("execution_to") and execution_to is None:
+        raise ValueError("Bitte gültige Datums- und Zeitangaben für den Durchführungszeitraum eingeben.")
 
     if (
         execution_from is not None
@@ -228,8 +238,9 @@ def create_pending_commission(
         sales_tax_code=sales_tax_code,
         public_id=public_id,
         source=source.value,
-        notify_tenants=notify_tenants,
-        notify_on_completion=notify_on_completion,
+        is_retrospective=is_retrospective,
+        notify_tenants=notify_tenants and not is_retrospective,
+        notify_on_completion=notify_on_completion and not is_retrospective,
         assignment_type=assignment_type,
         is_high_priority=is_high_priority,
         priority_is_manual="priority" in data,
@@ -237,7 +248,8 @@ def create_pending_commission(
             CommissionSyncState.PENDING.value
         ),
         local_status=(
-            CommissionLocalStatus.RECORDED.value
+            (CommissionLocalStatus.DONE.value if assignment_type == "internal" else CommissionLocalStatus.AWAITING_INVOICE.value)
+            if is_retrospective else CommissionLocalStatus.RECORDED.value
         ),
         erp_external_identification_number=(
             public_id
@@ -308,6 +320,8 @@ def create_pending_commission(
         ),
         recording_date=now,
         status_changed_at=now,
+        completed_at=now if is_retrospective else None,
+        completion_successful=True if is_retrospective else None,
         execution_from=execution_from,
         execution_to=execution_to,
         synced_at=now,
@@ -591,6 +605,8 @@ def create_pending_commission(
         ),
     )
 
+    if commission.is_high_priority and not commission.is_retrospective:
+        enqueue_priority_notification(commission, PushEventType.NEW_COMMISSION)
     return commission
 
 

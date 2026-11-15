@@ -33,6 +33,16 @@
     </a>
   </div>
 
+  {% if current_user.is_admin or current_user.is_foreman %}
+  <div class="col-md-4">
+    <a class="card shadow-sm text-decoration-none text-body h-100" href="{{ url_for('admin.commission_reviews', status='overdue') }}">
+      <div class="card-body">
+        <div class="text-muted">Durchführungszeitraum überschritten</div>
+        <div class="display-6 text-warning">{{ overdue_review_count }}</div>
+      </div>
+    </a>
+  </div>
+  {% endif %}
   {% if current_user.is_admin %}
   <div class="col-md-4">
     <a

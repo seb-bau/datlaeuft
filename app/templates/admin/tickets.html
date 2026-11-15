@@ -266,7 +266,24 @@ Einstellungen findest du unter Einstellungen.
               Kein Auftrag
             </button>
           </form>
+          <button class="btn btn-outline-secondary w-100" type="button"
+                  data-bs-toggle="modal" data-bs-target="#ticketReplyModal"
+                  data-reply-url="{{ url_for('admin.ticket_ignore_with_reply', ticket_id=ticket.id) }}"
+                  data-recipients-url="{{ url_for('admin.ticket_reply_recipient_options', ticket_id=ticket.id) }}"
+                  data-ticket-number="{{ ticket.id_num or ticket.erp_id }}">
+            Kein Auftrag (mit Antwort)
+          </button>
           {% elif ticket.state == "ignored" %}
+          {% set reply = ticket_reply_notifications.get(ticket.id) %}
+          {% if reply %}
+          <div class="small {% if reply.state in ['failed', 'uncertain'] %}text-danger{% else %}text-muted{% endif %}" role="status">
+            {% if reply.state == 'sent' %}Antwort versendet und dokumentiert
+            {% elif reply.payload.get('mail_sent') %}E-Mail versendet, Ticketdokumentation ausstehend
+            {% elif reply.state == 'uncertain' %}Versandstatus unklar – bitte den E-Mail-Versand prüfen
+            {% elif reply.state == 'failed' %}Antwort ausstehend: {{ reply.last_error }}
+            {% else %}Antwort zum Versand vorgemerkt{% endif %}
+          </div>
+          {% endif %}
           <form
             method="post"
             action="{{ url_for(
@@ -342,8 +359,34 @@ Einstellungen findest du unter Einstellungen.
   </ul>
 </nav>
 {% endif %}
+<div class="modal fade" id="ticketReplyModal" tabindex="-1" aria-labelledby="ticketReplyTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg"><div class="modal-content">
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="ticketReplyTitle">Kein Auftrag – Antwort an den Mieter</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label" for="ticketReplyRecipient">E-Mail-Empfänger</label>
+        <input class="form-control" type="email" id="ticketReplyRecipient" name="recipient" list="ticketReplyRecipients" required>
+        <datalist id="ticketReplyRecipients"></datalist>
+        <div class="form-text mb-3" id="ticketReplyStatus" role="status"></div>
+        <label class="form-label" for="ticketReplyText">Antwort an den Mieter</label>
+        <textarea class="form-control" id="ticketReplyText" name="response_text" rows="7" maxlength="20000" required></textarea>
+        <div class="form-text">Die Antwort wird per E-Mail versendet und zusätzlich im Wowiport-Ticket hinterlegt.</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Abbrechen</button>
+        <button class="btn btn-primary" type="submit">Antwort senden und als „Kein Auftrag“ markieren</button>
+      </div>
+    </form>
+  </div></div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/ticket_filters.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ticket_reply.js') }}"></script>
 {% endblock %}

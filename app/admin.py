@@ -59,6 +59,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from .commission_service import create_pending_commission
 from .models import (
+    WorkflowNotification,
     Commission,
     CommissionLocalStatus,
     CommissionSource,
@@ -220,6 +221,11 @@ from datetime import date, time, timedelta
 from uuid import uuid4
 
 from .commission_priority import set_manual_commission_priority
+from .commission_links import commission_wowiport_url
+from .push_preferences import admin_push_preference_rows, save_admin_push_preferences
+from .workflow_notifications import overdue_commission_filter
+from .ticket_replies import enqueue_ticket_reply, ticket_reply_recipients
+from .utils import format_local_datetime
 
 from .process_info_service import (
     create_office_info,
@@ -330,10 +336,10 @@ def root() -> Any:
 def commission_review_query():
     query = Commission.query.filter(
         Commission.deleted_at.is_(None),
-        Commission.local_status.in_([
+        or_(Commission.local_status.in_([
             CommissionLocalStatus.COMPLETION_REVIEW.value,
             CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
-        ]),
+        ]), overdue_commission_filter()),
     )
 
     if current_user.is_admin:
@@ -409,6 +415,7 @@ def dashboard() -> Any:
         Commission.local_status
         == CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
     ).count()
+    overdue_review_count = commission_reviews.filter(overdue_commission_filter()).count()
 
     sync_problem_count = 0
 
@@ -462,6 +469,7 @@ def dashboard() -> Any:
         low_stock_count=low_stock_count,
         completion_review_count=completion_review_count,
         tenant_charge_review_count=tenant_charge_review_count,
+        overdue_review_count=overdue_review_count,
         sync_problem_count=sync_problem_count,
     )
 
@@ -3510,6 +3518,7 @@ def user_create() -> Any:
         selected_craft_activities=[],
         **user_work_time_profile_context(item),
         **user_commission_visibility_context(item),
+        push_preference_rows=admin_push_preference_rows(item),
     )
 
 
@@ -3639,6 +3648,7 @@ def user_edit(user_id: int) -> Any:
         ),
         **user_work_time_profile_context(item),
         **user_commission_visibility_context(item),
+        push_preference_rows=admin_push_preference_rows(item),
     )
 
 
@@ -4099,8 +4109,13 @@ def tickets() -> Any:
         ).strip()
     )
 
+    reply_notifications = WorkflowNotification.query.filter(
+        WorkflowNotification.kind == "ticket_reply",
+        WorkflowNotification.ticket_id.in_([ticket.id for ticket in pagination.items]),
+    ).order_by(WorkflowNotification.id).all() if pagination.items else []
     return render_template(
         "admin/tickets.html",
+        ticket_reply_notifications={item.ticket_id: item for item in reply_notifications},
         pagination=pagination,
         selected_state=selected_state,
         search_text=search_text,
@@ -4165,6 +4180,7 @@ def ticket_commissions(
             "Mieterbelastung"
         ),
         "done": "Erledigt",
+        "awaiting_invoice": "Rechnungseingang erwartet",
         "deleted": "Gelöscht",
     }
 
@@ -4253,6 +4269,32 @@ def ticket_ignore(
     return redirect(
         url_for("admin.tickets")
     )
+
+
+@admin_bp.get("/admin/tickets/<int:ticket_id>/reply-recipients")
+@foreman_required
+def ticket_reply_recipient_options(ticket_id: int) -> Any:
+    ticket = db.get_or_404(TicketMirror, ticket_id)
+    try:
+        return jsonify({"recipients": ticket_reply_recipients(ticket)})
+    except Exception:
+        current_app.logger.exception("ticket_reply_recipient_lookup_failed ticket_id=%s", ticket_id)
+        return jsonify({"message": "Die Empfängeradresse konnte nicht geladen werden. Bitte prüfen und eintragen."}), 502
+
+
+@admin_bp.post("/admin/tickets/<int:ticket_id>/ignore-with-reply")
+@foreman_required
+def ticket_ignore_with_reply(ticket_id: int) -> Any:
+    ticket = TicketMirror.query.filter_by(id=ticket_id).with_for_update().populate_existing().first_or_404()
+    try:
+        notification = enqueue_ticket_reply(ticket, request.form.get("recipient", ""), request.form.get("response_text", ""))
+        audit("ticket.ignore_with_reply", "ticket", ticket.erp_id, {"notification_id": notification.id})
+        db.session.commit()
+        flash("Die Antwort wurde zum E-Mail-Versand und zur Dokumentation im Wowiport-Ticket vorgemerkt.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(safe_next_url("admin.tickets"))
 
 
 @admin_bp.post(
@@ -7662,6 +7704,7 @@ def commissions() -> Any:
         "completion_review": "Nicht abgeschlossen",
         "tenant_charge_review": "Mieterbelastung",
         "done": "Erledigt",
+        "awaiting_invoice": "Rechnungseingang erwartet",
         "deleted": "Gelöscht",
     }
     creator_filter = str(request.args.get("creator") or "mine").strip()
@@ -7801,6 +7844,7 @@ def commissions() -> Any:
 
     return render_template(
         "admin/commissions.html",
+        format_execution_datetime=format_local_datetime,
         items=items,
         creator_filter=creator_filter,
         view_mode=view_mode,
@@ -7937,6 +7981,7 @@ def commission_detail(
         "completion_review": "Nicht abgeschlossen",
         "tenant_charge_review": "Mieterbelastung",
         "done": "Erledigt",
+        "awaiting_invoice": "Rechnungseingang erwartet",
         "deleted": "Gelöscht",
     }
 
@@ -7971,6 +8016,8 @@ def commission_detail(
         "admin/commission_detail.html",
         item=item,
         manual_appointment_text=format_manual_appointment(item),
+        format_execution_datetime=format_local_datetime,
+        wowiport_url=commission_wowiport_url(item),
         photos=photos,
         appointment_requests=appointment_requests,
         history_entries=history_entries,
@@ -8072,11 +8119,14 @@ def commission_reviews() -> Any:
             "Nicht abgeschlossen",
         CommissionLocalStatus.TENANT_CHARGE_REVIEW.value:
             "Mieterbelastung",
+        "overdue": "Durchführungszeitraum überschritten",
     }
 
     query = commission_review_query()
 
-    if selected_status in status_labels:
+    if selected_status == "overdue":
+        query = query.filter(overdue_commission_filter())
+    elif selected_status in status_labels:
         query = query.filter(
             Commission.local_status
             == selected_status
@@ -8091,6 +8141,7 @@ def commission_reviews() -> Any:
 
     return render_template(
         "admin/commission_reviews.html",
+        format_execution_datetime=format_local_datetime,
         items=items,
         selected_status=selected_status,
         status_labels=status_labels,
@@ -10245,6 +10296,7 @@ def save_user_commission_visibility(
 
 
 def save_user_form(item: User) -> None:
+    save_admin_push_preferences(item, request.form)
     item.email = request.form.get("email", "").strip().lower()
     item.display_name = request.form.get("display_name", "").strip()
     item.entra_oid = request.form.get("entra_oid") or None
@@ -12195,6 +12247,7 @@ def read_commission_form() -> dict[str, Any]:
         ),
         "notify_tenants": request.form.get("notify_tenants"),
         "notify_on_completion": request.form.get("notify_on_completion") == "true",
+        "is_retrospective": request.form.get("is_retrospective", "false"),
     }
 
 

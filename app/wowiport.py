@@ -37,6 +37,7 @@ from .settings import SettingKeys, settings
 from .utils import (
     normalize_country_code,
     parse_datetime,
+    ensure_utc,
 )
 from .document_sync import sync_commission_documents
 from .push_service import enqueue_commission_push
@@ -50,6 +51,17 @@ ERP_LOCAL_STATUS = {
     10: CommissionLocalStatus.COMPLETION_REVIEW.value,
     11: CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
 }
+
+
+def commission_execution_datetime(value, *, current=None, end=False):
+    parsed = parse_datetime(value)
+    if parsed is None or any((parsed.hour, parsed.minute, parsed.second, parsed.microsecond)):
+        return parsed
+    day = parsed.date()
+    if current is not None and ensure_utc(current).astimezone(ZoneInfo("Europe/Berlin")).date() == day:
+        return current
+    clock = datetime.max.time() if end else datetime.min.time()
+    return datetime.combine(day, clock, tzinfo=ZoneInfo("Europe/Berlin")).astimezone(timezone.utc)
 
 CRAFTS_PROCESS_SHORT_DESCRIPTION_MAX_LENGTH = 100
 
@@ -1872,12 +1884,12 @@ class WowiportService:
             else utc_now().date()
         )
         execution_from = (
-            commission.execution_from.date()
+            ensure_utc(commission.execution_from).astimezone(ZoneInfo("Europe/Berlin")).date()
             if commission.execution_from
             else None
         )
         execution_to = (
-            commission.execution_to.date()
+            ensure_utc(commission.execution_to).astimezone(ZoneInfo("Europe/Berlin")).date()
             if commission.execution_to
             else None
         )
@@ -1889,7 +1901,12 @@ class WowiportService:
             )
         )
 
-        result = self.client.create_commissioning_commission_wait_for_craftsman_feedback(
+        create_commission = self.client.create_commissioning_commission if commission.is_retrospective else self.client.create_commissioning_commission_wait_for_craftsman_feedback
+        retrospective_values = {
+            "commission_status_id": 11 if commission.assignment_type == "external" else 9,
+            "completion_date": ensure_utc(commission.completed_at or utc_now()).astimezone(ZoneInfo("Europe/Berlin")).date(),
+        } if commission.is_retrospective else {}
+        result = create_commission(
             crafts_process_id=crafts_process_id,
             external_identification_number=external_identification_number,
             commission_type_id=commission.commission_type_erp_id,
@@ -1909,6 +1926,7 @@ class WowiportService:
                     commission
                 )
             ),
+            **retrospective_values,
         )
 
         identity = self._identity_from_rows(
@@ -2923,10 +2941,10 @@ def enqueue_synced_commission_push(
     actor_user_id: int | None = None,
     priority_raised: bool = False,
 ) -> None:
-    if commission.user is None:
+    if commission.is_retrospective:
         return
 
-    current_user_id = commission.user.id
+    current_user_id = commission.user.id if commission.user is not None else None
     current_sync_signature = (commission.raw_payload or {}).get(
         "sync_signature"
     )
@@ -2942,12 +2960,17 @@ def enqueue_synced_commission_push(
     elif (
         not previous_sync_signature
         or previous_sync_signature == current_sync_signature
-        or actor_user_id == current_user_id
     ):
         return
     else:
         event_type = PushEventType.CHANGED_COMMISSION
 
+    if commission.is_high_priority and commission.craftsman_erp_id is not None:
+        from .workflow_notifications import enqueue_priority_notification
+
+        enqueue_priority_notification(commission, event_type)
+    if commission.user is None or (event_type == PushEventType.CHANGED_COMMISSION and actor_user_id == current_user_id):
+        return
     enqueue_commission_push(
         commission=commission,
         event_type=event_type,
@@ -3709,6 +3732,7 @@ def upsert_commission(
         "Code",
     )
     if previous_craftsman_erp_id != craftsman_erp_id:
+        commission.overdue_notification_deadline = None
         commission.external_assignment_version = (
             int(
                 commission.external_assignment_version
@@ -3757,12 +3781,18 @@ def upsert_commission(
     commission.release_date = parse_datetime(
         _read_first(payload, "release_date", "ReleaseDate")
     )
-    commission.execution_from = parse_datetime(
-        _read_first(payload, "execution_from", "ExecutionFrom")
+    preserve_execution = commission.source in {CommissionSource.WEB.value, CommissionSource.IOS.value}
+    commission.execution_from = commission_execution_datetime(
+        _read_first(payload, "execution_from", "ExecutionFrom"),
+        current=commission.execution_from if preserve_execution else None,
     )
-    commission.execution_to = parse_datetime(
-        _read_first(payload, "execution_to", "ExecutionTo")
+    execution_to = commission_execution_datetime(
+        _read_first(payload, "execution_to", "ExecutionTo"), end=True,
+        current=commission.execution_to if preserve_execution else None,
     )
+    if execution_to != commission.execution_to:
+        commission.overdue_notification_deadline = None
+    commission.execution_to = execution_to
     commission.deleted_at = None
     commission.synced_at = utc_now()
 
@@ -3786,6 +3816,8 @@ def upsert_commission(
                 commission.status_id,
                 CommissionLocalStatus.OPEN.value,
             )
+            if commission.is_retrospective and commission.status_id == 11:
+                commission.local_status = CommissionLocalStatus.AWAITING_INVOICE.value
 
         current_status = (
             commission.status_id, commission.status_code, commission.local_status,

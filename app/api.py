@@ -102,6 +102,7 @@ from .push_preferences import (
     CONFIGURABLE_PUSH_EVENTS,
     PushEventType,
     serialize_push_preferences,
+    push_preference_overrides,
 )
 from .push_service import (
     register_push_device,
@@ -232,7 +233,7 @@ def update_push_preferences() -> Any:
         }), 400
 
     for key, value in events.items():
-        if key not in allowed_events or type(value) is not bool:
+        if key not in allowed_events or (value is not None and type(value) is not bool):
             return jsonify({
                 "message": "Ungültiger Mitteilungstyp oder Wahrheitswert."
             }), 400
@@ -254,15 +255,22 @@ def update_push_preferences() -> Any:
         .populate_existing()
         .one()
     )
-    preferences = dict(user.push_event_preferences or {})
+    preferences = push_preference_overrides(user)
 
     for key, (attribute, event_types) in legacy_fields.items():
         if key in data:
             setattr(user, attribute, data[key])
             for event_type in event_types:
-                preferences.pop(event_type.value, None)
+                preferences[event_type.value] = data[key]
 
-    preferences.update(events)
+    for key, value in events.items():
+        if value is None:
+            preferences.pop(key, None)
+        else:
+            preferences[key] = value
+    user.push_new_commission_enabled = True
+    user.push_changed_commission_enabled = True
+    user.push_safety_inspection_enabled = True
     user.push_event_preferences = preferences
     commit_mobile_changes()
     return jsonify({"preferences": serialize_push_preferences(user)})

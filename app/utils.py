@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gettext
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import pycountry
@@ -108,6 +109,22 @@ def parse_datetime(value: Any) -> datetime | None:
         return None
 
     return ensure_utc(parsed)
+
+
+def parse_local_datetime(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("Europe/Berlin"))
+    return ensure_utc(parsed)
+
+
+def format_local_datetime(value: datetime | None, pattern: str = "%d.%m.%Y %H:%M") -> str:
+    return ensure_utc(value).astimezone(ZoneInfo("Europe/Berlin")).strftime(pattern) if value else "–"
 
 
 def iso_datetime(value: datetime | None) -> str | None:

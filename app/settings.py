@@ -578,6 +578,15 @@ class SettingKeys:
     )
     MOBILE_MICROSOFT_SCOPES = SettingDefinition[str](
         "mobile.microsoft_scopes", SettingValueType.STRING, "User.Read", "Microsoft Scopes der iOS-App", "Mobile App")
+    PUSH_DEFAULT_NEW_COMMISSION = SettingDefinition[bool]("push.default.new_commission", SettingValueType.BOOL, True, "Neuer Auftrag", "Push-Standardwerte")
+    PUSH_DEFAULT_APPOINTMENT_ACCEPTED = SettingDefinition[bool]("push.default.appointment_accepted", SettingValueType.BOOL, True, "Terminzusage", "Push-Standardwerte")
+    PUSH_DEFAULT_APPOINTMENT_REJECTED = SettingDefinition[bool]("push.default.appointment_rejected", SettingValueType.BOOL, True, "Terminabsage", "Push-Standardwerte")
+    PUSH_DEFAULT_COMMISSION_PRIORITY_RAISED = SettingDefinition[bool]("push.default.commission_priority_raised", SettingValueType.BOOL, True, "Auftrag mit hoher Priorität", "Push-Standardwerte")
+    PUSH_DEFAULT_NEW_PROCESS_INFO = SettingDefinition[bool]("push.default.new_process_info", SettingValueType.BOOL, True, "Neue Vorgangsinformation", "Push-Standardwerte")
+    PUSH_DEFAULT_NEW_SAFETY_INSPECTION = SettingDefinition[bool]("push.default.new_safety_inspection", SettingValueType.BOOL, True, "Neue Verkehrssicherheitsprüfung", "Push-Standardwerte")
+    PUSH_DEFAULT_CHANGED_SAFETY_INSPECTION = SettingDefinition[bool]("push.default.changed_safety_inspection", SettingValueType.BOOL, True, "Geänderte Verkehrssicherheitsprüfung", "Push-Standardwerte")
+    PUSH_DEFAULT_URGENT_SAFETY_DEFECT = SettingDefinition[bool]("push.default.urgent_safety_defect", SettingValueType.BOOL, True, "Dringender Sicherheitsmangel", "Push-Standardwerte")
+
     PUSH_RELAY_URL = SettingDefinition[str](
         "push.relay_url",
         SettingValueType.STRING,

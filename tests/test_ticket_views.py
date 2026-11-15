@@ -67,6 +67,7 @@ class TicketViewTests(unittest.TestCase):
         module_patch.start()
         cls.addClassCleanup(module_patch.stop)
         cls.models = importlib.import_module(cls.package_name + ".models")
+        modules[cls.package_name + ".workflow_notifications"].overdue_commission_filter.return_value = cls.models.Commission.id.is_(None)
         cls.admin = importlib.import_module(cls.package_name + ".admin")
         login_manager = LoginManager(cls.app)
         login_manager.user_loader(lambda user_id: cls.db.session.get(cls.models.User, int(user_id)))
@@ -79,6 +80,7 @@ class TicketViewTests(unittest.TestCase):
             cls.models.WowiEconomicUnitJurisdiction, cls.models.BlacklistEntry,
             cls.models.Commission, cls.models.TicketMirror, cls.models.CommissionTicketLink,
             cls.models.CommissionPosition,
+            cls.models.WorkflowNotification,
             cls.models.TimeEntry, cls.models.InventoryMovement, cls.models.InventoryItem,
             cls.models.CraftActivity, cls.models.TimeTaskTemplate, cls.models.TicketCraftFallback,
             cls.models.WowiCommissionType, cls.models.WowiCompanyCode,

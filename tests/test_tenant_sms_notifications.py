@@ -630,7 +630,9 @@ class TenantSmsMigrationTests(unittest.TestCase):
                 self.assertNotIn(table.name, sa.inspect(connection).get_table_names())
                 self.assertEqual(connection.scalar(sa.select(sa.func.count()).select_from(commission)), 1)
             commission.drop(connection)
-        self.assertEqual(ScriptDirectory(str(root / "migrations")).get_heads(), [migration.revision])
+        script = ScriptDirectory(str(root / "migrations"))
+        self.assertIn(migration.revision, {item.revision for item in script.walk_revisions()})
+        self.assertEqual(len(script.get_heads()), 1)
 
 
 if __name__ == "__main__":

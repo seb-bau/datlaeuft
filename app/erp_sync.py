@@ -33,6 +33,7 @@ from .push_service import (
     requeue_stale_push_deliveries,
 )
 from .commission_priority import sync_ticket_commission_priorities
+from .workflow_notifications import process_workflow_notification_batch
 from .process_info_service import (
     process_process_info_work,
     sync_process_infos,
@@ -179,6 +180,7 @@ def process_due_work(
         ("tenant_notifications", process_tenant_notification_batch),
         ("tenant_sms_notifications", process_tenant_sms_notification_batch),
         ("completion_notifications", process_completion_notification_batch),
+        ("workflow_notifications", process_workflow_notification_batch),
         ("dms", process_dms_batch),
     )
     result = {}
@@ -321,9 +323,15 @@ def execute_outbox_operation(
 
         commission.erp_id = int(erp_id)
         commission.erp_idnum = str(erp_idnum)
-        commission.status_id = 12
-        commission.status_code = "WaitForCraftsmanFeedback"
-        commission.local_status = CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value
+        if commission.is_retrospective:
+            external = commission.assignment_type == "external"
+            commission.status_id = 11 if external else 9
+            commission.status_code = "AwaitInvoice" if external else "Done"
+            commission.local_status = CommissionLocalStatus.AWAITING_INVOICE.value if external else CommissionLocalStatus.DONE.value
+        else:
+            commission.status_id = 12
+            commission.status_code = "WaitForCraftsmanFeedback"
+            commission.local_status = CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value
 
         try:
             document_result = (

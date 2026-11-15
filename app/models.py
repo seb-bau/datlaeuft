@@ -72,6 +72,7 @@ class CommissionLocalStatus(str, Enum):
     COMPLETION_REVIEW = "completion_review"
     TENANT_CHARGE_REVIEW = "tenant_charge_review"
     DONE = "done"
+    AWAITING_INVOICE = "awaiting_invoice"
     DELETED = "deleted"
 
 
@@ -1173,6 +1174,9 @@ class UserJurisdictionPersonMapping(db.Model):
 class Commission(db.Model):
     __tablename__ = "commission"
 
+    is_retrospective: Mapped[bool] = mapped_column(db.Boolean, default=False, server_default=false(), nullable=False)
+    overdue_notification_deadline: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+
     notify_on_completion: Mapped[bool] = mapped_column(
         db.Boolean, default=False, server_default=false(), nullable=False,
     )
@@ -1513,6 +1517,26 @@ class Commission(db.Model):
             )
 
         return None
+
+
+class WorkflowNotification(db.Model):
+    __tablename__ = "workflow_notification"
+    __table_args__ = (db.Index("ix_workflow_notification_due", "state", "available_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    notification_key: Mapped[str] = mapped_column(db.String(180), unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(db.String(30), nullable=False)
+    commission_id: Mapped[int | None] = mapped_column(db.ForeignKey("commission.id", ondelete="CASCADE"), index=True)
+    ticket_id: Mapped[int | None] = mapped_column(db.ForeignKey("ticket_mirror.id", ondelete="CASCADE"), index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(db.JSON, default=dict, nullable=False)
+    state: Mapped[str] = mapped_column(db.String(30), default="pending", server_default="pending", nullable=False)
+    attempt_count: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    available_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    locked_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(db.Text)
+    commission: Mapped[Commission | None] = relationship()
+    ticket: Mapped["TicketMirror | None"] = relationship()
 
 
 class CommissionTenantNotification(db.Model):

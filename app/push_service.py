@@ -157,6 +157,14 @@ def enqueue_commission_push(
     *,
     message_detail: str | None = None,
 ) -> PushBatch:
+    if commission.is_retrospective:
+        return PushBatch(batch_id=str(uuid4()), queued_count=0)
+    if commission.is_high_priority and commission.craftsman_erp_id is not None and event_type in {
+        PushEventType.NEW_COMMISSION, PushEventType.CHANGED_COMMISSION, PushEventType.COMMISSION_PRIORITY_RAISED,
+    }:
+        from .workflow_notifications import enqueue_priority_notification
+
+        enqueue_priority_notification(commission, event_type)
     target_user = user or commission.user
 
     if target_user is None or not target_user.is_active:
@@ -518,7 +526,7 @@ def _event_enabled(
     *,
     is_high_priority: bool = False,
 ) -> bool:
-    if event_type == PushEventType.NEW_COMMISSION and is_high_priority:
+    if event_type in {PushEventType.NEW_COMMISSION, PushEventType.CHANGED_COMMISSION} and is_high_priority:
         event_type = PushEventType.COMMISSION_PRIORITY_RAISED
     return is_push_event_enabled(user, event_type)
 
@@ -544,6 +552,8 @@ def _commission_message(
         )
     elif event_type == PushEventType.COMMISSION_PRIORITY_RAISED:
         title = "Auftrag jetzt mit hoher Priorität"
+    elif event_type == PushEventType.CHANGED_COMMISSION:
+        title = "Auftrag geändert – hohe Priorität" if commission.is_high_priority else "Auftrag geändert"
     elif event_type == PushEventType.APPOINTMENT_ACCEPTED:
         title = "Termin angenommen"
     elif event_type == PushEventType.APPOINTMENT_REJECTED:
@@ -650,6 +660,9 @@ def _claim_next_delivery(
 def _deliver(delivery_id: int) -> None:
     delivery = db.session.get(PushDelivery, delivery_id)
     if delivery is None:
+        return
+    if delivery.commission is not None and delivery.commission.is_retrospective:
+        _discard_delivery(delivery, "Nachträgliche Beauftragung ohne Benachrichtigung.")
         return
 
     user = db.session.get(User, delivery.user_id)

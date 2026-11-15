@@ -446,6 +446,25 @@
     </div>
   </div>
 
+  <div class="card-body border-top">
+    <div class="col-12 mb-3">
+      <h2 class="h5">Push-Mitteilungen</h2>
+      <input type="hidden" name="push_preferences_present" value="1">
+      <div class="row g-3">
+      {% for row in push_preference_rows %}
+        <div class="col-md-6">
+          <label class="form-label" for="push-event-{{ row.event }}">{{ row.label }}</label>
+          <select class="form-select" id="push-event-{{ row.event }}" name="push_event_{{ row.event }}">
+            <option value="default" {% if row.mode == 'default' %}selected{% endif %}>Standard ({{ 'Aktiv' if row.default else 'Inaktiv' }})</option>
+            <option value="on" {% if row.mode == 'on' %}selected{% endif %}>Aktiv</option>
+            <option value="off" {% if row.mode == 'off' %}selected{% endif %}>Inaktiv</option>
+          </select>
+          <div class="form-text">Wirksam: {{ 'Aktiv' if row.enabled else 'Inaktiv' }}</div>
+        </div>
+      {% endfor %}
+      </div>
+    </div>
+  </div>
   <div class="card-footer d-flex justify-content-between">
     <a class="btn btn-outline-secondary" href="{{ url_for('admin.users') }}">Zurück</a>
     <button class="btn btn-primary" type="submit">Speichern</button>
