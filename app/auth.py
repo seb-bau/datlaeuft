@@ -65,6 +65,17 @@ def foreman_required(view: F) -> F:
     return wrapped
 
 
+def office_review_required(view: F) -> F:
+    @wraps(view)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if not current_user.is_authenticated:
+            return redirect(url_for("auth.login", next=request.full_path))
+        if not current_user.can_review_work:
+            abort(403)
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def commission_planning_required(view: F) -> F:
     @wraps(view)
     def wrapped(

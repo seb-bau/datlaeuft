@@ -13,6 +13,7 @@ OBJECT_REFERENCES = {
     "economic_unit": ("economic_unit", Commission.economic_unit_erp_id, Commission.economic_unit_idnum),
 }
 STATUS_LABELS = {
+    "waiting_for_approval": "Wartet auf Freigabe",
     "recorded": "Erfasst", "waiting_for_acceptance": "Warte auf Annahme", "open": "Beauftragt",
     "in_progress": "In Bearbeitung", "completion_review": "Nicht abgeschlossen",
     "tenant_charge_review": "Mieterbelastung", "done": "Erledigt",

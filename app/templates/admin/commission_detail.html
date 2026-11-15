@@ -118,6 +118,25 @@
   </div>
 </div>
 
+{% if item.approval_state == 'pending' %}
+<div class="card border-warning shadow-sm mb-4">
+  <div class="card-body">
+    <h2 class="h5">Freigabe ausstehend</h2>
+    <p>Dieser Auftrag wartet auf die Freigabe durch {{ item.approval_approver.display_name if item.approval_approver else 'einen anderen Sachbearbeiter' }}. Er wurde noch nicht an Wowiport übertragen. Handwerker und Mieter werden vor der Freigabe nicht benachrichtigt.</p>
+    {% if can_approve %}
+    <form method="post" action="{{ url_for('admin.commission_approve', commission_id=item.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-primary" type="submit">Auftrag freigeben</button>
+    </form>
+    {% elif current_user.id == item.created_by_user_id %}
+    <div class="small text-muted">Eigene Aufträge können nicht selbst freigegeben werden.</div>
+    {% endif %}
+  </div>
+</div>
+{% elif item.approval_state == 'approved' %}
+<div class="alert alert-success py-2">Freigegeben durch {{ item.approved_by.display_name if item.approved_by else 'einen anderen Sachbearbeiter' }} am {{ format_execution_datetime(item.approved_at) }}.</div>
+{% endif %}
+
 <form method="post"
       action="{{ url_for('admin.commission_priority', commission_id=item.id) }}"
       class="card card-body shadow-sm mb-4">

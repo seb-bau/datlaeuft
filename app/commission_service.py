@@ -32,6 +32,7 @@ from .tenant_notifications import resolve_tenant_notification_choice
 from .completion_notifications import resolve_completion_notification_choice
 from .workflow_notifications import enqueue_priority_notification
 from .models import PushEventType
+from .commission_approval import prepare_commission_approval
 
 
 def create_pending_commission(
@@ -593,6 +594,9 @@ def create_pending_commission(
         },
     }
     db.session.flush()
+
+    if prepare_commission_approval(commission, created_by_user):
+        return commission
 
     enqueue_erp_operation(
         commission=commission,

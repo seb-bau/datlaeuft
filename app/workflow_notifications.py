@@ -63,7 +63,7 @@ def enqueue_notification(key, kind, *, commission=None, ticket=None, payload=Non
 
 
 def enqueue_priority_notification(commission, event_type):
-    if commission.is_retrospective or not commission.is_high_priority or commission.deleted_at is not None:
+    if commission.approval_state == "pending" or commission.is_retrospective or not commission.is_high_priority or commission.deleted_at is not None:
         return None
     if commission.id is None:
         db.session.flush()
@@ -144,6 +144,14 @@ def notification_content(item):
             content["body"] = delimiter + "\n\n" + content["body"]
         return payload["recipient"], content
     commission = item.commission
+    if item.kind == "approval_request":
+        approver = db.session.get(User, payload["approver_user_id"])
+        recipient = validate_debug_email_address(approver.email if approver is not None and approver.is_active else "")
+        if not recipient:
+            raise RuntimeError("Für die Freigabe ist keine gültige Empfängeradresse hinterlegt.")
+        context = commission_email_context(commission)
+        context["commission_number"] = f"#{commission.id}"
+        return recipient, render_email_template("approval_request", context)
     if item.kind == "overdue" and payload["role"] == "office":
         recipient = office_user(commission)
         email = recipient.email if recipient is not None and recipient.is_active else ""
@@ -165,6 +173,15 @@ def notification_is_current(item):
     if item.kind == "ticket_reply":
         return item.ticket is not None and item.ticket.deleted_at is None
     commission = item.commission
+    if item.kind == "approval_request":
+        approver = db.session.get(User, item.payload.get("approver_user_id"))
+        return bool(
+            commission is not None and commission.approval_state == "pending" and commission.deleted_at is None
+            and commission.approval_approver_user_id == item.payload.get("approver_user_id")
+            and approver is not None and approver.is_active and approver.can_review_work
+        )
+    if commission is not None and commission.approval_state == "pending":
+        return False
     if commission is None or commission.is_retrospective or commission.deleted_at is not None:
         return False
     if item.kind == "overdue":
@@ -235,7 +252,7 @@ def execute_workflow_notification(item_id):
         item.locked_at = None
         db.session.commit()
         return
-    if item.commission is not None and (item.commission.erp_sync_state != CommissionSyncState.SYNCED.value or not item.commission.erp_idnum):
+    if item.kind != "approval_request" and item.commission is not None and (item.commission.erp_sync_state != CommissionSyncState.SYNCED.value or not item.commission.erp_idnum):
         raise RuntimeError("Der Auftrag ist noch nicht vollständig mit Wowiport synchronisiert.")
     if not item.payload.get("mail_sent"):
         if "subject" not in item.payload:

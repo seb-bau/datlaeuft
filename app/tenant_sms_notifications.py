@@ -151,7 +151,7 @@ def execute_tenant_sms_notification(item_id: int) -> None:
         db.session.commit()
         return
     commission = item.commission
-    if (commission.is_retrospective or not commission.notify_tenants or commission.license_agreement_id is None
+    if (commission.approval_state == "pending" or commission.is_retrospective or not commission.notify_tenants or commission.license_agreement_id is None
             or commission.deleted_at is not None or commission.status_id not in (7, 12)):
         item.state = "discarded"
         item.locked_at = None

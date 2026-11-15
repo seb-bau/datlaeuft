@@ -157,7 +157,7 @@ def enqueue_commission_push(
     *,
     message_detail: str | None = None,
 ) -> PushBatch:
-    if commission.is_retrospective:
+    if commission.approval_state == "pending" or commission.is_retrospective:
         return PushBatch(batch_id=str(uuid4()), queued_count=0)
     if commission.is_high_priority and commission.craftsman_erp_id is not None and event_type in {
         PushEventType.NEW_COMMISSION, PushEventType.CHANGED_COMMISSION, PushEventType.COMMISSION_PRIORITY_RAISED,
@@ -661,8 +661,8 @@ def _deliver(delivery_id: int) -> None:
     delivery = db.session.get(PushDelivery, delivery_id)
     if delivery is None:
         return
-    if delivery.commission is not None and delivery.commission.is_retrospective:
-        _discard_delivery(delivery, "Nachträgliche Beauftragung ohne Benachrichtigung.")
+    if delivery.commission is not None and (delivery.commission.approval_state == "pending" or delivery.commission.is_retrospective):
+        _discard_delivery(delivery, "Auftrag ohne freigegebene Handwerkerbenachrichtigung.")
         return
 
     user = db.session.get(User, delivery.user_id)

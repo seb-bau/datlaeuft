@@ -177,6 +177,7 @@ def ensure_tenant_notifications(limit: int = 200) -> int:
         .filter(
             Commission.notify_tenants.is_(True),
             Commission.is_retrospective.is_(False),
+            Commission.approval_state != "pending",
             Commission.license_agreement_id.is_not(None),
             Commission.erp_id.is_not(None),
             Commission.craftsman_erp_id.is_not(None),
@@ -359,7 +360,7 @@ def execute_tenant_notification(item_id: int) -> None:
     if item is None or item.state != "sending":
         return
     commission = item.commission
-    if commission.is_retrospective:
+    if commission.approval_state == "pending" or commission.is_retrospective:
         item.state = "discarded"
         item.locked_at = None
         db.session.commit()

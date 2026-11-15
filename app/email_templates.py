@@ -34,6 +34,12 @@ APPOINTMENT_LINE = "{{ appointment.date }}, {% if appointment.custom %}Beginn {{
 APPOINTMENT_DETAILS = "Handwerker: {{ craftsman_name or 'Ihr Handwerker' }}{% if topic %}\nThema: {{ topic }}{% endif %}"
 
 EMAIL_TEMPLATES = {
+    "approval_request": {
+        "label": "Sachbearbeitung: Auftragsfreigabe erforderlich",
+        "fields": ORDER_FIELDS,
+        "subject": "Freigabe erforderlich: Auftrag {{ commission_number }}",
+        "body": "Guten Tag,\n\nein Auftrag wartet auf Ihre Freigabe. Bitte prüfen Sie die Angaben in der Auftragsprüfung. Bis zur Freigabe wird der Auftrag nicht an Wowiport übertragen; Handwerker und Mieter werden noch nicht informiert.\n\n" + ORDER_DETAILS + "\n{{ commission_url }}",
+    },
     "overdue": {
         "label": "Auftrag: Durchführungszeitraum überschritten",
         "fields": ORDER_FIELDS + " execution_from execution_to craftsman_name",

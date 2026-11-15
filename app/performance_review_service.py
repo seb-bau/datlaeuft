@@ -606,6 +606,8 @@ def review_performance_scope(
     decision_name: str,
     reviewer: User,
 ) -> CommissionPerformanceReview:
+    if not reviewer.is_active or not reviewer.can_review_work:
+        raise ValueError("Für die Zeit- und Materialprüfung besteht keine Berechtigung.")
     if decision_name not in {
         "approve",
         "reject",
