@@ -6,6 +6,7 @@ from threading import Event, Thread
 from time import monotonic
 import unittest
 from unittest.mock import Mock, patch
+from urllib.parse import quote, quote_plus
 
 import requests
 from wowipy.exceptions import WowiPyException
@@ -60,6 +61,134 @@ class WowiportClientTests(unittest.TestCase):
         with patch.object(transport.requests, "request", side_effect=requests.ReadTimeout()):
             with self.assertRaisesRegex(WowiPyException, "Zeitlimit.*oauth2/token"):
                 self.client()
+
+    def test_failed_login_includes_the_oauth_error_and_description_in_the_logged_traceback(self):
+        logger = logging.getLogger("openwowi-authentication-test")
+        configuration = {
+            "hostname": "erp.example.invalid", "user": "test@example.invalid", "password": "a&b=c",
+            "api_key": "test-key", "user_agent": "datlaeuft-test",
+        }
+        rejected = response(400, {"error": "invalid_grant", "error_description": "Das Benutzerkonto ist vorübergehend gesperrt."})
+        with patch.object(transport.requests, "request", return_value=rejected) as request:
+            with self.assertLogs(logger, level="ERROR") as captured:
+                try:
+                    transport.WowiportClient(**configuration)
+                except WowiPyException:
+                    logger.exception("process_info_sync_failed process_erp_id=%s", 50695)
+                else:
+                    self.fail("Die abgewiesene Anmeldung muss einen Fehler auslösen.")
+        log = "\n".join(captured.output)
+        self.assertIn("process_info_sync_failed process_erp_id=50695", log)
+        self.assertIn("Anmeldung fehlgeschlagen (Status 400)", log)
+        self.assertIn("error: invalid_grant", log)
+        self.assertIn("error_description: Das Benutzerkonto ist vorübergehend gesperrt.", log)
+        for secret in ("test@example.invalid", "a&b=c", "test-key"):
+            self.assertNotIn(secret, log)
+        request.assert_called_once()
+
+    def test_login_error_details_are_available_for_non_400_statuses_and_generic_messages(self):
+        for status in (401, 403, 429, 503):
+            with self.subTest(status=status), patch.object(transport.requests, "request", return_value=response(
+                status, {"error": "temporarily_unavailable", "Message": "Anmeldung derzeit nicht möglich."},
+            )) as request:
+                with self.assertRaises(WowiPyException) as error:
+                    self.client()
+                self.assertIn(f"Status {status}", str(error.exception))
+                self.assertIn("temporarily_unavailable", str(error.exception))
+                self.assertIn("Anmeldung derzeit nicht möglich.", str(error.exception))
+                request.assert_called_once()
+
+    def test_rejected_refresh_shows_the_reason_and_does_not_repeat_a_write(self):
+        rejected = response(400, {"error": "invalid_grant", "error_description": "Das Aktualisierungstoken ist abgelaufen."})
+        with patch.object(transport.requests, "request", side_effect=[self.token_response(), response(401), rejected]) as request:
+            with self.assertRaises(WowiPyException) as error:
+                self.client()._rest_adapter.post("CommissioningEdit/Commission", data={})
+        message = str(error.exception)
+        self.assertIn("Token-Erneuerung fehlgeschlagen (Status 400)", message)
+        self.assertIn("invalid_grant", message)
+        self.assertIn("Das Aktualisierungstoken ist abgelaufen.", message)
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_args.kwargs["data"]["grant_type"], "refresh_token")
+
+    def test_authentication_details_redact_credentials_and_their_encoded_forms(self):
+        values = ("test-key", "a&b=c", "test@example.invalid")
+        sensitive = {variant for value in values for variant in (value, quote(value, safe=""), quote_plus(value, safe=""))}
+        rejected = response(400, {
+            "error": "invalid_grant",
+            "error_description": "Anmeldung abgelehnt: " + " ".join(sensitive) + "\n\x00\x1b " + "x" * 3000,
+            "access_token": "unexpected-access-secret", "refresh_token": ["unexpected-refresh-secret"],
+            "password": "unexpected-password-secret", "error_uri": "https://example.invalid/private-error-link",
+            "StackTrace": "internal-stack-hidden", "debug": {"Message": "internal-debug-hidden"},
+        })
+        with patch.object(transport.requests, "request", return_value=rejected):
+            with self.assertRaises(WowiPyException) as error:
+                self.client()
+        message = str(error.exception)
+        self.assertIn("invalid_grant", message)
+        self.assertIn("Anmeldung abgelehnt", message)
+        for value in sensitive | {"unexpected-access-secret", "unexpected-refresh-secret", "unexpected-password-secret",
+                                  "private-error-link", "internal-stack-hidden", "internal-debug-hidden", "\n", "\x00", "\x1b"}:
+            self.assertNotIn(value, message)
+        self.assertLessEqual(len(message.split("OPENWOWI-Details: ", 1)[1]), 2000)
+
+    def test_current_and_explicit_refresh_tokens_are_redacted(self):
+        supplied = "request-only-refresh-secret"
+        rejected = response(400, {"error": "invalid_grant", "error_description": f"Token abgewiesen: first-token refresh-token {supplied}"})
+        with patch.object(transport.requests, "request", side_effect=[self.token_response(), rejected]):
+            client = self.client()
+            with self.assertRaises(WowiPyException) as error:
+                client._rest_adapter._create_token(supplied)
+        message = str(error.exception)
+        self.assertIn("Token abgewiesen", message)
+        for value in ("first-token", "refresh-token", supplied):
+            self.assertNotIn(value, message)
+
+    def test_token_assignments_and_authorization_values_inside_messages_are_redacted(self):
+        rejected = response(400, {
+            "error": "invalid_grant",
+            "error_description": 'Authorization: Bearer new-bearer-secret; Basic bmV3LXNlY3JldA==; '
+                                 'access_token="new access secret"; refresh_token=new-refresh-secret; '
+                                 'client_secret: "new-client-secret"; password="new password secret"; apiKey=new-api-secret',
+        })
+        with patch.object(transport.requests, "request", return_value=rejected):
+            with self.assertRaises(WowiPyException) as error:
+                self.client()
+        message = str(error.exception)
+        self.assertIn("invalid_grant", message)
+        for value in ("new-bearer-secret", "bmV3LXNlY3JldA==", "new access secret", "new-refresh-secret",
+                      "new-client-secret", "new password secret", "new-api-secret"):
+            self.assertNotIn(value, message)
+
+    def test_authentication_plain_text_details_are_normalized_and_html_is_omitted(self):
+        for content_type, body, expected in (
+            ("text/plain; charset=utf-8", "  invalid_grant:\n  Konto gesperrt. test-key  ", "invalid_grant: Konto gesperrt."),
+            ("text/html", "<html>interner Proxyfehler</html>", None),
+            ("application/json", '{"error_description": broken', None),
+        ):
+            rejected = response(400)
+            rejected.json.side_effect = ValueError("Ungültige Antwort")
+            rejected.headers.get.return_value = content_type
+            rejected.text = body
+            with self.subTest(content_type=content_type), patch.object(transport.requests, "request", return_value=rejected):
+                with self.assertRaises(WowiPyException) as error:
+                    self.client()
+                message = str(error.exception)
+                self.assertIn("Anmeldung fehlgeschlagen (Status 400)", message)
+                if expected:
+                    self.assertIn(expected, message)
+                    self.assertNotIn("test-key", message)
+                else:
+                    self.assertNotIn("OPENWOWI-Details", message)
+                    self.assertNotIn(body, message)
+
+    def test_unusable_authentication_details_do_not_replace_the_status_error_or_expose_token_fields(self):
+        for payload in ([], {}, {"error": None, "error_description": None}, {"access_token": "private-token", "password": ["private-password"]}):
+            with self.subTest(payload=payload), patch.object(transport.requests, "request", return_value=response(400, payload)):
+                with self.assertRaisesRegex(WowiPyException, "Anmeldung fehlgeschlagen.*Status 400") as error:
+                    self.client()
+                self.assertNotIn("OPENWOWI-Details", str(error.exception))
+                self.assertNotIn("private-token", str(error.exception))
+                self.assertNotIn("private-password", str(error.exception))
 
     def test_token_refresh_is_bounded_and_uses_the_new_access_token(self):
         with patch.object(transport.requests, "request", side_effect=[
