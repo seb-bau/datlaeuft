@@ -33,7 +33,7 @@ process_info_web_bp = Blueprint(
 def chat_status(process_id: int | None):
     messages = ProcessInfo.query.filter(
         ProcessInfo.process_erp_id == process_id,
-        ProcessInfo.state != "deleted",
+        ProcessInfo.visible_filter(),
     ).order_by(ProcessInfo.created_at.asc()).all()
 
     return jsonify({

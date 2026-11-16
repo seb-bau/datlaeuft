@@ -1504,6 +1504,7 @@ class WowiportService:
             else process_from
         )
 
+        process_description = commission.description
         result = self.client.create_commissioning_crafts_process(
             short_description_crafts_process=short_description,
             crafts_process_type_id=resolved_process_type_id,
@@ -1519,7 +1520,7 @@ class WowiportService:
                 commission.responsible_official_repair_erp_id
             ),
             crafts_process_from=process_from_value,
-            description=commission.description,
+            description=process_description,
         )
 
         identity = self._identity_from_rows(
@@ -1534,6 +1535,11 @@ class WowiportService:
         commission.crafts_process_erp_id = (
             identity["id"]
         )
+        raw_payload = dict(commission.raw_payload) if isinstance(commission.raw_payload, dict) else {}
+        raw_payload["initial_process_description"] = {
+            "process_erp_id": identity["id"], "body": process_description or "",
+        }
+        commission.raw_payload = raw_payload
         db.session.commit()
 
         return identity["id"]

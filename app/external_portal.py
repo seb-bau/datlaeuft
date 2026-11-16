@@ -592,7 +592,7 @@ def commission_detail(public_id: str) -> Any:
             .filter(
                 ProcessInfo.process_erp_id
                 == commission.crafts_process_erp_id,
-                ProcessInfo.state != "deleted",
+                ProcessInfo.visible_filter(),
             )
             .order_by(
                 ProcessInfo.erp_date
@@ -741,7 +741,7 @@ def commission_info_retry(
         == commission.crafts_process_erp_id,
         ProcessInfo.sender_external_craftsman_id
         == craftsman.id,
-        ProcessInfo.state != "deleted",
+        ProcessInfo.visible_filter(),
     ).one_or_none()
 
     if info is None:

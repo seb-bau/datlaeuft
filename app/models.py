@@ -2225,6 +2225,10 @@ class ProcessInfo(db.Model):
         ]
     )
 
+    @classmethod
+    def visible_filter(cls):
+        return cls.state.notin_(("deleted", "initial_description"))
+
     @property
     def visible_author_name(self) -> str | None:
         from .blacklist import is_blacklisted
