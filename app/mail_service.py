@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from email import policy
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid, parseaddr
 import smtplib
 
 from sqlalchemy import select
@@ -10,6 +12,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from .extensions import db
 from .models import AppSetting
 from .settings import SettingKeys, validate_debug_email_address
+
+
+def _valid_single_header(message: EmailMessage, name: str) -> bool:
+    headers = message.get_all(name, [])
+    if len(headers) != 1:
+        return False
+    header = headers[0]
+    parsed = policy.default.header_factory(name, str(header))
+    return bool(str(header).strip()) and not getattr(header, "defects", ()) and not parsed.defects
 
 
 def send_email(
@@ -37,6 +48,17 @@ def send_email(
         ) from exc
 
     outgoing_message = deepcopy(message)
+    if not _valid_single_header(outgoing_message, "Message-ID"):
+        del outgoing_message["Message-ID"]
+        sender_domain = parseaddr(str(outgoing_message.get("From", "")))[1].rpartition("@")[2]
+        try:
+            sender_domain = sender_domain.encode("idna").decode("ascii")
+        except UnicodeError:
+            sender_domain = ""
+        outgoing_message["Message-ID"] = make_msgid(domain=sender_domain or None)
+    if not _valid_single_header(outgoing_message, "Date"):
+        del outgoing_message["Date"]
+        outgoing_message["Date"] = formatdate(usegmt=True)
     recipients = None
 
     if debug_recipient:
