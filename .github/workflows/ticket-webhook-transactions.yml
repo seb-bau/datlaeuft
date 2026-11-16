@@ -3,6 +3,7 @@ name: Ticket-Webhooks prüfen
 on:
   pull_request:
     paths:
+      - app/mail_service.py
       - app/blacklist.py
       - app/ticket_service.py
       - app/ticket_filters.py
@@ -62,6 +63,7 @@ on:
   push:
     branches: [master]
     paths:
+      - app/mail_service.py
       - app/blacklist.py
       - app/ticket_service.py
       - app/ticket_filters.py
