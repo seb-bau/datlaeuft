@@ -13,7 +13,7 @@ function functionSource(name) {
         start -= 6;
     }
     const remainder = source.slice(start);
-    const next = /\n +(?:async )?function /.exec(remainder);
+    const next = /\n {4}(?:async )?function /.exec(remainder);
     return next ? remainder.slice(0, next.index) : remainder;
 }
 
@@ -73,13 +73,13 @@ function form(items = []) {
 
 const building = {
     object_type: "building", object_id: 2, label: "Musterstraße 1", company_code: {erp_id: 77},
-    building: {erp_id: 2002, id_num: "GE-1", address: "Musterstraße 1"}, economic_unit: {id_num: "WE-1"},
+    building: {erp_id: 2002, id_num: "GE-1", address: "Musterstraße 1"}, economic_unit: {erp_id: 1001, id_num: "WE-1"},
 };
 const futureContract = {
     ...building, object_type: "license_agreement", object_id: 4, label: "Künftiger Mieter",
     tenant_name: "Künftiger Mieter", is_future: true, is_vacancy: false,
     license_agreement: {erp_id: 4004, id_num: "MV-1", start_date: "2027-01-01"},
-    use_unit: {id_num: "NE-1", floor: "1. OG", position: "links", description: "Wohnung am Innenhof", address: "Musterstraße 1"},
+    use_unit: {erp_id: 3003, id_num: "NE-1", floor: "1. OG", position: "links", description: "Wohnung am Innenhof", address: "Musterstraße 1"},
 };
 
 test("building search renders future tenants and selects the contract as the order target", async () => {
@@ -139,6 +139,48 @@ test("building results have distinct icons and keep each smaller contract below 
     const direct = form([futureContract]);
     await direct.loadObjects("Künftiger", "tenant");
     assert.doesNotMatch(direct.objectResults.children[0].className, /commission-object-child/);
+});
+
+test("economic search groups each building and contract at their respective indentation levels", async () => {
+    const economic = {...building, object_type: "economic_unit", object_id: 1, building: null};
+    const secondBuilding = {...building, object_id: 20, building: {erp_id: 2020, id_num: "GE-2"}};
+    const secondContract = {...futureContract, object_id: 40, building: secondBuilding.building};
+    const state = form([secondContract, building, economic, secondBuilding, futureContract]);
+    await state.loadObjects("WE-1", "economic_unit");
+    const buttons = state.objectResults.children;
+    assert.equal(buttons.length, 5);
+    assert.doesNotMatch(buttons[0].className, /commission-object-child/);
+    assert.match(buttons[1].textContent, /GE-1/);
+    assert.match(buttons[1].className, /commission-object-child/);
+    assert.doesNotMatch(buttons[1].className, /commission-object-grandchild/);
+    assert.match(buttons[2].textContent, /MV-1/);
+    assert.match(buttons[2].className, /commission-object-grandchild/);
+    assert.match(buttons[3].textContent, /GE-2/);
+    assert.match(buttons[4].className, /commission-object-grandchild/);
+    buttons[2].click();
+    assert.equal(state.objectType.value, "license_agreement");
+    assert.equal(state.objectId.value, "4");
+    buttons[1].click();
+    assert.equal(state.objectType.value, "building");
+});
+
+test("unit search groups contracts under the matching unit while preserving unit selection", async () => {
+    const unit = {...futureContract, object_type: "use_unit", object_id: 3, license_agreement: null, tenant_name: null};
+    const otherUnit = {...unit, object_id: 30, use_unit: {erp_id: 3030, id_num: "NE-2"}};
+    const otherContract = {...futureContract, object_id: 40, use_unit: otherUnit.use_unit, license_agreement: {erp_id: 4040, id_num: "MV-2"}};
+    const state = form([otherContract, futureContract, otherUnit, unit]);
+    await state.loadObjects("Muster", "use_unit");
+    const buttons = state.objectResults.children;
+    assert.match(buttons[0].textContent, /NE-2/);
+    assert.match(buttons[1].textContent, /MV-2/);
+    assert.match(buttons[1].className, /commission-object-child/);
+    assert.doesNotMatch(buttons[2].className, /commission-object-child/);
+    assert.match(buttons[3].className, /commission-object-child/);
+    buttons[2].click();
+    assert.equal(state.objectType.value, "use_unit");
+    assert.equal(state.objectId.value, "3");
+    buttons[3].click();
+    assert.equal(state.objectType.value, "license_agreement");
 });
 
 test("vacancies remain selectable and never enable tenant notifications", async () => {

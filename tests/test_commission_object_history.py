@@ -137,6 +137,57 @@ class CommissionObjectHistoryTests(unittest.TestCase):
         self.assertEqual({item["id"] for item in response.json["items"]}, {item.id for item in open_items})
         self.assertTrue(all(item["is_open"] for item in response.json["items"]))
 
+    def test_parent_levels_are_opt_in_and_keep_the_exact_selection_counts(self):
+        orders = {name: self.commission(name) for name in self.history.OBJECT_REFERENCES}
+        self.commission("license_agreement", local_status="done")
+        self.commission("building", building_erp_id=9999)
+        self.commission("use_unit", use_unit_id=9999)
+        self.commission("license_agreement", license_agreement_id=9999)
+        self.commission("economic_unit", economic_unit_erp_id=9999)
+        self.assertEqual(self.response(summary="true").json, {"total": 2, "open_count": 1})
+        expanded = self.response(levels=",".join(self.history.OBJECT_REFERENCES)).json
+        self.assertEqual((expanded["total"], expanded["open_count"]), (5, 4))
+        self.assertEqual(expanded["selection_counts"], {"total": 2, "open_count": 1})
+        self.assertTrue({item.id for item in orders.values()} <= {item["id"] for item in expanded["items"]})
+        self.assertEqual({item["object_type"] for item in expanded["items"]}, set(self.history.OBJECT_REFERENCES))
+        building_row = next(item for item in expanded["items"] if item["object_type"] == "building")
+        self.assertEqual(building_row["object_label"], "Gebäude GE-1")
+        self.assertEqual(self.response(summary="true", levels="building,economic_unit").json, {"total": 2, "open_count": 1})
+
+    def test_parent_only_levels_include_legacy_orders_and_never_descendants(self):
+        building = self.commission("building", explicit=False)
+        economic = self.commission("economic_unit", building_erp_id=2002, building_idnum="GE-1")
+        self.commission("license_agreement")
+        self.commission("use_unit")
+        result = self.response(levels="building,economic_unit,building").json
+        self.assertEqual({item["id"] for item in result["items"]}, {building.id, economic.id})
+        self.assertEqual(result["levels"], ["building", "economic_unit"])
+        self.assertEqual(result["selection_counts"], {"total": 1, "open_count": 1})
+        self.choice["object_type"] = "building"
+        result = self.response(levels="building,economic_unit").json
+        self.assertEqual({item["id"] for item in result["items"]}, {building.id, economic.id})
+
+    def test_invalid_unrelated_or_unavailable_history_levels_are_rejected(self):
+        self.choice["object_type"] = "building"
+        for levels in ("", "all", "use_unit", "license_agreement", "building,", "building,other"):
+            with self.subTest(levels=levels):
+                self.assertEqual(self.response(levels=levels).status_code, 400)
+        self.choice["economic_unit"] = None
+        self.assertEqual(self.response(levels="economic_unit").status_code, 400)
+
+    def test_expanded_levels_keep_open_filter_pagination_and_exact_counts(self):
+        self.commission("license_agreement", local_status="done")
+        first = self.commission("building")
+        for _ in range(22):
+            self.commission("economic_unit", local_status="done")
+        levels = "license_agreement,building,economic_unit"
+        opened = self.response(levels=levels, view="open").json
+        self.assertEqual([item["id"] for item in opened["items"]], [first.id])
+        self.assertEqual((opened["total"], opened["open_count"], opened["pages"]), (24, 1, 1))
+        self.assertEqual(opened["selection_counts"], {"total": 1, "open_count": 0})
+        second = self.response(levels=levels, page=2).json
+        self.assertEqual((len(second["items"]), second["pages"]), (4, 2))
+
     def test_public_number_fallback_requires_the_same_company_and_cannot_override_an_erp_id(self):
         legacy = self.commission(license_agreement_id=None)
         self.commission(license_agreement_id=None, company_code_erp_id=999, company_code_code="ANDERS")
@@ -210,13 +261,21 @@ class CommissionObjectHistoryTests(unittest.TestCase):
         try:
             with engine.begin() as connection:
                 metadata.create_all(connection)
-                connection.execute(table.insert(), [
+                connection.execute(table.insert(), [{"use_unit_id": None, "license_agreement_id": None, **row} for row in [
                     {"id": 1, "local_status": "open", "economic_unit_erp_id": 1001, "building_erp_id": 2002, "raw_payload": {"commission_scope": {"object_type": "economic_unit"}}},
                     {"id": 2, "local_status": "open", "economic_unit_erp_id": 1001, "building_erp_id": 2002, "raw_payload": None},
-                ])
+                    {"id": 3, "local_status": "open", "economic_unit_erp_id": 1001, "building_erp_id": 2002, "use_unit_id": 3003, "raw_payload": None},
+                    {"id": 4, "local_status": "open", "economic_unit_erp_id": 1001, "building_erp_id": 2002, "use_unit_id": 3003, "license_agreement_id": 4004, "raw_payload": None},
+                    {"id": 5, "local_status": "open", "economic_unit_erp_id": 1001, "building_erp_id": 9999, "raw_payload": {"commission_scope": {"object_type": "building"}}},
+                ]])
                 for name, expected in (("economic_unit", [1]), ("building", [2])):
                     self.choice["object_type"] = name
                     statement = self.history.commission_object_history_query(self.choice).with_entities(self.models.Commission.id).statement
+                    self.assertEqual(list(connection.scalars(statement)), expected)
+                self.choice["object_type"] = "license_agreement"
+                for levels, expected in ((["building", "economic_unit"], [1, 2]),
+                                         (["license_agreement", "use_unit", "building", "economic_unit"], [1, 2, 3, 4])):
+                    statement = self.history.commission_object_history_query(self.choice, levels).with_entities(self.models.Commission.id).order_by(self.models.Commission.id).statement
                     self.assertEqual(list(connection.scalars(statement)), expected)
                 metadata.drop_all(connection)
         finally:

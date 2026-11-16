@@ -185,6 +185,7 @@ jobs:
           python -m unittest discover -s tests -p test_approval_migration_recovery.py -v
           python -m unittest discover -s tests -p test_commission_approval.py -v
           python -m unittest discover -s tests -p test_commission_object_history.py -v
+          python -m unittest discover -s tests -p test_commission_object_levels.py -v
           python -m unittest discover -s tests -p test_workflow_notifications.py -v
           python -m unittest discover -s tests -p test_tenant_sms_notifications.py -v
           python -m unittest discover -s tests -p test_ticket_webhook_transactions.py -v

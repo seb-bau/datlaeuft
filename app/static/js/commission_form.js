@@ -378,20 +378,25 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function groupedObjectResults(items, searchContext) {
-        if (searchContext !== "address") return items;
-        const buildings = items.filter(item => item.object_type === "building");
+        const rootType = {address: "building", economic_unit: "economic_unit", use_unit: "use_unit"}[searchContext];
+        if (!rootType) return items;
         const grouped = [];
         const included = new Set();
-        for (const building of buildings) {
-            grouped.push(building);
-            included.add(building);
-            for (const item of items) {
-                if (item.object_type !== "building" && item.building?.erp_id && item.building.erp_id === building.building?.erp_id) {
-                    grouped.push(item);
-                    included.add(item);
+        function append(parent, depth) {
+            if (included.has(parent)) return;
+            grouped.push({...parent, search_depth: depth});
+            included.add(parent);
+            const childTypes = {
+                economic_unit: ["building"], building: ["license_agreement", "use_unit"], use_unit: ["license_agreement"]
+            }[parent.object_type] || [];
+            for (const child of items) {
+                const reference = child[parent.object_type]?.erp_id;
+                if (childTypes.includes(child.object_type) && reference && reference === parent[parent.object_type]?.erp_id) {
+                    append(child, depth + 1);
                 }
             }
         }
+        for (const item of items.filter(item => item.object_type === rootType)) append(item, 0);
         return [...grouped, ...items.filter(item => !included.has(item))];
     }
 
@@ -605,9 +610,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     "list-group-item "
                     + "list-group-item-action py-2"
                 );
-                if (searchContext === "address" && item.object_type !== "building" && payload.items.some(parent => parent.object_type === "building" && item.building?.erp_id && parent.building?.erp_id === item.building.erp_id)) {
+                if (item.search_depth > 0) {
                     button.className += " commission-object-child";
                 }
+                if (item.search_depth > 1) button.className += " commission-object-grandchild";
                 button.setAttribute("aria-label", `${objectTypeLabel(item)}: ${objectHeading(item)} · ${objectText(item)}`);
 
                 const title = document.createElement(

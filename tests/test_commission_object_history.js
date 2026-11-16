@@ -17,7 +17,8 @@ class Element {
 }
 
 const source = fs.readFileSync(path.join(__dirname, "../app/static/js/commission_object_history.js"), "utf8");
-const building = {object_type: "building", object_id: 2, label: "Musterstraße 1"};
+const building = {object_type: "building", object_id: 2, label: "Musterstraße 1", building: {erp_id: 2002, id_num: "GE-1"}, economic_unit: {erp_id: 1001, id_num: "WE-1"}};
+const contract = {...building, object_type: "license_agreement", object_id: 44, label: "Mieter", use_unit: {erp_id: 3003, id_num: "NE-1"}, license_agreement: {erp_id: 4004, id_num: "MV-1"}};
 const row = {id: 1, number: "01-2026-12345", title: "Wasserhahn", description: "Tropft in der Küche", is_open: true, status: "In Bearbeitung", created_at: "15.11.2026 10:00", created_by: "Andere Sachbearbeiterin", craftsman: "Regie", url: "/admin/commissions/1"};
 const result = {total: 3, open_count: 1, page: 1, pages: 1, items: [row]};
 const response = payload => ({ok: true, json: async () => payload});
@@ -27,7 +28,7 @@ function setup(handler = () => response(result)) {
     const elements = Object.fromEntries([
         "commissionForm", "objectSummary", "objectCommissionModal", "objectCommissionList", "objectCommissionStatus",
         "objectCommissionSelection", "objectCommissionView", "objectCommissionPrevious", "objectCommissionNext",
-        "objectCommissionPage", "objectCommissionRefresh", "positionText", "craftActivity", "notifyTenants",
+        "objectCommissionPage", "objectCommissionRefresh", "objectCommissionLevels", "positionText", "craftActivity", "notifyTenants",
     ].map(name => [name, new Element()]));
     elements.commissionForm.dataset.objectCommissionsUrl = "/admin/commission-objects/commissions";
     elements.positionText.value = "Ungespeicherter Auftragstext";
@@ -53,6 +54,7 @@ test("selection checks the exact object and highlights open orders without chang
     const button = state.elements.objectSummary.children[0];
     assert.equal(button.type, "button");
     assert.match(button.textContent, /1 offen/);
+    assert.match(button.textContent, /3 insgesamt/);
     assert.match(button.className, /btn-outline-warning/);
     assert.equal(button["data-bs-target"], "#objectCommissionModal");
     assert.equal(state.calls[0].searchParams.get("object_type"), "building");
@@ -173,4 +175,84 @@ test("order text is rendered as plain text", async () => {
     await state.select(building);
     await state.fire("objectCommissionModal", "show.bs.modal");
     assert.match(state.elements.objectCommissionList.textContent, /<img src=x/);
+});
+
+test("open and total counts are always separate including zero open orders", async () => {
+    const state = setup(() => response({...result, open_count: 0}));
+    await state.select(building);
+    const badges = state.elements.objectSummary.children[0].children.slice(-2);
+    assert.deepEqual(badges.map(item => item.textContent), ["0 offen", "3 insgesamt"]);
+});
+
+test("history offers only the exact level and its available parents", async () => {
+    for (const [item, labels] of [
+        [contract, ["Mietvertrag", "Wohnung", "Gebäude", "Wirtschaftseinheit"]],
+        [{...contract, object_type: "use_unit"}, ["Wohnung", "Gebäude", "Wirtschaftseinheit"]],
+        [building, ["Gebäude", "Wirtschaftseinheit"]],
+        [{...building, object_type: "economic_unit"}, ["Wirtschaftseinheit"]],
+    ]) {
+        const state = setup();
+        await state.select(item);
+        await state.fire("objectCommissionModal", "show.bs.modal");
+        const buttons = state.elements.objectCommissionLevels.children;
+        assert.equal(buttons.length, labels.length);
+        buttons.forEach((button, index) => {
+            assert.ok(button.textContent.startsWith(labels[index]));
+            assert.equal(button["aria-pressed"], index === 0 ? "true" : "false");
+        });
+        assert.equal(state.calls.at(-1).searchParams.get("levels"), item.object_type);
+    }
+});
+
+test("parent levels can be combined or viewed alone without changing exact counters or the draft", async () => {
+    const state = setup(url => response(url.searchParams.get("levels")?.includes("building")
+        ? {...result, total: 7, open_count: 4, selection_counts: {total: 3, open_count: 1}, items: [{...row, object_label: "Gebäude GE-1"}]}
+        : result));
+    await state.select(contract);
+    await state.fire("objectCommissionModal", "show.bs.modal");
+    await state.elements.objectCommissionLevels.children[2].listeners.click();
+    assert.equal(state.calls.at(-1).searchParams.get("levels"), "license_agreement,building");
+    assert.match(state.elements.objectCommissionStatus.textContent, /4 offene von 7.*gewählten Ebenen/);
+    assert.match(state.elements.objectCommissionList.textContent, /Gebäude GE-1/);
+    assert.match(state.elements.objectSummary.textContent, /1 offen3 insgesamt/);
+    assert.doesNotMatch(state.elements.objectSummary.textContent, /7 insgesamt/);
+    await state.elements.objectCommissionLevels.children[0].listeners.click();
+    assert.equal(state.calls.at(-1).searchParams.get("levels"), "building");
+    const selected = state.elements.objectCommissionLevels.children[2];
+    assert.equal(selected.disabled, true);
+    await selected.listeners.click();
+    assert.equal(state.calls.at(-1).searchParams.get("levels"), "building");
+    await state.fire("objectCommissionModal", "hidden.bs.modal");
+    await state.fire("objectCommissionModal", "show.bs.modal");
+    assert.equal(state.calls.at(-1).searchParams.get("levels"), "license_agreement");
+    assert.equal(state.elements.positionText.value, "Ungespeicherter Auftragstext");
+});
+
+test("a level change resets pagination and late expanded responses cannot replace the latest scope", async () => {
+    let finish;
+    const state = setup(url => url.searchParams.get("levels")?.includes("economic_unit")
+        ? new Promise(resolve => {finish = resolve;})
+        : response({...result, page: Number(url.searchParams.get("page") || 1), pages: 2}));
+    await state.select(building);
+    await state.fire("objectCommissionModal", "show.bs.modal");
+    await state.fire("objectCommissionNext", "click");
+    const pending = state.elements.objectCommissionLevels.children[1].listeners.click();
+    assert.equal(state.calls.at(-1).searchParams.get("page"), "1");
+    await state.elements.objectCommissionLevels.children[1].listeners.click();
+    finish(response({...result, total: 99, selection_counts: {total: 99, open_count: 99}, items: [{...row, title: "Veraltete Ebene"}]}));
+    await pending;
+    assert.doesNotMatch(state.elements.objectCommissionList.textContent, /Veraltete Ebene/);
+    assert.match(state.elements.objectSummary.textContent, /3 insgesamt/);
+    assert.doesNotMatch(state.elements.objectSummary.textContent, /99/);
+});
+
+test("failed expanded requests leave the known exact counters visible", async () => {
+    const state = setup(url => url.searchParams.get("levels")?.includes("economic_unit")
+        ? {ok: false, json: async () => ({message: "Übergeordnete Aufträge nicht verfügbar"})}
+        : response(result));
+    await state.select(building);
+    await state.fire("objectCommissionModal", "show.bs.modal");
+    await state.elements.objectCommissionLevels.children[1].listeners.click();
+    assert.match(state.elements.objectCommissionStatus.textContent, /nicht verfügbar/);
+    assert.match(state.elements.objectSummary.textContent, /1 offen3 insgesamt/);
 });

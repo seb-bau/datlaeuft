@@ -11,6 +11,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const next = document.getElementById("objectCommissionNext");
     const pageLabel = document.getElementById("objectCommissionPage");
     const refresh = document.getElementById("objectCommissionRefresh");
+    const levelControls = document.getElementById("objectCommissionLevels");
+    const levelLabels = {license_agreement: "Mietvertrag", use_unit: "Wohnung", building: "Gebäude", economic_unit: "Wirtschaftseinheit"};
+    let activeLevels = new Set();
     let selectedItem = null;
     let historyButton = null;
     let counts = null;
@@ -54,8 +57,37 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!historyButton) return;
         historyButton.className = "btn btn-sm mt-2 " + (counts?.open_count > 0 ? "btn-outline-warning text-body" : "btn-outline-secondary");
         historyButton.replaceChildren(element("i", "bi bi-list-ul me-2"), element("span", "", "Aufträge anzeigen"));
-        const label = error ? "Prüfung fehlgeschlagen" : (counts ? (counts.open_count > 0 ? `${counts.open_count} offen` : `${counts.total} insgesamt`) : "Prüfung läuft …");
-        historyButton.appendChild(element("span", counts?.open_count > 0 ? "badge text-bg-warning ms-2" : "small ms-2", " " + label));
+        if (error || !counts) {
+            historyButton.appendChild(element("span", "small ms-2", error ? "Prüfung fehlgeschlagen" : "Prüfung läuft …"));
+            return;
+        }
+        historyButton.appendChild(element("span", counts.open_count > 0 ? "badge text-bg-warning ms-2" : "badge text-bg-light ms-2", `${counts.open_count} offen`));
+        historyButton.appendChild(element("span", "badge text-bg-light ms-2", `${counts.total} insgesamt`));
+    }
+
+    function renderLevels() {
+        levelControls.replaceChildren();
+        const levels = Object.keys(levelLabels);
+        for (const name of levels.slice(levels.indexOf(selectedItem.object_type))) {
+            if (name !== selectedItem.object_type && !selectedItem[name]) continue;
+            const active = activeLevels.has(name);
+            const label = [levelLabels[name], selectedItem[name]?.id_num, name === selectedItem.object_type ? "(Auswahl)" : null].filter(Boolean).join(" ");
+            const button = element("button", "btn btn-sm " + (active ? "btn-primary" : "btn-outline-secondary"), label);
+            button.type = "button";
+            button.setAttribute("aria-pressed", String(active));
+            button.disabled = active && activeLevels.size === 1;
+            button.addEventListener("click", () => {
+                if (activeLevels.has(name)) {
+                    if (activeLevels.size === 1) return;
+                    activeLevels.delete(name);
+                } else {
+                    activeLevels.add(name);
+                }
+                renderLevels();
+                return loadPage(1);
+            });
+            levelControls.appendChild(button);
+        }
     }
 
     function renderItem(item) {
@@ -72,13 +104,14 @@ document.addEventListener("DOMContentLoaded", () => {
             item.status, `Erstellt: ${item.created_at}`, `Sachbearbeiter: ${item.created_by}`,
             item.craftsman ? `Handwerker: ${item.craftsman}` : "Handwerker: nicht zugewiesen",
         ].join(" · ")));
+        if (item.object_label) card.appendChild(element("div", "small fw-semibold mt-1", item.object_label));
         if (item.description) card.appendChild(element("p", "commission-history-description small mt-2 mb-0", item.description));
         return card;
     }
 
     function applyCounts(payload, currentSelection, currentRequest) {
         if (currentSelection !== selectionVersion || currentRequest < countVersion) return;
-        counts = payload;
+        counts = payload.selection_counts || payload;
         countVersion = currentRequest;
         updateButton();
     }
@@ -95,7 +128,7 @@ document.addEventListener("DOMContentLoaded", () => {
         status.className = "text-muted";
         status.textContent = "Aufträge werden geladen …";
         try {
-            const payload = await fetchHistory(item, {view: view.value, page: requestedPage});
+            const payload = await fetchHistory(item, {view: view.value, page: requestedPage, levels: [...activeLevels].join(",")});
             applyCounts(payload, currentSelection, currentRequest);
             if (currentSelection !== selectionVersion || currentRequest !== requestVersion) return;
             if (initial && view.value === "open" && payload.open_count === 0 && payload.total > 0) {
@@ -103,7 +136,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 return loadPage(1);
             }
             page = payload.page;
-            status.textContent = payload.total ? `${payload.open_count} offene von ${payload.total} vorhandenen Aufträgen zu genau dieser Auswahl.` : "Zu genau dieser Auswahl sind noch keine Aufträge vorhanden.";
+            const exactSelection = activeLevels.size === 1 && activeLevels.has(selectedItem.object_type);
+            status.textContent = payload.total
+                ? `${payload.open_count} offene von ${payload.total} vorhandenen Aufträgen ${exactSelection ? "zu genau dieser Auswahl" : "auf den gewählten Ebenen"}.`
+                : (exactSelection ? "Zu genau dieser Auswahl sind noch keine Aufträge vorhanden." : "Auf den gewählten Ebenen sind noch keine Aufträge vorhanden.");
             if (payload.items.length) {
                 list.replaceChildren(...payload.items.map(renderItem));
             } else if (view.value === "open" && payload.total) {
@@ -116,12 +152,14 @@ document.addEventListener("DOMContentLoaded", () => {
             if (currentSelection !== selectionVersion || currentRequest !== requestVersion) return;
             status.className = "text-danger";
             status.textContent = error.name === "AbortError" ? "Das Laden der Aufträge dauert zu lange. Bitte erneut versuchen." : error.message;
-            updateButton(true);
+            if (!counts) updateButton(true);
         }
     }
 
     summary.addEventListener("commission-object-selected", async event => {
         selectedItem = event.detail;
+        activeLevels = new Set([selectedItem.object_type]);
+        renderLevels();
         counts = null;
         countVersion = 0;
         const currentSelection = ++selectionVersion;
@@ -149,6 +187,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
     modal.addEventListener("show.bs.modal", () => {
+        activeLevels = new Set([selectedItem.object_type]);
+        renderLevels();
         view.value = counts?.open_count === 0 ? "all" : "open";
         loadPage(1, true);
     });

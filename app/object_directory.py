@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from itertools import zip_longest
+import re
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 from flask import current_app
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 
 from .extensions import db
 from .models import (
@@ -1792,6 +1793,30 @@ def _search_patterns_filter(patterns: list[str], *columns):
     return and_(*(or_(*(column.ilike(pattern, escape="\\") for column in columns)) for pattern in patterns))
 
 
+def _address_search_parts(text: str):
+    matches = list(re.finditer(r"(?<![\w./-])([0-9]{1,4}(?:\s*[a-z])?(?:\s*[-–/]\s*[0-9]{1,4}(?:\s*[a-z])?)?)(?=\s|,|$)", text, re.IGNORECASE))
+    if not matches:
+        return text, None
+    match = matches[-1]
+    remainder = re.sub(r"\s*,\s*", " ", text[:match.start()] + " " + text[match.end():]).strip()
+    if not any(character.isalpha() for character in remainder):
+        return text, None
+    house_number = re.sub(r"\s+", "", match.group(1)).casefold().replace("–", "-")
+    return remainder, house_number
+
+
+def _building_house_number_filter(house_number):
+    if house_number is None:
+        return True
+    parts = re.findall(r"[0-9]+|[a-z]|[-/]", house_number)
+    pattern = r"(^|[ \t])" + r"[ \t]*".join(
+        "0*" + str(int(part)) if part.isdigit() else "[-–]" if part == "-" else re.escape(part)
+        for part in parts
+    ) + r"[ \t]*(,|$)"
+    street = func.coalesce(func.nullif(func.trim(WowiBuilding.street), ""), WowiBuilding.address)
+    return func.lower(street).regexp_match(pattern)
+
+
 def search_commission_objects(
     search_text: str,
     search_context: str = "tenant",
@@ -1804,8 +1829,13 @@ def search_commission_objects(
     if len(normalized) < 2:
         return []
 
-    terms = normalized.split()
+    original_patterns = ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for term in normalized.split()]
+    address_text, house_number = _address_search_parts(normalized) if search_context in {"tenant", "address", "use_unit", "all"} else (normalized, None)
+    terms = address_text.split()
     patterns = ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for term in terms]
+    house_match = _building_house_number_filter(house_number)
+    unit_house_match = WowiUseUnit.building.has(house_match) if house_number else True
+    agreement_house_match = WowiLicenseAgreement.use_unit.has(unit_house_match) if house_number else True
     today = directory_today()
     choices = []
     seen = set()
@@ -1817,7 +1847,7 @@ def search_commission_objects(
             WowiUseUnit.building.has(_search_patterns_filter([pattern], WowiBuilding.id_num, WowiBuilding.address)),
         )
 
-    unit_match = and_(*(unit_search_pattern(pattern) for pattern in patterns))
+    unit_match = and_(*(unit_search_pattern(pattern) for pattern in patterns), unit_house_match)
 
     if search_context in {
         "tenant",
@@ -1829,6 +1859,7 @@ def search_commission_objects(
             .filter(
                 WowiContractor.active.is_(True),
                 _available_agreement_filter(today),
+                agreement_house_match,
                 or_(WowiContractor.contractual_use_to.is_(None), WowiContractor.contractual_use_to >= today),
                 and_(*(or_(
                     _search_patterns_filter([pattern], WowiContractor.display_name),
@@ -1866,7 +1897,7 @@ def search_commission_objects(
 
     if search_context in {"tenant", "agreement", "all"}:
         vacancies = WowiLicenseAgreement.query.filter(
-            _available_agreement_filter(today), WowiLicenseAgreement.is_vacancy.is_(True), vacancy_match,
+            _available_agreement_filter(today), WowiLicenseAgreement.is_vacancy.is_(True), vacancy_match, agreement_house_match,
         ).order_by(WowiLicenseAgreement.id_num.asc()).limit(limit).all()
         for agreement in vacancies:
             _append_choice(choices, seen, ("license_agreement", agreement.id))
@@ -1879,7 +1910,8 @@ def search_commission_objects(
             WowiLicenseAgreement.query
             .filter(
                 _available_agreement_filter(today),
-                _search_patterns_filter(patterns, WowiLicenseAgreement.id_num),
+                _search_patterns_filter(original_patterns, WowiLicenseAgreement.id_num),
+                agreement_house_match,
             )
             .order_by(
                 WowiLicenseAgreement.id_num.asc()
@@ -1921,10 +1953,9 @@ def search_commission_objects(
 
         for use_unit in use_units:
             _append_choice(choices, seen, ("use_unit", use_unit.id))
-            if search_context == "all":
-                for agreement in use_unit.license_agreements:
-                    if _agreement_is_available(agreement, today):
-                        _append_choice(choices, seen, ("license_agreement", agreement.id))
+            for agreement in sorted(use_unit.license_agreements, key=lambda item: (item.start_date or date.min, item.id)):
+                if _agreement_is_available(agreement, today):
+                    _append_choice(choices, seen, ("license_agreement", agreement.id))
 
     if search_context in {
         "address",
@@ -1935,6 +1966,7 @@ def search_commission_objects(
             .filter(
                 WowiBuilding.active.is_(True),
                 _search_patterns_filter(patterns, WowiBuilding.id_num, WowiBuilding.address),
+                house_match,
             )
             .order_by(
                 WowiBuilding.id_num.asc()
@@ -1973,7 +2005,7 @@ def search_commission_objects(
             vacancy_unit_match = WowiUseUnit.building_id.in_([building.id for building in buildings])
         vacant_units = WowiUseUnit.query.filter(
             WowiUseUnit.active.is_(True), WowiUseUnit.building.has(WowiBuilding.active.is_(True)),
-            ~WowiUseUnit.license_agreements.any(_current_agreement_filter(today)), vacancy_unit_match,
+            ~WowiUseUnit.license_agreements.any(_current_agreement_filter(today)), vacancy_unit_match, unit_house_match,
         ).order_by(WowiUseUnit.id_num.asc()).limit(limit).all()
         for use_unit in vacant_units:
             _append_choice(choices, seen, ("use_unit", use_unit.id))
@@ -1981,16 +2013,39 @@ def search_commission_objects(
     if search_context in {"economic_unit", "all"}:
         economic_units = WowiEconomicUnit.query.filter(
             WowiEconomicUnit.active.is_(True),
-            _search_patterns_filter(patterns, WowiEconomicUnit.id_num, WowiEconomicUnit.name, WowiEconomicUnit.location),
+            _search_patterns_filter(original_patterns, WowiEconomicUnit.id_num, WowiEconomicUnit.name, WowiEconomicUnit.location),
         ).order_by(WowiEconomicUnit.id_num.asc()).limit(limit).all()
+        economic_buildings = []
+        economic_agreements = []
+        if search_context == "economic_unit" and economic_units:
+            economic_buildings = WowiBuilding.query.filter(
+                WowiBuilding.active.is_(True), WowiBuilding.economic_unit_id.in_([item.id for item in economic_units]),
+            ).order_by(WowiBuilding.id_num.asc(), WowiBuilding.id.asc()).limit(limit).all()
+            economic_agreements = WowiLicenseAgreement.query.join(WowiUseUnit).filter(
+                _available_agreement_filter(today), WowiUseUnit.active.is_(True),
+                WowiUseUnit.building_id.in_([item.id for item in economic_buildings]),
+            ).order_by(WowiUseUnit.id_num.asc(), WowiLicenseAgreement.start_date.asc(), WowiLicenseAgreement.id.asc()).limit(limit).all()
         for economic_unit in economic_units:
             _append_choice(choices, seen, ("economic_unit", economic_unit.id))
+            for building in economic_buildings:
+                if building.economic_unit_id != economic_unit.id:
+                    continue
+                _append_choice(choices, seen, ("building", building.id))
+                for agreement in economic_agreements:
+                    if agreement.use_unit.building_id == building.id:
+                        _append_choice(choices, seen, ("license_agreement", agreement.id))
 
-    if search_context in {"all", "address"}:
-        object_types = (
-            ("license_agreement", "use_unit", "building", "economic_unit")
-            if search_context == "all" else ("building", "license_agreement", "use_unit")
-        )
+    if search_context == "address":
+        grouped = []
+        for parent in choices:
+            if parent["object_type"] != "building":
+                continue
+            grouped.append(parent)
+            grouped.extend(item for item in choices if item["object_type"] != "building" and item["building"]["erp_id"] == parent["building"]["erp_id"])
+        choices = grouped
+
+    if search_context == "all":
+        object_types = ("license_agreement", "use_unit", "building", "economic_unit")
         groups = [
             [item for item in choices if item["object_type"] == object_type]
             for object_type in object_types
