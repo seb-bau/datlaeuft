@@ -61,7 +61,7 @@ function form(items = []) {
     sandbox.scheduleObjectSearch = delay => sandbox.scheduled.push(delay);
     vm.createContext(sandbox);
     vm.runInContext([
-        "objectTypeLabel", "objectHeading", "objectIcon", "groupedObjectResults", "futureContractBadge", "retrospectiveCommissionSelected", "updateTenantNotificationOptions", "objectText",
+        "objectTypeLabel", "ticketAttachmentsReady", "objectHeading", "objectIcon", "groupedObjectResults", "futureContractBadge", "retrospectiveCommissionSelected", "updateTenantNotificationOptions", "objectText",
         "selectObject", "showObjectSearchMessage", "loadObjects",
     ].map(functionSource).join("\n"), sandbox);
     const listenerStart = source.indexOf("    objectSearchContext.addEventListener(");
@@ -230,4 +230,31 @@ test("missing numbers and descriptions never promote ancestor numbers or other l
     for (const number of ["NE-1", "GE-1", "WE-1"]) {
         assert.ok(!state.objectSummary.textContent.includes(number));
     }
+});
+
+test("addresses lead buildings, units and economic units in bold results and selected summaries", async () => {
+    const unit = {...futureContract, object_type: "use_unit", license_agreement: null, tenant_name: null};
+    const economic = {object_type: "economic_unit", object_id: 1, economic_unit: {id_num: "WE-1", name: "Siedlung", address: "Musterstraße 2"}};
+    for (const [item, expected] of [[building, "GE-1 · Musterstraße 1"], [unit, "NE-1 · Musterstraße 1 · Wohnung am Innenhof"], [economic, "WE-1 · Musterstraße 2"]]) {
+        const state = form([item]);
+        await state.loadObjects("Muster", "all");
+        const button = state.objectResults.children[0];
+        button.click();
+        for (const element of [button, state.objectSummary]) {
+            assert.ok(element.children[0].textContent.startsWith(expected));
+            assert.match(element.children[0].className, /fw-semibold/);
+            assert.equal(element.textContent.split(expected).length - 1, 1);
+        }
+    }
+});
+
+test("selecting an object cannot enable submission before the ticket photo selection has loaded", () => {
+    const state = form();
+    const ready = {value: ""};
+    state.document.getElementById = id => id === "ticketAttachmentSelectionReady" ? ready : null;
+    state.selectObject(building);
+    assert.equal(state.submitCommission.disabled, true);
+    ready.value = "true";
+    state.selectObject(building);
+    assert.equal(state.submitCommission.disabled, false);
 });

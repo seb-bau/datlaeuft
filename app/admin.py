@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from functools import partial
+from werkzeug.utils import secure_filename
 
 from io import BytesIO
 from typing import Any
@@ -59,6 +61,10 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from .commission_service import create_pending_commission
+from .ticket_attachments import (
+    prepare_ticket_attachment_selection, read_ticket_attachment, render_ticket_photo,
+    store_selected_ticket_attachments, ticket_attachment_choices,
+)
 from .models import (
     WorkflowNotification,
     Commission,
@@ -3666,6 +3672,7 @@ def save_web_commission_photo(
     commission: Commission,
     upload: Any,
     caption: str | None,
+    stored_paths: list[Path] | None = None,
 ) -> tuple[CommissionPhoto, bool]:
     stored_photo = store_commission_photo(
         commission,
@@ -3695,6 +3702,12 @@ def save_web_commission_photo(
         ).unlink(missing_ok=True)
 
         return existing_photo, True
+
+    if stored_paths is not None:
+        stored_paths.extend((
+            commission_photo_path(stored_photo.storage_name),
+            commission_photo_path(stored_photo.thumbnail_storage_name),
+        ))
 
     normalized_caption = (
         str(caption or "").strip()[:500]
@@ -4869,6 +4882,7 @@ def commission_create() -> Any:
                 )
 
     if request.method == "POST":
+        stored_file_paths = []
         form_data = read_commission_form()
         position_rows = (
             form_data["positions"]
@@ -4899,6 +4913,11 @@ def commission_create() -> Any:
             selected_object = None
 
         try:
+            ticket_attachment_selection = None
+            ticket_attachment_service = None
+            if source_ticket is not None:
+                ticket_attachment_service = WowiportService()
+                ticket_attachment_selection = prepare_ticket_attachment_selection(source_ticket, request.form, ticket_attachment_service)
             if (
                     source_ticket is not None
                     and source_ticket.ai_assignment_mode
@@ -5000,6 +5019,11 @@ def commission_create() -> Any:
             db.session.flush()
 
             if source_ticket is not None:
+                store_selected_ticket_attachments(
+                    commission, ticket_attachment_selection, ticket_attachment_service,
+                    partial(save_web_commission_photo, stored_paths=stored_file_paths),
+                    stored_paths=stored_file_paths, uploaded_by_user_id=current_user.id,
+                )
                 source_ticket.state = (
                     TicketMirrorState.CONVERTED.value
                 )
@@ -5045,21 +5069,12 @@ def commission_create() -> Any:
                     },
                 )
 
-            photo_upload = request.files.get(
-                "photo"
-            )
-
-            if (
-                photo_upload is not None
-                and photo_upload.filename
-            ):
-                save_web_commission_photo(
-                    commission=commission,
-                    upload=photo_upload,
-                    caption=request.form.get(
-                        "photo_caption"
-                    ),
-                )
+            for photo_upload in request.files.getlist("photo"):
+                if photo_upload.filename:
+                    save_web_commission_photo(
+                        commission=commission, upload=photo_upload,
+                        caption=request.form.get("photo_caption"), stored_paths=stored_file_paths,
+                    )
 
             audit(
                 "commission.create.web",
@@ -5099,6 +5114,7 @@ def commission_create() -> Any:
             )
 
             db.session.commit()
+            stored_file_paths.clear()
 
             if source_offer is not None:
                 flash(
@@ -5137,6 +5153,12 @@ def commission_create() -> Any:
                 str(exc),
                 "danger",
             )
+        finally:
+            for stored_path in stored_file_paths:
+                try:
+                    stored_path.unlink(missing_ok=True)
+                except OSError:
+                    current_app.logger.exception("commission_attachment_cleanup_failed")
 
     return render_template(
         "admin/commission_form.html",
@@ -5162,6 +5184,8 @@ def commission_create() -> Any:
         form_values=form_values,
         selected_object=selected_object,
         source_ticket=source_ticket,
+        selected_ticket_attachment_guids=(request.form.getlist("ticket_attachment_guid")
+                                    if request.method == "POST" and request.form.get("ticket_attachment_selection_ready") == "true" else None),
         selected_service_position=(
             selected_service_position
         ),
@@ -8230,6 +8254,55 @@ def commission_photo_for_admin(
         abort(404)
 
     return photo
+
+
+@admin_bp.get("/admin/tickets/<int:ticket_id>/attachments")
+@foreman_required
+def ticket_attachments(ticket_id: int) -> Any:
+    ticket = TicketMirror.query.filter_by(id=ticket_id, deleted_at=None).first_or_404()
+    try:
+        items = ticket_attachment_choices(ticket, WowiportService())
+    except Exception:
+        current_app.logger.exception("ticket_attachment_list_failed ticket_id=%s", ticket_id)
+        return jsonify({"message": "Die Ticketanhänge konnten nicht geladen werden. Bitte erneut versuchen."}), 502
+    return jsonify({"items": [{
+        **{key: item[key] for key in ("file_guid", "filename", "is_image", "is_pdf", "type_label")},
+        "thumbnail_url": url_for("admin.ticket_attachment_content", ticket_id=ticket.id, file_guid=item["file_guid"], thumbnail="true") if item["is_image"] else None,
+        "content_url": url_for("admin.ticket_attachment_content", ticket_id=ticket.id, file_guid=item["file_guid"]),
+    } for item in items]})
+
+
+@admin_bp.get("/admin/tickets/<int:ticket_id>/attachments/<string:file_guid>/content")
+@foreman_required
+def ticket_attachment_content(ticket_id: int, file_guid: str) -> Any:
+    ticket = TicketMirror.query.filter_by(id=ticket_id, deleted_at=None).first_or_404()
+    service = WowiportService()
+    try:
+        attachment = next((item for item in ticket_attachment_choices(ticket, service) if item["file_guid"] == file_guid), None)
+        if attachment is None:
+            abort(404)
+        content = read_ticket_attachment(attachment, service)
+        mimetype = "application/octet-stream"
+        as_attachment = True
+        filename = secure_filename(attachment["filename"]) or "ticketanhang"
+        if request.args.get("thumbnail") == "true":
+            content = render_ticket_photo(content, thumbnail=True)
+            mimetype, as_attachment, filename = "image/jpeg", False, "vorschau.jpg"
+        elif attachment["is_image"]:
+            try:
+                content = render_ticket_photo(content)
+                mimetype, as_attachment, filename = "image/jpeg", False, "ticketfoto.jpg"
+            except ValueError:
+                pass
+        elif attachment["is_pdf"] and content.lstrip().startswith(b"%PDF-"):
+            mimetype, as_attachment = "application/pdf", False
+    except (RuntimeError, ValueError):
+        current_app.logger.exception("ticket_attachment_content_failed ticket_id=%s", ticket_id)
+        return jsonify({"message": "Der Ticketanhang konnte nicht geöffnet werden."}), 502
+    response = send_file(BytesIO(content), mimetype=mimetype, download_name=filename, as_attachment=as_attachment)
+    response.headers["Cache-Control"] = "private, max-age=300"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @admin_bp.post(

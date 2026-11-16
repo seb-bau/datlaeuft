@@ -10,6 +10,9 @@ on:
       - app/api.py
       - app/object_directory.py
       - app/commission_object_history.py
+      - app/ticket_attachments.py
+      - app/document_sync.py
+      - app/static/js/ticket_attachment_selection.js
       - app/commission_approval.py
       - app/auth.py
       - app/performance_review_service.py
@@ -66,6 +69,9 @@ on:
       - app/api.py
       - app/object_directory.py
       - app/commission_object_history.py
+      - app/ticket_attachments.py
+      - app/document_sync.py
+      - app/static/js/ticket_attachment_selection.js
       - app/commission_approval.py
       - app/auth.py
       - app/performance_review_service.py
@@ -147,7 +153,7 @@ jobs:
           "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
           "requests>=2.32,<3"
           "phonenumbers>=9,<10"
-          "qrcode>=8,<9"
+          "qrcode>=8,<9" "Pillow>=10,<13"
           "wowipy>=1.1.91,<2"
           "alembic>=1.16,<2"
           "icalendar>=6.3.2,<7"

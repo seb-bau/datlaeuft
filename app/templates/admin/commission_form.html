@@ -701,15 +701,29 @@
       </div>
 
       <div class="col-12 border-top pt-3">
-        <h2 class="h6 mb-0">Auftragsfoto</h2>
+        <h2 class="h6 mb-0">Anhänge und Fotos</h2>
       </div>
+
+      {% if source_ticket %}
+      <div class="col-12" id="ticketAttachmentSelection" data-attachments-url="{{ url_for('admin.ticket_attachments', ticket_id=source_ticket.id) }}">
+        <input type="hidden" id="ticketAttachmentSelectionReady" name="ticket_attachment_selection_ready" value="">
+        <script type="application/json" id="initialTicketAttachmentSelection">{{ selected_ticket_attachment_guids|default(none)|tojson }}</script>
+        <p class="form-text mt-0">Anhänge aus dem Ticket werden vorgeschlagen. Entfernen gilt nur für diesen Auftrag; die Originaldateien im Ticket bleiben erhalten.</p>
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <div class="small text-muted" id="ticketAttachmentStatus" role="status" tabindex="-1">Ticketanhänge werden geladen …</div>
+          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="retryTicketAttachments">Erneut laden</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="restoreTicketAttachments">Entfernte Anhänge wiederherstellen</button>
+        </div>
+        <div class="row g-2" id="ticketAttachmentGallery"></div>
+      </div>
+      {% endif %}
 
       <div class="col-md-6">
         <label
           class="form-label small fw-semibold mb-1"
           for="photoUpload"
         >
-          Foto
+          Weitere Fotos hinzufügen
         </label>
         <input
           class="form-control form-control-sm"
@@ -717,9 +731,10 @@
           type="file"
           name="photo"
           accept="image/*"
+          multiple
         >
         <div class="form-text">
-          Das Foto kann auch nachträglich ergänzt werden.
+          Weitere Fotos können auch nachträglich ergänzt werden.
         </div>
       </div>
 
@@ -728,7 +743,7 @@
           class="form-label small fw-semibold mb-1"
           for="photoCaption"
         >
-          Bildbeschreibung
+          Beschreibung der zusätzlichen Fotos
         </label>
         <input
           class="form-control form-control-sm"
@@ -738,6 +753,7 @@
           value="{{ form_values.get('photo_caption', '') }}"
         >
       </div>
+      <div class="col-12 row g-2 m-0" id="uploadedPhotoPreviews"></div>
     </div>
   </div>
 
@@ -878,4 +894,5 @@
   src="{{ url_for('static', filename='js/commission_form.js') }}"
   defer
 ></script>
+<script src="{{ url_for('static', filename='js/ticket_attachment_selection.js') }}" defer></script>
 {% endblock %}

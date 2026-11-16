@@ -19,6 +19,7 @@ from .models import (
 )
 from .settings import SettingKeys, settings
 from .utils import ensure_utc, parse_datetime
+from .ticket_attachments import is_photo_content, is_photo_document, ticket_attachments_managed, ticket_photos_managed
 
 if TYPE_CHECKING:
     from .wowiport import WowiportService
@@ -218,6 +219,7 @@ def sync_commission_documents(
         "linked_photos": 0,
         "errors": 0,
         "skipped": 0,
+        "skipped_ticket_photos": 0,
     }
 
     if (
@@ -247,12 +249,10 @@ def sync_commission_documents(
             )
         )
 
-    ticket_sources, tickets_known = (
-        _ticket_sources(
-            commission=commission,
-            service=service,
-        )
-    )
+    if ticket_attachments_managed(commission):
+        ticket_sources, tickets_known = [], True
+    else:
+        ticket_sources, tickets_known = _ticket_sources(commission=commission, service=service)
 
     sources.extend(ticket_sources)
     sources = list(dict.fromkeys(sources))
@@ -278,6 +278,7 @@ def sync_commission_documents(
         )
 
     for entity_name, entity_id in sources:
+        managed_ticket = entity_name == "Ticket" and ticket_photos_managed(commission)
         try:
             rows = service.get_document_rows(
                 entity_name=entity_name,
@@ -312,6 +313,9 @@ def sync_commission_documents(
             seen_file_guids.add(file_guid)
             result["seen"] += 1
 
+            if ticket_attachments_managed(commission) and file_guid in commission.raw_payload["ticket_attachment_selection"].get("file_guids", []):
+                continue
+
             attachment = (
                 CommissionAttachment.query
                 .filter(
@@ -337,6 +341,18 @@ def sync_commission_documents(
                     attachment.deleted_at = now
                     result["deactivated"] += 1
 
+                continue
+
+            if managed_ticket and (
+                is_photo_document(row)
+                or (attachment is not None and attachment.mime_type.startswith("image/"))
+                or file_guid in commission.raw_payload["ticket_photo_selection"].get("photo_file_guids", [])
+            ):
+                if attachment is not None and attachment.active:
+                    attachment.active = False
+                    attachment.deleted_at = now
+                    result["deactivated"] += 1
+                result["skipped_ticket_photos"] += 1
                 continue
 
             external_document_id = (
@@ -417,6 +433,14 @@ def sync_commission_documents(
                             file_guid=file_guid,
                         )
                     )
+
+                    if managed_ticket and is_photo_content(raw_data):
+                        if attachment is not None and attachment.active:
+                            attachment.active = False
+                            attachment.deleted_at = now
+                            result["deactivated"] += 1
+                        result["skipped_ticket_photos"] += 1
+                        continue
 
                     stored_attachment = (
                         store_commission_attachment_bytes(
