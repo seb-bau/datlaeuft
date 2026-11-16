@@ -311,11 +311,19 @@
         Wähle hier die zusätzlichen Handwerker aus,
         deren Aufträge und Prüfungen dieser Benutzer
         in der App einsehen darf. Diese Auswahl erweitert
-        die Leseberechtigung.
+        die Leseberechtigung. Administratoren sehen
+        unabhängig davon alle Aufträge und Prüfungen.
       </p>
 
       {% if commission_visibility_users %}
+      <button
+        class="btn btn-sm btn-outline-primary mb-2"
+        type="button"
+        id="selectAllCommissionVisibilityUsers"
+        aria-controls="commissionVisibilityUsers"
+      >Alle</button>
       <div
+        id="commissionVisibilityUsers"
         class="border rounded p-2"
         style="max-height: 340px; overflow-y: auto;"
       >
@@ -497,6 +505,16 @@
 </form>
 
 <script>
+  const selectAllCommissionVisibilityUsers = document.getElementById("selectAllCommissionVisibilityUsers");
+
+  if (selectAllCommissionVisibilityUsers) {
+    selectAllCommissionVisibilityUsers.addEventListener("click", () => {
+      document.querySelectorAll('#commissionVisibilityUsers input[name="visible_commission_user_ids"]:not(:disabled)').forEach((checkbox) => {
+        checkbox.checked = true;
+      });
+    });
+  }
+
   const craftActivitySearch = document.getElementById("craftActivitySearch");
   const craftActivityOptions = Array.from(document.querySelectorAll(".craft-activity-option"));
   const craftActivityCheckboxes = Array.from(document.querySelectorAll(".craft-activity-checkbox"));

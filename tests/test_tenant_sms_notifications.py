@@ -500,6 +500,29 @@ class TenantSmsTests(unittest.TestCase):
         self.get.assert_not_called()
         self.post.assert_not_called()
 
+    def test_invalid_sms_recipient_log_includes_the_checked_value(self):
+        number = "0151 123\ninvalid"
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            result = self.provider.send_sms(number, "Vertraulicher SMS-Text")
+        self.assertEqual(result.state, "skipped")
+        self.assertIn("SMS recipient is not a phone number", logs.output[0])
+        self.assertIn(repr(number), logs.output[0])
+        self.assertNotIn("\n", logs.output[0])
+        self.assertNotIn("Vertraulicher SMS-Text", logs.output[0])
+        self.assertNotIn("test-seven-key", logs.output[0])
+        self.get.assert_not_called()
+        self.post.assert_not_called()
+
+    def test_invalid_tenant_phone_log_includes_the_checked_value_and_order(self):
+        number = "0151 unbekannt"
+        self.service.client.get_contractors.return_value = [self.contractor(phone=number)]
+        commission = self.commission()
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            numbers = self.sms.tenant_phone_numbers(commission, self.service)
+        self.assertEqual(numbers, [])
+        self.assertIn(repr(number), logs.output[0])
+        self.assertIn(f"commission_id={commission.id}", logs.output[0])
+
     def test_lookup_mismatch_or_nonmobile_result_prevents_sms_submission(self):
         self.get.return_value = self.response({"success": True, "network_type": "fixed_line", "international": PHONE_A})
         self.assertEqual(self.provider.send_sms(PHONE_A, "Beauftragung").state, "skipped")
