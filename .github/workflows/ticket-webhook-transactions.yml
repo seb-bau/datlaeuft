@@ -10,9 +10,9 @@ on:
       - app/api.py
       - app/object_directory.py
       - app/commission_object_history.py
-      - app/ticket_photos.py
+      - app/ticket_attachments.py
       - app/document_sync.py
-      - app/static/js/ticket_photo_selection.js
+      - app/static/js/ticket_attachment_selection.js
       - app/commission_approval.py
       - app/auth.py
       - app/performance_review_service.py
@@ -69,9 +69,9 @@ on:
       - app/api.py
       - app/object_directory.py
       - app/commission_object_history.py
-      - app/ticket_photos.py
+      - app/ticket_attachments.py
       - app/document_sync.py
-      - app/static/js/ticket_photo_selection.js
+      - app/static/js/ticket_attachment_selection.js
       - app/commission_approval.py
       - app/auth.py
       - app/performance_review_service.py

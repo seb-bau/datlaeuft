@@ -344,8 +344,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }[item.object_type] || "Objekt";
     }
 
-    function ticketPhotosReady() {
-        const field = document.getElementById?.("ticketPhotoSelectionReady");
+    function ticketAttachmentsReady() {
+        const field = document.getElementById?.("ticketAttachmentSelectionReady");
         return !field || field.value === "true";
     }
 
@@ -515,7 +515,7 @@ document.addEventListener("DOMContentLoaded", () => {
         submitCommission.disabled = (
             !canCreate
             || !objectId.value
-            || !ticketPhotosReady()
+            || !ticketAttachmentsReady()
         );
 
         updateAssignmentPreview({
@@ -1810,11 +1810,11 @@ document.addEventListener("DOMContentLoaded", () => {
     submitCommission.disabled = (
         !canCreate
         || !objectId.value
-        || !ticketPhotosReady()
+        || !ticketAttachmentsReady()
     );
 
-    commissionForm.addEventListener("ticket-photos-updated", () => {
-        submitCommission.disabled = !canCreate || !objectId.value || !ticketPhotosReady();
+    commissionForm.addEventListener("ticket-attachments-updated", () => {
+        submitCommission.disabled = !canCreate || !objectId.value || !ticketAttachmentsReady();
     });
 
     filterExternalCraftsmen();

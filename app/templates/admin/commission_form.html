@@ -701,20 +701,20 @@
       </div>
 
       <div class="col-12 border-top pt-3">
-        <h2 class="h6 mb-0">Auftragsfotos</h2>
+        <h2 class="h6 mb-0">Anhänge und Fotos</h2>
       </div>
 
       {% if source_ticket %}
-      <div class="col-12" id="ticketPhotoSelection" data-photos-url="{{ url_for('admin.ticket_photos', ticket_id=source_ticket.id) }}">
-        <input type="hidden" id="ticketPhotoSelectionReady" name="ticket_photo_selection_ready" value="">
-        <script type="application/json" id="initialTicketPhotoSelection">{{ selected_ticket_photo_guids|default(none)|tojson }}</script>
-        <p class="form-text mt-0">Fotos aus dem Ticket werden vorgeschlagen. Entfernen gilt nur für diesen Auftrag; die Fotos im Ticket bleiben erhalten.</p>
+      <div class="col-12" id="ticketAttachmentSelection" data-attachments-url="{{ url_for('admin.ticket_attachments', ticket_id=source_ticket.id) }}">
+        <input type="hidden" id="ticketAttachmentSelectionReady" name="ticket_attachment_selection_ready" value="">
+        <script type="application/json" id="initialTicketAttachmentSelection">{{ selected_ticket_attachment_guids|default(none)|tojson }}</script>
+        <p class="form-text mt-0">Anhänge aus dem Ticket werden vorgeschlagen. Entfernen gilt nur für diesen Auftrag; die Originaldateien im Ticket bleiben erhalten.</p>
         <div class="d-flex align-items-center gap-2 mb-2">
-          <div class="small text-muted" id="ticketPhotoStatus" role="status" tabindex="-1">Ticketfotos werden geladen …</div>
-          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="retryTicketPhotos">Erneut laden</button>
-          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="restoreTicketPhotos">Entfernte Fotos wiederherstellen</button>
+          <div class="small text-muted" id="ticketAttachmentStatus" role="status" tabindex="-1">Ticketanhänge werden geladen …</div>
+          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="retryTicketAttachments">Erneut laden</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="restoreTicketAttachments">Entfernte Anhänge wiederherstellen</button>
         </div>
-        <div class="row g-2" id="ticketPhotoGallery"></div>
+        <div class="row g-2" id="ticketAttachmentGallery"></div>
       </div>
       {% endif %}
 
@@ -894,5 +894,5 @@
   src="{{ url_for('static', filename='js/commission_form.js') }}"
   defer
 ></script>
-<script src="{{ url_for('static', filename='js/ticket_photo_selection.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/ticket_attachment_selection.js') }}" defer></script>
 {% endblock %}

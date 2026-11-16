@@ -19,7 +19,7 @@ from .models import (
 )
 from .settings import SettingKeys, settings
 from .utils import ensure_utc, parse_datetime
-from .ticket_photos import is_photo_content, is_photo_document, ticket_photos_managed
+from .ticket_attachments import is_photo_content, is_photo_document, ticket_attachments_managed, ticket_photos_managed
 
 if TYPE_CHECKING:
     from .wowiport import WowiportService
@@ -249,12 +249,10 @@ def sync_commission_documents(
             )
         )
 
-    ticket_sources, tickets_known = (
-        _ticket_sources(
-            commission=commission,
-            service=service,
-        )
-    )
+    if ticket_attachments_managed(commission):
+        ticket_sources, tickets_known = [], True
+    else:
+        ticket_sources, tickets_known = _ticket_sources(commission=commission, service=service)
 
     sources.extend(ticket_sources)
     sources = list(dict.fromkeys(sources))
@@ -314,6 +312,9 @@ def sync_commission_documents(
 
             seen_file_guids.add(file_guid)
             result["seen"] += 1
+
+            if ticket_attachments_managed(commission) and file_guid in commission.raw_payload["ticket_attachment_selection"].get("file_guids", []):
+                continue
 
             attachment = (
                 CommissionAttachment.query

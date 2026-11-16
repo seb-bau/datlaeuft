@@ -61,7 +61,7 @@ function form(items = []) {
     sandbox.scheduleObjectSearch = delay => sandbox.scheduled.push(delay);
     vm.createContext(sandbox);
     vm.runInContext([
-        "objectTypeLabel", "ticketPhotosReady", "objectHeading", "objectIcon", "groupedObjectResults", "futureContractBadge", "retrospectiveCommissionSelected", "updateTenantNotificationOptions", "objectText",
+        "objectTypeLabel", "ticketAttachmentsReady", "objectHeading", "objectIcon", "groupedObjectResults", "futureContractBadge", "retrospectiveCommissionSelected", "updateTenantNotificationOptions", "objectText",
         "selectObject", "showObjectSearchMessage", "loadObjects",
     ].map(functionSource).join("\n"), sandbox);
     const listenerStart = source.indexOf("    objectSearchContext.addEventListener(");
@@ -251,7 +251,7 @@ test("addresses lead buildings, units and economic units in bold results and sel
 test("selecting an object cannot enable submission before the ticket photo selection has loaded", () => {
     const state = form();
     const ready = {value: ""};
-    state.document.getElementById = id => id === "ticketPhotoSelectionReady" ? ready : null;
+    state.document.getElementById = id => id === "ticketAttachmentSelectionReady" ? ready : null;
     state.selectObject(building);
     assert.equal(state.submitCommission.disabled, true);
     ready.value = "true";

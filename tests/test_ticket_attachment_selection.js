@@ -4,7 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const source = fs.readFileSync(path.join(__dirname, "../app/static/js/ticket_photo_selection.js"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "../app/static/js/ticket_attachment_selection.js"), "utf8");
 
 class Element {
     constructor(tag = "div") {
@@ -41,12 +41,12 @@ const photos = [
 
 function fixture({initial = null, replies = [{ok: true, items: photos}], ticket = true} = {}) {
     const elements = Object.fromEntries([
-        "commissionForm", "photoUpload", "uploadedPhotoPreviews", "ticketPhotoSelection", "ticketPhotoSelectionReady",
-        "ticketPhotoGallery", "ticketPhotoStatus", "retryTicketPhotos", "restoreTicketPhotos", "initialTicketPhotoSelection",
+        "commissionForm", "photoUpload", "uploadedPhotoPreviews", "ticketAttachmentSelection", "ticketAttachmentSelectionReady",
+        "ticketAttachmentGallery", "ticketAttachmentStatus", "retryTicketAttachments", "restoreTicketAttachments", "initialTicketAttachmentSelection",
     ].map(id => [id, new Element()]));
-    elements.ticketPhotoSelection.dataset.photosUrl = "/ticket/photos";
-    elements.initialTicketPhotoSelection.textContent = JSON.stringify(initial);
-    if (!ticket) delete elements.ticketPhotoSelection;
+    elements.ticketAttachmentSelection.dataset.attachmentsUrl = "/ticket/attachments";
+    elements.initialTicketAttachmentSelection.textContent = JSON.stringify(initial);
+    if (!ticket) delete elements.ticketAttachmentSelection;
     let mounted;
     const revoked = [];
     const sandbox = {
@@ -77,7 +77,7 @@ function descendants(element) {
 }
 
 function submittedGuids(state) {
-    return descendants(state.elements.ticketPhotoGallery).filter(item => item.name === "ticket_photo_guid").map(item => item.value);
+    return descendants(state.elements.ticketAttachmentGallery).filter(item => item.name === "ticket_attachment_guid").map(item => item.value);
 }
 
 function removePhoto(column) {
@@ -89,13 +89,13 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 test("ticket photos appear selected by default, can be removed and restored before submission", async () => {
     const state = fixture();
     await settle();
-    assert.equal(state.elements.ticketPhotoSelectionReady.value, "true");
+    assert.equal(state.elements.ticketAttachmentSelectionReady.value, "true");
     assert.deepEqual(submittedGuids(state), ["kitchen", "bathroom"]);
-    removePhoto(state.elements.ticketPhotoGallery.children[1]);
+    removePhoto(state.elements.ticketAttachmentGallery.children[1]);
     assert.deepEqual(submittedGuids(state), ["kitchen"]);
-    assert.match(state.elements.ticketPhotoStatus.textContent, /1 von 2/);
-    assert.equal(state.elements.restoreTicketPhotos.classList.contains("d-none"), false);
-    state.elements.restoreTicketPhotos.click();
+    assert.match(state.elements.ticketAttachmentStatus.textContent, /1 von 2/);
+    assert.equal(state.elements.restoreTicketAttachments.classList.contains("d-none"), false);
+    state.elements.restoreTicketAttachments.click();
     assert.deepEqual(submittedGuids(state), ["kitchen", "bathroom"]);
 });
 
@@ -103,7 +103,7 @@ test("an intentionally empty selection survives validation and remains submittab
     const state = fixture({initial: []});
     await settle();
     assert.deepEqual(submittedGuids(state), []);
-    assert.match(state.elements.ticketPhotoStatus.textContent, /0 von 2/);
+    assert.match(state.elements.ticketAttachmentStatus.textContent, /0 von 2/);
     let prevented = false;
     state.elements.commissionForm.dispatchEvent({type: "submit", preventDefault() {prevented = true;}});
     assert.equal(prevented, false);
@@ -119,14 +119,14 @@ test("loading failures block submission and allow retry without changing other f
     const state = fixture({replies: [new TypeError("Failed to fetch"), {ok: true, items: photos}]});
     state.elements.photoUpload.value = "local-image.jpg";
     await settle();
-    assert.equal(state.elements.ticketPhotoSelectionReady.value, "");
-    assert.match(state.elements.ticketPhotoStatus.textContent, /Ticketfotos konnten nicht geladen werden/);
+    assert.equal(state.elements.ticketAttachmentSelectionReady.value, "");
+    assert.match(state.elements.ticketAttachmentStatus.textContent, /Ticketanhänge konnten nicht geladen werden/);
     let prevented = false;
     state.elements.commissionForm.dispatchEvent({type: "submit", preventDefault() {prevented = true;}});
     assert.equal(prevented, true);
-    state.elements.retryTicketPhotos.click();
+    state.elements.retryTicketAttachments.click();
     await settle();
-    assert.equal(state.elements.ticketPhotoSelectionReady.value, "true");
+    assert.equal(state.elements.ticketAttachmentSelectionReady.value, "true");
     assert.equal(state.elements.photoUpload.value, "local-image.jpg");
     assert.deepEqual(submittedGuids(state), ["kitchen", "bathroom"]);
 });
@@ -134,8 +134,8 @@ test("loading failures block submission and allow retry without changing other f
 test("no ticket photos is a successful explicit selection", async () => {
     const state = fixture({replies: [{ok: true, items: []}]});
     await settle();
-    assert.equal(state.elements.ticketPhotoSelectionReady.value, "true");
-    assert.match(state.elements.ticketPhotoStatus.textContent, /Keine Fotos im Ticket/);
+    assert.equal(state.elements.ticketAttachmentSelectionReady.value, "true");
+    assert.match(state.elements.ticketAttachmentStatus.textContent, /Keine Anhänge im Ticket/);
 });
 
 test("additional local photos can be previewed and individually removed from the upload", () => {
@@ -147,4 +147,20 @@ test("additional local photos can be previewed and individually removed from the
     assert.deepEqual(state.elements.photoUpload.files.map(file => file.name), ["eins.jpg", "drei.jpg"]);
     assert.equal(state.elements.uploadedPhotoPreviews.children.length, 2);
     assert.ok(state.revoked.includes("blob:zwei.jpg"));
+});
+
+test("mixed ticket attachments include PDF and Office documents with working links and removal", async () => {
+    const pdf = {file_guid: "pdf", filename: "hinweise.pdf", thumbnail_url: null, content_url: "/pdf/content", is_pdf: true, type_label: "PDF-Dokument"};
+    const word = {file_guid: "word", filename: "auftrag.docx", thumbnail_url: null, content_url: "/word/content", type_label: "DOCX-Datei"};
+    const state = fixture({replies: [{ok: true, items: [...photos, pdf, word]}]});
+    await settle();
+    assert.deepEqual(submittedGuids(state), ["kitchen", "bathroom", "pdf", "word"]);
+    const cards = state.elements.ticketAttachmentGallery.children;
+    assert.equal(descendants(cards[2]).filter(element => element.tag === "img").length, 0);
+    assert.ok(descendants(cards[2]).some(element => element.tag === "a" && element.href === "/pdf/content"));
+    assert.ok(descendants(cards[3]).some(element => element.textContent === "DOCX-Datei"));
+    removePhoto(cards[2]);
+    assert.deepEqual(submittedGuids(state), ["kitchen", "bathroom", "word"]);
+    state.elements.restoreTicketAttachments.click();
+    assert.deepEqual(submittedGuids(state), ["kitchen", "bathroom", "pdf", "word"]);
 });
