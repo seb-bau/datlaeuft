@@ -5433,11 +5433,14 @@ def commission_object_commissions() -> Any:
         return jsonify({"message": "Die Auswahl für die Auftragsübersicht ist ungültig."}), 400
     try:
         choice = get_commission_object_choice(object_type, object_id)
+        levels = request.args.get("levels")
+        result = commission_object_history(
+            choice, summary=request.args.get("summary") == "true", view=view, page=page,
+            levels=[name.strip() for name in levels.split(",")] if levels is not None else None,
+        )
     except ValueError as exc:
         return jsonify({"message": str(exc)}), 400
-    return jsonify(commission_object_history(
-        choice, summary=request.args.get("summary") == "true", view=view, page=page,
-    ))
+    return jsonify(result)
 
 
 @admin_bp.get(

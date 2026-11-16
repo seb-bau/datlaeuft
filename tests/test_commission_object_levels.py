@@ -1,5 +1,6 @@
 import ast
 import importlib
+import os
 import sys
 import types
 import unittest
@@ -10,6 +11,8 @@ from unittest.mock import Mock, patch
 from flask import Flask
 from flask_jwt_extended import JWTManager, create_access_token
 from flask_sqlalchemy import SQLAlchemy
+import sqlalchemy as sa
+from sqlalchemy.engine import make_url
 
 
 class CommissionObjectLevelTests(unittest.TestCase):
@@ -161,7 +164,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
 
     def test_unit_search_keeps_an_occupied_unit_separate_from_its_contract(self):
         choices = self.directory.search_commission_objects("COMMON", "use_unit")
-        self.assertEqual([(item["object_type"], item["object_id"]) for item in choices], [("use_unit", self.unit.id)])
+        self.assertEqual([(item["object_type"], item["object_id"]) for item in choices], [("use_unit", self.unit.id), ("license_agreement", self.agreement.id)])
         self.assertIsNone(choices[0]["license_agreement"])
         self.assertIsNone(choices[0]["tenant_name"])
         self.assertFalse(choices[0]["is_vacancy"])
@@ -205,7 +208,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.unit.position_name = "links"
         self.db.session.commit()
         choices = self.directory.search_commission_objects("Wehrenb 94 links", "use_unit")
-        self.assertEqual([item["object_id"] for item in choices], [self.unit.id])
+        self.assertEqual([item["object_id"] for item in choices], [self.unit.id, self.agreement.id])
         for context in ("address", "use_unit", "tenant", "all"):
             self.assertEqual(self.directory.search_commission_objects("Wehrenb 999", context), [])
 
@@ -241,7 +244,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.economic.name = "Siedlung Altstadt"
         self.db.session.commit()
         choices = self.directory.search_commission_objects("Alt Lün", "economic_unit")
-        self.assertEqual([item["object_id"] for item in choices], [self.economic.id])
+        self.assertEqual([item["object_id"] for item in choices], [self.economic.id, self.building.id, self.agreement.id, self.empty_building.id])
 
     def test_partial_address_search_is_available_through_the_existing_api(self):
         self.prepare_partial_address_search()
@@ -249,6 +252,126 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual({item["object_type"] for item in response.json["items"]}, {"building", "license_agreement"})
         self.assertEqual({item["building"]["erp_id"] for item in response.json["items"]}, {2002})
+
+    def test_house_numbers_cannot_match_postcodes_longer_numbers_or_suffixes(self):
+        self.building.street = "Tulpenweg 9"
+        self.building.address = "Tulpenweg 9, 44539 Lünen"
+        self.unit.address = self.building.address
+        for index, number in enumerate(("1", "19", "90", "9a", "9 b", "9-11", "9/11"), start=10):
+            building = self.models.WowiBuilding(
+                erp_id=2000 + index, id_num=f"GE-{index}", street=f"Tulpenweg {number}",
+                address=f"Tulpenweg {number}, 44539 Lünen", economic_unit=self.economic,
+            )
+            unit = self.models.WowiUseUnit(erp_id=3000 + index, id_num=f"NE-{index}", building=building, economic_unit=self.economic)
+            agreement = self.models.WowiLicenseAgreement(erp_id=4000 + index, id_num=f"MV-{index}", use_unit=unit)
+            agreement.contractors.append(self.models.WowiContractor(
+                erp_id=5000 + index, license_agreement_erp_id=agreement.erp_id, display_name=f"Mieter {index}",
+            ))
+            self.db.session.add_all([building, unit, agreement])
+        self.db.session.commit()
+        for text, expected in (("Tulpen 9", 2002), ("Tulpenweg 9", 2002), ("9 Tulpen", 2002),
+                               ("Tulpen 9a", 2013), ("Tulpen 9 A", 2013), ("Tulpen 9b", 2014),
+                               ("Tulpen 9-11", 2015), ("Tulpen 9 / 11", 2016)):
+            for context in ("address", "use_unit", "tenant", "all"):
+                with self.subTest(text=text, context=context):
+                    choices = self.directory.search_commission_objects(text, context)
+                    self.assertTrue(choices)
+                    self.assertEqual({item["building"]["erp_id"] for item in choices}, {expected})
+        choices = self.directory.search_commission_objects("Tulpenweg", "address")
+        self.assertGreater(len({item["building"]["erp_id"] for item in choices}), 1)
+        for text in ("Tulpenweg 9, 44539 Lünen", "Tulpenweg 9,44539 Lünen"):
+            choices = self.directory.search_commission_objects(text, "address")
+            self.assertEqual({item["building"]["erp_id"] for item in choices}, {2002})
+
+    def test_object_numbers_with_numeric_suffixes_remain_searchable(self):
+        self.building.id_num = "GE-94"
+        self.unit.id_num = "NE-94"
+        self.agreement.id_num = "MV-94"
+        self.db.session.commit()
+        for text, context, expected in (("GE-94", "address", "building"), ("NE-94", "use_unit", "use_unit"),
+                                        ("MV-94", "agreement", "license_agreement"), ("MV-94", "all", "license_agreement")):
+            with self.subTest(text=text, context=context):
+                choices = self.directory.search_commission_objects(text, context)
+                self.assertTrue(any(item["object_type"] == expected for item in choices))
+
+    def test_house_numbers_are_filtered_before_the_result_limit_and_support_legacy_addresses(self):
+        self.prepare_partial_address_search()
+        self.building.id_num = "ZZ-LAST"
+        self.building.address = "Tulpenweg 9, 44539 Lünen"
+        self.unit.address = self.building.address
+        other = self.models.WowiBuilding.query.filter_by(erp_id=2006).one()
+        other.street = "Tulpenweg 1"
+        other.address = "Tulpenweg 1, 44539 Lünen"
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("Tulpen 9", "address", limit=1)
+        self.assertEqual([(item["object_type"], item["object_id"]) for item in choices], [("building", self.building.id)])
+        response = self.client.get("/api/commission-objects/search?q=Tulpenweg+9&context=address", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({item["building"]["erp_id"] for item in response.json["items"]}, {2002})
+
+    def test_economic_and_unit_hierarchies_keep_current_and_future_contracts_with_their_parents(self):
+        future = self.models.WowiLicenseAgreement(erp_id=4005, id_num="MV-FUTURE", use_unit=self.unit, start_date=date(2027, 1, 1))
+        ended = self.models.WowiLicenseAgreement(erp_id=4006, id_num="MV-ENDED", use_unit=self.unit, end_date=date(2026, 11, 12))
+        inactive = self.models.WowiLicenseAgreement(erp_id=4007, id_num="MV-INACTIVE", use_unit=self.unit, active=False)
+        foreign_unit = self.models.WowiUseUnit(erp_id=3008, id_num="NE-FOREIGN", building=self.empty_building, economic_unit=self.economic)
+        foreign = self.models.WowiLicenseAgreement(erp_id=4008, id_num="MV-FOREIGN", use_unit=foreign_unit)
+        self.db.session.add_all([future, ended, inactive, foreign_unit, foreign])
+        self.db.session.commit()
+        unit_choices = self.directory.search_commission_objects("NE-COMMON", "use_unit")
+        self.assertEqual([(item["object_type"], item["object_id"]) for item in unit_choices], [
+            ("use_unit", self.unit.id), ("license_agreement", self.agreement.id), ("license_agreement", future.id),
+        ])
+        economic_choices = self.directory.search_commission_objects("WE-COMMON", "economic_unit")
+        self.assertEqual([(item["object_type"], item["object_id"]) for item in economic_choices], [
+            ("economic_unit", self.economic.id), ("building", self.building.id),
+            ("license_agreement", self.agreement.id), ("license_agreement", future.id),
+            ("building", self.empty_building.id), ("license_agreement", foreign.id),
+        ])
+        self.assertTrue(next(item for item in economic_choices if item["object_id"] == future.id)["is_future"])
+        for context, text, limit in (("economic_unit", "WE-COMMON", 3), ("use_unit", "NE-COMMON", 2)):
+            choices = self.directory.search_commission_objects(text, context, limit=limit)
+            self.assertEqual(len(choices), limit)
+            self.assertEqual(choices[0]["object_type"], context)
+
+    def test_economic_hierarchy_excludes_inactive_buildings_and_units(self):
+        self.building.active = False
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("WE-COMMON", "economic_unit")
+        self.assertEqual([item["object_type"] for item in choices], ["economic_unit", "building"])
+        self.assertEqual(choices[1]["object_id"], self.empty_building.id)
+        self.building.active = True
+        self.unit.active = False
+        self.db.session.commit()
+        choices = self.directory.search_commission_objects("WE-COMMON", "economic_unit")
+        self.assertFalse(any(item["object_type"] == "license_agreement" for item in choices))
+
+    def test_house_number_predicates_match_on_the_configured_database(self):
+        database_url = os.environ.get("DATLAEUFT_TEST_DATABASE_URL", "sqlite://")
+        url = make_url(database_url)
+        if url.get_backend_name() != "sqlite" and not (url.database or "").startswith("datlaeuft_test"):
+            self.fail("Diese Prüfung benötigt eine separate datlaeuft_test-Datenbank.")
+        engine = sa.create_engine(database_url)
+        metadata = sa.MetaData()
+        table = sa.Table("wowi_building", metadata, sa.Column("id", sa.Integer(), primary_key=True),
+                         sa.Column("street", sa.String(255)), sa.Column("address", sa.String(500)))
+        try:
+            with engine.begin() as connection:
+                metadata.create_all(connection)
+                connection.execute(table.insert(), [
+                    {"id": 1, "street": "Tulpenweg 9", "address": "Tulpenweg 9, 44539 Lünen"},
+                    {"id": 2, "street": "Tulpenweg 19", "address": "Tulpenweg 19, 44539 Lünen"},
+                    {"id": 3, "street": "Tulpenweg 90", "address": "Tulpenweg 90, 44539 Lünen"},
+                    {"id": 4, "street": "Tulpenweg 9 A", "address": "Tulpenweg 9 A, 44539 Lünen"},
+                    {"id": 5, "street": None, "address": "Tulpenweg 9, 44539 Lünen"},
+                    {"id": 6, "street": "Tulpenweg 1", "address": "Tulpenweg 1, 44539 Lünen"},
+                    {"id": 7, "street": "Tulpenweg 9–11", "address": "Tulpenweg 9–11, 44539 Lünen"},
+                ])
+                for number, expected in (("9", [1, 5]), ("9a", [4]), ("9-11", [7])):
+                    statement = sa.select(self.models.WowiBuilding.id).where(self.directory._building_house_number_filter(number)).order_by(self.models.WowiBuilding.id)
+                    self.assertEqual(list(connection.scalars(statement)), expected)
+                metadata.drop_all(connection)
+        finally:
+            engine.dispose()
 
     def test_building_search_returns_the_building_and_its_contracts_as_separate_choices(self):
         choices = self.directory.search_commission_objects("COMMON", "address")
@@ -616,7 +739,8 @@ class CommissionObjectLevelTests(unittest.TestCase):
     def test_mobile_search_accepts_the_selected_context_and_rejects_unknown_contexts(self):
         for context, object_types in (
             ("tenant", {"license_agreement"}), ("agreement", {"license_agreement"}),
-            ("use_unit", {"use_unit"}), ("address", {"building", "license_agreement"}), ("economic_unit", {"economic_unit"}),
+            ("use_unit", {"use_unit", "license_agreement"}), ("address", {"building", "license_agreement"}),
+            ("economic_unit", {"economic_unit", "building", "license_agreement"}),
         ):
             with self.subTest(context=context):
                 response = self.client.get(f"/api/commission-objects/search?q=COMMON&context={context}", headers=self.headers)
