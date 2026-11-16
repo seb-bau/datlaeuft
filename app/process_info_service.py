@@ -20,6 +20,7 @@ from .models import (
     CommissionSource,
     ExternalCraftsman,
     ProcessInfo,
+    ProcessInfoDelivery,
     ProcessInfoRead,
     ProcessInfoThread,
     User,
@@ -215,6 +216,39 @@ def ensure_process_thread(
     return thread
 
 
+def initial_process_note_id(process_erp_id, rows, existing_items):
+    remote = {
+        note_id: row for row in rows
+        if (note_id := _integer_value(_row_value(row, "Id"))) is not None
+    }
+    note_ids = set(remote) | set(existing_items)
+    if not note_ids:
+        return None
+    first_id = min(note_ids)
+    existing = existing_items.get(first_id)
+    if existing is not None and (
+        existing.sender_user_id is not None
+        or existing.sender_external_craftsman_id is not None
+        or existing.direction != OFFICE_DIRECTION
+    ):
+        return None
+    row = remote.get(first_id)
+    body = str(_row_value(row, "Description") or "") if row is not None else existing.erp_body
+    normalized = " ".join(body.split())
+    if not normalized:
+        return None
+    descriptions = set()
+    legacy_descriptions = set()
+    for commission in Commission.query.filter(Commission.crafts_process_erp_id == process_erp_id).all():
+        payload = commission.raw_payload if isinstance(commission.raw_payload, dict) else {}
+        origin = payload.get("initial_process_description")
+        if isinstance(origin, dict) and origin.get("process_erp_id") == process_erp_id:
+            descriptions.add(" ".join(str(origin.get("body") or "").split()))
+        else:
+            legacy_descriptions.add(" ".join(str(commission.description or "").split()))
+    return first_id if normalized in (descriptions or legacy_descriptions) else None
+
+
 def sync_process_infos(
     process_erp_id: int,
     *,
@@ -244,6 +278,7 @@ def sync_process_infos(
             ProcessInfo.erp_note_id.is_not(None),
         ).all()
     }
+    initial_note_id = initial_process_note_id(process_erp_id, rows, existing_items)
 
     remote_ids: set[int] = set()
     changed_items: list[ProcessInfo] = []
@@ -262,6 +297,7 @@ def sync_process_infos(
 
         remote_ids.add(note_id)
         item = existing_items.get(note_id)
+        new_item = item is None
 
         if item is None:
             outgoing_candidates = [
@@ -319,7 +355,36 @@ def sync_process_infos(
                 state="synced",
             )
             db.session.add(item)
+
+        if (
+            item.state == "initial_description"
+            or (
+                note_id == initial_note_id
+                and item.sender_user_id is None
+                and item.sender_external_craftsman_id is None
+                and item.direction == OFFICE_DIRECTION
+            )
+        ):
+            item.body = body
+            item.erp_body = body
+            item.author_name = item.author_name or _note_author(row)
+            item.erp_date = _date_value(_row_value(row, "Date"))
+            item.state = "initial_description"
+            item.mail_state = "not_required"
+            item.mail_available_at = None
+            item.mail_recipients = []
+            item.last_error = None
+            if not new_item:
+                ProcessInfoDelivery.query.filter(
+                    ProcessInfoDelivery.process_info_id == item.id,
+                    ProcessInfoDelivery.state.in_(("pending", "failed")),
+                ).update({ProcessInfoDelivery.state: "cancelled"}, synchronize_session=False)
+            existing_items[note_id] = item
+            continue
+
+        if new_item:
             changed_items.append(item)
+            existing_items[note_id] = item
             continue
 
         if item.erp_body != body:

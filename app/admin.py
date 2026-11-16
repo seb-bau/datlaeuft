@@ -7985,7 +7985,7 @@ def commission_detail(
             ProcessInfo.query.filter(
                 ProcessInfo.process_erp_id
                 == item.crafts_process_erp_id,
-                ProcessInfo.state != "deleted",
+                ProcessInfo.visible_filter(),
             )
             .order_by(
                 ProcessInfo.erp_date

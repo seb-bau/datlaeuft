@@ -597,6 +597,18 @@ class CommissionObjectLevelTests(unittest.TestCase):
         gateway.client.get_building_lands.return_value = [types.SimpleNamespace(id_=2002, id_num="GE-COMMON")]
         return gateway
 
+    def test_new_process_keeps_the_exact_original_description_after_an_order_update(self):
+        commission = self.create_order("license_agreement", self.agreement.id)
+        gateway = self.gateway_with_mocked_client()
+        original = commission.description
+        gateway.create_commission_waiting_for_acceptance(commission)
+        self.assertEqual(gateway.client.create_commissioning_crafts_process.call_args.kwargs["description"], original)
+        self.assertEqual(commission.raw_payload["initial_process_description"], {"process_erp_id": 9100, "body": original})
+        self.assertEqual(commission.raw_payload["commission_scope"]["object_type"], "license_agreement")
+        commission.description = "Später geänderter Auftragstext."
+        self.db.session.commit()
+        self.assertEqual(commission.raw_payload["initial_process_description"]["body"], original)
+
     def test_contact_resolution_prioritizes_the_explicit_future_contract_over_the_current_tenant(self):
         gateway = self.gateway_with_mocked_client()
         future = types.SimpleNamespace(

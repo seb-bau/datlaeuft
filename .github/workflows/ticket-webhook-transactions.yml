@@ -18,6 +18,9 @@ on:
       - app/auth.py
       - app/performance_review_service.py
       - app/process_info_service.py
+      - app/process_info_api.py
+      - app/process_info_web.py
+      - app/external_portal.py
       - migrations/versions/*commission_approval.py
       - migrations/env.py
       - app/static/js/commission_object_history.js
@@ -78,6 +81,9 @@ on:
       - app/auth.py
       - app/performance_review_service.py
       - app/process_info_service.py
+      - app/process_info_api.py
+      - app/process_info_web.py
+      - app/external_portal.py
       - migrations/versions/*commission_approval.py
       - migrations/env.py
       - app/static/js/commission_object_history.js
