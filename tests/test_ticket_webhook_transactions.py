@@ -179,6 +179,75 @@ class TicketWebhookTransactionTests(unittest.TestCase):
         self.assertEqual(ticket.ai_state, self.models.TicketAiState.READY.value)
         self.assertEqual(ticket.ai_title, "KI-Ergebnis erhalten")
 
+    def test_webhook_claim_starts_fresh_after_an_earlier_read(self):
+        if self.db.engine.dialect.name not in {"mysql", "mariadb"}:
+            self.skipTest("Dieser Test benötigt InnoDB-Snapshot-Isolation.")
+        self.db.session.execute(select(self.models.TicketMirror.id)).all()
+        with self.db.engine.begin() as writer:
+            writer.execute(
+                self.db.update(self.models.WebhookEvent.__table__)
+                .where(self.models.WebhookEvent.id == self.event_id)
+                .values(action="Created")
+            )
+        self.assertEqual(self.erp_sync.claim_webhook_event(), self.event_id)
+        self.assertFalse(self.db.session().in_transaction())
+        webhook = self.db.session.get(self.models.WebhookEvent, self.event_id)
+        self.assertEqual(webhook.action, "Created")
+        self.assertEqual(webhook.attempt_count, 1)
+
+    def test_webhook_claim_retries_conflicts_without_duplicate_processing(self):
+        commit = self.db.session.commit
+        for error_code in (1020, 1205, 1213):
+            with self.subTest(error_code=error_code):
+                webhook = self.db.session.get(self.models.WebhookEvent, self.event_id)
+                webhook.processed = False
+                webhook.processing_at = None
+                webhook.attempt_count = 0
+                self.db.session.commit()
+                failed = False
+                previous_reads = self.service.get_ticket_rows.call_count
+
+                def conflicting_commit():
+                    nonlocal failed
+                    if not failed:
+                        failed = True
+                        self.db.session.flush()
+                        raise OperationalError("UPDATE webhook_event", {}, Exception(error_code, "Konflikt"))
+                    return commit()
+
+                with patch.object(self.db.session, "commit", side_effect=conflicting_commit), self.assertLogs(self.app.logger, level="WARNING"):
+                    self.assertEqual(self.erp_sync.process_webhook_batch(1), 1)
+                webhook = self.db.session.get(self.models.WebhookEvent, self.event_id)
+                self.assertTrue(webhook.processed, webhook.message)
+                self.assertIsNone(webhook.processing_at)
+                self.assertEqual(webhook.attempt_count, 1)
+                self.assertEqual(self.service.get_ticket_rows.call_count, previous_reads + 1)
+
+    def test_webhook_claim_limits_retries_and_preserves_unclaimed_events(self):
+        conflict = OperationalError("SELECT webhook_event", {}, Exception(1020, "Konflikt"))
+        with patch.object(self.erp_sync, "_claim_webhook_event", side_effect=conflict) as claim:
+            with self.assertLogs(self.app.logger, level="WARNING"), self.assertRaises(OperationalError):
+                self.erp_sync.claim_webhook_event()
+        self.assertEqual(claim.call_count, 3)
+        webhook = self.db.session.get(self.models.WebhookEvent, self.event_id)
+        self.assertFalse(webhook.processed)
+        self.assertIsNone(webhook.processing_at)
+        self.assertEqual(webhook.attempt_count, 0)
+
+    def test_webhook_claim_does_not_retry_unrelated_database_errors(self):
+        error = OperationalError("SELECT webhook_event", {}, Exception(1146, "Tabelle fehlt"))
+        with patch.object(self.erp_sync, "_claim_webhook_event", side_effect=error) as claim:
+            with self.assertRaises(OperationalError):
+                self.erp_sync.claim_webhook_event()
+        self.assertEqual(claim.call_count, 1)
+
+    def test_empty_webhook_claim_leaves_no_open_transaction(self):
+        webhook = self.db.session.get(self.models.WebhookEvent, self.event_id)
+        webhook.processed = True
+        self.db.session.commit()
+        self.assertIsNone(self.erp_sync.claim_webhook_event())
+        self.assertFalse(self.db.session().in_transaction())
+
     def test_changed_source_invalidates_concurrently_completed_analysis(self):
         self.settings.get.side_effect = lambda name: False
 

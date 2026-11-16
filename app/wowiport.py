@@ -303,12 +303,18 @@ class WowiportService:
 
         def traced_post(endpoint, ep_params=None, data=None):
             is_commission_create = (
-                endpoint == "CommissioningEdit/Commission/WaitForCraftsmanFeedback"
+                endpoint in {
+                    "CommissioningEdit/Commission",
+                    "CommissioningEdit/Commission/WaitForCraftsmanFeedback",
+                }
             )
             body = data or {}
             if is_commission_create:
                 current_app.logger.info(
-                    "wowiport_commission_post field_present=%s ResponsibleOfficialRepairId=%s",
+                    "wowiport_commission_post endpoint=%s api_version=%r "
+                    "field_present=%s ResponsibleOfficialRepairId=%s",
+                    endpoint,
+                    settings.get(SettingKeys.WOWI_API_VERSION),
                     "ResponsibleOfficialRepairId" in body,
                     body.get("ResponsibleOfficialRepairId"),
                 )
@@ -329,18 +335,48 @@ class WowiportService:
                             force_refresh=True,
                         )
                         rows = self._result_rows(snapshot)
+                        commission_row = next((
+                            row for row in rows
+                            if _as_int(self._row_value(row, "Id", "CommissionId")) == identity["id"]
+                        ), None)
+                        number = (
+                            self._row_value(commission_row, "IdNum", "CommissionIdNum")
+                            if commission_row is not None else None
+                        ) or identity["id_num"]
+                        stored_official_id = (
+                            _commission_responsible_official_id(commission_row)
+                            if commission_row is not None else None
+                        )
+                        sent_official_id = _as_int(body.get("ResponsibleOfficialRepairId"))
                         current_app.logger.info(
-                            "wowiport_commission_readback erp_id=%s found=%s "
+                            "wowiport_commission_readback erp_id=%s erp_idnum=%r found=%s "
                             "sent_official_id=%s stored_official_id=%s",
                             identity["id"],
-                            bool(rows),
-                            body.get("ResponsibleOfficialRepairId"),
-                            _commission_responsible_official_id(rows[0]) if rows else None,
+                            number,
+                            commission_row is not None,
+                            sent_official_id,
+                            stored_official_id,
                         )
+                        if sent_official_id is not None and sent_official_id != stored_official_id:
+                            current_app.logger.warning(
+                                "wowiport_commission_official_mismatch endpoint=%s api_version=%r "
+                                "erp_id=%s erp_idnum=%r found=%s sent_official_id=%s stored_official_id=%s",
+                                endpoint,
+                                settings.get(SettingKeys.WOWI_API_VERSION),
+                                identity["id"],
+                                number,
+                                commission_row is not None,
+                                sent_official_id,
+                                stored_official_id,
+                            )
                     except Exception as exc:
                         current_app.logger.warning(
-                            "wowiport_commission_readback_failed erp_id=%s error_type=%s",
+                            "wowiport_commission_readback_failed endpoint=%s api_version=%r "
+                            "erp_id=%s erp_idnum=%r error_type=%s",
+                            endpoint,
+                            settings.get(SettingKeys.WOWI_API_VERSION),
                             identity["id"],
+                            identity["id_num"],
                             type(exc).__name__,
                         )
             return result

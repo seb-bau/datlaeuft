@@ -609,6 +609,94 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.db.session.commit()
         self.assertEqual(commission.raw_payload["initial_process_description"]["body"], original)
 
+    def test_real_erp_json_sends_the_creator_official_id_to_the_process_and_order(self):
+        from test_wowiport_client import transport
+
+        commission = self.create_order("license_agreement", self.agreement.id)
+        gateway = self.gateway_with_mocked_client()
+        lookups = gateway.client
+        with patch("wowipy.rest_adapter.requests_cache.install_cache"):
+            client = transport.WowiportClient(hostname="", user="test", password="test", api_key="test-key")
+        client._rest_adapter.access_token = "test-token"
+        client.get_license_agreements = lookups.get_license_agreements
+        client.get_use_units = lookups.get_use_units
+        client.get_building_lands = lookups.get_building_lands
+        replies = []
+        for erp_id, number in ((9100, "V-1"), (9200, "A-1")):
+            reply = Mock(status_code=200, reason="OK")
+            reply.json.return_value = {"Id": erp_id, "IdNum": number}
+            replies.append(reply)
+        client._rest_adapter._request = Mock(side_effect=replies)
+        gateway.client = client
+        gateway.create_commission_waiting_for_acceptance(commission)
+        requests = client._rest_adapter._request.call_args_list
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0].kwargs["json"]["PersonInChargeResponsibleOfficialId"], 900)
+        self.assertEqual(requests[1].kwargs["json"]["ResponsibleOfficialRepairId"], 900)
+        self.assertNotEqual(commission.created_by.person_erp_id, 900)
+
+    def test_commission_readback_reports_missing_or_changed_official_for_both_creation_endpoints(self):
+        for endpoint in ("CommissioningEdit/Commission", "CommissioningEdit/Commission/WaitForCraftsmanFeedback"):
+            for stored_official_id in (None, 901, 900):
+                with self.subTest(endpoint=endpoint, stored_official_id=stored_official_id):
+                    client = Mock()
+                    adapter = client._rest_adapter
+                    result = types.SimpleNamespace(data={"Id": 9200, "IdNum": "A-1"})
+                    adapter.post.return_value = result
+                    adapter.get.return_value = types.SimpleNamespace(data=[{
+                        "Id": 9200, "IdNum": "A-1", "ResponsibleOfficialRepair": (
+                            {"Id": stored_official_id} if stored_official_id is not None else None
+                        ),
+                    }])
+                    with patch.object(self.gateway, "WowiportClient", return_value=client):
+                        self.gateway.WowiportService()
+                    with self.assertLogs(self.app.logger, level="INFO") as logs:
+                        self.assertIs(adapter.post(endpoint, data={"ResponsibleOfficialRepairId": 900}), result)
+                    warnings = [record.getMessage() for record in logs.records if record.levelname == "WARNING"]
+                    self.assertEqual(len(warnings), int(stored_official_id != 900))
+                    if warnings:
+                        self.assertIn("wowiport_commission_official_mismatch", warnings[0])
+                        self.assertIn("erp_id=9200 erp_idnum='A-1'", warnings[0])
+                        self.assertIn("api_version='v1.2'", warnings[0])
+                        self.assertIn("sent_official_id=900", warnings[0])
+                        self.assertIn(f"stored_official_id={stored_official_id}", warnings[0])
+                    adapter.get.assert_called_once_with(
+                        endpoint="CommissioningRead/Commissions",
+                        ep_params={"id": 9200, "includeResponsibleOfficialRepair": "true", "showNullValues": "true", "limit": 1},
+                        force_refresh=True,
+                    )
+
+    def test_commission_readback_does_not_validate_a_different_order(self):
+        client = Mock()
+        adapter = client._rest_adapter
+        result = types.SimpleNamespace(data={"Id": 9200, "IdNum": "A-1"})
+        adapter.post.return_value = result
+        adapter.get.return_value = types.SimpleNamespace(data=[{
+            "Id": 9300, "IdNum": "A-OTHER", "ResponsibleOfficialRepair": {"Id": 900},
+        }])
+        with patch.object(self.gateway, "WowiportClient", return_value=client):
+            self.gateway.WowiportService()
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            self.assertIs(adapter.post("CommissioningEdit/Commission", data={"ResponsibleOfficialRepairId": 900}), result)
+        self.assertIn("found=False", logs.output[0])
+        self.assertIn("erp_id=9200 erp_idnum='A-1'", logs.output[0])
+        self.assertNotIn("A-OTHER", logs.output[0])
+
+    def test_failed_readback_preserves_the_created_order_without_repeating_the_write(self):
+        client = Mock()
+        adapter = client._rest_adapter
+        result = types.SimpleNamespace(data={"Id": 9200, "IdNum": "A-1"})
+        post = adapter.post
+        post.return_value = result
+        adapter.get.side_effect = RuntimeError("Rücklesen fehlgeschlagen")
+        with patch.object(self.gateway, "WowiportClient", return_value=client):
+            self.gateway.WowiportService()
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            self.assertIs(adapter.post("CommissioningEdit/Commission", data={"ResponsibleOfficialRepairId": 900}), result)
+        post.assert_called_once()
+        self.assertIn("wowiport_commission_readback_failed", logs.output[0])
+        self.assertIn("erp_id=9200 erp_idnum='A-1'", logs.output[0])
+
     def test_contact_resolution_prioritizes_the_explicit_future_contract_over_the_current_tenant(self):
         gateway = self.gateway_with_mocked_client()
         future = types.SimpleNamespace(
