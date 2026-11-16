@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import json
+import re
+from urllib.parse import quote, quote_plus
 
 import requests
 import requests_cache
@@ -14,8 +17,8 @@ REQUEST_TIMEOUT = (10, 60)
 
 
 class WowiportRestAdapter(RestAdapter):
-    def _validation_error_details(self, response):
-        if response.status_code not in (400, 409, 422):
+    def _validation_error_details(self, response, *, authentication=False, extra_secrets=()):
+        if not authentication and response.status_code not in (400, 409, 422):
             return ""
         try:
             payload = response.json()
@@ -25,11 +28,14 @@ class WowiportRestAdapter(RestAdapter):
 
         messages = []
 
+        def clean(value):
+            return " ".join("".join(character for character in value if character.isprintable() or character.isspace()).split())
+
         def collect(value, field="", depth=0):
             if depth > 3:
                 return
             if isinstance(value, str):
-                message = " ".join(value.split())
+                message = clean(value)
                 if message:
                     entry = f"{field}: {message}" if field else message
                     if entry not in messages:
@@ -42,17 +48,29 @@ class WowiportRestAdapter(RestAdapter):
                     normalized_key = key.casefold()
                     if normalized_key in {"message", "detail", "title", "description"}:
                         collect(item, field, depth + 1)
-                    elif normalized_key in {"errors", "modelstate"}:
+                    elif authentication and normalized_key in {"error", "error_description"}:
+                        collect(item, normalized_key, depth + 1)
+                    elif not authentication and normalized_key in {"errors", "modelstate"}:
                         collect(item, field, depth + 1)
-                    elif isinstance(item, list) and all(isinstance(entry, str) for entry in item):
+                    elif not authentication and isinstance(item, list) and all(isinstance(entry, str) for entry in item):
                         collect(item, str(key), depth + 1)
 
         collect(payload)
         details = "; ".join(messages)
-        for attribute in ("api_key", "access_token", "refresh_token", "password", "user"):
-            value = getattr(self, attribute, None)
+        secrets = [getattr(self, attribute, None) for attribute in ("api_key", "access_token", "refresh_token", "password", "user")]
+        variants = set()
+        for value in [*secrets, *extra_secrets]:
             if isinstance(value, str) and value:
-                details = details.replace(value, "[entfernt]")
+                variants.update((value, clean(value), quote(value, safe=""), quote_plus(value, safe=""), json.dumps(value)[1:-1]))
+        variants.discard("")
+        if variants:
+            details = re.sub("|".join(re.escape(value) for value in sorted(variants, key=len, reverse=True)), "[entfernt]", details, flags=re.IGNORECASE)
+        if authentication:
+            details = re.sub(r"(?i)\b(Bearer|Basic)\s+[^\s,;]+", r"\1 [entfernt]", details)
+            details = re.sub(
+                r'''(?i)(\b(?:password|username|user|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&]+)''',
+                r"\1[entfernt]", details,
+            )
         return details[:2000]
 
     def _request(self, method, endpoint, *, token=False, **kwargs):
@@ -86,8 +104,11 @@ class WowiportRestAdapter(RestAdapter):
             headers={"User-Agent": self.user_agent, "Accept": "text/plain"},
         )
         if response.status_code != 200:
+            details = self._validation_error_details(response, authentication=True, extra_secrets=(refresh_token,))
+            operation = "Token-Erneuerung" if refresh_token else "Anmeldung"
             raise WowiPyException(
-                f"OPENWOWI-Anmeldung fehlgeschlagen (Status {response.status_code})."
+                f"OPENWOWI-{operation} fehlgeschlagen (Status {response.status_code})."
+                + (f" OPENWOWI-Details: {details}" if details else "")
             )
         try:
             data = response.json()
