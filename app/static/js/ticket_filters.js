@@ -1,4 +1,65 @@
 document.addEventListener("DOMContentLoaded", () => {
+    const form = document.getElementById("ticketFilters");
+    if (!form) {
+        return;
+    }
+
+    const search = document.getElementById("ticketSearch");
+    let searchTimer = null;
+    let composing = false;
+    const searchFocusKey = "ticketSearchFocus";
+
+    try {
+        const saved = JSON.parse(window.sessionStorage.getItem(searchFocusKey) || "null");
+        window.sessionStorage.removeItem(searchFocusKey);
+        if (search && saved?.value === search.value) {
+            search.focus();
+            search.setSelectionRange(saved.start, saved.end);
+        }
+    } catch {}
+
+    function cancelSearch() {
+        clearTimeout(searchTimer);
+        searchTimer = null;
+    }
+
+    function submitFilters() {
+        cancelSearch();
+        form.requestSubmit();
+    }
+
+    function scheduleSearch() {
+        cancelSearch();
+        if (!composing) {
+            searchTimer = setTimeout(submitFilters, 350);
+        }
+    }
+
+    form.addEventListener("change", (event) => {
+        if (event.target.matches('select, input[name="owner"]')) {
+            submitFilters();
+        }
+    });
+    form.addEventListener("submit", () => {
+        cancelSearch();
+        if (search && document.activeElement === search) {
+            try {
+                window.sessionStorage.setItem(searchFocusKey, JSON.stringify({
+                    value: search.value, start: search.selectionStart, end: search.selectionEnd,
+                }));
+            } catch {}
+        }
+    });
+    search?.addEventListener("input", scheduleSearch);
+    search?.addEventListener("compositionstart", () => {
+        composing = true;
+        cancelSearch();
+    });
+    search?.addEventListener("compositionend", () => {
+        composing = false;
+        scheduleSearch();
+    });
+
     const filter = document.getElementById("ticketOwnerFilter");
     if (!filter) {
         return;

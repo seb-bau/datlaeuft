@@ -98,7 +98,6 @@
         </label>
         {% endfor %}
       </fieldset>
-      <button class="btn btn-sm btn-primary mt-2" type="submit">Auswahl anwenden</button>
     </div>
   </details>
   {% else %}
@@ -107,7 +106,6 @@
     name="{{ filter_key }}"
     aria-label="{{ filter_label }} filtern"
     title="{{ filter_label }}"
-    onchange="this.form.submit()"
   >
     {% for choice_key, choice_label in filter_choices.items() %}
     <option value="{{ choice_key }}" {% if filter_value == choice_key %}selected{% endif %}>
@@ -127,7 +125,9 @@
     placeholder="Ticket, Betreff oder Inhalt"
     aria-label="Tickets durchsuchen"
   >
-  <button class="btn btn-sm btn-outline-primary" type="submit">Suchen</button>
+  <noscript>
+    <button class="btn btn-sm btn-outline-primary" type="submit">Suchen</button>
+  </noscript>
   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.tickets') }}">
     Filter zurücksetzen
   </a>
