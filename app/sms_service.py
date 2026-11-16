@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 from typing import Callable
 
+from flask import current_app
 import phonenumbers
 import requests
 
@@ -75,6 +76,7 @@ def send_sms(
         raise SmsSendError("Der seven API-Key für den SMS-Versand fehlt.")
     number = normalize_phone_number(recipient_number)
     if not number:
+        current_app.logger.warning("SMS recipient is not a phone number: %r", recipient_number)
         return SmsResult("skipped")
     number_type = phonenumbers.number_type(phonenumbers.parse(number, None))
     if number_type not in (phonenumbers.PhoneNumberType.MOBILE, phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE):

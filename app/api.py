@@ -370,7 +370,11 @@ def commissions() -> Any:
             )
         )
     elif user_id_filter:
-        if not user_id_filter.isdigit():
+        try:
+            selected_user_id = int(user_id_filter)
+            if not 0 < selected_user_id <= 2**63 - 1:
+                raise ValueError
+        except ValueError:
             return jsonify({
                 "message": (
                     "Der ausgewählte Handwerker "
@@ -378,9 +382,7 @@ def commissions() -> Any:
                 ),
             }), 400
 
-        selected_user_id = int(user_id_filter)
-
-        if selected_user_id not in allowed_user_ids:
+        if allowed_user_ids is not None and selected_user_id not in allowed_user_ids:
             return jsonify({
                 "message": (
                     "Für diesen Handwerker besteht "
@@ -393,12 +395,16 @@ def commissions() -> Any:
             == selected_user_id,
             or_(Commission.approval_state != "pending", Commission.created_by_user_id == user.id),
         )
-    else:
+    elif allowed_user_ids is not None:
         query = query.filter(
             or_(
                 and_(Commission.approval_state != "pending", Commission.user_id.in_(allowed_user_ids)),
                 and_(Commission.approval_state == "pending", Commission.created_by_user_id == user.id),
             )
+        )
+    else:
+        query = query.filter(
+            or_(Commission.approval_state != "pending", Commission.created_by_user_id == user.id)
         )
 
     if status == "active":
@@ -441,26 +447,16 @@ def commission_users() -> Any:
     allowed_user_ids = (
         viewable_commission_user_ids(user)
     )
-    colleague_user_ids = (
-        allowed_user_ids - {user.id}
+    query = User.query.filter(
+        User.id != user.id,
+        User.is_active_flag.is_(True),
+        User.craftsman_erp_id.isnot(None),
     )
-    items = [user]
 
-    if colleague_user_ids:
-        items.extend(
-            User.query
-            .filter(
-                User.id.in_(
-                    colleague_user_ids
-                ),
-                User.is_active_flag.is_(True),
-                User.craftsman_erp_id.isnot(None),
-            )
-            .order_by(
-                User.display_name.asc()
-            )
-            .all()
-        )
+    if allowed_user_ids is not None:
+        query = query.filter(User.id.in_(allowed_user_ids))
+
+    items = [user] + query.order_by(User.display_name.asc()).all()
 
     return jsonify({
         "items": [
@@ -992,7 +988,7 @@ def commission_related(commission_id: int) -> Any:
     visible_ids = viewable_commission_user_ids(user)
     result["items"] = []
     for related, relationship in items:
-        direct_access = related.user_id in visible_ids
+        direct_access = visible_ids is None or related.user_id in visible_ids
         item = serialize_commission(related, viewer=user)
         item["can_edit"] = direct_access and item["can_edit"]
         result["items"].append({"commission": item, "relationship": relationship, "direct_access": direct_access})
@@ -3299,11 +3295,9 @@ def commission_time_entries(commission_id: int) -> Any:
     commission = viewable_commission(commission_id, user)
     query = TimeEntry.query.filter_by(commission_id=commission.id)
 
-    query = query.filter(
-        TimeEntry.user_id.in_(
-            viewable_commission_user_ids(user)
-        )
-    )
+    allowed_user_ids = viewable_commission_user_ids(user)
+    if allowed_user_ids is not None:
+        query = query.filter(TimeEntry.user_id.in_(allowed_user_ids))
 
     entries = query.order_by(
         TimeEntry.service_date.desc(),
@@ -3635,7 +3629,10 @@ def current_api_user() -> User:
 
 def viewable_commission_user_ids(
     user: User,
-) -> set[int]:
+) -> set[int] | None:
+    if user.is_admin:
+        return None
+
     visible_user_ids = {user.id}
 
     visible_user_ids.update(
@@ -3668,12 +3665,8 @@ def viewable_commission(commission_id: int, user: User) -> Commission:
         if commission.created_by_user_id != user.id:
             abort(403)
         return commission
-    if (
-        commission.user_id
-        not in viewable_commission_user_ids(
-            user
-        )
-    ):
+    allowed_user_ids = viewable_commission_user_ids(user)
+    if allowed_user_ids is not None and commission.user_id not in allowed_user_ids:
         abort(403)
     return commission
 

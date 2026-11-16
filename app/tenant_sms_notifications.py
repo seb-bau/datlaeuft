@@ -51,9 +51,15 @@ def tenant_phone_numbers(commission: Commission, service: Any) -> list[str]:
             if (communication not in preferred and str(type_id) not in {"1", "3"}
                     and str(type_name or "").strip().casefold() not in PHONE_TYPES):
                 continue
-            number = normalize_phone_number(read_value(communication, "content"))
+            recipient_number = read_value(communication, "content")
+            number = normalize_phone_number(recipient_number)
             if number:
                 numbers.add(number)
+            else:
+                current_app.logger.warning(
+                    "SMS recipient is not a phone number: %r commission_id=%s",
+                    recipient_number, commission.id,
+                )
     return sorted(numbers)
 
 

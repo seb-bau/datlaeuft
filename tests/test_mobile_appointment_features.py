@@ -67,6 +67,7 @@ class MobileAppointmentFeaturesTests(unittest.TestCase):
         cls.tables = [model.__table__ for model in (
             cls.models.AppSetting, cls.models.BlacklistEntry, cls.models.User, cls.models.Commission,
             cls.models.CommissionPosition, cls.models.TicketMirror, cls.models.WorkflowNotification,
+            cls.models.TimeTaskTemplate, cls.models.TimeEntry,
             cls.models.AppointmentWindow, cls.models.CommissionAppointmentRequest, cls.models.CommissionAppointmentProposal,
         )] + [cls.models.user_commission_visibility]
 
@@ -121,6 +122,85 @@ class MobileAppointmentFeaturesTests(unittest.TestCase):
 
     def manual_appointment(self, commission, **values):
         return self.client.post(f"/api/commissions/{commission.id}/appointments/accepted", headers=self.headers(), json={"date": "2027-01-15", "time": "10:30", **values})
+
+    def test_administrator_sees_all_assigned_and_external_orders_without_visibility_selections(self):
+        self.user.is_admin = True
+        own = self.commission()
+        colleague = self.commission(user=self.other_user)
+        external = self.commission(user=None)
+        inactive_user = self.models.User(email="inactive@example.invalid", display_name="Inaktiv", is_active_flag=False)
+        inactive = self.commission(user=inactive_user)
+        self.assertEqual(self.user.visible_commission_users, [])
+        response = self.client.get("/api/commissions?scope=all", headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({item["id"] for item in response.json["items"]}, {own.id, colleague.id, external.id, inactive.id})
+        for commission in (colleague, external, inactive):
+            with self.subTest(commission_id=commission.id):
+                response = self.client.get(f"/api/commissions/{commission.id}", headers=self.headers())
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json["item"]["id"], commission.id)
+        mine = self.client.get("/api/commissions?scope=mine", headers=self.headers())
+        self.assertEqual([item["id"] for item in mine.json["items"]], [own.id])
+
+    def test_administrator_can_filter_any_craftsman_without_visibility_selections(self):
+        self.user.is_admin = True
+        self.commission()
+        colleague = self.commission(user=self.other_user)
+        users = self.client.get("/api/commissions/users", headers=self.headers())
+        self.assertEqual({item["id"] for item in users.json["items"]}, {self.user.id, self.other_user.id})
+        response = self.client.get(f"/api/commissions?scope=all&user_id={self.other_user.id}", headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.json["items"]], [colleague.id])
+
+    def test_administrator_reads_colleagues_time_entries_and_related_orders(self):
+        self.user.is_admin = True
+        own = self.commission()
+        colleague = self.commission(user=self.other_user)
+        entry = self.models.TimeEntry(commission=colleague, user=self.other_user, minutes=30)
+        self.db.session.add(entry)
+        self.db.session.commit()
+        response = self.client.get(f"/api/commissions/{colleague.id}/time", headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.json["items"]], [entry.id])
+        related = self.client.get(f"/api/commissions/{own.id}/related", headers=self.headers())
+        self.assertEqual(related.status_code, 200)
+        self.assertEqual([item["commission"]["id"] for item in related.json["items"]], [colleague.id])
+        self.assertTrue(related.json["items"][0]["direct_access"])
+
+    def test_administrator_craftsman_filter_rejects_invalid_and_oversized_ids(self):
+        self.user.is_admin = True
+        self.db.session.commit()
+        for value in ("abc", "0", "-1", "9223372036854775808", "²", "9" * 5000):
+            with self.subTest(value=value[:20]):
+                response = self.client.get("/api/commissions", query_string={"scope": "all", "user_id": value}, headers=self.headers())
+                self.assertEqual(response.status_code, 400)
+
+    def test_administrator_does_not_expose_deleted_orders_or_another_users_pending_order(self):
+        self.user.is_admin = True
+        deleted = self.commission(local_status="deleted", user=self.other_user)
+        pending = self.commission(approval_state="pending", created_by_user_id=self.other_user.id, user=self.other_user)
+        own_pending = self.commission(approval_state="pending", created_by_user_id=self.user.id, user=self.other_user)
+        response = self.client.get("/api/commissions?scope=all", headers=self.headers())
+        self.assertEqual([item["id"] for item in response.json["items"]], [own_pending.id])
+        self.assertEqual(self.client.get(f"/api/commissions/{deleted.id}", headers=self.headers()).status_code, 404)
+        self.assertEqual(self.client.get(f"/api/commissions/{pending.id}", headers=self.headers()).status_code, 403)
+        self.assertFalse(self.api.can_edit_commission(own_pending, self.user))
+
+    def test_regular_users_still_need_explicit_craftsman_visibility_and_cannot_edit_colleagues_orders(self):
+        own = self.commission()
+        colleague = self.commission(user=self.other_user)
+        external = self.commission(user=None)
+        response = self.client.get("/api/commissions?scope=all", headers=self.headers())
+        self.assertEqual([item["id"] for item in response.json["items"]], [own.id])
+        self.assertEqual(self.client.get(f"/api/commissions/{colleague.id}", headers=self.headers()).status_code, 403)
+        self.assertEqual(self.client.get(f"/api/commissions?scope=all&user_id={self.other_user.id}", headers=self.headers()).status_code, 403)
+        self.user.visible_commission_users = [self.other_user]
+        self.db.session.commit()
+        response = self.client.get("/api/commissions?scope=all", headers=self.headers())
+        self.assertEqual({item["id"] for item in response.json["items"]}, {own.id, colleague.id})
+        self.assertEqual(self.client.get(f"/api/commissions/{colleague.id}", headers=self.headers()).status_code, 200)
+        self.assertEqual(self.client.get(f"/api/commissions/{external.id}", headers=self.headers()).status_code, 403)
+        self.assertEqual(self.client.post(f"/api/commissions/{colleague.id}/start", headers=self.headers()).status_code, 403)
 
     def process(self):
         self.db.session.commit()
