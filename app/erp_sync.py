@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from flask import current_app
 from sqlalchemy import or_
+from sqlalchemy.exc import OperationalError
 from time import monotonic, sleep
 
 from .audit import audit
@@ -621,6 +622,23 @@ def process_webhook_batch(limit: int) -> int:
 
 
 def claim_webhook_event() -> int | None:
+    db.session.rollback()
+
+    for attempt in range(3):
+        try:
+            return _claim_webhook_event()
+        except OperationalError as exc:
+            db.session.rollback()
+            error_code = exc.orig.args[0] if exc.orig.args else None
+            if error_code not in (1020, 1205, 1213) or attempt == 2:
+                raise
+            current_app.logger.warning(
+                "webhook_claim_retry error_code=%s attempt=%s",
+                error_code, attempt + 1,
+            )
+
+
+def _claim_webhook_event() -> int | None:
     event = WebhookEvent.query.filter(
         WebhookEvent.processed.is_(False),
         WebhookEvent.processing_at.is_(None),
@@ -639,10 +657,11 @@ def claim_webhook_event() -> int | None:
         db.session.rollback()
         return None
 
+    event_id = event.id
     event.processing_at = utc_now()
     event.attempt_count += 1
     db.session.commit()
-    return event.id
+    return event_id
 
 
 def process_webhook_event(event_id: int) -> None:
