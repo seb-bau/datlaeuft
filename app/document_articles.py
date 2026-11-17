@@ -390,6 +390,7 @@ def attach_article_fields(rows: list[dict], positions) -> None:
     source_values = request.form.getlist(
         "position_source_data"
     )
+    article_numbers = request.form.getlist("position_article_number")
 
     def position_id(values, index):
         raw = values[index].strip() if index < len(values) else ""
@@ -435,6 +436,13 @@ def attach_article_fields(rows: list[dict], positions) -> None:
                 )
 
             row["source_data"] = source_data
+
+        source_data = dict(row.get("source_data") or {})
+        if index < len(article_numbers):
+            source_data["article_number"] = article_numbers[index].strip()
+        if len(str(source_data.get("article_number") or "")) > 120:
+            raise ValueError(f"Die Artikelnummer der Position {index + 1} darf höchstens 120 Zeichen enthalten.")
+        row["source_data"] = source_data
 
         source = row["source_type"]
 

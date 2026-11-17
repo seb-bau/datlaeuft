@@ -5,6 +5,15 @@ on:
     paths:
       - app/mail_service.py
       - app/document_articles.py
+      - app/document_previews.py
+      - app/invoice_document.py
+      - app/offer_document.py
+      - app/static/js/document_preview.js
+      - app/templates/admin/_document_preview.html
+      - app/templates/admin/commission_pdf.html
+      - app/templates/admin/invoice_pdf.html
+      - app/templates/admin/offer_pdf.html
+      - migrations/versions/*commission_article_numbers.py
       - app/local_catalog.py
       - app/static/js/document_service_positions.js
       - app/templates/admin/_document_service_positions.html
@@ -76,6 +85,15 @@ on:
     paths:
       - app/mail_service.py
       - app/document_articles.py
+      - app/document_previews.py
+      - app/invoice_document.py
+      - app/offer_document.py
+      - app/static/js/document_preview.js
+      - app/templates/admin/_document_preview.html
+      - app/templates/admin/commission_pdf.html
+      - app/templates/admin/invoice_pdf.html
+      - app/templates/admin/offer_pdf.html
+      - migrations/versions/*commission_article_numbers.py
       - app/local_catalog.py
       - app/static/js/document_service_positions.js
       - app/templates/admin/_document_service_positions.html
@@ -170,6 +188,10 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.14'
+      - name: PDF-Systembibliotheken bereitstellen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 fonts-dejavu-core
       - name: Testabhängigkeiten installieren
         run: >-
           python -m pip install
@@ -181,6 +203,7 @@ jobs:
           "wowipy>=1.1.91,<2"
           "alembic>=1.16,<2"
           "icalendar>=6.3.2,<7"
+          "WeasyPrint>=66,<70" "pypdf>=5.3,<7" "factur-x>=6.7,<7"
       - name: Tests mit SQLite ausführen
         run: python -m unittest discover -s tests -v
       - name: Objektauswahl mit JavaScript prüfen

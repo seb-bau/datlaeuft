@@ -46,7 +46,7 @@ document.addEventListener("DOMContentLoaded", () => {
       offerCraft.value = String(item.craft_activity_id);
       offerCraft.dispatchEvent(new Event("change", {bubbles: true}));
     }
-    createPositionRow({sourceType: "catalog", taskTemplateId: item.id, description: item.title});
+    createPositionRow({sourceType: "catalog", taskTemplateId: item.id, description: item.title, articleNumber: item.code});
     positions.lastElementChild.dispatchEvent(new Event("input", {bubbles: true}));
     bootstrap.Modal.getOrCreateInstance(modal).hide();
   });

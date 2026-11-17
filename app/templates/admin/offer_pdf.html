@@ -188,6 +188,7 @@
   </style>
 </head>
 <body>
+{% if preview %}<div style="position: fixed; top: -12mm; right: 0; color: #b91c1c; font-size: 9pt; font-weight: bold;">ENTWURF · Nur zur Vorschau</div>{% endif %}
   <div class="recipient">
     {% for line in recipient_address %}
     <div>{{ line }}</div>
@@ -255,6 +256,7 @@
           {{ position.number }}
         </td>
         <td class="description">
+                        {% if position.article_number %}<div style="font-size: 8pt; color: #555;">Artikel-Nr.: {{ position.article_number }}</div>{% endif %}
           <div class="description-text">{{ position.description }}</div>
           {% if position.details %}
           <div class="details">{{ position.details }}</div>

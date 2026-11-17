@@ -3947,6 +3947,8 @@ def replace_commission_positions(
         commission: Commission,
         payload_items: list[Any],
 ) -> None:
+    stored_by_id = {position.erp_id: position.article_number for position in commission.positions if position.erp_id is not None}
+    pending_by_index = {(position.position_index, position.service_catalog_erp_id): position.article_number for position in commission.positions if position.erp_id is None}
     commission.positions.clear()
 
     if commission.id is not None:
@@ -3969,12 +3971,17 @@ def replace_commission_positions(
             _read_first(payload, "units", "Units")
         )
 
+        erp_id = _as_int(_read_first(payload, "id_", "id", "Id"))
+        service_id = _as_int(_read_first(service_catalogue, "id_", "id", "Id"))
+        article_number = stored_by_id.get(erp_id, pending_by_index.get((position_index, service_id)))
+
         commission.positions.append(
             CommissionPosition(
                 erp_id=_as_int(
                     _read_first(payload, "id_", "id", "Id")
                 ),
                 position_index=position_index,
+                article_number=article_number,
                 position_number=_as_float(
                     _read_first(
                         payload,

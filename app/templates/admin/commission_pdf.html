@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><style>
+  @page { size: A4; margin: 22mm; }
+  body { font-family: Arial, sans-serif; font-size: 10pt; color: #111827; }
+  h1 { font-size: 18pt; margin-bottom: 3mm; }
+  .preview { color: #b91c1c; font-weight: bold; margin-bottom: 8mm; }
+  .metadata { margin-bottom: 8mm; border-collapse: collapse; }
+  .metadata th { text-align: left; vertical-align: top; padding-right: 6mm; }
+  .metadata td { padding-bottom: 2mm; }
+  .positions { width: 100%; border-collapse: collapse; }
+  .positions th { text-align: left; border-bottom: 1pt solid #374151; padding: 2mm; }
+  .positions td { vertical-align: top; border-bottom: .5pt solid #d1d5db; padding: 3mm 2mm; }
+  .positions tr { break-inside: avoid; }
+  .text { white-space: pre-line; }
+  .small { font-size: 8pt; color: #555; }
+</style></head>
+<body>
+  <h1>Auftrag {{ reference or '' }}</h1>
+  <div class="preview">PDF-Vorschau · {{ 'Noch nicht erfasst' if not reference else 'Auftragsübersicht' }}</div>
+  <table class="metadata">
+    {% for label, value in [('Titel', title), ('Objekt', object_label), ('Adresse', address), ('Mieter', tenant_name), ('Gewerk', craft_name), ('Handwerker', craftsman_name), ('Kontakt', contact_person), ('Schadensort', damage_location), ('Ausführung von', execution_from), ('Ausführung bis', execution_to)] %}
+    {% if value %}<tr><th>{{ label }}</th><td>{{ value }}</td></tr>{% endif %}
+    {% endfor %}
+  </table>
+  <table class="positions"><thead><tr><th>Pos.</th><th>Artikelnummer</th><th>Auftragstext</th><th>Menge</th></tr></thead><tbody>
+    {% for position in positions %}<tr><td>{{ loop.index }}</td><td>{{ position.article_number }}</td><td class="text">{{ position.description }}{% if position.internal_description %}<div class="small">{{ position.internal_description }}</div>{% endif %}</td><td>{{ position.quantity }}</td></tr>{% endfor %}
+  </tbody></table>
+</body>
+</html>

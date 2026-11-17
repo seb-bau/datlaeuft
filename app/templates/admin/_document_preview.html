@@ -1,0 +1,14 @@
+<div class="modal fade" id="documentPreviewModal" tabindex="-1" aria-labelledby="documentPreviewTitle" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header"><h2 class="modal-title fs-5" id="documentPreviewTitle">PDF-Vorschau</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button></div>
+      <div class="modal-body">
+        <div id="documentPreviewLoading" class="text-center p-5" role="status"><div class="spinner-border mb-3" aria-hidden="true"></div><div>PDF-Vorschau wird erstellt …</div></div>
+        <div id="documentPreviewError" class="alert alert-danger" role="alert" hidden></div>
+        <iframe id="documentPreviewFrame" title="PDF-Vorschau" class="w-100 border rounded" style="height: 70vh;" hidden></iframe>
+      </div>
+      <div class="modal-footer"><a id="documentPreviewOpen" class="btn btn-outline-primary" target="_blank" rel="noopener" hidden>PDF in neuem Fenster öffnen</a><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button></div>
+    </div>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/document_preview.js') }}" defer></script>

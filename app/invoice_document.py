@@ -396,6 +396,7 @@ def _prepare_positions(
         positions.append(
             {
                 "number": number,
+                "article_number": str(getattr(position, "article_number", "") or ""),
                 "description": description,
                 "details": details,
                 "quantity": quantity,
@@ -424,6 +425,7 @@ def _prepare_positions(
                 "item_code": str(
                     _read_value(
                         position,
+                        "article_number",
                         "catalogue_code",
                         "service_code",
                         default="",

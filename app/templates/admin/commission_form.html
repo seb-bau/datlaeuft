@@ -535,6 +535,7 @@
                 <option
                   value="{{ service_position.erp_service_catalogue_id }}"
                   data-craft-id="{{ service_position.craft_activity_id }}"
+                  data-article-number="{{ service_position.code or '' }}"
                   data-commission-type-ids="{{ (service_position.commission_type_erp_ids or [])|tojson }}"
                   {% if position.get('service_catalog_id')|int == service_position.erp_service_catalogue_id %}selected{% endif %}
                 >
@@ -544,6 +545,11 @@
                 </option>
                 {% endfor %}
               </select>
+              <label class="form-label small fw-semibold mt-2 mb-1">Artikelnummer (optional)</label>
+              <input class="form-control form-control-sm" name="position_article_number" maxlength="120"
+                     value="{{ position.get('article_number') or '' }}"
+                     data-article-number-edited="{{ 'true' if position.get('article_number') is not none else 'false' }}"
+                     placeholder="Optional">
             </div>
 
             <div class="col-lg-6">
@@ -766,6 +772,9 @@
       </select>
       <div class="form-text">Interne Aufträge werden direkt als erledigt erfasst, externe mit „Rechnungseingang erwartet“. Handwerker und Mieter erhalten keine Benachrichtigung.</div>
     </div>
+    <button type="button" class="btn btn-sm btn-outline-primary" data-document-preview
+            data-preview-form="commissionForm" data-preview-title="Auftrag · PDF-Vorschau"
+            data-preview-url="{{ url_for('admin.commission_create_preview') }}">PDF-Vorschau</button>
     <button
       class="btn btn-sm btn-primary"
       id="submitCommission"
@@ -844,6 +853,7 @@
           <option
             value="{{ service_position.erp_service_catalogue_id }}"
             data-craft-id="{{ service_position.craft_activity_id }}"
+            data-article-number="{{ service_position.code or '' }}"
             data-commission-type-ids="{{ (service_position.commission_type_erp_ids or [])|tojson }}"
           >
             {{ service_position.code }}
@@ -852,6 +862,9 @@
           </option>
           {% endfor %}
         </select>
+        <label class="form-label small fw-semibold mt-2 mb-1">Artikelnummer (optional)</label>
+        <input class="form-control form-control-sm" name="position_article_number" maxlength="120"
+               value="" data-article-number-edited="false" placeholder="Optional">
       </div>
 
       <div class="col-lg-6">
@@ -899,5 +912,6 @@
   defer
 ></script>
 <script src="{{ url_for('static', filename='js/ticket_attachment_selection.js') }}" defer></script>
+{% include 'admin/_document_preview.html' %}
 {% endblock %}
 

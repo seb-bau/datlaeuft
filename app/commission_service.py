@@ -409,12 +409,19 @@ def create_pending_commission(
                 "zugeordnet."
             )
 
+        article_number = item.get("article_number")
+        if article_number is not None:
+            article_number = str(article_number).strip()
+            if len(article_number) > 120:
+                raise ValueError(f"Die Artikelnummer der Position {position_index + 1} darf höchstens 120 Zeichen enthalten.")
+
         service_positions.append(
             service_position
         )
         commission.positions.append(
             CommissionPosition(
                 position_index=position_index,
+                article_number=article_number,
                 code=(
                     clean_text(item.get("code"))
                     or service_position.code
@@ -737,3 +744,4 @@ def normalize_public_id(value: Any) -> str:
         raise ValueError(
             "Die Client-Auftragskennung ist ungültig."
         ) from exc
+

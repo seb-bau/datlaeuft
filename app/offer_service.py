@@ -1010,6 +1010,7 @@ def offer_commission_draft_data(
 
         position_rows.append(
             {
+                "article_number": position.article_number,
                 "service_catalog_id": (
                     task_template
                     .erp_service_catalogue_id
@@ -1373,3 +1374,4 @@ def reconcile_offer_workflows(
             result["unchanged"] += 1
 
     return result
+
