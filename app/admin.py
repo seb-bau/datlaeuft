@@ -2514,6 +2514,13 @@ def invoice_finalize(
     document_result = None
 
     try:
+        if request.form.get("save_draft") == "1":
+            if invoice.status != InvoiceStatus.DRAFT.value:
+                raise InvoiceFinalizationError("Nur Entwürfe können festgeschrieben werden.")
+            save_invoice_draft_form(invoice)
+            save_invoice_positions_form(invoice)
+            audit("invoice.update", "invoice", invoice.id)
+
         document_result = finalize_invoice(
             invoice,
             current_user,
@@ -2539,6 +2546,7 @@ def invoice_finalize(
             "danger",
         )
     except (
+        ValueError,
         InvoiceFinalizationError,
         InvoiceDocumentError,
     ) as exc:
@@ -5903,12 +5911,16 @@ def offer_recipient_candidates(
 def offer_release(
     offer_id: int,
 ) -> Any:
-    item = db.get_or_404(
-        Offer,
-        offer_id,
-    )
+    item = Offer.query.filter_by(id=offer_id).populate_existing().with_for_update().first_or_404()
 
     try:
+        if request.form.get("save_draft") == "1":
+            if item.status != OfferStatus.DRAFT.value:
+                raise OfferFinalizationError("Nur ein Entwurf kann freigegeben werden.")
+            save_offer_draft_form(item)
+            save_offer_positions_form(item)
+            audit("offer.update", "offer", item.id)
+
         release_offer(
             item,
             current_user,

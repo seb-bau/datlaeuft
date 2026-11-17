@@ -145,6 +145,7 @@
 {% endif %}
 
 <form method="post" id="offerDraftForm">
+  <input type="hidden" name="save_draft" value="1">
   <input
     type="hidden"
     name="csrf_token"
@@ -771,26 +772,20 @@
           Entwurf speichern
         </button>
 
-        <form
-          method="post"
-          action="{{ url_for(
+        <button
+          class="btn btn-primary"
+          type="submit"
+          form="offerDraftForm"
+          formaction="{{ url_for(
             'admin.offer_release',
             offer_id=item.id
           ) }}"
-          id="offerReleaseForm"
+          data-document-finalize
+          data-confirm-message="Soll das Angebot mit den aktuellen Eingaben freigegeben und festgeschrieben werden?"
+          data-pending-text="Angebot wird freigegeben …"
         >
-          <input
-            type="hidden"
-            name="csrf_token"
-            value="{{ csrf_token() }}"
-          >
-          <button
-            class="btn btn-primary"
-            type="submit"
-          >
-            Angebot freigeben
-          </button>
-        </form>
+          Angebot freigeben
+        </button>
       </div>
     </div>
   </div>
@@ -938,12 +933,8 @@
 {% if editable %}
 <script>
 
-const offerDraftForm = document.getElementById("offerDraftForm");
-const offerReleaseForm = document.getElementById("offerReleaseForm");
-
 const positionsBody = document.getElementById("offerPositions");
 const emptyPositionMessage = document.getElementById("emptyPositionMessage");
-let draftChanged = false;
 
 function escapeValue(value) {
   return String(value || "")
@@ -1014,7 +1005,6 @@ function createPositionRow(values) {
 
   positionsBody.appendChild(row);
   updateEmptyMessage();
-  draftChanged = true;
 }
 
 document.getElementById(
@@ -1039,7 +1029,6 @@ positionsBody.addEventListener("click", event => {
   if (event.target.closest(".remove-position")) {
     row.remove();
     updateEmptyMessage();
-    draftChanged = true;
     return;
   }
 
@@ -1048,7 +1037,6 @@ positionsBody.addEventListener("click", event => {
 
     if (previous) {
       positionsBody.insertBefore(row, previous);
-      draftChanged = true;
     }
 
     return;
@@ -1059,56 +1047,16 @@ positionsBody.addEventListener("click", event => {
 
     if (next) {
       positionsBody.insertBefore(next, row);
-      draftChanged = true;
     }
   }
 });
-offerDraftForm.addEventListener(
-  "input",
-  () => {
-    draftChanged = true;
-  }
-);
-offerDraftForm.addEventListener(
-  "change",
-  () => {
-    draftChanged = true;
-  }
-);
-offerDraftForm.addEventListener(
-  "submit",
-  () => {
-    draftChanged = false;
-  }
-);
-
-offerReleaseForm.addEventListener(
-  "submit",
-  event => {
-    if (draftChanged) {
-      event.preventDefault();
-      window.alert(
-        "Bitte speichern Sie zuerst "
-        + "die geänderten Angebotsdaten."
-      );
-      return;
-    }
-
-    if (!window.confirm(
-      "Soll das Angebot freigegeben und "
-      + "festgeschrieben werden?"
-    )) {
-      event.preventDefault();
-    }
-  }
-);
-
 updateEmptyMessage();
 </script>
 {% endif %}
 {% if editable %}
 <script src="{{ url_for('static', filename='js/recipient_lookup.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/document_totals.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/document_finalization.js') }}" defer></script>
 {% endif %}
 {% with document_type='offer' %}
 {% include 'admin/_document_articles.html' %}
