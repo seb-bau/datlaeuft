@@ -7,6 +7,7 @@ on:
       - app/document_articles.py
       - app/local_catalog.py
       - app/static/js/document_service_positions.js
+      - app/static/js/document_totals.js
       - app/templates/admin/_document_service_positions.html
       - app/templates/admin/local_catalog*.html
       - app/templates/admin/offer_draft.html
@@ -78,6 +79,7 @@ on:
       - app/document_articles.py
       - app/local_catalog.py
       - app/static/js/document_service_positions.js
+      - app/static/js/document_totals.js
       - app/templates/admin/_document_service_positions.html
       - app/templates/admin/local_catalog*.html
       - app/templates/admin/offer_draft.html
