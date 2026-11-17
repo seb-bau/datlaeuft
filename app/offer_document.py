@@ -203,6 +203,7 @@ def prepare_positions(
         positions.append(
             {
                 "number": number,
+                "article_number": str(getattr(position, "article_number", "") or ""),
                 "description": required_text(
                     position.description,
                     (
@@ -328,10 +329,11 @@ def document_context(
     offer: Offer,
     positions: list[dict],
     vat_rows: list[dict],
+    preview: bool = False,
 ) -> dict:
     return {
         "document_title": "Angebot",
-        "offer_number": required_text(
+        "offer_number": (offer.offer_number or "Entwurf") if preview else required_text(
             offer.offer_number,
             "Angebotsnummer",
         ),

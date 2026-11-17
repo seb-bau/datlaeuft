@@ -661,6 +661,21 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    function updateArticleNumbers() {
+        positions.querySelectorAll(".position-row").forEach((row) => {
+            const input = row.querySelector('[name="position_article_number"]');
+            if (!input || input.dataset.articleNumberEdited === "true") return;
+            const select = row.querySelector('[name="position_service_catalog_id"]');
+            input.value = select?.selectedOptions?.[0]?.dataset.articleNumber || "";
+        });
+    }
+
+    positions.addEventListener("input", (event) => {
+        if (event.target.name === "position_article_number") {
+            event.target.dataset.articleNumberEdited = "true";
+        }
+    });
+
     function filterServicePositions() {
         const selectedCraftId = craftActivity.value;
         const selects = Array.from(
@@ -707,6 +722,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     : "Bitte zuerst Gewerk auswählen"
             );
         });
+        updateArticleNumbers();
     }
 
     function applyCraftServicePositionDefault() {
@@ -740,6 +756,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (defaultOption) {
             applyAutomaticValue(select, defaultOption.value);
+            updateArticleNumbers();
         }
     }
 
@@ -1577,6 +1594,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 event.target.name
                 === "position_service_catalog_id"
             ) {
+                updateArticleNumbers();
                 updateCommissionTypeOptions();
             }
         }
@@ -1840,3 +1858,4 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     updateAllFieldStates();
 });
+

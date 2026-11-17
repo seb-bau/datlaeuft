@@ -236,7 +236,7 @@ from .commission_approval import approve_commission, approval_user_choices, can_
 from .push_preferences import admin_push_preference_rows, save_admin_push_preferences
 from .workflow_notifications import overdue_commission_filter
 from .ticket_replies import enqueue_ticket_reply, ticket_reply_recipients
-from .utils import format_local_datetime
+from .utils import format_local_datetime, parse_local_datetime
 
 from .process_info_service import (
     create_office_info,
@@ -265,6 +265,7 @@ from .catalog import (
 from .appointment_service import format_manual_appointment
 from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
 from .document_articles import attach_article_fields
+from .document_previews import render_document_preview
 from .ticket_ai_service import (
     enqueue_ticket_ai, ticket_ai_enabled, ticket_ai_is_current,
     ticket_ai_lease_seconds,
@@ -7008,6 +7009,141 @@ def invoice_edit(
     )
 
 
+def document_preview_response(content: bytes, filename: str):
+    response = send_file(BytesIO(content), mimetype="application/pdf", download_name=filename, as_attachment=False)
+    response.headers["Cache-Control"] = "private, no-store, max-age=0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def draft_pdf_preview(kind: str, document_id: int):
+    item = db.get_or_404(Invoice if kind == "invoice" else Offer, document_id)
+    if item.status != "draft":
+        return jsonify(error="Die Vorschau ist nur für bearbeitbare Entwürfe verfügbar."), 409
+    try:
+        if kind == "invoice":
+            save_invoice_draft_form(item)
+            save_invoice_positions_form(item)
+        else:
+            save_offer_draft_form(item)
+            save_offer_positions_form(item)
+        content = render_document_preview(kind, item)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("document_preview_failed document_type=%s document_id=%s", kind, document_id)
+        return jsonify(error="Die PDF-Vorschau konnte nicht erstellt werden."), 502
+    finally:
+        db.session.rollback()
+    return document_preview_response(content, "Rechnung-Vorschau.pdf" if kind == "invoice" else "Angebot-Vorschau.pdf")
+
+
+@admin_bp.post("/admin/invoices/<int:invoice_id>/preview")
+@invoice_required
+def invoice_preview(invoice_id: int):
+    return draft_pdf_preview("invoice", invoice_id)
+
+
+@admin_bp.post("/admin/offers/<int:offer_id>/preview")
+@offer_required
+def offer_preview(offer_id: int):
+    return draft_pdf_preview("offer", offer_id)
+
+
+def commission_preview_context(data=None, commission=None):
+    if commission is not None:
+        crafts = CraftActivity.query.filter(CraftActivity.erp_id.in_([position.craft_activity_erp_id for position in commission.positions])).order_by(CraftActivity.name).all()
+        external = ExternalCraftsman.query.filter_by(craftsman_erp_id=commission.craftsman_erp_id).first() if commission.user is None else None
+        return {
+            "reference": commission.erp_idnum or f"#{commission.id}", "title": commission.title or commission.display_title,
+            "object_label": commission.use_unit_idnum or commission.building_idnum or commission.economic_unit_idnum,
+            "address": commission.apartment_address, "tenant_name": commission.tenant_name,
+            "craft_name": ", ".join(craft.name for craft in crafts),
+            "craftsman_name": commission.user.display_name if commission.user else external.display_name if external else "",
+            "contact_person": commission.contact_person, "damage_location": commission.damage_location,
+            "execution_from": format_local_datetime(commission.execution_from), "execution_to": format_local_datetime(commission.execution_to),
+            "positions": [{"article_number": position.display_article_number, "description": position.commission_text or position.description or "",
+                           "internal_description": position.internal_description or "", "quantity": str(position.units).replace(".", ",")} for position in commission.positions],
+        }
+    try:
+        craft_id = int(data.get("craft_activity_id") or "")
+        object_id = int(data.get("object_id") or "")
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Bitte Gewerk und Objekt auswählen.") from exc
+    craft = db.session.get(CraftActivity, craft_id)
+    if craft is None or not craft.active or not craft.app_enabled:
+        raise ValueError("Das Gewerk ist nicht verfügbar.")
+    choice = get_commission_object_choice(str(data.get("object_type") or ""), object_id)
+    rows = []
+    for index, values in enumerate(data.get("positions") or []):
+        try:
+            service_id = int(values.get("service_catalog_id") or "")
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Bitte die Leistungsposition {index + 1} auswählen.") from exc
+        service = TimeTaskTemplate.query.filter_by(erp_service_catalogue_id=service_id, craft_activity_id=craft.id, active=True).one_or_none()
+        if service is None:
+            raise ValueError(f"Die Leistungsposition {index + 1} ist nicht verfügbar.")
+        number = values.get("article_number")
+        number = (service.code or "") if number is None else str(number).strip()
+        if len(number) > 120:
+            raise ValueError(f"Die Artikelnummer der Position {index + 1} darf höchstens 120 Zeichen enthalten.")
+        text = str(values.get("commission_text") or "").strip()
+        if not text:
+            raise ValueError(f"Der Auftragstext der Position {index + 1} fehlt.")
+        units = required_position_decimal(str(values.get("units") or "1"), "Menge")
+        if not units.is_finite() or units <= 0:
+            raise ValueError("Die Menge muss größer als null sein.")
+        rows.append({"article_number": number, "description": text, "internal_description": values.get("internal_description") or "",
+                     "quantity": format(units, "f").replace(".", ",")})
+    if not rows:
+        raise ValueError("Bitte mindestens eine Auftragsposition erfassen.")
+    craftsman_name = ""
+    selected_id = data.get("external_craftsman_id") if data.get("assignment_type") == "external" else data.get("craftsman_user_id")
+    if selected_id:
+        try:
+            craftsman = db.session.get(ExternalCraftsman if data.get("assignment_type") == "external" else User, int(selected_id))
+            craftsman_name = craftsman.display_name if craftsman else ""
+        except (TypeError, ValueError):
+            pass
+    return {"reference": "", "title": data.get("title") or "Auftrag", "object_label": choice.get("label") or "",
+            "address": (choice.get("use_unit") or choice.get("building") or choice.get("economic_unit") or {}).get("address") or "",
+            "tenant_name": choice.get("tenant_name") or "", "craft_name": craft.name, "craftsman_name": craftsman_name,
+            "contact_person": data.get("contact_person") or "", "damage_location": data.get("damage_location") or "",
+            "execution_from": format_local_datetime(parse_local_datetime(data.get("execution_from"))),
+            "execution_to": format_local_datetime(parse_local_datetime(data.get("execution_to"))), "positions": rows}
+
+
+@admin_bp.post("/admin/commissions/preview")
+@commission_creation_required
+def commission_create_preview():
+    try:
+        source_offer_id = optional_form_int(request.form.get("source_offer_id"), "Angebot")
+        if source_offer_id is not None:
+            source_offer = db.session.get(Offer, source_offer_id)
+            if source_offer is None:
+                raise ValueError("Das Angebot wurde nicht gefunden.")
+            offer_commission_draft_data(source_offer)
+        content = render_document_preview("commission", commission_preview_context(read_commission_form()))
+        return document_preview_response(content, "Auftrag-Vorschau.pdf")
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("commission_preview_failed")
+        return jsonify(error="Die PDF-Vorschau konnte nicht erstellt werden."), 502
+
+
+@admin_bp.get("/admin/commissions/<int:commission_id>/preview")
+@foreman_required
+def commission_preview(commission_id: int):
+    item = db.get_or_404(Commission, commission_id)
+    try:
+        content = render_document_preview("commission", commission_preview_context(commission=item))
+        return document_preview_response(content, "Auftrag-Vorschau.pdf")
+    except Exception:
+        current_app.logger.exception("commission_preview_failed commission_id=%s", commission_id)
+        return jsonify(error="Die PDF-Vorschau konnte nicht erstellt werden."), 502
+
+
 @admin_bp.post(
     "/admin/invoices/<int:invoice_id>/suggestions"
 )
@@ -12346,6 +12482,7 @@ def read_commission_form() -> dict[str, Any]:
         1,
     )
 
+    article_numbers = request.form.getlist("position_article_number")
     positions = []
 
     for position_index in range(
@@ -12381,6 +12518,7 @@ def read_commission_form() -> dict[str, Any]:
 
         positions.append(
             {
+                "article_number": list_value(article_numbers, position_index) if article_numbers else None,
                 "commission_text": (
                     commission_text
                 ),
@@ -13191,4 +13329,5 @@ def external_craftsman_disable(
     return redirect(
         url_for("admin.external_craftsmen")
     )
+
 

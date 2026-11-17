@@ -69,6 +69,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const row = positions.lastElementChild;
     const values = {
+      position_article_number: item.item_number,
       position_inventory_item_id:
         item.source_type === "material" ? item.id : "",
       position_local_catalog_item_id:

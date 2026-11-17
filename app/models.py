@@ -15,6 +15,17 @@ from decimal import Decimal
 from .extensions import db
 
 
+def document_position_article_number(position) -> str:
+    data = position.source_data if isinstance(position.source_data, dict) else {}
+    if "article_number" in data:
+        return str(data["article_number"] or "")
+    for field, attribute in (("inventory_item", "item_number"), ("local_catalog_item", "item_number"), ("task_template", "code")):
+        item = getattr(position, field, None)
+        if item is not None:
+            return str(getattr(item, attribute, "") or "")
+    return ""
+
+
 class DmsProfile(db.Model):
     __tablename__ = "dms_profile"
 
@@ -2457,6 +2468,7 @@ class CommissionPosition(db.Model):
     position_index: Mapped[int] = mapped_column(db.Integer, nullable=False)
     position_number: Mapped[float | None] = mapped_column(db.Float)
     code: Mapped[str | None] = mapped_column(db.String(120))
+    article_number: Mapped[str | None] = mapped_column(db.String(120))
     commission_text: Mapped[str | None] = mapped_column(db.Text)
     internal_description: Mapped[str | None] = mapped_column(db.Text)
     description: Mapped[str | None] = mapped_column(db.Text)
@@ -2469,6 +2481,10 @@ class CommissionPosition(db.Model):
     craft_activity_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
 
     commission: Mapped[Commission] = relationship(back_populates="positions")
+
+    @property
+    def display_article_number(self) -> str:
+        return str(self.code or "") if self.article_number is None else self.article_number
 
     @property
     def display_text(self) -> str:
@@ -4336,6 +4352,11 @@ class InvoicePosition(db.Model):
         InventoryItem | None
     ] = relationship()
 
+    @property
+    def article_number(self) -> str:
+        return document_position_article_number(self)
+
+
 
 class InvoiceCommission(db.Model):
     __tablename__ = "invoice_commission"
@@ -4971,6 +4992,11 @@ class OfferPosition(db.Model):
     task_template: Mapped[
         TimeTaskTemplate | None
     ] = relationship()
+
+    @property
+    def article_number(self) -> str:
+        return document_position_article_number(self)
+
 
 
 class OfferCraftFallback(db.Model):
@@ -7472,4 +7498,5 @@ class TicketAiJob(db.Model):
     attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     lock_token: Mapped[str | None] = mapped_column(db.String(32))
+
 

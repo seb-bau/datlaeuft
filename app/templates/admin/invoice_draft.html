@@ -14,6 +14,9 @@
     </div>
   </div>
 
+  {% if editable %}<button type="button" class="btn btn-outline-primary" data-document-preview
+      data-preview-form="invoice-draft-form" data-preview-title="Rechnung · PDF-Vorschau"
+      data-preview-url="{{ url_for('admin.invoice_preview', invoice_id=item.id) }}">PDF-Vorschau</button>{% endif %}
   <a
     class="btn btn-outline-secondary"
     href="{{ url_for('admin.invoices') }}"
@@ -675,6 +678,7 @@
             <thead>
               <tr>
                 <th style="width: 90px;">Quelle</th>
+                <th style="width: 140px;">Artikelnummer</th>
                 <th>Bezeichnung</th>
                 <th>Zusatz</th>
                 <th style="width: 110px;">Menge</th>
@@ -720,6 +724,10 @@
                   >
                 </td>
 
+                <td>
+                  <input class="form-control form-control-sm" name="position_article_number" maxlength="120"
+                         value="{{ position.article_number }}" aria-label="Artikelnummer (optional)" placeholder="Optional">
+                </td>
                 <td>
                   <textarea
                     class="form-control form-control-sm"
@@ -993,6 +1001,10 @@
         <input type="hidden" name="position_local_catalog_item_id" value="">
         <input type="hidden" name="position_source_data" value="{}">
       </td>
+    <td>
+      <input class="form-control form-control-sm" name="position_article_number" maxlength="120"
+             value="${escapePositionValue(values.articleNumber)}" aria-label="Artikelnummer (optional)" placeholder="Optional">
+    </td>
       <td>
         <textarea class="form-control form-control-sm" name="position_description" rows="2" required>${escapePositionValue(values.description)}</textarea>
       </td>
@@ -1215,4 +1227,5 @@ document.addEventListener("DOMContentLoaded", () => {
   {% include 'admin/_document_articles.html' %}
 {% include 'admin/_document_service_positions.html' %}
 {% endwith %}
+{% if editable %}{% include 'admin/_document_preview.html' %}{% endif %}
 {% endblock %}

@@ -201,6 +201,7 @@
     </style>
 </head>
 <body>
+{% if preview %}<div style="position: fixed; top: -12mm; right: 0; color: #b91c1c; font-size: 9pt; font-weight: bold;">ENTWURF · Nur zur Vorschau</div>{% endif %}
 <!--    <div class="sender-line">-->
 <!--        {{ seller_address | join(" · ") }}-->
 <!--    </div>-->
@@ -288,6 +289,7 @@
                 <tr>
                     <td class="number">{{ position.number }}</td>
                     <td class="description">
+                        {% if position.article_number %}<div style="font-size: 8pt; color: #555;">Artikel-Nr.: {{ position.article_number }}</div>{% endif %}
                         <div>
                             {{ position.description }}
                         </div>

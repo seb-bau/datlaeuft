@@ -33,6 +33,9 @@
     </a>
     {% endif %}
 
+  {% if editable %}<button type="button" class="btn btn-outline-primary" data-document-preview
+      data-preview-form="offerDraftForm" data-preview-title="Angebot · PDF-Vorschau"
+      data-preview-url="{{ url_for('admin.offer_preview', offer_id=item.id) }}">PDF-Vorschau</button>{% endif %}
     <a
       class="btn btn-outline-secondary"
       href="{{ url_for('admin.offers') }}"
@@ -570,6 +573,7 @@
             <thead>
               <tr>
                 <th style="width: 90px;">Quelle</th>
+                <th style="width: 140px;">Artikelnummer</th>
                 <th>Bezeichnung</th>
                 <th>Zusatz</th>
                 <th style="width: 105px;">Menge</th>
@@ -606,6 +610,10 @@
                          value="{{ position.local_catalog_item_id or '' }}">
                   <input type="hidden" name="position_source_data"
                          value="{{ (position.source_data or {})|tojson|forceescape }}">
+                </td>
+                <td>
+                  <input class="form-control form-control-sm" name="position_article_number" maxlength="120"
+                         value="{{ position.article_number }}" aria-label="Artikelnummer (optional)" placeholder="Optional">
                 </td>
                 <td>
                   <textarea
@@ -971,6 +979,10 @@ function createPositionRow(values) {
       <input type="hidden" name="position_source_data" value="{}">
     </td>
     <td>
+      <input class="form-control form-control-sm" name="position_article_number" maxlength="120"
+             value="${escapeValue(values.articleNumber)}" aria-label="Artikelnummer (optional)" placeholder="Optional">
+    </td>
+    <td>
       <textarea class="form-control form-control-sm" name="position_description" rows="2" required>${escapeValue(values.description)}</textarea>
     </td>
     <td>
@@ -1102,4 +1114,5 @@ updateEmptyMessage();
 {% include 'admin/_document_articles.html' %}
 {% include 'admin/_document_service_positions.html' %}
 {% endwith %}
+{% if editable %}{% include 'admin/_document_preview.html' %}{% endif %}
 {% endblock %}

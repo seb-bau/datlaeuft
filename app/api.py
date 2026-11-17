@@ -4348,6 +4348,7 @@ def serialize_commission(
                 "position_index": position.position_index,
                 "position_number": position.position_number,
                 "code": position.code,
+                "article_number": position.display_article_number,
                 "commission_text": position.commission_text,
                 "internal_description": position.internal_description,
                 "description": position.description,
