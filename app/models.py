@@ -4205,6 +4205,11 @@ class Invoice(db.Model):
         cascade="all, delete-orphan",
         order_by="InvoicePosition.position_index",
     )
+    pdf_attachments: Mapped[list["InvoiceAttachment"]] = relationship(
+        back_populates="invoice",
+        cascade="all, delete-orphan",
+        order_by="[InvoiceAttachment.position_index, InvoiceAttachment.id]",
+    )
     commission_links: Mapped[
         list["InvoiceCommission"]
     ] = relationship(
@@ -6992,6 +6997,23 @@ class CraftActivityDepartmentMapping(db.Model):
         back_populates="craft_activity_mappings"
     )
     updated_by: Mapped[User | None] = relationship()
+
+
+class InvoiceAttachment(db.Model):
+    __tablename__ = "invoice_attachment"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(db.ForeignKey("invoice.id", ondelete="CASCADE"), nullable=False, index=True)
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id", ondelete="SET NULL"))
+    original_filename: Mapped[str] = mapped_column(db.String(255), nullable=False)
+    storage_name: Mapped[str] = mapped_column(db.String(500), nullable=False, unique=True)
+    sha256: Mapped[str] = mapped_column(db.String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(db.Integer, nullable=False)
+    page_count: Mapped[int] = mapped_column(db.Integer, nullable=False)
+    position_index: Mapped[int] = mapped_column(db.Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
+    invoice: Mapped["Invoice"] = relationship(back_populates="pdf_attachments")
+    uploaded_by: Mapped["User | None"] = relationship()
 
 
 class WowiResponsibleOfficial(db.Model):

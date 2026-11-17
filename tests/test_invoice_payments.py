@@ -178,7 +178,8 @@ class InvoicePaymentTests(unittest.TestCase):
                        "mandate_reference": "MANDAT-1", "creditor_id": self.company.seller_creditor_id}
         values["payment_information_data"] = json.dumps(information)
         text = self.pdf_text(self.client.post(f"/admin/invoices/{invoice.id}/preview", data=values))
-        self.assertIn(DEBIT_IBAN, text)
+        self.assertIn(self.invoice_payments.masked_payment_iban(DEBIT_IBAN), text)
+        self.assertNotIn(DEBIT_IBAN, text)
         self.db.session.expire_all()
         self.assertIsNone(invoice.payment_information)
         self.assertIsNone(invoice.invoice_number)
@@ -203,8 +204,25 @@ class InvoicePaymentTests(unittest.TestCase):
                     self.assertEqual(data["BT-89"], "MANDAT-1")
                 raw = self.document_previews.render_document_preview("invoice", invoice)
                 text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(raw)).pages)
-                self.assertIn(iban, text)
-                self.assertIn("Einzugskonto" if method == "sepa_debit" else "Zahlungskonto", text)
+                self.assertIn(self.invoice_payments.masked_payment_iban(iban) if method == "sepa_debit" else iban, text)
+                self.assertNotIn("Einzugskonto", text)
+                self.assertNotIn("Zahlungskonto", text)
+                if method == "sepa_debit":
+                    self.assertNotIn(iban, text)
+                    self.assertNotIn("INGDDEFFXXX", text)
+                    self.assertIn("MANDAT-1", text)
+                else:
+                    self.assertIn("INGDDEFFXXX", text)
+
+    def test_sepa_payment_text_masks_the_iban_without_changing_the_original_account(self):
+        invoice = self.complete_draft()
+        invoice.payment_information = {"method": "sepa_debit", "iban": DEBIT_IBAN, "bic": "INGDDEFFXXX",
+                                       "mandate_reference": "MANDAT-1", "creditor_id": self.company.seller_creditor_id}
+        self.settings.settings.set(self.settings.SettingKeys.INVOICE_SEPA_PAYMENT_TEXT, "Einzug vom Konto {iban} zum {due_date}.")
+        self.invoice_payments.freeze_invoice_payment_information(invoice)
+        self.assertEqual(invoice.payment_information["iban"], DEBIT_IBAN)
+        self.assertNotIn(DEBIT_IBAN, invoice.payment_information["terms_text"])
+        self.assertIn("****", invoice.payment_information["terms_text"])
 
     def test_pdf_article_column_is_optional_and_all_text_stays_inside_a4(self):
         for kind in ("invoice", "offer"):

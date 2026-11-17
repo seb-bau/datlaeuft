@@ -1,0 +1,23 @@
+<section class="card shadow-sm my-4" id="invoiceAttachments"
+         data-endpoint="{{ url_for('invoice_delivery.attachment_list', invoice_id=item.id) }}"
+         data-document-url="{{ url_for('invoice_delivery.attachment_document', invoice_id=item.id, attachment_id=0) }}">
+  <div class="card-header">PDF-Anhänge</div>
+  <div class="card-body">
+    <p class="small text-muted">Die Anhänge werden in der angezeigten Reihenfolge hinter die Rechnung gesetzt und sind auch in der PDF-Vorschau enthalten.</p>
+    <ul class="list-group list-group-flush mb-3" id="invoiceAttachmentList"></ul>
+    {% if editable %}
+    <form id="invoiceAttachmentForm" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="invoiceAttachmentFiles" class="form-label">PDF-Dateien hinzufügen</label>
+      <div class="d-flex flex-wrap gap-2">
+        <input type="file" class="form-control" style="max-width: 32rem" id="invoiceAttachmentFiles" name="files" accept=".pdf,application/pdf" multiple required>
+        <button type="submit" class="btn btn-outline-primary" id="invoiceAttachmentUpload">Hochladen</button>
+      </div>
+      <div class="form-text">Mehrere Dateien möglich, höchstens 25 MB pro PDF-Datei.</div>
+    </form>
+    {% else %}
+    <p class="small text-muted mb-0">Die Anhänge sind Bestandteil der festgeschriebenen Rechnung und können nicht mehr geändert werden.</p>
+    {% endif %}
+    <div class="small mt-2" id="invoiceAttachmentMessage" aria-live="polite"></div>
+  </div>
+</section>

@@ -1,0 +1,36 @@
+{% if item.status == 'finalized' %}
+<div class="modal fade" id="invoiceDeliveryModal" tabindex="-1" aria-labelledby="invoiceDeliveryTitle" aria-hidden="true"
+     data-recipients-url="{{ url_for('invoice_delivery.delivery_recipients', invoice_id=item.id) }}"
+     data-preview-url="{{ url_for('invoice_delivery.delivery_preview', invoice_id=item.id) }}"
+     data-send-url="{{ url_for('invoice_delivery.delivery_send', invoice_id=item.id) }}"
+     data-status-url="{{ url_for('invoice_delivery.delivery_status', invoice_id=item.id) }}">
+  <div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h2 class="modal-title fs-5" id="invoiceDeliveryTitle">Rechnung versenden</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="invoiceDeliveryCsrf" value="{{ csrf_token() }}">
+      <fieldset class="mb-3">
+        <legend class="fs-6">Wie möchten Sie die Rechnung versenden?</legend>
+        <div class="form-check"><input class="form-check-input" type="radio" name="invoiceDeliveryMode" id="invoiceDeliveryClient" value="client" checked><label class="form-check-label" for="invoiceDeliveryClient">Im installierten Mailprogramm öffnen</label></div>
+        <div class="form-check mt-2"><input class="form-check-input" type="radio" name="invoiceDeliveryMode" id="invoiceDeliverySystem" value="system"><label class="form-check-label" for="invoiceDeliverySystem">Direkt über das System versenden</label></div>
+      </fieldset>
+      <div id="invoiceDeliveryClientPanel">
+        <p>Sie erhalten einen leeren E-Mail-Entwurf mit dem Betreff „Mieterbelastung - Rechnung {{ item.invoice_number }}“ und der vollständigen Rechnungs-PDF als Anhang.</p>
+        <p class="small text-muted">Öffnen Sie die heruntergeladene EML-Datei mit Outlook, Thunderbird oder Ihrem Mailprogramm. Ob der Entwurf direkt zum Bearbeiten geöffnet wird, hängt vom Mailprogramm und dessen Version ab.</p>
+        <a class="btn btn-primary" href="{{ url_for('invoice_delivery.delivery_draft', invoice_id=item.id) }}">E-Mail-Entwurf öffnen / herunterladen</a>
+      </div>
+      <div id="invoiceDeliverySystemPanel" hidden>
+        <label class="form-label" for="invoiceDeliveryOfficial">Sachbearbeiter</label>
+        <select class="form-select mb-3" id="invoiceDeliveryOfficial"><option value="">Bitte auswählen</option></select>
+        <div id="invoiceDeliveryPreview" hidden>
+          <dl class="row small"><dt class="col-sm-2">An</dt><dd class="col-sm-10 text-break" id="invoiceDeliveryRecipient"></dd><dt class="col-sm-2">Betreff</dt><dd class="col-sm-10" id="invoiceDeliverySubject"></dd></dl>
+          <pre class="border rounded p-3 bg-light text-wrap" id="invoiceDeliveryBody" style="font-family: inherit"></pre>
+          <p class="small text-muted">Die festgeschriebene Rechnungs-PDF einschließlich aller PDF-Anhänge wird beigefügt. Betreff und Text lassen sich unter Einstellungen → E-Mail-Vorlagen anpassen.</p>
+        </div>
+        <button type="button" class="btn btn-primary" id="invoiceDeliverySend" disabled>Rechnung über das System versenden</button>
+      </div>
+      <div class="small mt-3" id="invoiceDeliveryMessage" aria-live="polite"></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button></div>
+  </div></div>
+</div>
+{% endif %}

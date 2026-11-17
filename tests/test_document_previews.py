@@ -30,7 +30,7 @@ class DocumentPreviewTests(unittest.TestCase):
         fixtures.TicketAttachmentSelectionTests.setUpClass.__func__(cls)
         cls.app.before_request(lambda: g.pop("_login_user", None) and None)
         sys.modules[cls.package_name + ".auth"].accounting_required = lambda view: view
-        for name in ("invoice_payments", "invoice_document", "offer_document", "invoice_service", "offer_service", "document_articles", "document_previews"):
+        for name in ("invoice_payments", "invoice_attachments", "invoice_document", "offer_document", "invoice_service", "offer_service", "document_articles", "document_previews"):
             sys.modules.pop(cls.package_name + "." + name, None)
             setattr(cls, name, importlib.import_module(cls.package_name + "." + name))
         cls.admin.render_document_preview = cls.document_previews.render_document_preview
@@ -40,7 +40,7 @@ class DocumentPreviewTests(unittest.TestCase):
         cls.admin.payment_options_from_wowiport = cls.invoice_payments.payment_options_from_wowiport
         source = ast.parse((cls.root / "app/admin.py").read_text())
         for node in source.body:
-            if isinstance(node, ast.ImportFrom) and node.module in {"invoice_service", "offer_service"}:
+            if isinstance(node, ast.ImportFrom) and node.module in {"invoice_service", "offer_service", "invoice_document", "offer_document"}:
                 module = getattr(cls, node.module)
                 for item in node.names:
                     setattr(cls.admin, item.asname or item.name, getattr(module, item.name))
@@ -48,10 +48,11 @@ class DocumentPreviewTests(unittest.TestCase):
         functions = [node for node in auth_source.body if isinstance(node, ast.FunctionDef) and node.name in {"invoice_required", "offer_required", "commission_creation_required"}]
         namespace = dict(F=object, Any=object, wraps=wraps, current_user=current_user, abort=abort, redirect=redirect, request=request, url_for=url_for)
         exec(compile(ast.Module(body=functions, type_ignores=[]), "auth.py", "exec"), namespace)
+        sys.modules[cls.package_name + ".auth"].invoice_required = namespace["invoice_required"]
         for endpoint, guard in (("invoice_preview", "invoice_required"), ("offer_preview", "offer_required"), ("commission_create_preview", "commission_creation_required"), ("invoice_payment_information_fetch", "invoice_required")):
             view = cls.app.view_functions["admin." + endpoint]
             cls.app.view_functions["admin." + endpoint] = namespace[guard](view.__wrapped__)
-        for name in ("Invoice", "InvoicePosition", "InvoiceCommission", "Offer", "OfferPosition", "OfferCraftFallback", "LocalCatalogItem"):
+        for name in ("Invoice", "InvoiceAttachment", "InvoicePosition", "InvoiceCommission", "Offer", "OfferPosition", "OfferCraftFallback", "LocalCatalogItem"):
             table = getattr(cls.models, name).__table__
             if table not in cls.tables:
                 cls.tables.append(table)

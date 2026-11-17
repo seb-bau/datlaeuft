@@ -2510,9 +2510,7 @@ def invoice_billing_rules() -> Any:
 def invoice_finalize(
     invoice_id: int,
 ) -> Any:
-    invoice = Invoice.query.get_or_404(
-        invoice_id
-    )
+    invoice = Invoice.query.filter_by(id=invoice_id).populate_existing().with_for_update().first_or_404()
     document_result = None
 
     try:
@@ -7363,10 +7361,7 @@ def invoice_payment_information_fetch(invoice_id: int):
 def invoice_delete(
     invoice_id: int,
 ) -> Any:
-    item = db.get_or_404(
-        Invoice,
-        invoice_id,
-    )
+    item = Invoice.query.filter_by(id=invoice_id).populate_existing().with_for_update().first_or_404()
 
     if (
         item.status
@@ -7397,8 +7392,11 @@ def invoice_delete(
             ],
         },
     )
+    from .invoice_attachments import invoice_attachment_path, remove_invoice_attachment_files
+    attachment_paths = [invoice_attachment_path(attachment) for attachment in item.pdf_attachments]
     db.session.delete(item)
     db.session.commit()
+    remove_invoice_attachment_files(attachment_paths)
 
     flash(
         "Rechnungsentwurf gelöscht.",

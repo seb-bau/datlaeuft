@@ -173,6 +173,9 @@ def notification_content(item):
 
 
 def notification_is_current(item):
+    if item.kind == "invoice_delivery":
+        from .invoice_delivery import invoice_delivery_is_current
+        return invoice_delivery_is_current(item)
     if item.kind == "appointment_calendar":
         from .appointment_calendar import appointment_calendar_is_current
         return appointment_calendar_is_current(item)
@@ -296,6 +299,9 @@ def execute_workflow_notification(item_id):
             if reply_to:
                 message["Reply-To"] = validate_debug_email_address(reply_to)
         set_email_content(message, item.payload["subject"], item.payload["body"])
+        if item.kind == "invoice_delivery":
+            from .invoice_delivery import attach_invoice_delivery_pdf
+            attach_invoice_delivery_pdf(message, item)
         if item.kind == "appointment_calendar":
             from .appointment_calendar import attach_appointment_calendar
             attach_appointment_calendar(message, item)
@@ -315,6 +321,10 @@ def execute_workflow_notification(item_id):
             raise
         item.payload = {**item.payload, "mail_sent": True, "submission_started": False, "delivery_recipient": debug_recipient or item.payload["recipient"]}
         item.sent_at = utc_now()
+        if item.kind == "invoice_delivery":
+            from .audit import audit
+            audit("invoice.mail_sent", "invoice", item.payload["invoice_id"], {"notification_id": item.id, "recipient": item.payload["delivery_recipient"]})
+            current_app.logger.info("invoice_mail_sent invoice_id=%s notification_id=%s recipient=%s", item.payload["invoice_id"], item.id, item.payload["delivery_recipient"])
         db.session.commit()
     if item.kind == "ticket_reply" and not item.payload.get("comment_id"):
         document_ticket_reply(item)

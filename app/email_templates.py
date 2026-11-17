@@ -34,6 +34,12 @@ APPOINTMENT_LINE = "{{ appointment.date }}, {% if appointment.custom %}Beginn {{
 APPOINTMENT_DETAILS = "Handwerker: {{ craftsman_name or 'Ihr Handwerker' }}{% if topic %}\nThema: {{ topic }}{% endif %}"
 
 EMAIL_TEMPLATES = {
+    "invoice_tenant_charge": {
+        "label": "Rechnung: Mieterbelastung an Sachbearbeitung",
+        "fields": "invoice_number invoice_recipient_name contract_number recipient_name total_gross currency invoice_date due_date company_name sender_name",
+        "subject": "Mieterbelastung - Rechnung {{ invoice_number }}",
+        "body": GREETING + "anbei erhalten Sie die Rechnung {{ invoice_number }} zur Mieterbelastung.\n\nMieter: {{ invoice_recipient_name }}{% if contract_number %}\nVertrag: {{ contract_number }}{% endif %}\nRechnungsbetrag: {{ total_gross }} {{ currency }}\n\nBitte veranlassen Sie die weitere Bearbeitung.\n\nFreundliche Grüße\n{{ sender_name }}",
+    },
     "approval_request": {
         "label": "Sachbearbeitung: Auftragsfreigabe erforderlich",
         "fields": ORDER_FIELDS,
@@ -153,6 +159,15 @@ EMAIL_TEMPLATES = {
 }
 
 FIELD_LABELS = {
+    "invoice_number": "Rechnungsnummer",
+    "invoice_recipient_name": "Rechnungsempfänger / Mieter",
+    "contract_number": "Vertragsnummer",
+    "total_gross": "Rechnungsbetrag",
+    "currency": "Währung",
+    "invoice_date": "Rechnungsdatum",
+    "due_date": "Fälligkeitsdatum",
+    "company_name": "Buchwerk",
+    "sender_name": "Name des versendenden Benutzers",
     "appointment_text": "Bestätigter Termin",
     "appointment_comment": "Notiz zum Termin",
     "execution_from": "Beginn des Durchführungszeitraums",
@@ -192,6 +207,9 @@ FIELD_LABELS = {
 }
 
 EXAMPLE_CONTEXT = {
+    "invoice_number": "RE-2026-0042", "invoice_recipient_name": "Max Mustermann", "contract_number": "NV-12345",
+    "total_gross": "119,00", "currency": "EUR", "invoice_date": "17.11.2026", "due_date": "01.12.2026",
+    "company_name": "Beispielbetrieb", "sender_name": "Petra Beispiel",
     "appointment_text": "15.01.2027 10:30 Uhr",
     "appointment_comment": "Bitte am Hauseingang klingeln.",
     "execution_from": "16.11.2026 08:00",
