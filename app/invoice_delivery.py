@@ -208,7 +208,7 @@ def delivery_send(invoice_id):
             if str(existing.payload.get("official_id")) != str(data.get("official_id")):
                 raise ValueError("Die Versandkennung wurde bereits für einen anderen Empfänger verwendet. Bitte den Dialog erneut öffnen.")
             return invoice_response(delivery_data(existing), 200)
-        if not settings.get(SettingKeys.SMTP_HOST).strip() or not validate_debug_email_address(settings.get(SettingKeys.SMTP_SENDER)):
+        if not settings.get(SettingKeys.SMTP_HOST).strip() or not settings.get(SettingKeys.SMTP_SENDER).strip():
             raise ValueError("SMTP-Server oder Absenderadresse fehlen. Bitte die E-Mail-Einstellungen ergänzen.")
         final_invoice_pdf(invoice)
         official, recipient = selected_official(data.get("official_id"))

@@ -26,5 +26,4 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_index("ix_invoice_attachment_invoice_id", table_name="invoice_attachment")
     op.drop_table("invoice_attachment")

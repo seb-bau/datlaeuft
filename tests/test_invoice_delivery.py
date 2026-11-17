@@ -232,6 +232,7 @@ class InvoiceDeliveryTests(unittest.TestCase):
         invoice = self.rendered_invoice(with_attachments=True)
         definition = self.templates.email_template_definition("invoice_tenant_charge")
         self.settings.settings.set(definition, {"subject": "Belastung {{ invoice_number }}", "body": "An {{ recipient_name }}: {{ invoice_recipient_name }} – {{ total_gross }} {{ currency }}"})
+        self.settings.settings.set(self.settings.SettingKeys.SMTP_SENDER, "Testbetrieb <app@example.invalid>")
         self.db.session.commit()
         preview = self.client.get(f"/admin/invoices/{invoice.id}/delivery/preview?official_id=901")
         self.assertEqual(preview.status_code, 200, preview.data)
@@ -245,6 +246,7 @@ class InvoiceDeliveryTests(unittest.TestCase):
         self.assertEqual(self.models.WorkflowNotification.query.count(), 1)
         self.assertEqual(self.workflow.process_workflow_notification_batch(limit=1), 1)
         message = self.mail.call_args.args[0]
+        self.assertEqual(str(message["From"]), "Testbetrieb <app@example.invalid>")
         self.assertEqual(str(message["To"]), "office@example.invalid")
         self.assertEqual(str(message["Subject"]), preview.json["subject"])
         self.assertIn("11,90 EUR", message.get_body(preferencelist=("plain",)).get_content())
