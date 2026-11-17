@@ -13,10 +13,11 @@ class Element {
   replaceChildren(...items) { this.children = items; this.value = ""; }
   add(item) { this.children.push(item); }
   reset() { this.wasReset = true; }
+  reportValidity() { return true; }
 }
 
 function fixture({editable = true, mail = true, fetchResult} = {}) {
-  const names = ["invoiceAttachments", "invoiceAttachmentForm", "invoiceAttachmentList", "invoiceAttachmentMessage", "invoiceAttachmentFiles", "invoiceAttachmentUpload", "invoiceDeliveryModal", "invoiceDeliveryClient", "invoiceDeliverySystem", "invoiceDeliveryOfficial", "invoiceDeliveryPreview", "invoiceDeliverySend", "invoiceDeliveryMessage", "invoiceDeliveryLastState", "invoiceDeliveryClientPanel", "invoiceDeliverySystemPanel", "invoiceDeliveryRecipient", "invoiceDeliverySubject", "invoiceDeliveryBody", "invoiceDeliveryCsrf"];
+  const names = ["invoiceAttachments", "invoiceAttachmentForm", "invoiceAttachmentList", "invoiceAttachmentMessage", "invoiceAttachmentFiles", "invoiceAttachmentUpload", "invoiceDeliveryModal", "invoiceDeliveryClient", "invoiceDeliverySystem", "invoiceDeliveryOfficial", "invoiceDeliveryPreview", "invoiceDeliverySend", "invoiceDeliveryMessage", "invoiceDeliveryLastState", "invoiceDeliveryClientPanel", "invoiceDeliverySystemPanel", "invoiceDeliveryRecipient", "invoiceDeliverySubject", "invoiceDeliveryBody", "invoiceDeliveryResetBody", "invoiceDeliveryCsrf"];
   const elements = Object.fromEntries(names.map(name => [name, new Element()]));
   elements.invoiceAttachments.dataset = {endpoint: "/admin/invoices/1/attachments", documentUrl: "/admin/invoices/1/attachments/0"};
   elements.invoiceAttachmentForm.elements = {csrf_token: {value: "csrf-test"}};
@@ -104,10 +105,12 @@ test("system delivery previews the selected official and reports the completed s
   await state.openSystem();
   await state.choose(901);
   assert.equal(state.elements.invoiceDeliverySubject.textContent, "Mieterbelastung - Rechnung RE-1");
+  assert.equal(state.elements.invoiceDeliveryBody.value, "Bitte bearbeiten.");
   assert.equal(state.elements.invoiceDeliveryPreview.hidden, false);
   await state.fire("invoiceDeliverySend", "click");
   const request = state.calls.find(call => call.url.pathname === "/send");
   assert.equal(JSON.parse(request.body).official_id, "901");
+  assert.equal(JSON.parse(request.body).body, "Bitte bearbeiten.");
   assert.equal(request.headers["X-CSRFToken"], "csrf-test");
   assert.match(state.elements.invoiceDeliveryLastState.textContent, /E-Mail versendet/);
   assert.equal(state.elements.invoiceDeliverySend.disabled, true);
@@ -136,10 +139,78 @@ test("retrying after a lost send response reuses the same request identifier", a
   const state = fixture({fetchResult: async url => { if (url.pathname === "/send" && attempts++ === 0) throw new Error("Verbindung unterbrochen"); return null; }});
   await state.openSystem();
   await state.choose(901);
+  state.elements.invoiceDeliveryBody.value = "Individuelle Hinweise\nZweite Zeile";
+  await state.fire("invoiceDeliveryBody", "input");
   await state.fire("invoiceDeliverySend", "click");
   assert.equal(state.elements.invoiceDeliverySend.disabled, false);
+  assert.equal(state.elements.invoiceDeliveryBody.readOnly, false);
   await state.fire("invoiceDeliverySend", "click");
   const requests = state.calls.filter(call => call.url.pathname === "/send").map(call => JSON.parse(call.body));
   assert.equal(requests.length, 2);
   assert.equal(requests[0].request_id, requests[1].request_id);
+  assert.equal(requests[0].body, "Individuelle Hinweise\nZweite Zeile");
+  assert.equal(requests[1].body, requests[0].body);
+});
+
+test("individual mail text survives recipient and delivery mode changes and can be reset to the current template", async () => {
+  const state = fixture({fetchResult: async url => url.pathname === "/preview" && url.searchParams.get("official_id") === "902"
+    ? response({recipient: "other@example.invalid", subject: "Mieterbelastung - Rechnung RE-1", body: "Vorlage für andere Sachbearbeitung."}) : null});
+  await state.openSystem();
+  await state.choose(901);
+  const body = state.elements.invoiceDeliveryBody;
+  body.value = "Zusätzliche Infos\n<b>Wörtlich</b> & {{ invoice_number }}";
+  await state.fire("invoiceDeliveryBody", "input");
+  await state.choose(902);
+  assert.equal(body.value, "Zusätzliche Infos\n<b>Wörtlich</b> & {{ invoice_number }}");
+  state.elements.invoiceDeliverySystem.checked = false;
+  await state.fire("invoiceDeliveryClient", "change");
+  state.elements.invoiceDeliverySystem.checked = true;
+  await state.fire("invoiceDeliverySystem", "change");
+  assert.match(body.value, /Zusätzliche Infos/);
+  await state.fire("invoiceDeliveryResetBody", "click");
+  assert.equal(body.value, "Vorlage für andere Sachbearbeitung.");
+  await state.choose(901);
+  assert.equal(body.value, "Bitte bearbeiten.");
+  body.value = "";
+  await state.fire("invoiceDeliveryBody", "input");
+  await state.choose(902);
+  assert.equal(body.value, "");
+});
+
+test("sending freezes the edited text for that mail and a new dialog starts from the template", async () => {
+  let resolve;
+  const state = fixture({fetchResult: async url => url.pathname === "/send" ? new Promise(done => { resolve = done; }) : null});
+  await state.openSystem();
+  await state.choose(901);
+  const body = state.elements.invoiceDeliveryBody;
+  body.value = "Spezielle Hinweise\nBitte beachten.";
+  await state.fire("invoiceDeliveryBody", "input");
+  const sending = state.fire("invoiceDeliverySend", "click");
+  await settle();
+  assert.equal(body.readOnly, true);
+  assert.equal(state.elements.invoiceDeliveryResetBody.disabled, true);
+  await state.fire("invoiceDeliveryResetBody", "click");
+  assert.equal(body.value, "Spezielle Hinweise\nBitte beachten.");
+  await state.fire("invoiceDeliverySend", "click");
+  const requests = state.calls.filter(call => call.url.pathname === "/send");
+  assert.equal(requests.length, 1);
+  assert.equal(JSON.parse(requests[0].body).body, body.value);
+  resolve(response({id: 12, state: "pending", recipient: "office@example.invalid"}));
+  await sending;
+  assert.equal(body.readOnly, true);
+  await state.fire("invoiceDeliveryModal", "hidden.bs.modal");
+  await state.openSystem();
+  await state.choose(901);
+  assert.equal(body.value, "Bitte bearbeiten.");
+  assert.equal(body.readOnly, false);
+});
+
+test("invalid text fields are checked before a mail is queued", async () => {
+  const state = fixture();
+  await state.openSystem();
+  await state.choose(901);
+  state.elements.invoiceDeliveryBody.reportValidity = () => false;
+  await state.fire("invoiceDeliverySend", "click");
+  assert.equal(state.calls.some(call => call.url.pathname === "/send"), false);
+  assert.equal(state.elements.invoiceDeliverySend.disabled, false);
 });

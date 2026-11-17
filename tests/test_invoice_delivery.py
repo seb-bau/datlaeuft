@@ -79,8 +79,8 @@ class InvoiceDeliveryTests(unittest.TestCase):
         self.company.invoice_stationery_filename = stationery.name
         self.db.session.commit()
 
-    def queue(self, invoice, token=None, official_id=901):
-        return self.client.post(f"/admin/invoices/{invoice.id}/delivery/send", json={"official_id": official_id, "request_id": token or str(uuid4())})
+    def queue(self, invoice, token=None, official_id=901, **values):
+        return self.client.post(f"/admin/invoices/{invoice.id}/delivery/send", json={"official_id": official_id, "request_id": token or str(uuid4()), **values})
 
     def test_multiple_attachments_are_ordered_previewed_and_appended_without_saving_the_form(self):
         invoice = self.draft("invoice")
@@ -276,6 +276,71 @@ class InvoiceDeliveryTests(unittest.TestCase):
         self.assertEqual(self.models.WorkflowNotification.query.count(), 0)
         self.mail.assert_not_called()
 
+    def test_edited_mail_body_is_sent_literally_with_the_invoice_without_changing_the_template(self):
+        invoice = self.rendered_invoice(with_attachments=True)
+        preview_url = f"/admin/invoices/{invoice.id}/delivery/preview?official_id=901"
+        preview = self.client.get(preview_url).json
+        template = self.templates.get_email_template("invoice_tenant_charge")
+        body = "Guten Tag,\r\n\r\nBitte mit Vorgang 42 abgleichen.\r\n<b>Zusatzinfo</b> & {{ invoice_number }}\r\n"
+        normalized = body.replace("\r\n", "\n")
+        queued = self.queue(invoice, body=body)
+        self.assertEqual(queued.status_code, 202, queued.data)
+        notification = self.db.session.get(self.models.WorkflowNotification, queued.json["id"])
+        self.assertEqual(notification.payload["body"], normalized)
+        self.assertEqual(notification.payload["subject"], preview["subject"])
+        self.assertEqual(self.templates.get_email_template("invoice_tenant_charge"), template)
+        self.assertEqual(self.client.get(preview_url).json["body"], preview["body"])
+        self.settings.settings.set(self.templates.email_template_definition("invoice_tenant_charge"), {"subject": "Neuer Standardbetreff", "body": "Neue Standardnachricht"})
+        self.db.session.commit()
+        self.assertEqual(self.workflow.process_workflow_notification_batch(limit=1), 1)
+        message = self.mail.call_args.args[0]
+        self.assertEqual(str(message["Subject"]), preview["subject"])
+        self.assertEqual(message.get_body(preferencelist=("plain",)).get_content(), normalized)
+        html = message.get_body(preferencelist=("html",)).get_content()
+        self.assertIn("&lt;b&gt;Zusatzinfo&lt;/b&gt; &amp; {{ invoice_number }}", html)
+        self.assertNotIn("<b>Zusatzinfo</b>", html)
+        self.assertEqual(list(message.iter_attachments())[0].get_content(), self.delivery.final_invoice_pdf(invoice))
+        self.mail.assert_called_once()
+
+    def test_mail_body_validation_rejects_invalid_values_before_queuing(self):
+        invoice = self.rendered_invoice()
+        for body in (None, False, 42, [], {}, "x" * 250001, "Text\x00Zusatz"):
+            with self.subTest(body_type=type(body).__name__):
+                response = self.queue(invoice, body=body)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertIn("Mailtext", response.json["message"])
+        self.assertEqual(self.models.WorkflowNotification.query.count(), 0)
+        self.remote.get_responsible_official.assert_not_called()
+        self.mail.assert_not_called()
+
+    def test_explicit_empty_mail_body_is_not_replaced_by_the_template(self):
+        invoice = self.rendered_invoice()
+        queued = self.queue(invoice, body="")
+        self.assertEqual(queued.status_code, 202, queued.data)
+        self.assertEqual(self.db.session.get(self.models.WorkflowNotification, queued.json["id"]).payload["body"], "")
+        self.assertEqual(self.workflow.process_workflow_notification_batch(limit=1), 1)
+        self.assertEqual(self.mail.call_args.args[0].get_body(preferencelist=("plain",)).get_content().strip(), "")
+
+    def test_edited_body_retries_keep_the_original_message_and_reject_different_content(self):
+        invoice = self.rendered_invoice()
+        token = str(uuid4())
+        first = self.queue(invoice, token, body="Individuelle Hinweise\r\nZweite Zeile")
+        self.assertEqual(first.status_code, 202, first.data)
+        retry = self.queue(invoice, token, body="Individuelle Hinweise\nZweite Zeile")
+        self.assertEqual(retry.status_code, 200, retry.data)
+        self.assertEqual(retry.json["id"], first.json["id"])
+        changed = self.queue(invoice, token, body="Nachträgliche Änderung")
+        self.assertEqual(changed.status_code, 400, changed.data)
+        self.assertIn("anderen Text", changed.json["message"])
+        item = self.db.session.get(self.models.WorkflowNotification, first.json["id"])
+        with patch.object(self.delivery, "enqueue_notification", return_value=item):
+            conflict = self.queue(invoice, body="Gleichzeitig anderer Text")
+        self.assertEqual(conflict.status_code, 400, conflict.data)
+        self.assertEqual(self.models.WorkflowNotification.query.count(), 1)
+        self.assertEqual(item.payload["body"], "Individuelle Hinweise\nZweite Zeile")
+        self.assertEqual(self.models.AuditLog.query.filter_by(action="invoice.mail_queued").count(), 1)
+        self.mail.assert_not_called()
+
     def test_a_queued_invoice_is_not_sent_after_its_document_changes(self):
         invoice = self.rendered_invoice()
         self.assertEqual(self.queue(invoice).status_code, 202)
@@ -304,6 +369,8 @@ class InvoiceDeliveryTests(unittest.TestCase):
         self.assertIn("Rechnung versenden", html)
         self.assertIn("E-Mail-Entwurf öffnen / herunterladen", html)
         self.assertIn("invoice_delivery.js", html)
+        self.assertIn('<textarea class="form-control mb-2" id="invoiceDeliveryBody"', html)
+        self.assertIn("Die gespeicherte Vorlage bleibt unverändert.", html)
         self.assertNotIn('id="invoiceAttachmentForm"', html)
         invoice.status = "draft"
         with self.app.test_request_context():

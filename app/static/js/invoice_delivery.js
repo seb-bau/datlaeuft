@@ -94,6 +94,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const system = document.getElementById("invoiceDeliverySystem");
   const official = document.getElementById("invoiceDeliveryOfficial");
   const preview = document.getElementById("invoiceDeliveryPreview");
+  const body = document.getElementById("invoiceDeliveryBody");
+  const resetBody = document.getElementById("invoiceDeliveryResetBody");
   const send = document.getElementById("invoiceDeliverySend");
   const message = document.getElementById("invoiceDeliveryMessage");
   const lastState = document.getElementById("invoiceDeliveryLastState");
@@ -104,6 +106,15 @@ document.addEventListener("DOMContentLoaded", () => {
   let sending = false;
   let pollTimer;
   let pollCount = 0;
+  let templateBody = "";
+  let bodyEdited = false;
+
+  body.addEventListener("input", () => { bodyEdited = true; });
+  resetBody.addEventListener("click", () => {
+    if (sending || resetBody.disabled) return;
+    body.value = templateBody;
+    bodyEdited = false;
+  });
 
   function feedback(text, error = false) {
     message.textContent = text;
@@ -165,7 +176,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (controller.signal.aborted || !modalOpen || official.value !== selected) return;
       document.getElementById("invoiceDeliveryRecipient").textContent = data.recipient;
       document.getElementById("invoiceDeliverySubject").textContent = data.subject;
-      document.getElementById("invoiceDeliveryBody").textContent = data.body;
+      templateBody = data.body;
+      if (!bodyEdited) body.value = templateBody;
+      body.readOnly = false;
+      resetBody.disabled = false;
       preview.hidden = false;
       send.disabled = false;
       feedback("");
@@ -176,23 +190,30 @@ document.addEventListener("DOMContentLoaded", () => {
 
   send.addEventListener("click", async () => {
     if (sending || send.disabled || !official.value) return;
+    if (!body.reportValidity()) return;
     sending = true;
     send.disabled = true;
     official.disabled = true;
     client.disabled = true;
     system.disabled = true;
+    body.readOnly = true;
+    resetBody.disabled = true;
     feedback("Rechnung wird zum Versand übergeben …");
     try {
       const item = await jsonResponse(await fetch(modal.dataset.sendUrl, {
         method: "POST", headers: {Accept: "application/json", "Content-Type": "application/json", "X-CSRFToken": document.getElementById("invoiceDeliveryCsrf").value},
-        body: JSON.stringify({official_id: official.value, request_id: requestId})
+        body: JSON.stringify({official_id: official.value, request_id: requestId, body: body.value})
       }));
       showState(item);
       clearTimeout(pollTimer);
       pollCount = 0;
       await loadStatus(item.id);
     } catch (error) { feedback(error.message, true); send.disabled = false; }
-    finally { sending = false; official.disabled = false; client.disabled = false; system.disabled = false; }
+    finally {
+      sending = false; official.disabled = false; client.disabled = false; system.disabled = false;
+      body.readOnly = send.disabled;
+      resetBody.disabled = send.disabled;
+    }
   });
 
   client.addEventListener("change", updateMode);
@@ -202,6 +223,11 @@ document.addEventListener("DOMContentLoaded", () => {
     requestId = newRequestId();
     recipientsLoaded = false;
     official.value = "";
+    templateBody = "";
+    bodyEdited = false;
+    body.value = "";
+    body.readOnly = false;
+    resetBody.disabled = false;
     preview.hidden = true;
     send.disabled = true;
     feedback("");
