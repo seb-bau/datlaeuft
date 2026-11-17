@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
-from flask import Blueprint, abort, jsonify, request
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .audit import audit
+from .auth import accounting_required
+from .local_catalog import MAX_IMPORT_BYTES, article_decimal, catalog_values, parse_catalog_import, plan_catalog_import
 from .extensions import db
 from .models import (
     InventoryItem,
@@ -22,27 +25,6 @@ from .models import (
 
 
 document_articles_bp = Blueprint("document_articles", __name__)
-
-
-def article_decimal(value, label: str, maximum: str, places=4) -> Decimal:
-    try:
-        result = Decimal(
-            str("" if value is None else value).strip().replace(",", ".")
-        )
-    except (InvalidOperation, ValueError, TypeError) as exc:
-        raise ValueError(f"{label} ist ungültig.") from exc
-
-    if not result.is_finite() or not Decimal("0") <= result <= Decimal(maximum):
-        raise ValueError(f"{label} muss zwischen 0 und {maximum} liegen.")
-
-    rounded = result.quantize(Decimal("1").scaleb(-places))
-
-    if result != rounded:
-        raise ValueError(
-            f"{label} darf höchstens {places} Nachkommastellen enthalten."
-        )
-
-    return rounded
 
 
 def article_text(name: str, label: str, length: int, required=False) -> str:
@@ -269,8 +251,124 @@ def items(document_type: str, document_id: int):
     except IntegrityError:
         db.session.rollback()
         return jsonify(
-            error="Die Artikelnummer ist bereits vergeben."
+            error="Diese Artikelvariante ist bereits vorhanden." if source == "local_catalog" else "Die Artikelnummer ist bereits vergeben."
         ), 409
+
+
+@document_articles_bp.get("/admin/local-catalog")
+@accounting_required
+def catalog():
+    search = request.args.get("q", "").strip()[:255]
+    business_area = request.args.get("business_area", "").strip()[:100]
+    state = request.args.get("state", "active")
+    if state not in {"active", "inactive", "all"}:
+        state = "active"
+    query = LocalCatalogItem.query
+    if search:
+        query = query.filter(or_(LocalCatalogItem.item_number.ilike(f"%{search}%"), LocalCatalogItem.name.ilike(f"%{search}%")))
+    if business_area:
+        query = query.filter(LocalCatalogItem.business_area == business_area)
+    if state != "all":
+        query = query.filter(LocalCatalogItem.active.is_(state == "active"))
+    page = max(1, request.args.get("page", 1, type=int))
+    pagination = query.order_by(LocalCatalogItem.name, LocalCatalogItem.item_number, LocalCatalogItem.id).paginate(page=page, per_page=50, error_out=False)
+    areas = [value for value, in db.session.query(LocalCatalogItem.business_area).distinct().order_by(LocalCatalogItem.business_area) if value]
+    return render_template("admin/local_catalog.html", pagination=pagination, areas=areas, search=search, business_area=business_area, selected_state=state)
+
+
+@document_articles_bp.route("/admin/local-catalog/new", methods=["GET", "POST"])
+@document_articles_bp.route("/admin/local-catalog/<int:item_id>/edit", methods=["GET", "POST"])
+@accounting_required
+def catalog_edit(item_id=None):
+    item = db.get_or_404(LocalCatalogItem, item_id) if item_id is not None else None
+    values = serialize_article(item) if item is not None else {
+        "unit": "Stk", "price_net": "0,00", "vat_rate": "19,00", "tax_label": "Normalsteuersatz", "active": True,
+    }
+    if request.method == "POST":
+        values = dict(request.form)
+        values["active"] = "active" in request.form
+        try:
+            changes = catalog_values(values)
+            created = item is None
+            if created:
+                item = LocalCatalogItem()
+                db.session.add(item)
+            for field, value in changes.items():
+                setattr(item, field, value)
+            db.session.flush()
+            audit("local_catalog.create" if created else "local_catalog.update", "local_catalog_item", item.id)
+            db.session.commit()
+            flash("Katalogartikel gespeichert.", "success")
+            return redirect(url_for("document_articles.catalog"))
+        except (ValueError, IntegrityError) as exc:
+            db.session.rollback()
+            flash(str(exc) if isinstance(exc, ValueError) else "Diese Artikelvariante ist bereits vorhanden.", "danger")
+    return render_template("admin/local_catalog_form.html", item=item if item_id is not None else None, values=values)
+
+
+@document_articles_bp.post("/admin/local-catalog/<int:item_id>/active")
+@accounting_required
+def catalog_active(item_id: int):
+    item = db.get_or_404(LocalCatalogItem, item_id)
+    if request.form.get("active") not in {"true", "false"}:
+        abort(400)
+    item.active = request.form["active"] == "true"
+    audit("local_catalog.active", "local_catalog_item", item.id, {"active": item.active})
+    db.session.commit()
+    flash("Katalogartikel aktiviert." if item.active else "Katalogartikel deaktiviert.", "success")
+    return redirect(url_for("document_articles.catalog", state="all"))
+
+
+def catalog_import_serializer():
+    return URLSafeTimedSerializer(current_app.secret_key, salt="local-catalog-import")
+
+
+@document_articles_bp.route("/admin/local-catalog/import", methods=["GET", "POST"])
+@accounting_required
+def catalog_import():
+    preview = None
+    plan = None
+    token = None
+    default_unit = request.form.get("default_unit", "Stk")
+    if request.method == "POST":
+        try:
+            action = request.form.get("action", "preview")
+            if action == "apply":
+                payload = catalog_import_serializer().loads(request.form.get("token", ""), max_age=1800)
+                if payload.get("user_id") != current_user.get_id():
+                    abort(403)
+                plan = plan_catalog_import(payload["rows"])
+                for row in plan["rows"]:
+                    if row["action"] == "unchanged":
+                        continue
+                    item = row["item"]
+                    if item is None:
+                        item = LocalCatalogItem()
+                        db.session.add(item)
+                    for field, value in row["values"].items():
+                        setattr(item, field, value)
+                audit("local_catalog.import", "local_catalog_item", "import", {key: plan[key] for key in ("created", "updated", "unchanged")})
+                db.session.commit()
+                flash(f"Import abgeschlossen: {plan['created']} neue Artikel, {plan['updated']} aktualisiert, {plan['unchanged']} unverändert.", "success")
+                return redirect(url_for("document_articles.catalog", state="all"))
+            if action != "preview":
+                abort(400)
+            upload = request.files.get("file")
+            if upload is None or not upload.filename:
+                raise ValueError("Bitte eine Importdatei auswählen.")
+            preview = parse_catalog_import(upload.stream.read(MAX_IMPORT_BYTES + 1), default_unit)
+            plan = plan_catalog_import(preview["rows"])
+            if not preview["errors"]:
+                token = catalog_import_serializer().dumps({"user_id": current_user.get_id(), "rows": preview["rows"]})
+        except (BadSignature, SignatureExpired):
+            db.session.rollback()
+            flash("Die Importvorschau ist ungültig oder abgelaufen. Bitte die Datei erneut prüfen.", "danger")
+            plan = None
+        except (ValueError, IntegrityError) as exc:
+            db.session.rollback()
+            flash(str(exc) if isinstance(exc, ValueError) else "Der Katalog wurde zwischenzeitlich geändert. Bitte die Importvorschau erneut erstellen.", "danger")
+            token = None
+    return render_template("admin/local_catalog_import.html", preview=preview, plan=plan, token=token, default_unit=default_unit)
 
 
 def attach_article_fields(rows: list[dict], positions) -> None:
@@ -391,3 +489,4 @@ def attach_article_fields(rows: list[dict], positions) -> None:
                 source_data.setdefault(field, getattr(item, field))
 
         row["source_data"] = source_data
+

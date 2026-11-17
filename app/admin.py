@@ -7190,8 +7190,11 @@ def invoice_edit_context(
 ) -> dict[str, Any]:
     task_templates = (
         TimeTaskTemplate.query
+        .join(CraftActivity, TimeTaskTemplate.craft_activity_id == CraftActivity.id)
         .filter(
-            TimeTaskTemplate.active.is_(True)
+            TimeTaskTemplate.active.is_(True),
+            CraftActivity.active.is_(True),
+            CraftActivity.app_enabled.is_(True),
         )
         .order_by(
             TimeTaskTemplate.title.asc(),
@@ -7203,6 +7206,7 @@ def invoice_edit_context(
     catalogue_items = [
         {
             "id": task_template.id,
+            "craft_activity_id": task_template.craft_activity_id,
             "code": task_template.code,
             "title": task_template.title,
         }
@@ -7227,6 +7231,7 @@ def invoice_edit_context(
             == InvoiceStatus.DRAFT.value
         ),
         "task_templates": task_templates,
+        "craft_activities": CraftActivity.query.filter_by(active=True, app_enabled=True).order_by(CraftActivity.name).all(),
         "catalogue_items": catalogue_items,
         "position_source_labels": {
             "time": "Zeit",
@@ -13099,3 +13104,4 @@ def external_craftsman_disable(
     return redirect(
         url_for("admin.external_craftsmen")
     )
+

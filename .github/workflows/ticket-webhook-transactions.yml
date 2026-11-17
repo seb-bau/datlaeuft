@@ -4,6 +4,14 @@ on:
   pull_request:
     paths:
       - app/mail_service.py
+      - app/document_articles.py
+      - app/local_catalog.py
+      - app/static/js/document_service_positions.js
+      - app/templates/admin/_document_service_positions.html
+      - app/templates/admin/local_catalog*.html
+      - app/templates/admin/offer_draft.html
+      - app/templates/admin/invoice_draft.html
+      - migrations/versions/*local_catalog_variants.py
       - app/blacklist.py
       - app/ticket_service.py
       - app/ticket_filters.py
@@ -67,6 +75,14 @@ on:
     branches: [master]
     paths:
       - app/mail_service.py
+      - app/document_articles.py
+      - app/local_catalog.py
+      - app/static/js/document_service_positions.js
+      - app/templates/admin/_document_service_positions.html
+      - app/templates/admin/local_catalog*.html
+      - app/templates/admin/offer_draft.html
+      - app/templates/admin/invoice_draft.html
+      - migrations/versions/*local_catalog_variants.py
       - app/blacklist.py
       - app/ticket_service.py
       - app/ticket_filters.py
@@ -200,4 +216,6 @@ jobs:
           python -m unittest discover -s tests -p test_mobile_sync.py -v
           python -m unittest discover -s tests -p test_completion_notifications.py -v
           python -m unittest discover -s tests -p test_mobile_appointment_features.py -v
+          python -m unittest discover -s tests -p test_accounting_catalog.py -v
+
 

@@ -541,17 +541,13 @@
 
         {% if editable %}
         <div class="d-flex flex-wrap gap-2">
-          <select
-            class="form-select form-select-sm"
-            id="cataloguePosition"
-          ></select>
-
           <button
             class="btn btn-sm btn-outline-primary"
             id="addCataloguePosition"
             type="button"
+            data-bs-toggle="modal" data-bs-target="#documentServicePositionModal"
           >
-            Aus Katalog
+            Leistungsposition hinzufügen
           </button>
 
           <button
@@ -929,11 +925,10 @@
 
 {% if editable %}
 <script>
-const catalogueItems = {{ catalogue_items|tojson }};
+
 const offerDraftForm = document.getElementById("offerDraftForm");
 const offerReleaseForm = document.getElementById("offerReleaseForm");
-const craftActivity = document.getElementById("craftActivity");
-const cataloguePosition = document.getElementById("cataloguePosition");
+
 const positionsBody = document.getElementById("offerPositions");
 const emptyPositionMessage = document.getElementById("emptyPositionMessage");
 let draftChanged = false;
@@ -945,24 +940,6 @@ function escapeValue(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
-}
-
-function refreshCatalogue() {
-  const craftId = Number(craftActivity.value);
-  cataloguePosition.innerHTML =
-    '<option value="">Leistungsposition auswählen</option>';
-
-  catalogueItems
-    .filter(item => item.craft_activity_id === craftId)
-    .forEach(item => {
-      const option = document.createElement("option");
-      option.value = String(item.id);
-      option.textContent = [
-        item.code,
-        item.title
-      ].filter(Boolean).join(" · ");
-      cataloguePosition.appendChild(option);
-    });
 }
 
 function updateEmptyMessage() {
@@ -1024,11 +1001,6 @@ function createPositionRow(values) {
   draftChanged = true;
 }
 
-craftActivity.addEventListener(
-  "change",
-  refreshCatalogue
-);
-
 document.getElementById(
   "addFreePosition"
 ).addEventListener("click", () => {
@@ -1036,27 +1008,6 @@ document.getElementById(
     sourceType: "free",
     taskTemplateId: "",
     description: ""
-  });
-});
-
-document.getElementById(
-  "addCataloguePosition"
-).addEventListener("click", () => {
-  const selectedId = Number(
-    cataloguePosition.value
-  );
-  const selectedItem = catalogueItems.find(
-    item => item.id === selectedId
-  );
-
-  if (!selectedItem) {
-    return;
-  }
-
-  createPositionRow({
-    sourceType: "catalog",
-    taskTemplateId: selectedItem.id,
-    description: selectedItem.title
   });
 });
 
@@ -1136,7 +1087,6 @@ offerReleaseForm.addEventListener(
   }
 );
 
-refreshCatalogue();
 updateEmptyMessage();
 </script>
 {% endif %}
@@ -1145,5 +1095,6 @@ updateEmptyMessage();
 {% endif %}
 {% with document_type='offer' %}
 {% include 'admin/_document_articles.html' %}
+{% include 'admin/_document_service_positions.html' %}
 {% endwith %}
 {% endblock %}

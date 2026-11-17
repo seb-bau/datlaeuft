@@ -395,4 +395,6 @@ class AppointmentCalendarMigrationTests(unittest.TestCase):
                 self.assertEqual(connection.execute(sa.text("SELECT appointment_calendar_email_enabled FROM user_account ORDER BY id")).scalars().all(), [0, 1])
                 migration.downgrade()
                 self.assertEqual(connection.execute(sa.text("SELECT COUNT(*) FROM user_account")).scalar(), 2)
-        self.assertEqual(ScriptDirectory(str(root / "migrations")).get_heads(), [migration.revision])
+        script = ScriptDirectory(str(root / "migrations"))
+        self.assertIn(migration.revision, {revision.revision for revision in script.iterate_revisions(script.get_current_head(), "base")})
+

@@ -3585,10 +3585,13 @@ class InventoryMovement(db.Model):
 
 class LocalCatalogItem(db.Model):
     __tablename__ = "local_catalog_item"
+    __table_args__ = (
+        UniqueConstraint("item_number", "name", "business_area", "tax_label", "vat_rate", name="uq_local_catalog_item_variant"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     item_number: Mapped[str] = mapped_column(
-        db.String(100), unique=True, index=True
+        db.String(100), index=True
     )
     name: Mapped[str] = mapped_column(
         db.String(255), index=True
@@ -7468,3 +7471,4 @@ class TicketAiJob(db.Model):
     attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     lock_token: Mapped[str | None] = mapped_column(db.String(32))
+

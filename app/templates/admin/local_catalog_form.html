@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Katalogartikel {{ 'bearbeiten' if item else 'anlegen' }}{% endblock %}
+{% block content %}
+<div class="mb-4"><h1 class="h3">Katalogartikel {{ 'bearbeiten' if item else 'anlegen' }}</h1><p class="text-muted">Dieser Artikel wird ohne Lagerbestand verwaltet. Änderungen gelten für künftige Übernahmen in Belege.</p></div>
+<form method="post" class="card card-body">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row g-3">
+    {% for field, label, length, required in [('item_number', 'Artikelnummer', 100, true), ('name', 'Bezeichnung', 255, true), ('business_area', 'Geschäftsbereich', 100, false), ('product_group', 'Warengruppe', 100, false), ('unit', 'Einheit', 40, true), ('tax_label', 'Steuersatz', 80, true)] %}
+    <div class="col-md-{{ 12 if field == 'name' else 6 }}"><label class="form-label" for="catalog_{{ field }}">{{ label }}</label><input class="form-control" id="catalog_{{ field }}" name="{{ field }}" maxlength="{{ length }}" value="{{ values.get(field, '') }}" {{ 'required' if required else '' }}></div>
+    {% endfor %}
+    <div class="col-md-6"><label class="form-label" for="catalogPrice">Nettopreis je Einheit</label><input class="form-control" id="catalogPrice" name="price_net" inputmode="decimal" value="{{ values.get('price_net', '0,00') }}" required><div class="form-text">Bis zu vier Nachkommastellen, z. B. 12,3456.</div></div>
+    <div class="col-md-6"><label class="form-label" for="catalogVat">MwSt. in %</label><input class="form-control" id="catalogVat" name="vat_rate" inputmode="decimal" value="{{ values.get('vat_rate', '19,00') }}" required></div>
+    <div class="col-12"><div class="form-check"><input class="form-check-input" id="catalogActive" type="checkbox" name="active" {{ 'checked' if values.get('active') else '' }}><label class="form-check-label" for="catalogActive">Aktiv und in Angeboten und Rechnungen auswählbar</label></div></div>
+  </div>
+  <p class="form-text mt-3">Eine Artikelnummer kann mehrere Varianten mit abweichender Bezeichnung, Geschäftsbereich oder Steuersatz haben.</p>
+  <div class="d-flex justify-content-end gap-2 mt-3"><a class="btn btn-outline-secondary" href="{{ url_for('document_articles.catalog') }}">Abbrechen</a><button class="btn btn-primary" type="submit">Speichern</button></div>
+</form>
+{% endblock %}

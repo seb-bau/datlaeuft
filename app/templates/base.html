@@ -31,18 +31,22 @@
   {% set can_access_invoices = current_user.is_admin or current_user.can_manage_invoices %}
   {% set can_manage_safety = current_user.is_admin or current_user.can_manage_safety_inspections %}
   {% set can_review_safety = can_manage_safety or current_user.can_review_safety_inspections %}
-  {% set can_access_orders = can_access_foreman or can_access_offers or can_access_invoices %}
+  {% set can_access_orders = can_access_foreman %}
+  {% set can_access_accounting = can_access_offers or can_access_invoices %}
   {% set can_access_administration = current_user.is_admin or current_user.is_foreman %}
 
   {% set is_dashboard = request.endpoint == 'admin.dashboard' %}
   {% set is_order_section = (
-    request.path.startswith('/admin/offers')
-    or request.path.startswith('/admin/commissions')
+    request.path.startswith('/admin/commissions')
     or request.path.startswith('/admin/commission-reviews')
     or request.path.startswith('/admin/tickets')
-    or request.path.startswith('/admin/invoices')
     or request.path.startswith('/admin/performance-reviews')
     or request.path.startswith('/admin/work-time-reports')
+  ) %}
+  {% set is_accounting_section = (
+    request.path.startswith('/admin/offers')
+    or request.path.startswith('/admin/invoices')
+    or request.path.startswith('/admin/local-catalog')
   ) %}
   {% set is_reports_section =
     request.path.startswith('/admin/reports')
@@ -89,6 +93,8 @@
   {% set current_section_label = 'Dashboard' %}
   {% if is_order_section %}
     {% set current_section_label = 'Auftragswesen' %}
+  {% elif is_accounting_section %}
+    {% set current_section_label = 'Rechnungswesen' %}
   {% elif is_reports_section %}
     {% set current_section_label = 'Auswertungen' %}
   {% elif is_safety_section %}
@@ -180,24 +186,6 @@
                 ) }}
               {% endif %}
 
-              {% if can_access_offers %}
-                {{ sidebar_link(
-                  'admin.offers',
-                  'Angebote',
-                  'file-earmark-text',
-                  request.path.startswith('/admin/offers')
-                ) }}
-              {% endif %}
-
-              {% if can_access_invoices %}
-                {{ sidebar_link(
-                  'admin.invoices',
-                  'Rechnungen',
-                  'receipt',
-                  request.path.startswith('/admin/invoices')
-                ) }}
-              {% endif %}
-
               {% if current_user.can_review_work %}
                 {{ sidebar_link(
                   'admin.performance_reviews',
@@ -221,6 +209,44 @@
                 ) }}
 
               {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if can_access_accounting %}
+        <div class="sidebar-group">
+          <button class="sidebar-group-toggle{% if is_accounting_section %} active{% else %} collapsed{% endif %}"
+                  type="button" data-bs-toggle="collapse" data-bs-target="#navAccounting"
+                  aria-expanded="{{ 'true' if is_accounting_section else 'false' }}" aria-controls="navAccounting">
+            <span class="sidebar-group-label">
+              <span class="sidebar-link-icon" aria-hidden="true"><i class="bi bi-receipt"></i></span>
+              <span>Rechnungswesen</span>
+            </span>
+            <i class="bi bi-chevron-down sidebar-chevron" aria-hidden="true"></i>
+          </button>
+          <div class="collapse sidebar-subnav{% if is_accounting_section %} show{% endif %}"
+               id="navAccounting" data-bs-parent="#appNavigation">
+            <div class="sidebar-subnav-inner">
+              {% if can_access_offers %}
+                {{ sidebar_link(
+                  'admin.offers',
+                  'Angebote',
+                  'file-earmark-text',
+                  request.path.startswith('/admin/offers')
+                ) }}
+              {% endif %}
+
+              {% if can_access_invoices %}
+                {{ sidebar_link(
+                  'admin.invoices',
+                  'Rechnungen',
+                  'receipt',
+                  request.path.startswith('/admin/invoices')
+                ) }}
+              {% endif %}
+
+              {{ sidebar_link('document_articles.catalog', 'Lokaler Katalog', 'journal-text', request.path.startswith('/admin/local-catalog')) }}
             </div>
           </div>
         </div>
