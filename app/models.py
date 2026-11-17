@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from flask_login import UserMixin
 from sqlalchemy import UniqueConstraint, false, true
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.dialects.mysql import LONGTEXT
 from werkzeug.security import check_password_hash, generate_password_hash
 from decimal import Decimal
@@ -1467,6 +1467,13 @@ class Commission(db.Model):
         back_populates="commission",
         cascade="all, delete-orphan",
     )
+
+    @validates("title")
+    def normalize_title(self, key: str, value: str | None) -> str | None:
+        if value is None:
+            return None
+        maximum_length = self.__table__.c[key].type.length
+        return value if len(value) <= maximum_length else value[:maximum_length - 1].rstrip() + "…"
 
     @property
     def is_actionable(self) -> bool:
@@ -7472,4 +7479,5 @@ class TicketAiJob(db.Model):
     attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     lock_token: Mapped[str | None] = mapped_column(db.String(32))
+
 

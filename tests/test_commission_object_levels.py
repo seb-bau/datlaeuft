@@ -597,6 +597,64 @@ class CommissionObjectLevelTests(unittest.TestCase):
         gateway.client.get_building_lands.return_value = [types.SimpleNamespace(id_=2002, id_num="GE-COMMON")]
         return gateway
 
+    def test_long_position_text_keeps_its_full_contents_during_creation_and_erp_sync(self):
+        text = "Trocknung kontrollieren und sämtliche Messwerte dokumentieren.\r\n" * 7
+        commission = self.create_order("license_agreement", self.agreement.id, positions=[{
+            "service_catalog_id": 600, "commission_text": text, "units": 1,
+        }])
+        self.assertEqual(len(commission.title), 255)
+        self.assertTrue(commission.title.endswith("…"))
+        self.assertEqual(commission.description, text.strip())
+        self.assertEqual(commission.positions[0].commission_text, text.strip())
+        gateway = self.gateway_with_mocked_client()
+        gateway.create_commission_waiting_for_acceptance(commission)
+        self.assertEqual(gateway.client.create_commissioning_crafts_process.call_args.kwargs["description"], text.strip())
+        for items in ([{"Id": 12, "CommissionText": text, "Units": 1}], []):
+            with self.subTest(has_positions=bool(items)):
+                synced = self.gateway.upsert_commission({"Id": 9200, "IdNum": "A-1", "Description": text, "CommissionItems": items})
+                self.db.session.commit()
+                self.assertEqual(len(synced.title), 255)
+                self.assertTrue(synced.title.endswith("…"))
+                self.assertEqual(synced.description.strip(), text.strip())
+
+    def test_order_titles_respect_the_database_limit_for_initial_values_and_updates(self):
+        for title in (None, "", "Kurzer Titel", "ä" * 255):
+            with self.subTest(title_length=len(title or "")):
+                commission = self.models.Commission(title=title)
+                self.assertEqual(commission.title, title)
+        commission = self.models.Commission(title="ä" * 291)
+        self.assertEqual(commission.title, "ä" * 254 + "…")
+        commission.title = "Neuer Titel " * 40
+        self.assertEqual(len(commission.title), 255)
+        self.assertTrue(commission.title.endswith("…"))
+
+    def test_long_titles_can_be_written_to_the_configured_database_without_losing_the_description(self):
+        database_url = os.environ.get("DATLAEUFT_TEST_DATABASE_URL", "sqlite://")
+        url = make_url(database_url)
+        if url.get_backend_name() != "sqlite" and not (url.database or "").startswith("datlaeuft_test"):
+            self.fail("Diese Prüfung benötigt eine separate datlaeuft_test-Datenbank.")
+        engine = sa.create_engine(database_url)
+        metadata = sa.MetaData()
+        constraints = [sa.CheckConstraint("length(title) <= 255")] if url.get_backend_name() == "sqlite" else []
+        table = sa.Table("commission_title_regression", metadata, sa.Column("id", sa.Integer(), primary_key=True),
+                         sa.Column("title", self.models.Commission.__table__.c.title.type), sa.Column("description", sa.Text()), *constraints)
+        text = "Ausführlicher Auftragstext mit vollständigen Messwerten.\r\n" * 7
+        commission = self.models.Commission(title=text, description=text)
+        try:
+            with engine.begin() as connection:
+                metadata.create_all(connection)
+                connection.execute(table.insert().values(id=1, title=commission.title, description=commission.description))
+                commission.title = text + "Erneute Kontrolle."
+                connection.execute(table.update().where(table.c.id == 1).values(title=commission.title))
+                stored = connection.execute(sa.select(table.c.title, table.c.description)).one()
+                self.assertLessEqual(len(stored.title), 255)
+                self.assertTrue(stored.title.endswith("…"))
+                self.assertEqual(stored.description, text)
+        finally:
+            with engine.begin() as connection:
+                metadata.drop_all(connection)
+            engine.dispose()
+
     def test_new_process_keeps_the_exact_original_description_after_an_order_update(self):
         commission = self.create_order("license_agreement", self.agreement.id)
         gateway = self.gateway_with_mocked_client()
@@ -1142,3 +1200,4 @@ class CommissionObjectLevelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

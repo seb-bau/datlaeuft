@@ -127,6 +127,17 @@ class TicketAttachmentSelectionTests(unittest.TestCase):
         self.assertIn("multiple", html)
         self.assertIn("ticket_attachment_selection.js", html)
 
+    def test_long_web_position_text_creates_the_order_and_keeps_the_ticket_link(self):
+        text = "Bitte die Trocknung prüfen und sämtliche Messwerte dokumentieren.\r\n" * 7
+        commission = self.post_order(self.form(selected=(), title="", position_text=text))
+        self.assertEqual(len(commission.title), 255)
+        self.assertTrue(commission.title.endswith("…"))
+        self.assertEqual(commission.description, text.strip())
+        self.assertEqual(commission.positions[0].commission_text, text.strip())
+        self.assertEqual(self.models.CommissionTicketLink.query.one().commission_id, commission.id)
+        self.assertEqual(self.models.ErpOutboxOperation.query.one().commission_id, commission.id)
+        self.assertEqual(self.ticket.state, "converted")
+
     def test_attachment_endpoint_lists_all_current_documents_and_returns_authenticated_previews(self):
         response = self.client.get(f"/admin/tickets/{self.ticket.id}/attachments")
         self.assertEqual(response.status_code, 200)
