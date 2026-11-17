@@ -67,7 +67,11 @@ document.addEventListener("DOMContentLoaded", () => {
         Array.from(upload.files).forEach((file, index) => {
             const url = URL.createObjectURL(file);
             uploadUrls.push(url);
-            uploads.appendChild(attachmentCard({filename: file.name, thumbnail_url: url, content_url: url, type_label: "Bild"}, () => {
+            const isImage = (file.type || "").startsWith("image/");
+            const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+            const extension = file.name.includes(".") ? file.name.split(".").pop().toUpperCase() : "";
+            const typeLabel = isImage ? "Bild" : isPdf ? "PDF-Dokument" : /^[A-Z0-9]{1,10}$/.test(extension) ? `${extension}-Datei` : "Datei";
+            uploads.appendChild(attachmentCard({filename: file.name, thumbnail_url: isImage ? url : null, content_url: url, is_pdf: isPdf, type_label: typeLabel}, () => {
                 const transfer = new DataTransfer();
                 Array.from(upload.files).forEach((item, itemIndex) => {
                     if (itemIndex !== index) transfer.items.add(item);
@@ -159,3 +163,4 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     loadAttachments();
 });
+

@@ -61,6 +61,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from .commission_service import create_pending_commission
+from .attachment_service import MAX_ATTACHMENT_BYTES, commission_attachment_path, store_commission_attachment_bytes
 from .ticket_attachments import (
     prepare_ticket_attachment_selection, read_ticket_attachment, render_ticket_photo,
     store_selected_ticket_attachments, ticket_attachment_choices,
@@ -92,6 +93,7 @@ from .models import (
     AuditLog,
     CommissionAppointmentRequest,
     CommissionPhoto,
+    CommissionAttachment,
     CommissionSyncState,
     ErpOperationType,
     ErpOutboxOperation,
@@ -3668,6 +3670,63 @@ def user_edit(user_id: int) -> Any:
     )
 
 
+def save_web_commission_upload(
+    commission: Commission,
+    upload: Any,
+    caption: str | None,
+    stored_paths: list[Path],
+) -> tuple[CommissionPhoto | CommissionAttachment, bool]:
+    raw_data = upload.stream.read(MAX_ATTACHMENT_BYTES + 1)
+    if not raw_data:
+        raise ValueError("Die Datei ist leer.")
+    if len(raw_data) > MAX_ATTACHMENT_BYTES:
+        raise ValueError("Die Datei darf höchstens 25 MB groß sein.")
+    try:
+        render_ticket_photo(raw_data, thumbnail=True)
+    except ValueError as exc:
+        if Path(upload.filename).suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"} and not raw_data.lstrip().startswith(b"%PDF-"):
+            raise ValueError("Die Bilddatei konnte nicht gelesen werden.") from exc
+    else:
+        upload.stream.seek(0)
+        return save_web_commission_photo(commission, upload, caption, stored_paths)
+
+    stored = store_commission_attachment_bytes(commission, raw_data, upload.filename)
+    paths = [commission_attachment_path(stored.storage_name)]
+    if stored.thumbnail_storage_name:
+        paths.append(commission_attachment_path(stored.thumbnail_storage_name))
+    stored_paths.extend(paths)
+    existing = CommissionAttachment.query.filter_by(
+        commission_id=commission.id, content_sha256=stored.content_sha256, active=True,
+    ).first()
+    if existing is not None:
+        for path in paths:
+            path.unlink(missing_ok=True)
+        return existing, True
+    mime_type = stored.mime_type
+    if mime_type.startswith("image/") or (mime_type == "application/pdf" and not raw_data.lstrip().startswith(b"%PDF-")):
+        mime_type = "application/octet-stream"
+    attachment = CommissionAttachment(
+        commission=commission, uploaded_by_user_id=current_user.id, source="web",
+        source_entity_name="Commission", source_entity_id=commission.erp_id,
+        original_filename=stored.original_filename, storage_name=stored.storage_name,
+        thumbnail_storage_name=stored.thumbnail_storage_name, mime_type=mime_type,
+        size_bytes=stored.size_bytes, content_sha256=stored.content_sha256,
+        caption=str(caption or "").strip()[:500] or None, active=True,
+        erp_sync_state=CommissionSyncState.PENDING.value,
+    )
+    db.session.add(attachment)
+    db.session.flush()
+    if commission.erp_id is not None:
+        enqueue_erp_operation(
+            commission, ErpOperationType.UPLOAD_COMMISSION_ATTACHMENT,
+            f"commission-attachment:{attachment.external_document_id}", {"attachment_id": attachment.id},
+        )
+    audit("commission.attachment.upload", "commission", commission.id, {
+        "attachment_id": attachment.id, "filename": attachment.original_filename, "source": "web",
+    })
+    return attachment, False
+
+
 def save_web_commission_photo(
     commission: Commission,
     upload: Any,
@@ -5071,7 +5130,7 @@ def commission_create() -> Any:
 
             for photo_upload in request.files.getlist("photo"):
                 if photo_upload.filename:
-                    save_web_commission_photo(
+                    save_web_commission_upload(
                         commission=commission, upload=photo_upload,
                         caption=request.form.get("photo_caption"), stored_paths=stored_file_paths,
                     )
@@ -8012,6 +8071,10 @@ def commission_detail(
         .all()
     )
 
+    attachments = CommissionAttachment.query.filter_by(
+        commission_id=item.id, active=True,
+    ).order_by(CommissionAttachment.created_at.desc(), CommissionAttachment.id.desc()).all()
+
     appointment_requests = (
         CommissionAppointmentRequest.query
         .filter_by(
@@ -8076,6 +8139,7 @@ def commission_detail(
         "erp.outbox.failed": "Wowiport-Synchronisierung fehlgeschlagen",
         "webhook.wowiport": "Änderung aus Wowiport übernommen",
         "commission.photo.upload": "Foto hinzugefügt",
+        "commission.attachment.upload": "Datei hinzugefügt",
         "commission.priority.web": "Priorität im Web geändert",
         "commission.priority.wowiport": "Ticketpriorität aus Wowiport übernommen",
     }
@@ -8088,6 +8152,7 @@ def commission_detail(
         wowiport_url=commission_wowiport_url(item),
         can_approve=can_approve_commission(item, current_user),
         photos=photos,
+        attachments=attachments,
         appointment_requests=appointment_requests,
         history_entries=history_entries,
         local_status_labels=local_status_labels,
@@ -8311,6 +8376,9 @@ def ticket_attachment_content(ticket_id: int, file_guid: str) -> Any:
 @admin_bp.post(
     "/admin/commissions/<int:commission_id>/photos"
 )
+@admin_bp.post(
+    "/admin/commissions/<int:commission_id>/attachments"
+)
 @foreman_required
 def commission_photo_upload(
     commission_id: int,
@@ -8320,11 +8388,11 @@ def commission_photo_upload(
         commission_id,
     )
 
-    upload = request.files.get("photo")
+    uploads = [upload for upload in request.files.getlist("photo") if upload.filename]
 
-    if upload is None or not upload.filename:
+    if not uploads:
         flash(
-            "Bitte ein Foto auswählen.",
+            "Bitte eine Datei auswählen.",
             "danger",
         )
         return redirect(
@@ -8334,37 +8402,36 @@ def commission_photo_upload(
             )
         )
 
+    stored_paths = []
+    duplicates = 0
     try:
-        photo, duplicate = save_web_commission_photo(
-            commission=commission,
-            upload=upload,
-            caption=request.form.get(
-                "photo_caption"
-            ),
-        )
-
+        for upload in uploads:
+            _, duplicate = save_web_commission_upload(
+                commission, upload, request.form.get("photo_caption"), stored_paths,
+            )
+            duplicates += int(duplicate)
         db.session.commit()
+        stored_paths.clear()
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
     else:
-        if duplicate:
+        if duplicates == len(uploads):
             flash(
-                "Dieses Foto ist bereits vorhanden.",
+                "Die ausgewählten Dateien sind bereits vorhanden.",
                 "warning",
-            )
-        elif commission.erp_id is None:
-            flash(
-                "Das Foto wurde gespeichert und wird nach "
-                "der Wowiport-Bestätigung übertragen.",
-                "success",
             )
         else:
             flash(
-                "Das Foto wurde gespeichert und zur "
-                "Übertragung an Wowiport eingeplant.",
+                "Die Dateien wurden gespeichert, sind in der App verfügbar und werden an Wowiport übertragen.",
                 "success",
             )
+    finally:
+        for path in stored_paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                current_app.logger.exception("commission_attachment_cleanup_failed")
 
     return redirect(
         url_for(
@@ -8372,6 +8439,26 @@ def commission_photo_upload(
             commission_id=commission.id,
         )
     )
+
+
+@admin_bp.get("/admin/commissions/<int:commission_id>/attachments/<int:attachment_id>/content")
+@foreman_required
+def commission_attachment_content(commission_id: int, attachment_id: int) -> Any:
+    attachment = CommissionAttachment.query.filter_by(
+        id=attachment_id, commission_id=commission_id, active=True,
+    ).first_or_404()
+    path = commission_attachment_path(attachment.storage_name)
+    if not path.is_file():
+        abort(404)
+    response = send_file(
+        path, mimetype=attachment.mime_type, download_name=attachment.original_filename,
+        as_attachment=attachment.mime_type not in ("application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp"),
+        conditional=True, max_age=3600,
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.cache_control.private = True
+    response.cache_control.public = False
+    return response
 
 
 @admin_bp.get(
@@ -13099,3 +13186,4 @@ def external_craftsman_disable(
     return redirect(
         url_for("admin.external_craftsmen")
     )
+

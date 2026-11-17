@@ -99,6 +99,8 @@ def store_commission_attachment_bytes(
         )[0]
         or "application/octet-stream"
     )
+    if raw_data.lstrip().startswith(b"%PDF-"):
+        mime_type = "application/pdf"
 
     commission_directory = Path(
         str(commission.public_id)

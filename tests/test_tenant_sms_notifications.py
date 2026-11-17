@@ -160,6 +160,35 @@ class TenantSmsTests(unittest.TestCase):
             self.assertIn(value, text)
         self.assertNotIn("<", text)
 
+    def test_confirmed_sms_logs_the_recipient_order_reason_and_provider_receipt_once(self):
+        commission, item = self.enqueue()
+        with self.assertLogs(self.app.logger, level="INFO") as logs:
+            self.sms.process_tenant_sms_notification_batch()
+        sent = [record for record in logs.records if record.getMessage().startswith("sms_sent ")]
+        self.assertEqual(len(sent), 1)
+        record = sent[0]
+        self.assertEqual(record.levelname, "INFO")
+        self.assertEqual(record.recipient_number, PHONE_A)
+        self.assertEqual(record.commission_id, commission.id)
+        self.assertEqual(record.commission_number, commission.erp_idnum)
+        self.assertEqual(record.reason, "Mieterinformation zur Beauftragung")
+        self.assertEqual(record.notification_id, item.id)
+        self.assertEqual(record.sms_message_id, item.payload["results"][PHONE_A]["message_id"])
+        for value in (PHONE_A, commission.erp_idnum, record.reason):
+            self.assertIn(value, record.getMessage())
+        with patch.object(self.app.logger, "info") as log:
+            self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 0)
+        log.assert_not_called()
+
+    def test_simulated_and_skipped_sms_do_not_emit_a_success_log(self):
+        for state in ("simulated", "skipped"):
+            with self.subTest(state=state):
+                self.enqueue()
+                self.sms_sender.side_effect = lambda *args, **kwargs: self.provider.SmsResult(state)
+                with patch.object(self.app.logger, "info") as log:
+                    self.sms.process_tenant_sms_notification_batch()
+                log.assert_not_called()
+
     def test_smtp_failure_does_not_block_sms(self):
         commission, item = self.enqueue()
         self.mail_sender.side_effect = RuntimeError("SMTP nicht erreichbar")
@@ -660,3 +689,4 @@ class TenantSmsMigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

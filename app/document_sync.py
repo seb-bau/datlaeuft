@@ -366,6 +366,13 @@ def sync_commission_documents(
                     or str(uuid4())
             )[:80]
 
+            if attachment is None and entity_name == "Commission":
+                attachment = CommissionAttachment.query.filter_by(
+                    commission_id=commission.id, source="web", external_document_id=external_document_id,
+                ).one_or_none()
+                if attachment is not None:
+                    attachment.external_file_guid = file_guid
+
             local_photo = None
 
             if entity_name == "Commission":
@@ -719,3 +726,4 @@ def sync_commission_documents(
         commission.document_sync_error = None
 
     return result
+
