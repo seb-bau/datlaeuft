@@ -262,6 +262,7 @@
   method="post"
   id="invoice-draft-form"
 >
+  <input type="hidden" name="save_draft" value="1">
   <input
     type="hidden"
     name="csrf_token"
@@ -946,26 +947,20 @@
           Entwurf speichern
         </button>
 
-        <form
-          method="post"
-          action="{{ url_for(
+        <button
+          class="btn btn-danger"
+          type="submit"
+          form="invoice-draft-form"
+          formaction="{{ url_for(
             'admin.invoice_finalize',
             invoice_id=item.id
           ) }}"
-          id="invoice-finalize-form"
+          data-document-finalize
+          data-confirm-message="Soll die Rechnung mit den aktuellen Eingaben endgültig festgeschrieben werden?"
+          data-pending-text="Rechnung wird festgeschrieben …"
         >
-          <input
-            type="hidden"
-            name="csrf_token"
-            value="{{ csrf_token() }}"
-          >
-          <button
-            class="btn btn-danger"
-            type="submit"
-          >
-            Rechnung festschreiben
-          </button>
-        </form>
+          Rechnung festschreiben
+        </button>
       </div>
     </div>
   </div>
@@ -1100,82 +1095,12 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const draftForm = document.getElementById(
-    "invoice-draft-form"
-  );
-  const finalizeForm = document.getElementById(
-    "invoice-finalize-form"
-  );
   const cancelForm = document.getElementById(
     "invoice-cancel-form"
   );
   const archiveForm = document.getElementById(
     "invoice-archive-form"
   );
-  let draftChanged = false;
-
-  if (draftForm) {
-    draftForm.addEventListener(
-      "input",
-      () => {
-        draftChanged = true;
-      }
-    );
-
-    draftForm.addEventListener(
-      "change",
-      () => {
-        draftChanged = true;
-      }
-    );
-
-    draftForm.addEventListener(
-      "submit",
-      () => {
-        draftChanged = false;
-      }
-    );
-  }
-
-  if (finalizeForm) {
-    finalizeForm.addEventListener(
-      "submit",
-      event => {
-        if (draftChanged) {
-          event.preventDefault();
-          window.alert(
-            "Bitte speichern Sie zuerst "
-            + "die geänderten Rechnungsdaten."
-          );
-          return;
-        }
-
-        if (
-          !window.confirm(
-            "Soll die Rechnung endgültig "
-            + "festgeschrieben werden?"
-          )
-        ) {
-          event.preventDefault();
-          return;
-        }
-
-        const submitButton = (
-          finalizeForm.querySelector(
-            "button[type='submit']"
-          )
-        );
-
-        if (submitButton) {
-          submitButton.disabled = true;
-          submitButton.textContent = (
-            "Rechnung wird festgeschrieben …"
-          );
-        }
-      }
-    );
-  }
-
   if (cancelForm) {
     cancelForm.addEventListener(
       "submit",
@@ -1231,6 +1156,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <script src="{{ url_for('static', filename='js/recipient_lookup.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/invoice_payments.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/document_totals.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/document_finalization.js') }}" defer></script>
 {% endif %}
 {% with document_type='invoice' %}
   {% include 'admin/_document_articles.html' %}
