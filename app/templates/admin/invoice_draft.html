@@ -829,30 +829,34 @@
         {% endif %}
 
         <div class="row justify-content-end mt-3">
-          <div class="col-md-4">
+          <div class="col-md-4" data-document-totals data-positions-target="invoicePositions"
+               data-currency="{{ item.currency_code }}" aria-live="polite" aria-atomic="true">
             <table class="table table-sm">
               <tr>
                 <th>Netto</th>
-                <td class="text-end">
-                  {{ "%.2f"|format(item.total_net) }}
+                <td class="text-end" data-document-total="net">
+                  {{ ("%.2f"|format(item.total_net)).replace('.', ',') }}
                   {{ item.currency_code }}
                 </td>
               </tr>
               <tr>
                 <th>Umsatzsteuer</th>
-                <td class="text-end">
-                  {{ "%.2f"|format(item.total_vat) }}
+                <td class="text-end" data-document-total="vat">
+                  {{ ("%.2f"|format(item.total_vat)).replace('.', ',') }}
                   {{ item.currency_code }}
                 </td>
               </tr>
               <tr class="fw-bold">
                 <th>Brutto</th>
-                <td class="text-end">
-                  {{ "%.2f"|format(item.total_gross) }}
+                <td class="text-end" data-document-total="gross">
+                  {{ ("%.2f"|format(item.total_gross)).replace('.', ',') }}
                   {{ item.currency_code }}
                 </td>
               </tr>
             </table>
+            <p class="small text-danger mb-0" data-document-totals-error hidden>
+              Bitte Menge, Einzelpreis und Umsatzsteuer aller Positionen prüfen.
+            </p>
           </div>
         </div>
       </div>
@@ -1205,6 +1209,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 {% if editable %}
 <script src="{{ url_for('static', filename='js/recipient_lookup.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/document_totals.js') }}" defer></script>
 {% endif %}
 {% with document_type='invoice' %}
   {% include 'admin/_document_articles.html' %}
