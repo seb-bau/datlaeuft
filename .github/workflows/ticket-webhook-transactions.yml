@@ -9,6 +9,16 @@ on:
       - app/static/js/app.js
       - app/templates/admin/commission_detail.html
       - app/document_articles.py
+      - app/invoice_payments.py
+      - app/invoice_service.py
+      - app/static/js/invoice_payments.js
+      - app/static/js/recipient_lookup.js
+      - app/static/js/document_articles.js
+      - app/templates/admin/_invoice_payment_information.html
+      - app/templates/admin/_document_articles.html
+      - app/templates/admin/settings.html
+      - app/templates/admin/company_code_invoicing.html
+      - migrations/versions/*invoice_payment_information.py
       - app/document_previews.py
       - app/invoice_document.py
       - app/offer_document.py
@@ -94,6 +104,16 @@ on:
       - app/static/js/app.js
       - app/templates/admin/commission_detail.html
       - app/document_articles.py
+      - app/invoice_payments.py
+      - app/invoice_service.py
+      - app/static/js/invoice_payments.js
+      - app/static/js/recipient_lookup.js
+      - app/static/js/document_articles.js
+      - app/templates/admin/_invoice_payment_information.html
+      - app/templates/admin/_document_articles.html
+      - app/templates/admin/settings.html
+      - app/templates/admin/company_code_invoicing.html
+      - migrations/versions/*invoice_payment_information.py
       - app/document_previews.py
       - app/invoice_document.py
       - app/offer_document.py
@@ -250,5 +270,6 @@ jobs:
           python -m unittest discover -s tests -p test_completion_notifications.py -v
           python -m unittest discover -s tests -p test_mobile_appointment_features.py -v
           python -m unittest discover -s tests -p test_accounting_catalog.py -v
+          python -m unittest discover -s tests -p test_invoice_payments.py -v
 
 

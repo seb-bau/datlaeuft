@@ -159,6 +159,11 @@
             value="{{ item.seller_bic or '' }}"
           >
         </div>
+        <div class="col-12">
+          <label class="form-label" for="sellerCreditorId">SEPA-Gläubiger-ID</label>
+          <input class="form-control" id="sellerCreditorId" name="seller_creditor_id" maxlength="80" value="{{ item.seller_creditor_id or '' }}">
+          <div class="form-text">Wird für Rechnungen mit SEPA-Mandat vorbelegt, wenn Wowiport keine Gläubiger-ID liefert.</div>
+        </div>
       </div>
     </div>
   </div>

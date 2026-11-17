@@ -239,6 +239,26 @@ class AccountingCatalogTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual([item["id"] for item in response.json["items"]], [active.id])
 
+    def test_default_article_search_combines_sources_without_confusing_overlapping_ids(self):
+        local = self.article(name="Armatur lokal")
+        material = self.models.InventoryItem(item_number="L-1", name="Armatur Lager", unit="Stk", active=True, billing_base_price_net=10, billing_vat_rate=19)
+        self.db.session.add(material)
+        invoice = self.models.Invoice(company_code=self.company, created_by=self.user, company_code_erp_id=1, company_code_code="1", status="draft")
+        self.db.session.add(invoice)
+        self.db.session.commit()
+        response = self.client.get(f"/admin/document-articles/invoice/{invoice.id}?q=Armatur")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([(item["source_type"], item["id"]) for item in response.json["items"]], [("material", material.id), ("local_catalog", local.id)])
+        for index in range(55):
+            self.article(item_number=f"P-{index}", name=f"Pagination {index:02}")
+        first = self.client.get(f"/admin/document-articles/invoice/{invoice.id}?source=all&q=Pagination").json
+        second = self.client.get(f"/admin/document-articles/invoice/{invoice.id}?source=all&q=Pagination&page=2").json
+        self.assertEqual(len(first["items"]), 50)
+        self.assertTrue(first["has_more"])
+        self.assertEqual(len(second["items"]), 5)
+        self.assertFalse(second["has_more"])
+        self.assertFalse({item["id"] for item in first["items"]} & {item["id"] for item in second["items"]})
+
     def test_parser_accepts_windows_encoding_and_optional_header(self):
         raw = ('Artikelnummer;Bezeichnung;Geschäftsbereich;Warengruppe;Einheit;Nettopreis;Aktiv;Steuersatz;MwSt.\nA-100;Tür;;;Stück;12,92;false;Kein Steuersatz;0,00\n').encode("cp1252")
         result = self.catalog.parse_catalog_import(raw)

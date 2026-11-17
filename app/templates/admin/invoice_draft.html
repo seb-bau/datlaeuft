@@ -471,6 +471,7 @@
       </div>
 
       <div class="col-lg-5">
+        {% include 'admin/_invoice_payment_information.html' %}
         <div class="card shadow-sm mb-4">
           <div class="card-header">
             Rechnungsdaten
@@ -1221,6 +1222,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 {% if editable %}
 <script src="{{ url_for('static', filename='js/recipient_lookup.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/invoice_payments.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/document_totals.js') }}" defer></script>
 {% endif %}
 {% with document_type='invoice' %}

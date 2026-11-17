@@ -18,6 +18,7 @@ from .models import (
     Invoice,
     InvoiceKind,
 )
+from .invoice_payments import invoice_payment_context
 
 MONEY_QUANTIZER = Decimal("0.01")
 QUANTITY_QUANTIZER = Decimal("0.001")
@@ -863,13 +864,12 @@ def _document_context(
         invoice.invoice_kind
         == InvoiceKind.CANCELLATION.value
     )
-    if (
-        not is_cancellation
-        and not seller_iban
-    ):
-        raise InvoiceDocumentError(
-            "Die IBAN des Rechnungsausstellers fehlt."
-        )
+    payment_context = {}
+    if not is_cancellation:
+        try:
+            payment_context = invoice_payment_context(invoice, complete=True)
+        except ValueError as exc:
+            raise InvoiceDocumentError(str(exc)) from exc
     original_invoice = (
         invoice.original_invoice
         if is_cancellation
@@ -951,6 +951,7 @@ def _document_context(
         ),
         "payment_reference": payment_reference,
         "payment_terms_text": payment_terms_text,
+        **payment_context,
         "intro_text": str(
             _read_value(
                 invoice,
@@ -1207,22 +1208,12 @@ def _zugferd_data(context: dict) -> dict:
     }
 
     if not is_cancellation:
-        data.update(
-            {
-                "BT-81": (
-                    "58"
-                    if context["seller_iban"]
-                    else "30"
-                ),
-                "BT-82": "SEPA-Überweisung",
-                "BT-83": (
-                    context["payment_reference"]
-                ),
-                "BT-84": context["seller_iban"],
-                "BT-85": context["seller_name"],
-                "BT-86": context["seller_bic"],
-            }
-        )
+        if context["payment_method"] == "sepa_debit":
+            data.update({"BT-81": "59", "BT-82": "SEPA-Lastschrift", "BT-83": context["payment_reference"],
+                         "BT-89": context["payment_mandate_reference"], "BT-90": context["payment_creditor_id"], "BT-91": context["payment_iban"]})
+        else:
+            data.update({"BT-81": "58", "BT-82": "SEPA-Überweisung", "BT-83": context["payment_reference"],
+                         "BT-84": context["payment_iban"], "BT-85": context["seller_name"], "BT-86": context["payment_bic"]})
 
     return _compact(data)
 

@@ -74,6 +74,9 @@
           name="{{ definition.key }}"
           placeholder="Leer lassen, um den Wert beizubehalten"
         >
+        {% elif definition.key in ("invoice.transfer_payment_text", "invoice.sepa_payment_text") %}
+        <textarea class="form-control" name="{{ definition.key }}" rows="4" maxlength="4000">{{ value }}</textarea>
+        <div class="form-text">Platzhalter: {% raw %}{due_date}, {invoice_number}, {payment_reference}, {amount}, {currency}, {iban}, {bic}, {mandate_reference}, {creditor_id}, {account_holder}{% endraw %}</div>
         {% elif definition.value_type.value == "json" %}
         <textarea
           class="form-control font-monospace"

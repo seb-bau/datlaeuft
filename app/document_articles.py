@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import or_
+from sqlalchemy import literal, or_, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -92,9 +92,9 @@ def items(document_type: str, document_id: int):
             error="Der Beleg ist kein bearbeitbarer Entwurf."
         ), 409
 
-    source = request.args.get("source", "local_catalog")
+    source = request.args.get("source", "all" if request.method == "GET" else "local_catalog")
 
-    if source not in {"local_catalog", "material"}:
+    if source not in {"all", "local_catalog", "material"} or source == "all" and request.method != "GET":
         return jsonify(error="Die Artikelquelle ist ungültig."), 400
 
     article_model = (
@@ -102,6 +102,25 @@ def items(document_type: str, document_id: int):
     )
 
     if request.method == "GET":
+        if source == "all":
+            search = request.args.get("q", "").strip()[:255]
+            statements = []
+            for model, kind in ((LocalCatalogItem, "local_catalog"), (InventoryItem, "material")):
+                statement = select(model.id.label("item_id"), model.name.label("name"), literal(kind).label("source_type")).where(model.active.is_(True))
+                if search:
+                    statement = statement.where(or_(model.item_number.ilike(f"%{search}%"), model.name.ilike(f"%{search}%")))
+                statements.append(statement)
+            combined = union_all(*statements).subquery()
+            page = max(1, request.args.get("page", 1, type=int))
+            references = db.session.execute(select(combined).order_by(combined.c.name, combined.c.source_type, combined.c.item_id).offset((page - 1) * 50).limit(51)).all()
+            catalog_ids = [row.item_id for row in references if row.source_type == "local_catalog"]
+            inventory_ids = [row.item_id for row in references if row.source_type == "material"]
+            catalog_items = {item.id: item for item in LocalCatalogItem.query.filter(LocalCatalogItem.id.in_(catalog_ids)).all()}
+            inventory_items = {item.id: item for item in InventoryItem.query.options(joinedload(InventoryItem.item_type).joinedload(InventoryItemType.group)).filter(InventoryItem.id.in_(inventory_ids)).all()}
+            articles = [(catalog_items if row.source_type == "local_catalog" else inventory_items)[row.item_id] for row in references]
+            item_types = InventoryItemType.query.join(InventoryItemType.group).filter(InventoryItemType.active.is_(True), InventoryItemGroup.active.is_(True)).order_by(InventoryItemType.name).all()
+            return jsonify(items=[serialize_article(item) for item in articles[:50]], has_more=len(articles) > 50,
+                           item_types=[{"id": item.id, "name": item.name, "unit": item.unit} for item in item_types])
         query = article_model.query.filter(
             article_model.active.is_(True)
         )

@@ -145,6 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
       recipientCandidates = [];
       showMessage("");
       markChanged();
+      if (!isOffer) form.dispatchEvent(new CustomEvent("invoice-agreement-selected", {detail: {agreementId}, bubbles: true}));
       if (agreementId) {
         applyRecipient({});
         loadRecipient();
@@ -174,11 +175,15 @@ document.addEventListener("DOMContentLoaded", () => {
           const agreement = result.license_agreement || {};
           const economicUnit = result.economic_unit || {};
           const building = result.building || {};
+          const unit = result.use_unit || {};
+          const address = unit.address || building.address || economicUnit.address || "";
+          const location = [unit.floor, unit.position, unit.description].filter(Boolean).filter((value, index, values) => values.indexOf(value) === index).join(" · ");
           const label = [
             result.tenant_name || result.label || "Mieter",
             agreement.id_num ? "Vertrag " + agreement.id_num : "",
             economicUnit.id_num ? "WE " + economicUnit.id_num : "",
-            isOffer ? building.address || "" : ""
+            address,
+            location
           ].filter(Boolean).join(" · ");
           const button = document.createElement("button");
           button.type = "button";
