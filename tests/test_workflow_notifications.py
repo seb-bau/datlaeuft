@@ -242,13 +242,14 @@ class WorkflowNotificationTests(unittest.TestCase):
         self.assertEqual(str(self.send.call_args.args[0]["To"]), "external@example.invalid")
 
     def test_failed_workflow_logs_the_problem_and_notification_context(self):
-        commission = self.commission(is_high_priority=True, execution_to=None, erp_id=None, erp_idnum=None, erp_sync_state="pending")
+        commission = self.commission(is_high_priority=True, execution_to=None)
         item = self.notifications.enqueue_priority_notification(commission, self.models.PushEventType.NEW_COMMISSION)
         self.db.session.commit()
+        self.send.side_effect = RuntimeError("SMTP-Server nicht erreichbar")
         with self.assertLogs(self.app.logger, level="ERROR") as logs:
             self.notifications.process_workflow_notification_batch()
         record = logs.records[0]
-        self.assertIn("noch nicht vollständig mit Wowiport synchronisiert", record.getMessage())
+        self.assertIn("SMTP-Server nicht erreichbar", record.getMessage())
         self.assertEqual(record.notification_id, item.id)
         self.assertEqual(record.commission_id, commission.id)
         self.assertEqual(record.notification_kind, "priority")
@@ -256,6 +257,75 @@ class WorkflowNotificationTests(unittest.TestCase):
         self.assertEqual(record.error_type, "RuntimeError")
         self.assertIsNotNone(record.exc_info)
         self.assertIn(item.last_error, record.getMessage())
+
+    def test_pending_erp_sync_logs_a_warning_and_keeps_the_notification_pending(self):
+        commission = self.commission(is_high_priority=True, execution_to=None, erp_id=None, erp_idnum=None, erp_sync_state="pending")
+        item = self.notifications.enqueue_priority_notification(commission, self.models.PushEventType.NEW_COMMISSION)
+        now = self.models.utc_now()
+        item.available_at = now
+        self.db.session.commit()
+        with patch.object(self.notifications, "utc_now", return_value=now), self.assertLogs(self.app.logger, level="WARNING") as logs:
+            self.assertEqual(self.notifications.process_workflow_notification_batch(), 1)
+        self.assertEqual(len(logs.records), 1)
+        record = logs.records[0]
+        self.assertEqual(record.levelname, "WARNING")
+        self.assertIn("workflow_notification_waiting_for_erp", record.getMessage())
+        self.assertIn("noch nicht vollständig mit Wowiport synchronisiert", record.getMessage())
+        self.assertEqual(record.notification_id, item.id)
+        self.assertEqual(record.commission_id, commission.id)
+        self.assertEqual(record.notification_state, "pending")
+        self.assertEqual(record.erp_sync_state, "pending")
+        self.assertEqual(record.attempt_count, 1)
+        self.assertEqual(record.next_attempt_at, (now + timedelta(minutes=1)).isoformat())
+        self.assertIsNone(record.exc_info)
+        self.assertEqual(item.state, "pending")
+        self.assertIsNone(item.locked_at)
+        self.assertIsNone(item.last_error)
+        self.assertNotIn("submission_started", item.payload)
+        self.send.assert_not_called()
+        with patch.object(self.notifications, "utc_now", return_value=now + timedelta(seconds=59)):
+            self.assertEqual(self.notifications.process_workflow_notification_batch(), 0)
+
+    def test_waiting_notification_is_sent_once_when_erp_sync_finishes(self):
+        commission = self.commission(is_high_priority=True, execution_to=None, erp_id=None, erp_idnum=None, erp_sync_state="pending")
+        item = self.notifications.enqueue_priority_notification(commission, self.models.PushEventType.NEW_COMMISSION)
+        now = self.models.utc_now()
+        item.available_at = now
+        self.db.session.commit()
+        with patch.object(self.notifications, "utc_now", return_value=now), self.assertLogs(self.app.logger, level="WARNING"):
+            self.notifications.process_workflow_notification_batch()
+        self.send.assert_not_called()
+        commission.erp_id = 500
+        commission.erp_idnum = "A-500"
+        commission.erp_sync_state = "synced"
+        self.db.session.commit()
+        with patch.object(self.notifications, "utc_now", return_value=now + timedelta(minutes=1)):
+            self.assertEqual(self.notifications.process_workflow_notification_batch(), 1)
+            self.assertEqual(self.notifications.process_workflow_notification_batch(), 0)
+        self.send.assert_called_once()
+        self.assertEqual(item.state, "sent")
+        self.assertEqual(item.attempt_count, 2)
+        self.assertTrue(item.payload["mail_sent"])
+        self.assertIsNone(item.last_error)
+
+    def test_old_failed_sync_waits_are_requeued_without_hiding_the_erp_error_context(self):
+        commission = self.commission(is_high_priority=True, execution_to=None, erp_id=None, erp_idnum=None,
+                                     erp_sync_state="failed", erp_sync_message="OPENWOWI ist nicht erreichbar")
+        item = self.notifications.enqueue_priority_notification(commission, self.models.PushEventType.NEW_COMMISSION)
+        now = self.models.utc_now()
+        item.state = "failed"
+        item.attempt_count = 6
+        item.last_error = "Der Auftrag ist noch nicht vollständig mit Wowiport synchronisiert."
+        item.available_at = now
+        self.db.session.commit()
+        with patch.object(self.notifications, "utc_now", return_value=now), self.assertLogs(self.app.logger, level="WARNING") as logs:
+            self.notifications.process_workflow_notification_batch()
+        self.assertEqual(item.state, "pending")
+        self.assertEqual(logs.records[0].erp_sync_state, "failed")
+        self.assertEqual(logs.records[0].erp_sync_message, "OPENWOWI ist nicht erreichbar")
+        self.assertEqual(logs.records[0].next_attempt_at, (now + timedelta(hours=1)).isoformat())
+        self.assertEqual(commission.erp_sync_message, "OPENWOWI ist nicht erreichbar")
+        self.send.assert_not_called()
 
     def test_wrapped_delivery_errors_include_the_original_cause_in_the_log(self):
         commission = self.commission(is_high_priority=True, execution_to=None)
@@ -273,10 +343,10 @@ class WorkflowNotificationTests(unittest.TestCase):
         commission = self.commission(is_high_priority=True, execution_to=None, erp_id=None, erp_idnum=None, erp_sync_state="pending")
         item = self.notifications.enqueue_priority_notification(commission, self.models.PushEventType.NEW_COMMISSION)
         self.db.session.commit()
-        with self.assertLogs(self.app.logger, level="ERROR"):
+        with self.assertLogs(self.app.logger, level="WARNING"):
             self.notifications.process_workflow_notification_batch()
         self.send.assert_not_called()
-        self.assertEqual(item.state, "failed")
+        self.assertEqual(item.state, "pending")
         commission.erp_id = 500
         commission.erp_idnum = "A-500"
         commission.erp_sync_state = "synced"

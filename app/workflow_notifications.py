@@ -259,7 +259,26 @@ def execute_workflow_notification(item_id):
         db.session.commit()
         return
     if item.kind != "approval_request" and item.commission is not None and (item.commission.erp_sync_state != CommissionSyncState.SYNCED.value or not item.commission.erp_idnum):
-        raise RuntimeError("Der Auftrag ist noch nicht vollständig mit Wowiport synchronisiert.")
+        item.state = "pending"
+        item.locked_at = None
+        item.last_error = None
+        delay_seconds = min(60 * 2 ** min(max(item.attempt_count - 1, 0), 6), 3600)
+        item.available_at = utc_now() + timedelta(seconds=delay_seconds)
+        db.session.commit()
+        next_attempt_at = ensure_utc(item.available_at).isoformat()
+        current_app.logger.warning(
+            "workflow_notification_waiting_for_erp id=%s kind=%s state=%s commission_id=%s ticket_id=%s "
+            "attempt=%s erp_sync_state=%s erp_id=%s erp_idnum=%s next_attempt_at=%s "
+            "reason=Der Auftrag ist noch nicht vollständig mit Wowiport synchronisiert.",
+            item.id, item.kind, item.state, item.commission_id, item.ticket_id, item.attempt_count,
+            item.commission.erp_sync_state, item.commission.erp_id, item.commission.erp_idnum, next_attempt_at,
+            extra={"notification_id": item.id, "notification_kind": item.kind, "notification_state": item.state,
+                   "commission_id": item.commission_id, "ticket_id": item.ticket_id, "attempt_count": item.attempt_count,
+                   "erp_sync_state": item.commission.erp_sync_state, "erp_id": item.commission.erp_id,
+                   "erp_idnum": item.commission.erp_idnum, "erp_sync_message": item.commission.erp_sync_message,
+                   "next_attempt_at": next_attempt_at},
+        )
+        return
     if not item.payload.get("mail_sent"):
         if "subject" not in item.payload:
             recipient, content = notification_content(item)
