@@ -160,6 +160,7 @@ def mobile_config() -> Any:
         "show_service_target_times": settings.get(SettingKeys.MOBILE_SHOW_SERVICE_TARGET_TIMES),
         "show_work_time_target_times": settings.get(SettingKeys.MOBILE_SHOW_WORK_TIME_TARGET_TIMES),
         "time_components_enabled": settings.get(SettingKeys.MOBILE_TIME_COMPONENTS_ENABLED),
+        "allow_time_on_completed_commissions": settings.get(SettingKeys.TIME_ALLOW_ON_COMPLETED_COMMISSIONS),
     })
 
 
@@ -3314,6 +3315,18 @@ def commission_time_entries(commission_id: int) -> Any:
 def add_time_entry(commission_id: int) -> Any:
     user = current_api_user()
     commission = editable_commission(commission_id, user)
+    if (
+        commission.local_status in {
+            CommissionLocalStatus.DONE.value,
+            CommissionLocalStatus.AWAITING_INVOICE.value,
+            CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
+        }
+        and not settings.get(SettingKeys.TIME_ALLOW_ON_COMPLETED_COMMISSIONS)
+    ):
+        return jsonify(
+            message="Für diesen abgeschlossenen Auftrag können keine neuen Zeiten erfasst werden.",
+            code="completed_commission_time_disabled",
+        ), 409
     data = request.get_json(silent=True) or {}
     values = time_entry_values_from_payload(data, user)
     entry = TimeEntry(

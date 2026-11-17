@@ -564,6 +564,13 @@ class SettingKeys:
         "Zeitbausteine bei Aufträgen in der App aktivieren",
         "Mobile App",
     )
+    TIME_ALLOW_ON_COMPLETED_COMMISSIONS = SettingDefinition[bool](
+        "time.allow_on_completed_commissions",
+        SettingValueType.BOOL,
+        True,
+        "Neue Zeiten auf abgeschlossenen Aufträgen erlauben",
+        "Zeiterfassung",
+    )
     MOBILE_SHOW_SERVICE_TARGET_TIMES = SettingDefinition[bool](
         "mobile.show_service_target_times",
         SettingValueType.BOOL,

@@ -3451,16 +3451,24 @@ def object_directory_sync() -> Any:
 @admin_required
 def users() -> Any:
     items = User.query.order_by(User.display_name.asc()).all()
-    return render_template("admin/users.html", items=items)
+    return render_template("admin/users.html", items=items, entra_enabled=settings.get(SettingKeys.MICROSOFT_LOGIN_ENABLED))
 
 
 @admin_bp.route("/admin/users/import-entra", methods=["POST"])
 @admin_required
 def import_users_from_entra() -> Any:
-    result = import_entra_users()
-    audit("users.import_entra", metadata={"created": result.created, "updated": result.updated, "skipped": result.skipped})
-    db.session.commit()
-    flash(f"Import abgeschlossen: {result.created} neu, {result.updated} aktualisiert, {result.skipped} uebersprungen.", "success")
+    if not settings.get(SettingKeys.MICROSOFT_LOGIN_ENABLED):
+        abort(403)
+    try:
+        result = import_entra_users()
+        audit("users.import_entra", metadata={"created": result.created, "updated": result.updated, "skipped": result.skipped})
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("users_import_entra_failed")
+        flash("Die Synchronisierung mit Entra ist fehlgeschlagen. Bitte die Entra-Konfiguration prüfen und erneut versuchen.", "danger")
+    else:
+        flash(f"Synchronisierung abgeschlossen: {result.created} neu, {result.updated} aktualisiert, {result.skipped} übersprungen.", "success")
     return redirect(url_for("admin.users"))
 
 
