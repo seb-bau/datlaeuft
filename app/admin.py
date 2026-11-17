@@ -266,6 +266,7 @@ from .appointment_service import format_manual_appointment
 from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
 from .document_articles import attach_article_fields
 from .document_previews import render_document_preview
+from .invoice_payments import invoice_payment_information, payment_options_from_wowiport, save_invoice_payment_form
 from .ticket_ai_service import (
     enqueue_ticket_ai, ticket_ai_enabled, ticket_ai_is_current,
     ticket_ai_lease_seconds,
@@ -7326,6 +7327,27 @@ def invoice_recipient_candidates(
     )
 
 
+@admin_bp.get("/admin/invoices/<int:invoice_id>/payment-information")
+@invoice_required
+def invoice_payment_information_fetch(invoice_id: int):
+    invoice = db.get_or_404(Invoice, invoice_id)
+    if invoice.status != InvoiceStatus.DRAFT.value:
+        return jsonify(message="Zahlungsinformationen können nur für einen Entwurf abgerufen werden."), 409
+    try:
+        agreement_id = required_form_int(request.args.get("license_agreement_id"), "Vertrag")
+        agreement = invoice_agreement(invoice, agreement_id)
+    except ValueError as exc:
+        return jsonify(message=str(exc)), 400
+    try:
+        values = payment_options_from_wowiport(WowiportService(), agreement.erp_id, invoice.company_code.seller_creditor_id or "")
+    except Exception:
+        current_app.logger.exception("invoice_payment_information_fetch_failed invoice_id=%s license_agreement_id=%s", invoice.id, agreement.erp_id)
+        return jsonify(message="Die Zahlungsinformationen konnten nicht aus Wowiport geladen werden. Bitte erneut versuchen oder über „ändern“ eingeben."), 502
+    response = jsonify(values)
+    response.headers["Cache-Control"] = "private, no-store, max-age=0"
+    return response
+
+
 @admin_bp.post(
     "/admin/invoices/<int:invoice_id>/delete"
 )
@@ -7708,6 +7730,7 @@ def save_invoice_draft_form(
         item.recipient_license_agreement_erp_id = None
         item.recipient_license_agreement_idnum = None
 
+    save_invoice_payment_form(item)
     item.recipient_person_erp_id = (
         optional_form_int(
             request.form.get(
@@ -11653,6 +11676,7 @@ def save_company_code_invoice_form(
     item.seller_bic = optional_form_text(
         "seller_bic"
     )
+    item.seller_creditor_id = optional_form_text("seller_creditor_id")
 
 
 def invoice_stationery_directory() -> Path:

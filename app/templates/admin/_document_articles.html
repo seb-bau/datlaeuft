@@ -20,6 +20,7 @@
           <div class="d-flex flex-wrap gap-2 mb-3">
             <select id="documentArticleSource"
                     class="form-select w-auto" aria-label="Artikelquelle">
+              <option value="all" selected>Alle Artikelquellen</option>
               <option value="material">Lager (Material)</option>
               <option value="local_catalog">Lokaler Katalog</option>
             </select>
@@ -40,7 +41,7 @@
               <thead>
                 <tr>
                   {% for label in [
-                    'Artikel-Nr.', 'Bezeichnung', 'Geschäftsbereich',
+                    'Quelle', 'Artikel-Nr.', 'Bezeichnung', 'Geschäftsbereich',
                     'Warengruppe', 'Einheit', 'Nettopreis', 'Aktiv',
                     'Steuersatz', 'MwSt.', ''
                   ] %}
@@ -69,6 +70,13 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
           <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label" for="newArticleSource">Artikelquelle</label>
+              <select id="newArticleSource" class="form-select">
+                <option value="local_catalog">Lokaler Katalog</option>
+                <option value="material">Lager (Material)</option>
+              </select>
+            </div>
             {% for field, label, length, default in [
               ('item_number', 'Artikelnummer', 100, ''),
               ('name', 'Bezeichnung', 255, ''),

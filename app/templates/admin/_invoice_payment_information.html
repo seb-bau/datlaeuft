@@ -1,0 +1,51 @@
+{% set payment = item.payment_information or {
+  'method': '' if item.recipient_license_agreement_erp_id and editable else 'bank_transfer',
+  'iban': '' if item.recipient_license_agreement_erp_id and editable else item.seller_iban or item.company_code.seller_iban or '',
+  'bic': '' if item.recipient_license_agreement_erp_id and editable else item.seller_bic or item.company_code.seller_bic or '',
+  'source': 'unresolved' if item.recipient_license_agreement_erp_id and editable else 'company',
+  'license_agreement_erp_id': item.recipient_license_agreement_erp_id
+} %}
+<section class="card shadow-sm mb-4" id="invoicePaymentInformation"
+         data-endpoint="{{ url_for('admin.invoice_payment_information_fetch', invoice_id=item.id) }}"
+         data-creditor-id="{{ item.company_code.seller_creditor_id or '' }}">
+  <div class="card-header">Zahlungsinformationen</div>
+  <div class="card-body">
+    <input type="hidden" id="invoicePaymentData" name="payment_information_data" value="{{ payment|tojson|forceescape }}">
+    <div id="invoicePaymentMethod" class="fw-semibold mb-2">{{ 'SEPA-Mandat' if payment.method == 'sepa_debit' else 'Überweisung' if payment.method == 'bank_transfer' else 'Noch nicht festgelegt' }}</div>
+    <dl class="row small mb-2">
+      <dt class="col-sm-4" id="invoicePaymentAccountLabel">{{ 'Einzugskonto' if payment.method == 'sepa_debit' else 'Zahlungskonto' }}</dt>
+      <dd class="col-sm-8 text-break" id="invoicePaymentIban">{{ payment.get('iban') or 'Nicht hinterlegt' }}</dd>
+      <dt class="col-sm-4">BIC</dt><dd class="col-sm-8" id="invoicePaymentBic">{{ payment.get('bic') or 'Nicht hinterlegt' }}</dd>
+      <dt class="col-sm-4" data-sepa-summary {% if payment.method != 'sepa_debit' %}hidden{% endif %}>Mandatsreferenz</dt>
+      <dd class="col-sm-8 text-break" id="invoicePaymentMandate" data-sepa-summary {% if payment.method != 'sepa_debit' %}hidden{% endif %}>{{ payment.get('mandate_reference') or 'Nicht hinterlegt' }}</dd>
+      <dt class="col-sm-4" data-sepa-summary {% if payment.method != 'sepa_debit' %}hidden{% endif %}>Gläubiger-ID</dt>
+      <dd class="col-sm-8 text-break" id="invoicePaymentCreditor" data-sepa-summary {% if payment.method != 'sepa_debit' %}hidden{% endif %}>{{ payment.get('creditor_id') or 'Nicht hinterlegt' }}</dd>
+    </dl>
+    {% if editable %}
+    <button type="button" class="btn btn-link btn-sm p-0" id="invoicePaymentEdit" data-bs-toggle="modal" data-bs-target="#invoicePaymentModal">ändern</button>
+    <button type="button" class="btn btn-link btn-sm ms-3 p-0" id="invoicePaymentRefresh">Neu aus Wowiport laden</button>
+    <div class="small mt-2" id="invoicePaymentMessage" aria-live="polite"></div>
+    {% endif %}
+  </div>
+</section>
+{% if editable %}
+<div class="modal fade" id="invoicePaymentModal" tabindex="-1" aria-labelledby="invoicePaymentTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h2 class="modal-title fs-5" id="invoicePaymentTitle">Zahlungsinformationen ändern</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button></div>
+    <div class="modal-body">
+      <div class="mb-3"><label class="form-label" for="paymentOption">Aus Wowiport übernehmen</label><select class="form-select" id="paymentOption"><option value="">Manuell anpassen</option></select></div>
+      <div class="row g-3">
+        <div class="col-12"><label class="form-label" for="paymentMethod">Zahlungsart</label><select class="form-select" id="paymentMethod"><option value="bank_transfer">Überweisung</option><option value="sepa_debit">SEPA-Mandat</option></select></div>
+        <div class="col-md-8"><label class="form-label" for="paymentIban">IBAN</label><input class="form-control" id="paymentIban" maxlength="80" autocomplete="off" spellcheck="false"></div>
+        <div class="col-md-4"><label class="form-label" for="paymentBic">BIC (falls vorhanden)</label><input class="form-control" id="paymentBic" maxlength="40" autocomplete="off" spellcheck="false"></div>
+        <div class="col-12"><label class="form-label" for="paymentAccountHolder">Kontoinhaber</label><input class="form-control" id="paymentAccountHolder" maxlength="255"></div>
+        <div class="col-md-6" data-sepa-field><label class="form-label" for="paymentMandateReference">Mandatsreferenz</label><input class="form-control" id="paymentMandateReference" maxlength="140"></div>
+        <div class="col-md-6" data-sepa-field><label class="form-label" for="paymentCreditorId">Gläubiger-ID</label><input class="form-control" id="paymentCreditorId" maxlength="80"></div>
+      </div>
+      <div class="form-text mt-3" id="paymentAccountHelp"></div>
+      <div class="alert alert-danger mt-3" id="paymentEditError" role="alert" hidden></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button><button type="button" class="btn btn-primary" id="paymentApply">Übernehmen</button></div>
+  </div></div>
+</div>
+{% endif %}

@@ -13,6 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const previous = document.getElementById("documentArticlePrevious");
   const next = document.getElementById("documentArticleNext");
   const itemType = document.getElementById("newArticleType");
+  const newSource = document.getElementById("newArticleSource");
   const unit = document.getElementById("newArticle_unit");
   const positions =
     document.getElementById("offerPositions") ||
@@ -34,13 +35,13 @@ document.addEventListener("DOMContentLoaded", () => {
     message.hidden = !text;
   }
 
-  function endpoint() {
+  function endpoint(selectedSource = source.value) {
     const url = new URL(
       modal.dataset.endpoint,
       window.location.origin
     );
 
-    url.searchParams.set("source", source.value);
+    url.searchParams.set("source", selectedSource);
     url.searchParams.set("q", search.value.trim());
     url.searchParams.set("page", String(page));
 
@@ -131,6 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
       for (const item of data.items) {
         const row = results.insertRow();
         const cells = [
+          item.source_type === "material" ? "Lager" : "Lokaler Katalog",
           item.item_number,
           item.name,
           item.business_area,
@@ -157,7 +159,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (!data.items.length) {
         const cell = results.insertRow().insertCell();
-        cell.colSpan = 10;
+        cell.colSpan = 11;
         cell.textContent = "Keine passenden Artikel gefunden.";
       }
 
@@ -183,13 +185,26 @@ document.addEventListener("DOMContentLoaded", () => {
       "Artikel hinzufügen";
   }
 
+  function updateNewSource() {
+      const local = newSource.value === "local_catalog";
+      document.getElementById("documentArticleTitle").textContent = local ? "Katalogartikel anlegen" : "Lagerartikel anlegen";
+      const localSection = document.getElementById("newArticleLocalSection");
+      localSection.hidden = !local;
+      localSection.querySelectorAll("input").forEach(input => { input.disabled = !local; });
+      document.getElementById("newArticleTypeSection").hidden = local;
+      itemType.disabled = local;
+      unit.readOnly = false;
+  }
+
+  newSource.addEventListener("change", updateNewSource);
   document.getElementById("documentArticleNew").addEventListener(
     "click",
     () => {
       showError("");
       form.reset();
 
-      const local = source.value === "local_catalog";
+      newSource.value = source.value === "material" ? "material" : "local_catalog";
+      const local = newSource.value === "local_catalog";
       selection.hidden = true;
       form.hidden = false;
 
@@ -236,6 +251,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   modal.addEventListener("show.bs.modal", () => {
+    source.value = "all";
+    page = 1;
     showSelection();
     loadArticles();
   });
@@ -281,7 +298,7 @@ document.addEventListener("DOMContentLoaded", () => {
     showError("");
 
     try {
-      const response = await fetch(endpoint(), {
+      const response = await fetch(endpoint(newSource.value), {
         method: "POST",
         body: new FormData(form),
         headers: {Accept: "application/json"}

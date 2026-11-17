@@ -3142,6 +3142,7 @@ class WowiCompanyCode(db.Model):
     seller_bic: Mapped[str | None] = mapped_column(
         db.String(40)
     )
+    seller_creditor_id: Mapped[str | None] = mapped_column(db.String(80))
 
     invoice_billing_rules: Mapped[
         list["InvoiceBillingRule"]
@@ -4117,6 +4118,7 @@ class Invoice(db.Model):
     payment_reference: Mapped[str | None] = mapped_column(
         db.String(160)
     )
+    payment_information: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     introductory_text: Mapped[str | None] = mapped_column(
         db.Text
     )

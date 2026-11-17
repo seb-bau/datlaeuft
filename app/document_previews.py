@@ -39,6 +39,8 @@ def invoice_preview_context(invoice) -> dict:
     }
     for field, company_field in (("seller_iban", "invoice_iban"), ("seller_bic", "invoice_bic"), ("seller_bank_name", "invoice_bank_name")):
         context[field] = str(_company_value(invoice, (field,), (company_field, field), default="") or "")
+    from .invoice_payments import invoice_payment_context
+    context.update(invoice_payment_context(invoice))
     return context
 
 

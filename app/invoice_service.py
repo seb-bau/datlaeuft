@@ -52,6 +52,7 @@ from .models import (
     OfferStatus,
 )
 from .settings import SettingKeys, settings
+from .invoice_payments import freeze_invoice_payment_information, invoice_payment_context
 
 
 INVOICE_TIME_TYPES = (
@@ -1355,6 +1356,12 @@ def _validate_invoice_for_finalization(
             "Das Buchwerk fehlt."
         )
 
+    if invoice.invoice_kind != InvoiceKind.CANCELLATION.value:
+        try:
+            invoice_payment_context(invoice, complete=True)
+        except ValueError as exc:
+            raise InvoiceFinalizationError(str(exc)) from exc
+
     required_recipient_values = (
         (
             invoice.recipient_name,
@@ -1770,6 +1777,9 @@ def finalize_invoice(
         invoice.payment_reference
         or invoice.invoice_number
     )
+
+    if invoice.invoice_kind != InvoiceKind.CANCELLATION.value:
+        freeze_invoice_payment_information(invoice)
 
     db.session.flush()
 

@@ -57,7 +57,7 @@
     .metadata td:first-child {
       padding-left: 0;
       font-weight: 600;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .title {
@@ -102,26 +102,22 @@
     }
 
     .number {
-      width: 8mm;
       text-align: right;
     }
 
     .quantity {
-      width: 20mm;
       text-align: right;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .price {
-      width: 25mm;
       text-align: right;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .vat {
-      width: 14mm;
       text-align: right;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .description-text,
@@ -154,7 +150,7 @@
 
     .summary td:last-child {
       text-align: right;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .summary .gross td {
@@ -185,7 +181,18 @@
     .vat-summary th:first-child {
       text-align: left;
     }
-  </style>
+
+      .positions { table-layout: fixed; max-width: 100%; font-size: 8pt; }
+      .positions th, .positions td { box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
+      .positions .article-number { font-size: 6.3pt; line-height: 1.15; color: #555; white-space: normal; word-break: break-all; }
+      .positions .quantity, .positions .price, .positions .vat, .positions .number { font-size: 7.2pt; }
+      .positions .description { white-space: normal; }
+      .positions .description-text, .positions .details { white-space: pre-line; }
+      .positions .details { font-size: 7.2pt; line-height: 1.15; color: #555; margin-top: 1mm; }
+      .payment { white-space: pre-line; overflow-wrap: anywhere; }
+      .bank-details { max-width: 100%; }
+      .bank-details td { overflow-wrap: anywhere; word-break: break-word; }
+    </style>
 </head>
 <body>
 {% if preview %}<div style="position: fixed; top: -12mm; right: 0; color: #b91c1c; font-size: 9pt; font-weight: bold;">ENTWURF · Nur zur Vorschau</div>{% endif %}
@@ -238,10 +245,18 @@
   </div>
   {% endif %}
 
-  <table class="positions">
+  {% set show_article_numbers = positions|selectattr('article_number')|list|length > 0 %}
+    <table class="positions">
+      <colgroup>
+        <col style="width: 5%;">
+        {% if show_article_numbers %}<col style="width: 13%;">{% endif %}
+        <col style="width: {{ '31%' if show_article_numbers else '44%' }};">
+        <col style="width: 11%;"><col style="width: 15%;"><col style="width: 8%;"><col style="width: 17%;">
+      </colgroup>
     <thead>
       <tr>
         <th class="number">Pos.</th>
+                {% if show_article_numbers %}<th class="article-number">Artikel-Nr.</th>{% endif %}
         <th>Bezeichnung</th>
         <th class="quantity">Menge</th>
         <th class="price">Einzelpreis</th>
@@ -255,8 +270,8 @@
         <td class="number">
           {{ position.number }}
         </td>
-        <td class="description">
-                        {% if position.article_number %}<div style="font-size: 8pt; color: #555;">Artikel-Nr.: {{ position.article_number }}</div>{% endif %}
+        {% if show_article_numbers %}<td class="article-number">{{ position.article_number }}</td>{% endif %}
+                    <td class="description">
           <div class="description-text">{{ position.description }}</div>
           {% if position.details %}
           <div class="details">{{ position.details }}</div>

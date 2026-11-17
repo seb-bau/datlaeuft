@@ -63,7 +63,7 @@
         .metadata td:first-child {
             padding-left: 0;
             font-weight: 600;
-            white-space: nowrap;
+            white-space: normal;
         }
 
         .text-section {
@@ -102,26 +102,22 @@
         }
 
         .number {
-            width: 8mm;
             text-align: right;
         }
 
         .quantity {
-            width: 20mm;
             text-align: right;
-            white-space: nowrap;
+            white-space: normal;
         }
 
         .price {
-            width: 25mm;
             text-align: right;
-            white-space: nowrap;
+            white-space: normal;
         }
 
         .vat {
-            width: 14mm;
             text-align: right;
-            white-space: nowrap;
+            white-space: normal;
         }
 
         .description {
@@ -147,7 +143,7 @@
 
         .summary td:last-child {
             text-align: right;
-            white-space: nowrap;
+            white-space: normal;
         }
 
         .summary .gross td {
@@ -198,6 +194,18 @@
         .bank-details td:first-child {
             font-weight: 600;
         }
+
+      .positions { table-layout: fixed; max-width: 100%; font-size: 8pt; }
+      .positions th, .positions td { box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
+      .positions .article-number { font-size: 6.3pt; line-height: 1.15; color: #555; white-space: normal; word-break: break-all; }
+      .positions .quantity, .positions .price, .positions .vat, .positions .number { font-size: 7.2pt; }
+      .positions .description { white-space: normal; }
+      .positions .description-text, .positions .details { white-space: pre-line; }
+      .positions .details { font-size: 7.2pt; line-height: 1.15; color: #555; margin-top: 1mm; }
+      .payment { overflow-wrap: anywhere; }
+      .payment-terms { white-space: pre-line; }
+      .bank-details { max-width: 100%; }
+      .bank-details td { overflow-wrap: anywhere; word-break: break-word; }
     </style>
 </head>
 <body>
@@ -273,10 +281,18 @@
         </div>
     {% endif %}
 
+    {% set show_article_numbers = positions|selectattr('article_number')|list|length > 0 %}
     <table class="positions">
+      <colgroup>
+        <col style="width: 5%;">
+        {% if show_article_numbers %}<col style="width: 13%;">{% endif %}
+        <col style="width: {{ '31%' if show_article_numbers else '44%' }};">
+        <col style="width: 11%;"><col style="width: 15%;"><col style="width: 8%;"><col style="width: 17%;">
+      </colgroup>
         <thead>
             <tr>
                 <th class="number">Pos.</th>
+                {% if show_article_numbers %}<th class="article-number">Artikel-Nr.</th>{% endif %}
                 <th>Bezeichnung</th>
                 <th class="quantity">Menge</th>
                 <th class="price">Einzelpreis</th>
@@ -288,15 +304,11 @@
             {% for position in positions %}
                 <tr>
                     <td class="number">{{ position.number }}</td>
+                    {% if show_article_numbers %}<td class="article-number">{{ position.article_number }}</td>{% endif %}
                     <td class="description">
-                        {% if position.article_number %}<div style="font-size: 8pt; color: #555;">Artikel-Nr.: {{ position.article_number }}</div>{% endif %}
-                        <div>
-                            {{ position.description }}
-                        </div>
+                        <div class="description-text">{{ position.description }}</div>
                         {% if position.details %}
-                        <div style="font-size: 7.8pt; line-height: 1.15; color: #555;">
-                            {{ position.details }}
-                        </div>
+                        <div class="details">{{ position.details }}</div>
                         {% endif %}
                     </td>
                     <td class="quantity">
@@ -361,31 +373,34 @@
     {% if not is_cancellation %}
         <div class="payment">
             {% if payment_terms_text %}
-                <div>{{ payment_terms_text }}</div>
+                <div class="payment-terms">{{ payment_terms_text }}</div>
             {% endif %}
 
-            {% if seller_iban %}
+            {% if payment_iban %}
+                <div class="fw-semibold">{{ payment_method_label }} · {{ 'Einzugskonto' if payment_method == 'sepa_debit' else 'Zahlungskonto' }}</div>
                 <table class="bank-details">
-                    {% if seller_bank_name %}
+                    {% if payment_account_holder %}
                         <tr>
-                            <td>Bank</td>
-                            <td>{{ seller_bank_name }}</td>
+                            <td>Kontoinhaber</td>
+                            <td>{{ payment_account_holder }}</td>
                         </tr>
                     {% endif %}
                     <tr>
                         <td>IBAN</td>
-                        <td>{{ seller_iban }}</td>
+                        <td>{{ payment_iban }}</td>
                     </tr>
-                    {% if seller_bic %}
+                    {% if payment_bic %}
                         <tr>
                             <td>BIC</td>
-                            <td>{{ seller_bic }}</td>
+                            <td>{{ payment_bic }}</td>
                         </tr>
                     {% endif %}
-                    <tr>
-                        <td>Verwendungszweck</td>
-                        <td>{{ payment_reference }}</td>
-                    </tr>
+                    {% if payment_method == 'sepa_debit' %}
+                    {% if payment_mandate_reference %}<tr><td>Mandatsreferenz</td><td>{{ payment_mandate_reference }}</td></tr>{% endif %}
+                    {% if payment_creditor_id %}<tr><td>Gläubiger-ID</td><td>{{ payment_creditor_id }}</td></tr>{% endif %}
+                    {% else %}
+                    <tr><td>Verwendungszweck</td><td>{{ payment_reference }}</td></tr>
+                    {% endif %}
                 </table>
             {% endif %}
         </div>

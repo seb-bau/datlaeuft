@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar, cast
+from string import Formatter
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -518,6 +519,16 @@ class SettingKeys:
         "Standard-Zahlungsziel in Tagen",
         "Rechnungen",
     )
+    INVOICE_TRANSFER_PAYMENT_TEXT = SettingDefinition[str](
+        "invoice.transfer_payment_text", SettingValueType.STRING,
+        "Bitte überweisen Sie den Rechnungsbetrag bis zum {due_date} auf das unten angegebene Konto. Bitte geben Sie als Verwendungszweck {payment_reference} an.",
+        "Zahlungstext für Überweisung", "Rechnungen",
+    )
+    INVOICE_SEPA_PAYMENT_TEXT = SettingDefinition[str](
+        "invoice.sepa_payment_text", SettingValueType.STRING,
+        "Der Rechnungsbetrag wird am {due_date} über das bestehende SEPA-Mandat von Ihrem unten angegebenen Konto eingezogen.",
+        "Zahlungstext für SEPA-Mandat", "Rechnungen",
+    )
     OFFER_VALIDITY_DAYS = SettingDefinition[int](
         "offer.validity_days",
         SettingValueType.INT,
@@ -779,6 +790,19 @@ def grouped_definitions() -> dict[str, list[SettingDefinition[Any]]]:
     return groups
 
 
+def validate_invoice_payment_text(value: str) -> str:
+    if not isinstance(value, str) or len(value) > 4000:
+        raise ValueError("Der Zahlungstext darf höchstens 4000 Zeichen enthalten.")
+    allowed = {"due_date", "invoice_number", "payment_reference", "amount", "currency", "iban", "bic", "mandate_reference", "creditor_id", "account_holder"}
+    try:
+        for literal, field, specification, conversion in Formatter().parse(value):
+            if field is not None and (field not in allowed or specification or conversion):
+                raise ValueError("Der Zahlungstext enthält einen unbekannten oder ungültigen Platzhalter.")
+    except ValueError as exc:
+        raise ValueError("Bitte gültige Platzhalter im Zahlungstext verwenden.") from exc
+    return value
+
+
 def validate_debug_email_address(value: str) -> str:
     error_message = (
         "Bitte genau eine gültige Debug-E-Mail-Adresse ohne "
@@ -826,6 +850,8 @@ class SettingsService:
         return cast(T, self._deserialize(row.value_text, definition.value_type))
 
     def set(self, definition: SettingDefinition[T], value: T) -> None:
+        if definition.key in {SettingKeys.INVOICE_TRANSFER_PAYMENT_TEXT.key, SettingKeys.INVOICE_SEPA_PAYMENT_TEXT.key}:
+            value = cast(T, validate_invoice_payment_text(value))
         if definition.key == SettingKeys.SMS_API_KEY.key:
             key = str(value or "").strip()
             if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in key):
