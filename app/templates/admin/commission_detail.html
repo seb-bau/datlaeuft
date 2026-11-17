@@ -628,7 +628,7 @@
 
 <div class="card shadow-sm mb-4">
   <div class="card-header fw-semibold">
-    Fotos
+    Dateien und Fotos
   </div>
   <div class="card-body">
     <form
@@ -644,18 +644,18 @@
       >
 
       <div class="col-md-5">
-        <label class="form-label">Foto hinzufügen</label>
+        <label class="form-label">Dateien oder Fotos hinzufügen</label>
         <input
           class="form-control"
           type="file"
           name="photo"
-          accept="image/*"
+          multiple
           required
         >
       </div>
 
       <div class="col-md-5">
-        <label class="form-label">Bildbeschreibung</label>
+        <label class="form-label">Beschreibung</label>
         <input
           class="form-control"
           name="photo_caption"
@@ -672,6 +672,19 @@
         </button>
       </div>
     </form>
+    <p class="form-text">Dokumente (z. B. PDF) bis 25 MB und Fotos bis 15 MB je Datei.</p>
+    {% if attachments %}
+    <div class="list-group mb-3" id="dateien">
+      {% for attachment in attachments %}
+      <a class="list-group-item list-group-item-action" href="{{ url_for('admin.commission_attachment_content', commission_id=item.id, attachment_id=attachment.id) }}" target="_blank" rel="noopener">
+        <i class="bi {{ 'bi-file-earmark-pdf' if attachment.mime_type == 'application/pdf' else 'bi-file-earmark' }} me-2" aria-hidden="true"></i>
+        {{ attachment.original_filename }}
+        <span class="text-muted small">· {{ (attachment.size_bytes / 1024)|round(1) }} KB</span>
+        {% if attachment.caption %}<div class="small text-muted">{{ attachment.caption }}</div>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
     {% if photos %}
     <div class="row g-3">
       {% for photo in photos %}
@@ -702,9 +715,9 @@
       </div>
       {% endfor %}
     </div>
-    {% else %}
+    {% elif not attachments %}
     <div class="text-muted">
-      Keine Fotos vorhanden.
+      Keine Dateien oder Fotos vorhanden.
     </div>
     {% endif %}
   </div>

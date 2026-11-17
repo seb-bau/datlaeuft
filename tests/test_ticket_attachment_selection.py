@@ -28,6 +28,9 @@ class TicketAttachmentSelectionTests(unittest.TestCase):
             setattr(cls, name, importlib.import_module(cls.package_name + "." + name))
         cls.admin.store_commission_photo = cls.photo_service.store_commission_photo
         cls.admin.commission_photo_path = cls.photo_service.commission_photo_path
+        cls.admin.MAX_ATTACHMENT_BYTES = cls.attachment_service.MAX_ATTACHMENT_BYTES
+        cls.admin.commission_attachment_path = cls.attachment_service.commission_attachment_path
+        cls.admin.store_commission_attachment_bytes = cls.attachment_service.store_commission_attachment_bytes
         for name in ("prepare_ticket_attachment_selection", "read_ticket_attachment", "render_ticket_photo", "store_selected_ticket_attachments", "ticket_attachment_choices"):
             setattr(cls.admin, name, getattr(cls.ticket_attachments, name))
         cls.admin.create_pending_commission = cls.service.create_pending_commission
@@ -421,3 +424,4 @@ class TicketAttachmentSelectionTests(unittest.TestCase):
         response = self.client.post("/admin/commissions/new", data=self.form(selected=()))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.models.Commission.query.count(), 0)
+

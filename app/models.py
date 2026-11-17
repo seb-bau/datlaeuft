@@ -122,6 +122,7 @@ class ErpOperationType(str, Enum):
     COMPLETE_COMMISSION = "complete_commission"
     AWAIT_INVOICE = "await_invoice"
     UPLOAD_COMMISSION_PHOTO = "upload_commission_photo"
+    UPLOAD_COMMISSION_ATTACHMENT = "upload_commission_attachment"
 
 
 class ErpOutboxState(str, Enum):
@@ -7468,3 +7469,4 @@ class TicketAiJob(db.Model):
     attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     lock_token: Mapped[str | None] = mapped_column(db.String(32))
+

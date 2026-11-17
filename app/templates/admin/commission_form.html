@@ -724,18 +724,17 @@
           class="form-label small fw-semibold mb-1"
           for="photoUpload"
         >
-          Weitere Fotos hinzufügen
+          Weitere Dateien und Fotos hinzufügen
         </label>
         <input
           class="form-control form-control-sm"
           id="photoUpload"
           type="file"
           name="photo"
-          accept="image/*"
           multiple
         >
         <div class="form-text">
-          Weitere Fotos können auch nachträglich ergänzt werden.
+          Dokumente (z. B. PDF) bis 25 MB und Fotos bis 15 MB je Datei. Dateien können auch nachträglich ergänzt werden.
         </div>
       </div>
 
@@ -744,7 +743,7 @@
           class="form-label small fw-semibold mb-1"
           for="photoCaption"
         >
-          Beschreibung der zusätzlichen Fotos
+          Beschreibung der zusätzlichen Dateien
         </label>
         <input
           class="form-control form-control-sm"
@@ -901,3 +900,4 @@
 ></script>
 <script src="{{ url_for('static', filename='js/ticket_attachment_selection.js') }}" defer></script>
 {% endblock %}
+

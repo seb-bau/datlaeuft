@@ -72,7 +72,7 @@ class WorkerLoopTests(unittest.TestCase):
     def test_round_preserves_step_order_limits_counts_and_progress(self):
         names = (
             "process_mobile_deliveries", "requeue_stale_work",
-            "enqueue_pending_commission_photo_uploads", "process_webhook_batch",
+            "enqueue_pending_commission_photo_uploads", "enqueue_pending_commission_attachment_uploads", "process_webhook_batch",
             "process_outbox_batch", "process_process_info_work",
             "process_external_assignment_mail_batch", "process_push_batch",
             "process_tenant_notification_batch", "process_tenant_sms_notification_batch", "process_completion_notification_batch",
@@ -96,9 +96,9 @@ class WorkerLoopTests(unittest.TestCase):
         actions["process_outbox_batch"].assert_called_once_with(3)
         actions["process_push_batch"].assert_called_once_with(5)
         self.assertEqual(result, {
-            "mobile_deliveries": 0, "webhooks": 3, "outbox": 4,
-            "process_infos": 5, "external_assignment_emails": 6, "push": 7,
-            "tenant_notifications": 8, "tenant_sms_notifications": 9, "completion_notifications": 10, "workflow_notifications": 11, "dms": 12,
+            "mobile_deliveries": 0, "webhooks": 4, "outbox": 5,
+            "process_infos": 6, "external_assignment_emails": 7, "push": 8,
+            "tenant_notifications": 9, "tenant_sms_notifications": 10, "completion_notifications": 11, "workflow_notifications": 12, "dms": 13,
         })
         self.assertEqual(progress.call_count, len(names))
 
@@ -144,3 +144,4 @@ class WorkerLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

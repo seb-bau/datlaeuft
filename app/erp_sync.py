@@ -20,6 +20,7 @@ from app.models import (
     WebhookEvent,
     utc_now,
     CommissionPhoto,
+    CommissionAttachment,
     HealthHeartbeat
 )
 from .wowiport import (
@@ -161,6 +162,22 @@ def enqueue_pending_commission_photo_uploads(
     return len(photos)
 
 
+def enqueue_pending_commission_attachment_uploads(limit: int = 100) -> int:
+    attachments = CommissionAttachment.query.join(Commission).filter(
+        CommissionAttachment.source == "web", CommissionAttachment.active.is_(True),
+        CommissionAttachment.erp_sync_state != CommissionSyncState.SYNCED.value,
+        Commission.erp_id.is_not(None),
+    ).order_by(CommissionAttachment.created_at, CommissionAttachment.id).limit(limit).all()
+    for attachment in attachments:
+        enqueue_erp_operation(
+            attachment.commission, ErpOperationType.UPLOAD_COMMISSION_ATTACHMENT,
+            f"commission-attachment:{attachment.external_document_id}", {"attachment_id": attachment.id},
+        )
+    if attachments:
+        db.session.commit()
+    return len(attachments)
+
+
 def process_due_work(
     outbox_limit: int = 20,
     webhook_limit: int = 50,
@@ -173,6 +190,7 @@ def process_due_work(
         ("mobile_deliveries", process_mobile_deliveries),
         ("requeue_stale_work", requeue_stale_work),
         ("commission_photo_uploads", enqueue_pending_commission_photo_uploads),
+        ("commission_attachment_uploads", enqueue_pending_commission_attachment_uploads),
         ("webhooks", lambda: process_webhook_batch(webhook_limit)),
         ("outbox", lambda: process_outbox_batch(outbox_limit)),
         ("process_infos", process_process_info_work),
@@ -188,7 +206,7 @@ def process_due_work(
     for name, action in steps:
         with worker_step(name):
             count = action()
-        if name not in {"requeue_stale_work", "commission_photo_uploads"}:
+        if name not in {"requeue_stale_work", "commission_photo_uploads", "commission_attachment_uploads"}:
             result[name] = count
         if progress is not None:
             progress()
@@ -488,6 +506,25 @@ def execute_outbox_operation(
         )
         photo.erp_sync_message = None
         photo.erp_synced_at = utc_now()
+    elif operation.operation_type == ErpOperationType.UPLOAD_COMMISSION_ATTACHMENT.value:
+        require_erp_id(commission)
+        attachment = db.session.get(CommissionAttachment, (operation.payload or {}).get("attachment_id"))
+        if attachment is None or attachment.commission_id != commission.id:
+            raise RuntimeError("Die zu übertragende Datei wurde nicht gefunden.")
+        if attachment.active:
+            uploaded_row = service.upload_commission_attachment(commission, attachment)
+            file_guid = uploaded_row.get("FileGuid") or uploaded_row.get("fileGuid") or uploaded_row.get("file_guid")
+            file_id = uploaded_row.get("Id") or uploaded_row.get("id")
+            if not file_guid and file_id is None:
+                raise RuntimeError("OPENWOWI hat keine Dokument-ID zurückgegeben.")
+            attachment.external_file_guid = file_guid
+            attachment.external_id = str(file_id or file_guid)
+            attachment.source_entity_name = "Commission"
+            attachment.source_entity_id = commission.erp_id
+            attachment.external_updated_at = utc_now()
+        attachment.erp_sync_state = CommissionSyncState.SYNCED.value
+        attachment.erp_sync_message = None
+        attachment.erp_synced_at = utc_now()
     else:
         raise RuntimeError(
             f"Unbekannte ERP-Operation: {operation.operation_type}"
@@ -567,6 +604,12 @@ def fail_outbox_operation(
                 CommissionSyncState.FAILED.value
             )
             photo.erp_sync_message = message
+
+    if operation.operation_type == ErpOperationType.UPLOAD_COMMISSION_ATTACHMENT.value:
+        attachment = db.session.get(CommissionAttachment, (operation.payload or {}).get("attachment_id"))
+        if attachment is not None and attachment.commission_id == operation.commission_id:
+            attachment.erp_sync_state = CommissionSyncState.FAILED.value
+            attachment.erp_sync_message = message
 
     operation.state = ErpOutboxState.FAILED.value
     operation.available_at = utc_now() + timedelta(seconds=delay_seconds)
@@ -868,3 +911,4 @@ def run_worker(
 
         if not any(result.values()):
             sleep(max(poll_seconds, 1))
+

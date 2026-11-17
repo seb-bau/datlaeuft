@@ -27,6 +27,7 @@ from .models import (
     utc_now,
     WowiCompanyCode,
     CommissionPhoto,
+    CommissionAttachment,
     PushEventType,
     ErpOperationType,
     ErpOutboxOperation,
@@ -42,6 +43,7 @@ from .utils import (
 from .document_sync import sync_commission_documents
 from .push_service import enqueue_commission_push
 from .photo_service import commission_photo_path
+from .attachment_service import commission_attachment_path
 from .commission_priority import sync_commission_priority
 
 ERP_LOCAL_STATUS = {
@@ -536,18 +538,28 @@ class WowiportService:
             commission: Commission,
             photo: CommissionPhoto,
     ) -> dict[str, Any]:
+        return self._upload_commission_document(commission, photo, commission_photo_path(photo.storage_name))
+
+    def upload_commission_attachment(
+            self,
+            commission: Commission,
+            attachment: CommissionAttachment,
+    ) -> dict[str, Any]:
+        return self._upload_commission_document(commission, attachment, commission_attachment_path(attachment.storage_name))
+
+    def _upload_commission_document(self, commission, document, path) -> dict[str, Any]:
         if commission.erp_id is None:
             raise RuntimeError(
                 "Der Auftrag besitzt noch keine OPENWOWI-ID."
             )
 
         external_document_id = str(
-            photo.external_document_id or ""
+            document.external_document_id or ""
         ).strip()
 
         if not external_document_id:
             raise RuntimeError(
-                "Das Foto besitzt keine externe Dokument-ID."
+                "Die Datei besitzt keine externe Dokument-ID."
             )
 
         def row_value(
@@ -587,20 +599,16 @@ class WowiportService:
         if existing_row is not None:
             return existing_row
 
-        path = commission_photo_path(
-            photo.storage_name
-        )
-
         if not path.is_file():
             raise RuntimeError(
-                "Die lokale Fotodatei wurde nicht gefunden."
+                "Die lokale Datei wurde nicht gefunden."
             )
 
         content = path.read_bytes()
 
         if not content:
             raise RuntimeError(
-                "Die lokale Fotodatei ist leer."
+                "Die lokale Datei ist leer."
             )
 
         file_type_id = settings.get(
@@ -620,7 +628,7 @@ class WowiportService:
                 "Es ist keine gültige Datenschutzkategorie konfiguriert."
             )
 
-        creation_date = photo.created_at or utc_now()
+        creation_date = document.created_at or utc_now()
 
         if creation_date.tzinfo is None:
             creation_date = creation_date.replace(
@@ -632,7 +640,7 @@ class WowiportService:
             )
 
         payload = {
-            "Filename": photo.original_filename,
+            "Filename": document.original_filename,
             "CreationDate": creation_date.strftime(
                 "%Y-%m-%dT%H:%M:%S"
             ),
@@ -675,7 +683,7 @@ class WowiportService:
             return existing_row
 
         raise RuntimeError(
-            "OPENWOWI hat das Foto nicht mit Dokumentdaten bestätigt."
+            "OPENWOWI hat die Datei nicht mit Dokumentdaten bestätigt."
         )
 
     def download_document_content(
@@ -4628,3 +4636,4 @@ def _signature_value(value: Any) -> str | None:
         return value.isoformat()
 
     return str(value)
+

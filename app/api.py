@@ -1828,6 +1828,8 @@ def commission_attachment_content(
     response.headers[
         "X-Content-Type-Options"
     ] = "nosniff"
+    response.cache_control.private = True
+    response.cache_control.public = False
 
     return response
 
@@ -4919,3 +4921,4 @@ def serialize_appointment_request(
             for proposal in item.proposals
         ],
     }
+

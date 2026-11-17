@@ -205,6 +205,15 @@ def execute_tenant_sms_notification(item_id: int) -> None:
                     before_send=before_send,
                 )
                 result = {"state": outcome.state, "message_id": outcome.message_id}
+                if outcome.state == "sent":
+                    reason = "Mieterinformation zur Beauftragung"
+                    current_app.logger.info(
+                        "sms_sent recipient=%s commission_id=%s commission_number=%s reason=%s notification_id=%s message_id=%s",
+                        number, commission.id, commission.erp_idnum, reason, item.id, outcome.message_id,
+                        extra={"recipient_number": number, "commission_id": commission.id,
+                               "commission_number": commission.erp_idnum, "reason": reason,
+                               "notification_id": item.id, "sms_message_id": outcome.message_id},
+                    )
             except SmsSuppressed:
                 item.payload = {**item.payload, "submitting": None}
                 item.state = "discarded"
@@ -258,7 +267,11 @@ def fail_tenant_sms_notification(item_id: int, error: Exception) -> None:
     item.available_at = utc_now() + timedelta(seconds=min(60 * (2 ** min(max(item.attempt_count - 1, 0), 6)), 3600))
     item.locked_at = None
     db.session.commit()
-    current_app.logger.error("tenant_sms_notification_failed notification_id=%s commission_id=%s state=%s", item.id, item.commission_id, item.state)
+    current_app.logger.error(
+        "tenant_sms_notification_failed notification_id=%s commission_id=%s state=%s error=%s",
+        item.id, item.commission_id, item.state, error,
+        exc_info=(type(error), error, error.__traceback__),
+    )
 
 
 def process_tenant_sms_notification_batch(limit: int = 20) -> int:
@@ -279,3 +292,4 @@ def process_tenant_sms_notification_batch(limit: int = 20) -> int:
             fail_tenant_sms_notification(item_id, exc)
         processed += 1
     return processed
+

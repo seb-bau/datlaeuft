@@ -164,3 +164,21 @@ test("mixed ticket attachments include PDF and Office documents with working lin
     state.elements.restoreTicketAttachments.click();
     assert.deepEqual(submittedGuids(state), ["kitchen", "bathroom", "pdf", "word"]);
 });
+
+test("local PDFs and Office files use document cards and retain their upload bytes when another file is removed", () => {
+    const state = fixture({ticket: false});
+    const image = {name: "foto.jpg", type: "image/jpeg"};
+    const pdf = {name: "hinweise.PDF", type: ""};
+    const word = {name: "auftrag.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"};
+    state.elements.photoUpload.files = [image, pdf, word];
+    state.elements.photoUpload.dispatchEvent({type: "change"});
+    const cards = state.elements.uploadedPhotoPreviews.children;
+    assert.equal(descendants(cards[0]).filter(element => element.tag === "img").length, 1);
+    assert.equal(descendants(cards[1]).filter(element => element.tag === "img").length, 0);
+    assert.ok(descendants(cards[1]).some(element => element.textContent === "PDF-Dokument"));
+    assert.ok(descendants(cards[1]).some(element => element.href === "blob:hinweise.PDF"));
+    assert.ok(descendants(cards[2]).some(element => element.textContent === "DOCX-Datei"));
+    removePhoto(cards[0]);
+    assert.deepEqual(state.elements.photoUpload.files, [pdf, word]);
+});
+

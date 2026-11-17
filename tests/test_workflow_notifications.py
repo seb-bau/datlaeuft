@@ -241,6 +241,34 @@ class WorkflowNotificationTests(unittest.TestCase):
         self.notifications.process_workflow_notification_batch()
         self.assertEqual(str(self.send.call_args.args[0]["To"]), "external@example.invalid")
 
+    def test_failed_workflow_logs_the_problem_and_notification_context(self):
+        commission = self.commission(is_high_priority=True, execution_to=None, erp_id=None, erp_idnum=None, erp_sync_state="pending")
+        item = self.notifications.enqueue_priority_notification(commission, self.models.PushEventType.NEW_COMMISSION)
+        self.db.session.commit()
+        with self.assertLogs(self.app.logger, level="ERROR") as logs:
+            self.notifications.process_workflow_notification_batch()
+        record = logs.records[0]
+        self.assertIn("noch nicht vollständig mit Wowiport synchronisiert", record.getMessage())
+        self.assertEqual(record.notification_id, item.id)
+        self.assertEqual(record.commission_id, commission.id)
+        self.assertEqual(record.notification_kind, "priority")
+        self.assertEqual(record.attempt_count, 1)
+        self.assertEqual(record.error_type, "RuntimeError")
+        self.assertIsNotNone(record.exc_info)
+        self.assertIn(item.last_error, record.getMessage())
+
+    def test_wrapped_delivery_errors_include_the_original_cause_in_the_log(self):
+        commission = self.commission(is_high_priority=True, execution_to=None)
+        self.notifications.enqueue_priority_notification(commission, self.models.PushEventType.NEW_COMMISSION)
+        self.db.session.commit()
+        error = RuntimeError("E-Mail-Versand fehlgeschlagen")
+        error.__cause__ = ConnectionRefusedError("SMTP-Verbindung abgelehnt")
+        self.send.side_effect = error
+        with self.assertLogs(self.app.logger, level="ERROR") as logs:
+            self.notifications.process_workflow_notification_batch()
+        self.assertIn("SMTP-Verbindung abgelehnt", "\n".join(logs.output))
+        self.assertIs(logs.records[0].exc_info[1], error)
+
     def test_a_priority_email_waits_for_the_erp_number_and_a_reassigned_notice_is_discarded(self):
         commission = self.commission(is_high_priority=True, execution_to=None, erp_id=None, erp_idnum=None, erp_sync_state="pending")
         item = self.notifications.enqueue_priority_notification(commission, self.models.PushEventType.NEW_COMMISSION)
@@ -526,3 +554,4 @@ class WorkflowMigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

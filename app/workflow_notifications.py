@@ -335,6 +335,13 @@ def process_workflow_notification_batch(limit=20):
                 item.locked_at = None
                 item.available_at = utc_now() + timedelta(seconds=min(60 * 2 ** min(item.attempt_count - 1, 6), 3600))
                 db.session.commit()
-                current_app.logger.error("workflow_notification_failed id=%s kind=%s state=%s", item.id, item.kind, item.state)
+                current_app.logger.exception(
+                    "workflow_notification_failed id=%s kind=%s state=%s commission_id=%s ticket_id=%s attempt=%s error=%s",
+                    item.id, item.kind, item.state, item.commission_id, item.ticket_id, item.attempt_count, exc,
+                    extra={"notification_id": item.id, "notification_kind": item.kind, "notification_state": item.state,
+                           "commission_id": item.commission_id, "ticket_id": item.ticket_id,
+                           "attempt_count": item.attempt_count, "error_type": type(exc).__name__, "error": str(exc)},
+                )
         processed += 1
     return processed
+
