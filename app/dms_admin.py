@@ -7,6 +7,7 @@ from flask import (
     request, send_file, url_for,
 )
 
+from .utils import commission_detail_url
 from .audit import audit
 from .auth import admin_required, foreman_required
 from .dms_client import DmsError, normalize_hostname
@@ -434,5 +435,5 @@ def work_report_regenerate(commission_id):
         db.session.rollback()
         flash(str(exc), "danger")
     return redirect(
-        url_for("admin.commission_detail", commission_id=commission.id)
+        commission_detail_url(commission.id)
     )

@@ -13,6 +13,7 @@ from flask import (
 )
 from flask_login import current_user
 
+from .utils import commission_detail_url
 from .audit import audit
 from .auth import foreman_required
 from .extensions import db
@@ -287,10 +288,7 @@ def local_official(commission_id: int):
         flash(str(exc), "danger")
 
     return redirect(
-        url_for(
-            "admin.commission_detail",
-            commission_id=commission.id,
-        ) + "#sachbearbeitung"
+        commission_detail_url(commission.id, "sachbearbeitung")
     )
 
 
@@ -333,3 +331,4 @@ def generate_keys():
     settings.set(SettingKeys.WEB_PUSH_ENABLED, True)
     db.session.commit()
     click.echo("Web-Push-Schlüssel wurden angelegt.")
+

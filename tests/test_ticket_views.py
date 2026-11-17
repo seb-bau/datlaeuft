@@ -56,7 +56,7 @@ class TicketViewTests(unittest.TestCase):
         for node in admin_source.body:
             if not isinstance(node, ast.ImportFrom) or node.level != 1:
                 continue
-            if node.module in {"models", "extensions", "blacklist", "ticket_filters"}:
+            if node.module in {"models", "extensions", "blacklist", "ticket_filters", "utils"}:
                 continue
             module_name = cls.package_name + "." + node.module
             module = modules.setdefault(module_name, types.ModuleType(module_name))
@@ -441,3 +441,4 @@ class TicketViewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

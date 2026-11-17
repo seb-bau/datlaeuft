@@ -78,6 +78,7 @@
     <form method="post"
           action="{{ url_for('dms_admin.work_report_regenerate', commission_id=item.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ list_return_url }}">
       <button class="btn btn-outline-primary">Arbeitsnachweis neu erzeugen</button>
     </form>
     {% endif %}
@@ -91,6 +92,7 @@
         name="csrf_token"
         value="{{ csrf_token() }}"
       >
+      <input type="hidden" name="return_to" value="{{ list_return_url }}">
       <input
         type="hidden"
         name="next"
@@ -113,7 +115,7 @@
     {% endif %}
     <a
       class="btn btn-outline-secondary"
-      href="{{ url_for('admin.commissions') }}"
+      href="{{ list_return_url }}"
     >
       Zurück
     </a>
@@ -128,6 +130,7 @@
     {% if can_approve %}
     <form method="post" action="{{ url_for('admin.commission_approve', commission_id=item.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ list_return_url }}">
       <button class="btn btn-primary" type="submit">Auftrag freigeben</button>
     </form>
     {% elif current_user.id == item.created_by_user_id %}
@@ -143,6 +146,7 @@
       action="{{ url_for('admin.commission_priority', commission_id=item.id) }}"
       class="card card-body shadow-sm mb-4">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ list_return_url }}">
   <div class="row g-2 align-items-end">
     <div class="col-sm-4">
       <label class="form-label" for="commissionPriority">Priorität</label>
@@ -302,6 +306,7 @@
       action="{{ url_for('process_info_web.local_official', commission_id=item.id) }}"
     >
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ list_return_url }}">
 
       <label class="form-label" for="localOfficial">
         Zuständiger Sachbearbeiter
@@ -430,6 +435,7 @@
         name="csrf_token"
         value="{{ csrf_token() }}"
       >
+      <input type="hidden" name="return_to" value="{{ list_return_url }}">
 
       <div class="mb-3">
         <label
@@ -644,6 +650,7 @@
         name="csrf_token"
         value="{{ csrf_token() }}"
       >
+      <input type="hidden" name="return_to" value="{{ list_return_url }}">
 
       <div class="col-md-5">
         <label class="form-label">Dateien oder Fotos hinzufügen</label>

@@ -236,7 +236,7 @@ from .commission_approval import approve_commission, approval_user_choices, can_
 from .push_preferences import admin_push_preference_rows, save_admin_push_preferences
 from .workflow_notifications import overdue_commission_filter
 from .ticket_replies import enqueue_ticket_reply, ticket_reply_recipients
-from .utils import format_local_datetime, parse_local_datetime
+from .utils import commission_detail_url, commission_list_return_url, format_local_datetime, parse_local_datetime
 
 from .process_info_service import (
     create_office_info,
@@ -7957,6 +7957,22 @@ def commission_official_labels(
     return result
 
 
+def commission_craftsman_labels(items, external_craftsmen):
+    result = {}
+    for item in items:
+        if item.user is not None:
+            result[item.id] = (f"user:{item.user.id}", f"{item.user.display_name} (Intern)")
+        elif item.craftsman_erp_id is not None:
+            external = external_craftsmen.get(item.craftsman_erp_id)
+            name = external.display_name if external else f"Handwerker-ID {item.craftsman_erp_id}"
+            if item.assignment_type == CommissionAssignmentType.EXTERNAL.value:
+                name += " (Extern)"
+            result[item.id] = (f"erp:{item.craftsman_erp_id}", name)
+        else:
+            result[item.id] = ("unassigned", "Nicht zugewiesen")
+    return result
+
+
 @admin_bp.get("/admin/commissions")
 @foreman_required
 def commissions() -> Any:
@@ -7984,6 +8000,7 @@ def commissions() -> Any:
     priority_filter = str(
         request.args.get("priority") or "all"
     ).strip()
+    craftsman_filter = str(request.args.get("craftsman") or "all").strip()
 
     if local_status_filter not in {"all", *local_status_labels}:
         local_status_filter = "all"
@@ -8051,6 +8068,7 @@ def commissions() -> Any:
         Commission.synced_at.desc()
     ).all()
 
+    candidate_items = list(items)
     officials_by_commission_id = commission_official_labels(items)
     official_options = dict(officials_by_commission_id.values())
     official_options.pop("unassigned", None)
@@ -8077,7 +8095,7 @@ def commissions() -> Any:
 
     external_craftsman_ids = {
         item.craftsman_erp_id
-        for item in items
+        for item in candidate_items
         if (
             item.assignment_type
             == CommissionAssignmentType.EXTERNAL.value
@@ -8107,6 +8125,12 @@ def commissions() -> Any:
             )
         }
 
+    craftsmen_by_commission_id = commission_craftsman_labels(candidate_items, external_craftsmen_by_erp_id)
+    craftsman_options = dict(craftsmen_by_commission_id.values())
+    craftsman_choices = sorted(craftsman_options.items(), key=lambda choice: (choice[1].casefold(), choice[0]))
+    if craftsman_filter != "all":
+        items = [item for item in items if craftsmen_by_commission_id[item.id][0] == craftsman_filter]
+
     return render_template(
         "admin/commissions.html",
         format_execution_datetime=format_local_datetime,
@@ -8124,6 +8148,10 @@ def commissions() -> Any:
         local_status_filter=local_status_filter,
         local_status_labels=local_status_labels,
         priority_filter=priority_filter,
+        craftsman_filter=craftsman_filter,
+        craftsman_options=craftsman_options,
+        craftsman_choices=craftsman_choices,
+        list_return_url=url_for("admin.commissions") + ("?" + request.full_path.partition("?")[2] if request.query_string else ""),
     )
 
 
@@ -8146,7 +8174,7 @@ def commission_priority(commission_id: int) -> Any:
         flash(str(exc), "danger")
 
     return redirect(
-        url_for("admin.commission_detail", commission_id=item.id)
+        commission_detail_url(item.id)
     )
 
 
@@ -8288,6 +8316,7 @@ def commission_detail(
     return render_template(
         "admin/commission_detail.html",
         item=item,
+        list_return_url=commission_list_return_url(),
         manual_appointment_text=format_manual_appointment(item),
         format_execution_datetime=format_local_datetime,
         wowiport_url=commission_wowiport_url(item),
@@ -8373,11 +8402,7 @@ def commission_info_create(
         )
 
     return redirect(
-        url_for(
-            "admin.commission_detail",
-            commission_id=commission.id,
-        )
-        + "#zusatzinformationen"
+        commission_detail_url(commission.id, "zusatzinformationen")
     )
 
 
@@ -8435,7 +8460,7 @@ def commission_approve(commission_id: int) -> Any:
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
-    return redirect(url_for("admin.commission_detail", commission_id=commission_id))
+    return redirect(commission_detail_url(commission_id))
 
 
 def commission_photo_for_admin(
@@ -8537,10 +8562,7 @@ def commission_photo_upload(
             "danger",
         )
         return redirect(
-            url_for(
-                "admin.commission_detail",
-                commission_id=commission.id,
-            )
+            commission_detail_url(commission.id)
         )
 
     stored_paths = []
@@ -8575,10 +8597,7 @@ def commission_photo_upload(
                 current_app.logger.exception("commission_attachment_cleanup_failed")
 
     return redirect(
-        url_for(
-            "admin.commission_detail",
-            commission_id=commission.id,
-        )
+        commission_detail_url(commission.id)
     )
 
 

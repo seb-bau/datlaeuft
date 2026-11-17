@@ -4,8 +4,34 @@ import gettext
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Any
+from urllib.parse import urlsplit
 
 import pycountry
+from flask import request, url_for
+
+
+def commission_list_return_url() -> str:
+    fallback = url_for("admin.commissions")
+    value = request.values.get("return_to", "")
+    if "\\" in value or any(ord(character) < 32 or ord(character) == 127 for character in value):
+        return fallback
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return fallback
+    if parsed.scheme or parsed.netloc or parsed.path != fallback:
+        return fallback
+    return fallback + ("?" + parsed.query if parsed.query else "")
+
+
+def commission_detail_url(commission_id: int, anchor: str | None = None) -> str:
+    return_url = commission_list_return_url()
+    values = {"commission_id": commission_id}
+    if return_url != url_for("admin.commissions"):
+        values["return_to"] = return_url
+    if anchor:
+        values["_anchor"] = anchor
+    return url_for("admin.commission_detail", **values)
 
 
 def country_lookup_key(value: Any) -> str:
