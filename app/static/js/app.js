@@ -104,10 +104,43 @@ document.addEventListener("DOMContentLoaded", function () {
       filterRow
     );
 
+    const stateOptions = {};
+    if (table.dataset.stateKey) {
+      const prefix = `datatable:${table.dataset.stateKey}:${window.location.pathname}:`;
+      const storageKey = prefix + window.location.search;
+      stateOptions.stateSave = true;
+      stateOptions.stateDuration = -1;
+      stateOptions.stateSaveCallback = (settings, data) => {
+        try {
+          window.sessionStorage.setItem(storageKey, JSON.stringify(data));
+        } catch {}
+      };
+      stateOptions.stateLoadCallback = () => {
+        try {
+          return JSON.parse(window.sessionStorage.getItem(storageKey) || "null");
+        } catch {
+          return null;
+        }
+      };
+      document.querySelectorAll("[data-reset-table-state]").forEach(link => {
+        if (link.dataset.resetTableState !== table.dataset.stateKey) return;
+        link.addEventListener("click", () => {
+          try {
+            const storage = window.sessionStorage;
+            for (let index = storage.length - 1; index >= 0; index -= 1) {
+              const key = storage.key(index);
+              if (key?.startsWith(prefix)) storage.removeItem(key);
+            }
+          } catch {}
+        });
+      });
+    }
+
     const dataTable = new DataTable(
       table,
       {
         titleRow: 0,
+        ...stateOptions,
         ordering: true,
         searching: true,
         paging: true,
@@ -158,6 +191,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const column = dataTable.column(
           filter.columnIndex
         );
+        filter.input.value = column.search();
 
         filter.input.addEventListener(
           "input",

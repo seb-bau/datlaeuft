@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - app/mail_service.py
+      - app/utils.py
+      - app/dms_admin.py
+      - app/static/js/app.js
+      - app/templates/admin/commission_detail.html
       - app/document_articles.py
       - app/document_previews.py
       - app/invoice_document.py
@@ -85,6 +89,10 @@ on:
     branches: [master]
     paths:
       - app/mail_service.py
+      - app/utils.py
+      - app/dms_admin.py
+      - app/static/js/app.js
+      - app/templates/admin/commission_detail.html
       - app/document_articles.py
       - app/document_previews.py
       - app/invoice_document.py

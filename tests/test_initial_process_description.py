@@ -128,6 +128,7 @@ class InitialProcessDescriptionTests(unittest.TestCase):
             "render_template": lambda template, **values: values, "sync_process_infos": self.service.sync_process_infos,
             "format_manual_appointment": lambda item: "", "format_local_datetime": str,
             "commission_wowiport_url": lambda item: None, "can_approve_commission": lambda *args: False,
+            "commission_list_return_url": lambda: "/admin/commissions",
             "external_commission_or_404": lambda public_id: self.commission,
             "external_commission_photos": lambda item: [], "WowiportService": lambda: self.remote,
             "or_": or_, "uuid4": uuid4,
@@ -274,3 +275,4 @@ class InitialProcessDescriptionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
