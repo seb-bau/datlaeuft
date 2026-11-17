@@ -1,0 +1,41 @@
+{% if editable %}
+<div class="modal fade" id="documentServicePositionModal" tabindex="-1"
+     aria-labelledby="documentServicePositionTitle" aria-hidden="true" data-document-type="{{ document_type }}">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title fs-5" id="documentServicePositionTitle">Leistungsposition hinzufügen</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <div id="servicePositionError" class="alert alert-danger" role="alert" hidden></div>
+        <div class="mb-3">
+          <label for="servicePositionCraft" class="form-label">1. Gewerk auswählen</label>
+          <select id="servicePositionCraft" class="form-select">
+            <option value="">Bitte Gewerk auswählen</option>
+            {% for craft in craft_activities %}
+            <option value="{{ craft.id }}">{{ craft.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label for="servicePositionItem" class="form-label">2. Leistungsposition auswählen</label>
+          <select id="servicePositionItem" class="form-select" disabled aria-describedby="servicePositionStatus">
+            <option value="">Bitte zuerst ein Gewerk auswählen</option>
+          </select>
+          <div class="form-text" id="servicePositionStatus" role="status">Bitte zuerst ein Gewerk auswählen.</div>
+        </div>
+        {% if document_type == 'offer' %}
+        <p class="small text-muted mb-0">Die Leistungspositionen eines Angebots gehören zu einem gemeinsamen Gewerk.</p>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="button" class="btn btn-primary" id="servicePositionAdd" disabled>Position übernehmen</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="application/json" id="documentServicePositionData">{{ catalogue_items|tojson }}</script>
+<script src="{{ url_for('static', filename='js/document_service_positions.js') }}" defer></script>
+{% endif %}

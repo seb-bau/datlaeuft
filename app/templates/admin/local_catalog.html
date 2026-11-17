@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Lokaler Katalog{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div><h1 class="h3 mb-1">Lokaler Katalog</h1><p class="text-muted mb-0">Artikel für Angebote und Rechnungen ohne Lagerbestandsführung.</p></div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('document_articles.catalog_import') }}">Artikel importieren</a>
+    <a class="btn btn-primary" href="{{ url_for('document_articles.catalog_edit') }}">Artikel anlegen</a>
+  </div>
+</div>
+<form class="card card-body mb-4" method="get">
+  <div class="row g-3 align-items-end">
+    <div class="col-md-5"><label class="form-label" for="catalogSearch">Artikel suchen</label><input class="form-control" id="catalogSearch" name="q" value="{{ search }}" placeholder="Artikelnummer oder Bezeichnung"></div>
+    <div class="col-md-3"><label class="form-label" for="catalogArea">Geschäftsbereich</label><select class="form-select" id="catalogArea" name="business_area"><option value="">Alle Geschäftsbereiche</option>{% for area in areas %}<option value="{{ area }}" {{ 'selected' if area == business_area else '' }}>{{ area }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label" for="catalogState">Status</label><select class="form-select" id="catalogState" name="state">{% for value, label in [('active', 'Aktiv'), ('inactive', 'Inaktiv'), ('all', 'Alle')] %}<option value="{{ value }}" {{ 'selected' if selected_state == value else '' }}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Filtern</button></div>
+  </div>
+</form>
+<div class="card shadow-sm"><div class="card-header">{{ pagination.total }} Artikel</div><div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Artikelnummer</th><th>Bezeichnung</th><th>Geschäftsbereich</th><th>Warengruppe</th><th>Einheit</th><th class="text-end">Nettopreis</th><th>Steuersatz</th><th>MwSt.</th><th>Status</th><th>Aktionen</th></tr></thead>
+    <tbody>{% for article in pagination.items %}<tr>
+      <td>{{ article.item_number }}</td><td>{{ article.name }}</td><td>{{ article.business_area or '–' }}</td><td>{{ article.product_group or '–' }}</td><td>{{ article.unit }}</td>
+      <td class="text-end text-nowrap">{{ ('%.4f'|format(article.price_net)).replace('.', ',') }} €</td><td>{{ article.tax_label }}</td><td class="text-nowrap">{{ ('%.2f'|format(article.vat_rate)).replace('.', ',') }} %</td><td>{{ 'Aktiv' if article.active else 'Inaktiv' }}</td>
+      <td><div class="d-flex gap-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('document_articles.catalog_edit', item_id=article.id) }}">Bearbeiten</a><form method="post" action="{{ url_for('document_articles.catalog_active', item_id=article.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="active" value="{{ 'false' if article.active else 'true' }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Deaktivieren' if article.active else 'Aktivieren' }}</button></form></div></td>
+    </tr>{% else %}<tr><td colspan="10" class="text-muted p-4">Keine passenden Artikel vorhanden.</td></tr>{% endfor %}</tbody>
+  </table>
+</div></div>
+<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Katalogseiten">
+  <span class="text-muted">Seite {{ pagination.page }} von {{ pagination.pages or 1 }}</span><div class="d-flex gap-2">
+    {% if pagination.has_prev %}<a class="btn btn-outline-secondary" href="{{ url_for('document_articles.catalog', page=pagination.prev_num, q=search, business_area=business_area, state=selected_state) }}">Zurück</a>{% endif %}
+    {% if pagination.has_next %}<a class="btn btn-outline-secondary" href="{{ url_for('document_articles.catalog', page=pagination.next_num, q=search, business_area=business_area, state=selected_state) }}">Weiter</a>{% endif %}
+  </div>
+</nav>
+{% endblock %}

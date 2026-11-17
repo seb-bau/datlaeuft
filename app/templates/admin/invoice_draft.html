@@ -639,26 +639,13 @@
 
         {% if editable %}
         <div class="d-flex gap-2">
-          <select
-            class="form-select form-select-sm"
-            id="cataloguePosition"
-          >
-            <option value="">
-              Leistungsposition auswählen
-            </option>
-            {% for task_template in task_templates %}
-            <option value="{{ task_template.id }}">
-              {{ task_template.code }} · {{ task_template.title }}
-            </option>
-            {% endfor %}
-          </select>
-
           <button
             class="btn btn-sm btn-outline-primary"
             id="addCataloguePosition"
             type="button"
+            data-bs-toggle="modal" data-bs-target="#documentServicePositionModal"
           >
-            Aus Katalog einfügen
+            Leistungsposition hinzufügen
           </button>
 
           <button
@@ -965,12 +952,11 @@
 </div>
 
 <script>
-  const catalogueItems = {{ catalogue_items|tojson }};
+
   const positionsBody = document.getElementById("invoicePositions");
   const emptyPositionMessage = document.getElementById("emptyPositionMessage");
   const addFreePosition = document.getElementById("addFreePosition");
-  const addCataloguePosition = document.getElementById("addCataloguePosition");
-  const cataloguePosition = document.getElementById("cataloguePosition");
+
 
   function escapePositionValue(value) {
     return String(value || "")
@@ -1081,23 +1067,6 @@
       sourceType: "free",
       taskTemplateId: "",
       description: ""
-    });
-  });
-
-  addCataloguePosition.addEventListener("click", function () {
-    const selectedId = Number(cataloguePosition.value);
-    const selectedItem = catalogueItems.find(function (item) {
-      return item.id === selectedId;
-    });
-
-    if (!selectedItem) {
-      return;
-    }
-
-    createPositionRow({
-      sourceType: "catalog",
-      taskTemplateId: selectedItem.id,
-      description: selectedItem.title
     });
   });
 
@@ -1239,5 +1208,6 @@ document.addEventListener("DOMContentLoaded", () => {
 {% endif %}
 {% with document_type='invoice' %}
   {% include 'admin/_document_articles.html' %}
+{% include 'admin/_document_service_positions.html' %}
 {% endwith %}
 {% endblock %}

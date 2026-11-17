@@ -145,6 +145,17 @@ def commission_creation_required(view: F) -> F:
     return wrapped
 
 
+def accounting_required(view: F) -> F:
+    @wraps(view)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if not current_user.is_authenticated:
+            return redirect(url_for("auth.login", next=request.full_path))
+        if not (current_user.is_admin or current_user.can_manage_invoices or current_user.can_manage_offers):
+            abort(403)
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def invoice_required(view: F) -> F:
     @wraps(view)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -691,3 +702,4 @@ def validate_microsoft_id_token(id_token: str) -> dict[str, Any]:
         audience=client_ids,
         issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0"
     )
+
