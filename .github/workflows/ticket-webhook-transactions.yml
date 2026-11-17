@@ -10,6 +10,12 @@ on:
       - app/templates/admin/commission_detail.html
       - app/document_articles.py
       - app/invoice_payments.py
+      - app/invoice_attachments.py
+      - app/invoice_delivery.py
+      - app/static/js/invoice_delivery.js
+      - app/templates/admin/_invoice_attachments.html
+      - app/templates/admin/_invoice_delivery.html
+      - migrations/versions/*invoice_pdf_attachments.py
       - app/invoice_service.py
       - app/static/js/invoice_payments.js
       - app/static/js/recipient_lookup.js
@@ -106,6 +112,12 @@ on:
       - app/templates/admin/commission_detail.html
       - app/document_articles.py
       - app/invoice_payments.py
+      - app/invoice_attachments.py
+      - app/invoice_delivery.py
+      - app/static/js/invoice_delivery.js
+      - app/templates/admin/_invoice_attachments.html
+      - app/templates/admin/_invoice_delivery.html
+      - migrations/versions/*invoice_pdf_attachments.py
       - app/invoice_service.py
       - app/static/js/invoice_payments.js
       - app/static/js/recipient_lookup.js
@@ -261,6 +273,7 @@ jobs:
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
         run: |
+          python -m unittest discover -s tests -p test_invoice_delivery_migration.py -v
           python -m unittest discover -s tests -p test_approval_migration_recovery.py -v
           python -m unittest discover -s tests -p test_commission_approval.py -v
           python -m unittest discover -s tests -p test_commission_object_history.py -v

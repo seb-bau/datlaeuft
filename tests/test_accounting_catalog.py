@@ -71,7 +71,7 @@ class AccountingCatalogTests(unittest.TestCase):
         cls.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
         cls.tables = [getattr(cls.models, name).__table__ for name in (
             "User", "AuditLog", "LocalCatalogItem", "CraftActivity", "TimeTaskTemplate", "WowiCompanyCode",
-            "Invoice", "Offer", "InvoicePosition", "OfferPosition", "InventoryItem", "InventoryItemType", "InventoryItemGroup",
+            "Invoice", "InvoiceAttachment", "Offer", "InvoicePosition", "OfferPosition", "InventoryItem", "InventoryItemType", "InventoryItemGroup",
         )]
 
     def setUp(self):

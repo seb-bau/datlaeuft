@@ -76,5 +76,8 @@ def render_document_preview(kind: str, document) -> bytes:
             target = Path(directory) / "preview.pdf"
             source.write_bytes(raw_data)
             merge(source, target, background)
-            return target.read_bytes()
+            raw_data = target.read_bytes()
+    if kind == "invoice":
+        from .invoice_attachments import append_invoice_attachments
+        raw_data = append_invoice_attachments(document, raw_data)
     return raw_data

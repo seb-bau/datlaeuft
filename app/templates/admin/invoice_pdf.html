@@ -176,7 +176,7 @@
         }
 
         .payment {
-            margin-top: 4mm;
+            margin-top: 6mm;
             line-height: 1.3;
             font-size: 9pt;
             break-inside: avoid;
@@ -377,7 +377,6 @@
             {% endif %}
 
             {% if payment_iban %}
-                <div class="fw-semibold">{{ payment_method_label }} · {{ 'Einzugskonto' if payment_method == 'sepa_debit' else 'Zahlungskonto' }}</div>
                 <table class="bank-details">
                     {% if payment_account_holder %}
                         <tr>
@@ -387,9 +386,9 @@
                     {% endif %}
                     <tr>
                         <td>IBAN</td>
-                        <td>{{ payment_iban }}</td>
+                        <td>{{ payment_iban_display }}</td>
                     </tr>
-                    {% if payment_bic %}
+                    {% if payment_bic and payment_method != 'sepa_debit' %}
                         <tr>
                             <td>BIC</td>
                             <td>{{ payment_bic }}</td>

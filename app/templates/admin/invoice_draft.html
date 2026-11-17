@@ -50,6 +50,10 @@
             >
                 Rechnung öffnen
             </a>
+            {% if item.status == 'finalized' %}
+            <button type="button" class="btn btn-outline-primary ms-2" data-bs-toggle="modal" data-bs-target="#invoiceDeliveryModal">Rechnung versenden</button>
+            <div class="small text-muted mt-2" id="invoiceDeliveryLastState" aria-live="polite"></div>
+            {% endif %}
                         {% if has_any_work_reports %}
             <form
               method="get"
@@ -872,6 +876,9 @@
     </div>
   </fieldset>
 </form>
+{% include 'admin/_invoice_attachments.html' %}
+{% include 'admin/_invoice_delivery.html' %}
+<script src="{{ url_for('static', filename='js/invoice_delivery.js') }}" defer></script>
 {% if editable and item.commission_links %}
 <form
   method="post"

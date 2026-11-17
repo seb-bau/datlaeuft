@@ -19,6 +19,7 @@ from .models import (
     InvoiceKind,
 )
 from .invoice_payments import invoice_payment_context
+from .invoice_attachments import append_invoice_attachments
 
 MONEY_QUANTIZER = Decimal("0.01")
 QUANTITY_QUANTIZER = Decimal("0.001")
@@ -1242,13 +1243,10 @@ def _apply_stationery(
     ):
         if page_number == 0:
             stationery_page = (
-                stationery_reader.pages[0]
+                writer.add_page(stationery_reader.pages[0])
             )
             stationery_page.merge_page(
                 content_page
-            )
-            writer.add_page(
-                stationery_page
             )
         else:
             writer.add_page(
@@ -1371,6 +1369,10 @@ def create_invoice_document(
             stationery_pdf_path,
             stationery_path,
         )
+        try:
+            stationery_pdf_path.write_bytes(append_invoice_attachments(invoice, stationery_pdf_path.read_bytes(), lock=True))
+        except ValueError as exc:
+            raise InvoiceDocumentError(str(exc)) from exc
         temporary_xml_path.write_bytes(
             xml_bytes
         )

@@ -83,8 +83,13 @@ def save_invoice_payment_form(invoice):
     invoice.payment_information = value
 
 
+def masked_payment_iban(value):
+    return f"{value[:4]} **** **** **** {value[-4:]}" if value else ""
+
+
 def invoice_payment_context(invoice, complete=False):
     value = normalize_payment_information(invoice_payment_information(invoice), complete=complete)
+    display_iban = masked_payment_iban(value["iban"]) if value["method"] == "sepa_debit" else value["iban"]
     number = invoice.invoice_number or "Entwurf"
     due = invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "vereinbarten Fälligkeitstermin"
     definition = SettingKeys.INVOICE_SEPA_PAYMENT_TEXT if value["method"] == "sepa_debit" else SettingKeys.INVOICE_TRANSFER_PAYMENT_TEXT
@@ -94,11 +99,14 @@ def invoice_payment_context(invoice, complete=False):
     if text is None:
         text = template.format_map({"due_date": due, "invoice_number": number, "payment_reference": invoice.payment_reference or number,
                                     "amount": f"{Decimal(str(invoice.total_gross or 0)):,.2f}".replace(",", "_").replace(".", ",").replace("_", "."),
-                                    "currency": invoice.currency_code or "EUR", **{field: value.get(field, "") for field in PAYMENT_FIELDS}})
+                                    "currency": invoice.currency_code or "EUR", **{field: value.get(field, "") for field in PAYMENT_FIELDS},
+                                    "iban": display_iban, "bic": "" if value["method"] == "sepa_debit" else value["bic"]})
+    if value["method"] == "sepa_debit" and value["iban"]:
+        text = text.replace(value["iban"], display_iban)
     if not value["method"]:
         text = "Zahlungsinformationen noch nicht vollständig. Bitte vor dem Abschluss prüfen."
     return {"payment_method": value["method"], "payment_method_label": PAYMENT_LABELS.get(value["method"], "Noch nicht festgelegt"),
-            "payment_iban": value["iban"], "payment_bic": value["bic"], "payment_account_holder": value["account_holder"],
+            "payment_iban": value["iban"], "payment_iban_display": display_iban, "payment_bic": value["bic"], "payment_account_holder": value["account_holder"],
             "payment_mandate_reference": value["mandate_reference"], "payment_creditor_id": value["creditor_id"], "payment_terms_text": text}
 
 
