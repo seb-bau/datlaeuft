@@ -3,6 +3,17 @@
 {% block content %}
 <h1 class="h3 mb-4">Dashboard</h1>
 <div class="row g-3">
+  {% if current_user.is_admin or current_user.can_manage_invoices %}
+  <div class="col-md-4">
+    <a class="card shadow-sm text-decoration-none text-body h-100" href="{{ url_for('admin.invoices', responsible='mine', status='active') }}">
+      <div class="card-body">
+        <div class="text-muted">Meine Rechnungen</div>
+        <div class="display-6">{{ my_invoice_count }}</div>
+        <div class="small text-muted">Entwürfe und festgeschriebene Rechnungen in meiner Zuständigkeit</div>
+      </div>
+    </a>
+  </div>
+  {% endif %}
   {% if current_user.is_admin or current_user.is_foreman %}
   <div class="col-md-4">
     <a

@@ -18,6 +18,12 @@
     </div>
 
     <div class="col-md-6">
+      <label class="form-label">Telefon</label>
+      <input class="form-control" type="tel" name="phone" maxlength="80" value="{{ item.phone or '' }}">
+      <div class="form-text">Kontaktangabe für Rechnungsanschreiben.</div>
+    </div>
+
+    <div class="col-md-6">
       <label class="form-label">ERP-Handwerker-ID</label>
       <input class="form-control" type="number" name="craftsman_erp_id" value="{{ item.craftsman_erp_id or '' }}">
     </div>

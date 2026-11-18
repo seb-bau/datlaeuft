@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title }}</title>
+  <style>
+    @page { size: A4; margin: 25mm 20mm 25mm 24mm; @bottom-right { content: "Anschreiben · Seite " counter(page); font: 8pt Arial, sans-serif; color: #666; } }
+    @page:first { margin-top: 45mm; }
+    body { margin: 0; font: 11pt/1.5 Arial, Helvetica, sans-serif; color: #171717; }
+    .sender { font-size: 7.5pt; margin-bottom: 6mm; }
+    .header { display: flex; justify-content: space-between; gap: 10mm; margin: 8mm 0 12mm; }
+    .address { width: 85mm; white-space: pre-line; }
+    .contact { width: 65mm; font-size: 8.5pt; overflow-wrap: anywhere; }
+    .contact div { margin-bottom: 1mm; }
+    h1 { font-size: 14pt; line-height: 1.35; margin: 0 0 7mm; overflow-wrap: anywhere; }
+    .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .preview { position: fixed; top: 110mm; left: 10mm; color: #dddddd; font-size: 62pt; transform: rotate(-30deg); z-index: -1; }
+  </style>
+</head>
+<body>
+  {% if preview %}<div class="preview">ENTWURF</div>{% endif %}
+  <div class="sender">{{ sender_line }}</div>
+  <div class="header">
+    <div class="address">{% for line in recipient_address %}{{ line }}{% if not loop.last %}{{ '\n' }}{% endif %}{% endfor %}</div>
+    <div class="contact">
+      {% if contract_number %}<div><strong>Vertrag:</strong> {{ contract_number }}</div>{% endif %}
+      <div><strong>Rechnung:</strong> {{ invoice_reference }}</div>
+      {% if contact.name %}<div><strong>Sachbearbeiter:</strong> {{ contact.name }}</div>{% endif %}
+      {% if contact.phone %}<div><strong>Telefon:</strong> {{ contact.phone }}</div>{% endif %}
+      {% if contact.email %}<div><strong>E-Mail:</strong> {{ contact.email }}</div>{% endif %}
+      <div><strong>Datum:</strong> {{ letter_date }}</div>
+    </div>
+  </div>
+  <h1>{{ title }}</h1>
+  <div class="text">{{ text }}</div>
+</body>
+</html>

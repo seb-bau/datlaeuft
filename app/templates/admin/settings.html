@@ -77,6 +77,13 @@
         {% elif definition.key in ("invoice.transfer_payment_text", "invoice.sepa_payment_text") %}
         <textarea class="form-control" name="{{ definition.key }}" rows="4" maxlength="4000">{{ value }}</textarea>
         <div class="form-text">Platzhalter: {% raw %}{due_date}, {invoice_number}, {payment_reference}, {amount}, {currency}, {iban}, {bic}, {mandate_reference}, {creditor_id}, {account_holder}{% endraw %}</div>
+        {% elif definition.key in ("invoice.cover_letter_title", "invoice.cover_letter_text") %}
+        {% if definition.key == "invoice.cover_letter_title" %}
+        <input class="form-control" name="{{ definition.key }}" maxlength="200" value="{{ value }}" required>
+        {% else %}
+        <textarea class="form-control" name="{{ definition.key }}" rows="8" maxlength="20000" required>{{ value }}</textarea>
+        {% endif %}
+        <div class="form-text">Platzhalter: {% raw %}{invoice_number}, {invoice_date}, {contract_number}, {recipient_name}, {amount}, {currency}, {due_date}, {payment_terms}, {seller_name}, {caseworker_name}, {caseworker_email}, {caseworker_phone}{% endraw %}. Überschrift und Text können pro Rechnung geändert werden.</div>
         {% elif definition.value_type.value == "json" %}
         <textarea
           class="form-control font-monospace"

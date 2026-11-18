@@ -25,10 +25,12 @@
   </a>
 </div>
 
+{% include "admin/_invoice_responsibility.html" %}
+{% include "admin/_invoice_cover_letter.html" %}
+
 {% if not editable %}
 <div class="alert alert-info">
-  Diese Rechnung ist festgeschrieben und kann
-  nicht mehr bearbeitet werden.
+  Die Rechnungsdaten sind festgeschrieben. Zuständigkeit und Anschreiben können weiterhin bearbeitet werden.
 </div>
 {% endif %}
 

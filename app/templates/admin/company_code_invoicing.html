@@ -375,6 +375,24 @@
     </div>
   </div>
 
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-header">Geschäftspapier für Rechnungsanschreiben</div>
+      <div class="card-body">
+        <label class="form-label" for="coverLetterStationery">Briefbogen als PDF</label>
+        <input class="form-control" id="coverLetterStationery" type="file" name="cover_letter_stationery" accept="application/pdf,.pdf">
+        <div class="form-text">Ohne eigenen Briefbogen verwendet das Anschreiben das oben hinterlegte Geschäftspapier. Maximal 20 MB, unverschlüsselt.</div>
+        {% if item.cover_letter_stationery_filename %}
+        <a class="d-inline-block mt-3" href="{{ url_for('admin.company_code_cover_letter_stationery', item_id=item.id) }}" target="_blank" rel="noopener">Aktuelles Geschäftspapier öffnen</a>
+        <div class="form-check mt-3">
+          <input class="form-check-input" type="checkbox" name="remove_cover_letter_stationery" id="removeCoverLetterStationery">
+          <label class="form-check-label" for="removeCoverLetterStationery">Eigenen Briefbogen entfernen und vorhandenes Geschäftspapier verwenden</label>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
   <div class="col-12 text-end">
     <button
       class="btn btn-primary"

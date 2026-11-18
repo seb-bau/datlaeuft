@@ -395,6 +395,12 @@ def safe_next_url(
 @admin_bp.get("/admin")
 @login_required
 def dashboard() -> Any:
+    my_invoice_count = 0
+    if current_user.is_admin or current_user.can_manage_invoices:
+        my_invoice_count = Invoice.query.filter(
+            Invoice.responsible_user_id == current_user.id,
+            Invoice.status.in_((InvoiceStatus.DRAFT.value, InvoiceStatus.FINALIZED.value)),
+        ).count()
     my_open_ticket_count = 0
     if current_user.is_admin or current_user.is_foreman:
         my_open_ticket_count = open_tickets_query(TicketMirror.query).filter(
@@ -479,6 +485,7 @@ def dashboard() -> Any:
 
     return render_template(
         "admin/dashboard.html",
+        my_invoice_count=my_invoice_count,
         my_open_ticket_count=my_open_ticket_count,
         open_count=open_count,
         review_count=review_count,
@@ -1242,6 +1249,10 @@ def company_code_invoicing(
             save_company_code_invoice_form(
                 item
             )
+            for field in ("stationery", "cover_letter_stationery"):
+                upload = request.files.get(field)
+                if upload is not None and upload.filename:
+                    validate_company_code_stationery(upload)
 
             if (
                 "remove_stationery"
@@ -1263,6 +1274,11 @@ def company_code_invoicing(
                     item,
                     stationery,
                 )
+            if "remove_cover_letter_stationery" in request.form:
+                remove_company_code_stationery(item, attribute="cover_letter_stationery_filename")
+            cover_stationery = request.files.get("cover_letter_stationery")
+            if cover_stationery is not None and cover_stationery.filename:
+                store_company_code_stationery(item, cover_stationery, attribute="cover_letter_stationery_filename")
 
             audit(
                 "company_code.invoicing.update",
@@ -1332,6 +1348,15 @@ def company_code_stationery(
         mimetype="application/pdf",
         as_attachment=False,
     )
+
+
+@admin_bp.get("/admin/company-codes/<int:item_id>/cover-letter-stationery")
+@admin_required
+def company_code_cover_letter_stationery(item_id):
+    item = db.get_or_404(WowiCompanyCode, item_id)
+    if not item.cover_letter_stationery_filename:
+        abort(404)
+    return send_from_directory(invoice_stationery_directory(), item.cover_letter_stationery_filename, mimetype="application/pdf", as_attachment=False)
 
 
 @admin_bp.route(
@@ -6783,29 +6808,118 @@ def offer_agreement(
 @admin_bp.get("/admin/invoices")
 @invoice_required
 def invoices() -> Any:
-    items = (
-        Invoice.query
-        .order_by(
-            Invoice.created_at.desc(),
-            Invoice.id.desc(),
-        )
-        .all()
+    status_labels = {"active": "Entwürfe und festgeschriebene Rechnungen", "draft": "Entwurf", "finalized": "Festgeschrieben", "canceled": "Storniert"}
+    creator_filter = request.args.get("creator", "all").strip()
+    responsible_filter = request.args.get("responsible", "mine").strip()
+    status_filter = request.args.get("status", "all").strip()
+    if creator_filter not in {"all", "mine"} and not (creator_filter.isdecimal() and len(creator_filter) <= 18):
+        creator_filter = "all"
+    if responsible_filter not in {"all", "mine"} and not (responsible_filter.isdecimal() and len(responsible_filter) <= 18):
+        responsible_filter = "mine"
+    if status_filter not in {"all", *status_labels}:
+        status_filter = "all"
+    query = Invoice.query.options(
+        selectinload(Invoice.created_by), selectinload(Invoice.responsible_user),
+        selectinload(Invoice.commission_links),
     )
-
-    status_labels = {
-        InvoiceStatus.DRAFT.value:
-            "Entwurf",
-        InvoiceStatus.FINALIZED.value:
-            "Festgeschrieben",
-        InvoiceStatus.CANCELED.value:
-            "Storniert",
-    }
-
+    if creator_filter != "all":
+        query = query.filter(Invoice.created_by_user_id == (current_user.id if creator_filter == "mine" else int(creator_filter)))
+    if responsible_filter != "all":
+        query = query.filter(Invoice.responsible_user_id == (current_user.id if responsible_filter == "mine" else int(responsible_filter)))
+    if status_filter == "active":
+        query = query.filter(Invoice.status.in_((InvoiceStatus.DRAFT.value, InvoiceStatus.FINALIZED.value)))
+    elif status_filter != "all":
+        query = query.filter(Invoice.status == status_filter)
+    creator_choices = User.query.join(Invoice, Invoice.created_by_user_id == User.id).distinct().order_by(User.display_name, User.id).all()
+    responsible_choices = User.query.join(Invoice, Invoice.responsible_user_id == User.id).distinct().order_by(User.display_name, User.id).all()
     return render_template(
-        "admin/invoices.html",
-        items=items,
-        status_labels=status_labels,
+        "admin/invoices.html", items=query.order_by(Invoice.created_at.desc(), Invoice.id.desc()).all(),
+        status_labels=status_labels, creator_filter=creator_filter, responsible_filter=responsible_filter,
+        status_filter=status_filter, creator_choices=creator_choices, responsible_choices=responsible_choices,
     )
+
+
+@admin_bp.post("/admin/invoices/<int:invoice_id>/responsibility")
+@invoice_required
+def invoice_responsibility(invoice_id):
+    from .invoice_responsibility import assign_invoice
+    item = Invoice.query.filter_by(id=invoice_id).populate_existing().with_for_update().first_or_404()
+    try:
+        previous_user_id = item.responsible_user_id
+        changed = assign_invoice(item, request.form.get("responsible_user_id"), current_user, request.form.get("revision"))
+        if changed:
+            audit("invoice.responsibility.update", "invoice", item.id, {
+                "previous_user_id": previous_user_id, "responsible_user_id": item.responsible_user.id,
+            })
+        db.session.commit()
+        flash("Zuständigkeit gespeichert. Die E-Mail-Benachrichtigung wurde zum Versand vorgemerkt." if changed else "Die Zuständigkeit ist unverändert.", "success" if changed else "info")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("admin.invoice_edit", invoice_id=invoice_id))
+
+
+@admin_bp.route("/admin/invoices/<int:invoice_id>/cover-letter", methods=["GET", "POST", "DELETE"])
+@invoice_required
+def invoice_cover_letter(invoice_id):
+    from .invoice_correspondence import cover_letter_values, invoice_correspondence_pdf, letter_date
+    from .settings import validate_cover_letter_text
+    item = Invoice.query.filter_by(id=invoice_id).populate_existing().with_for_update().first_or_404()
+    if request.method == "GET":
+        response = jsonify(cover_letter_values(item))
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        return response
+    if request.method == "DELETE":
+        item.cover_letter_title = item.cover_letter_text = item.cover_letter_date = None
+        audit("invoice.cover_letter.remove", "invoice", item.id)
+        db.session.commit()
+        return jsonify(message="Anschreiben entfernt.")
+    try:
+        item.cover_letter_title = validate_cover_letter_text(request.form.get("title"), title=True)
+        item.cover_letter_text = validate_cover_letter_text(request.form.get("text"))
+        item.cover_letter_date = item.cover_letter_date or letter_date()
+        invoice_correspondence_pdf(item)
+        audit("invoice.cover_letter.update", "invoice", item.id)
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify(message=str(exc)), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("invoice_cover_letter_failed invoice_id=%s", invoice_id)
+        return jsonify(message="Das Anschreiben konnte nicht erstellt werden. Bitte den Briefbogen und die Rechnungsdaten prüfen."), 502
+    return jsonify(message="Anschreiben gespeichert.", url=url_for("admin.invoice_correspondence", invoice_id=item.id))
+
+
+@admin_bp.post("/admin/invoices/<int:invoice_id>/cover-letter/preview")
+@invoice_required
+def invoice_cover_letter_preview(invoice_id):
+    from .invoice_correspondence import invoice_correspondence_pdf
+    item = db.get_or_404(Invoice, invoice_id)
+    try:
+        content = invoice_correspondence_pdf(item, title=request.form.get("title", ""), text=request.form.get("text", ""))
+    except ValueError as exc:
+        return jsonify(message=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("invoice_cover_letter_preview_failed invoice_id=%s", invoice_id)
+        return jsonify(message="Die Vorschau konnte nicht erstellt werden. Bitte den Briefbogen und die Rechnungsdaten prüfen."), 502
+    return document_preview_response(content, "Rechnung-mit-Anschreiben-Vorschau.pdf")
+
+
+@admin_bp.get("/admin/invoices/<int:invoice_id>/correspondence")
+@invoice_required
+def invoice_correspondence(invoice_id):
+    from .invoice_correspondence import invoice_correspondence_pdf
+    item = db.get_or_404(Invoice, invoice_id)
+    if item.cover_letter_title is None:
+        abort(404)
+    try:
+        content = invoice_correspondence_pdf(item)
+    except Exception:
+        current_app.logger.exception("invoice_correspondence_failed invoice_id=%s", invoice_id)
+        flash("Die PDF mit Anschreiben konnte nicht erstellt werden. Bitte den Briefbogen und die Rechnungsdatei prüfen.", "danger")
+        return redirect(url_for("admin.invoice_edit", invoice_id=invoice_id))
+    return document_preview_response(content, secure_filename(f"Rechnung-{item.invoice_number or item.id}-mit-Anschreiben.pdf"))
 
 
 @admin_bp.route(
@@ -7461,6 +7575,9 @@ def invoice_edit_context(
 
     return {
         "item": item,
+        "responsibility_users": User.query.filter(
+            User.is_active_flag.is_(True), db.or_(User.is_admin.is_(True), User.can_manage_invoices.is_(True)),
+        ).order_by(User.display_name, User.id).all(),
         "editable": (
             item.status
             == InvoiceStatus.DRAFT.value
@@ -8030,7 +8147,7 @@ def commissions() -> Any:
         "deleted": "Gelöscht",
     }
     creator_filter = str(request.args.get("creator") or "mine").strip()
-    if creator_filter not in {"mine", "all"}:
+    if creator_filter not in {"mine", "all"} and not (creator_filter.isdecimal() and len(creator_filter) <= 18):
         creator_filter = "mine"
     official_filter = str(
         request.args.get("official") or "all"
@@ -8068,10 +8185,12 @@ def commissions() -> Any:
     query = Commission.query.options(
         selectinload(Commission.user),
         selectinload(Commission.local_official),
+        selectinload(Commission.created_by),
     )
 
-    if creator_filter == "mine":
-        query = query.filter(Commission.created_by_user_id == current_user.id)
+    creator_choices = User.query.join(Commission, Commission.created_by_user_id == User.id).distinct().order_by(User.display_name, User.id).all()
+    if creator_filter != "all":
+        query = query.filter(Commission.created_by_user_id == (current_user.id if creator_filter == "mine" else int(creator_filter)))
 
     if view_mode == "done":
         query = query.filter(
@@ -8177,6 +8296,7 @@ def commissions() -> Any:
         format_execution_datetime=format_local_datetime,
         items=items,
         creator_filter=creator_filter,
+        creator_choices=creator_choices,
         view_mode=view_mode,
         assignment_type=assignment_type,
         external_craftsmen_by_erp_id=(
@@ -10720,6 +10840,11 @@ def save_user_form(item: User) -> None:
     save_admin_push_preferences(item, request.form)
     item.email = request.form.get("email", "").strip().lower()
     item.display_name = request.form.get("display_name", "").strip()
+    if "phone" in request.form:
+        phone = request.form.get("phone", "").strip()
+        if len(phone) > 80:
+            raise ValueError("Die Telefonnummer darf höchstens 80 Zeichen enthalten.")
+        item.phone = phone or None
     item.entra_oid = request.form.get("entra_oid") or None
     raw_craftsman_id = request.form.get("craftsman_erp_id", "").strip()
     item.craftsman_erp_id = int(raw_craftsman_id) if raw_craftsman_id else None
@@ -11709,18 +11834,26 @@ def invoice_stationery_directory() -> Path:
     return directory
 
 
+def validate_company_code_stationery(upload):
+    from pypdf import PdfReader
+    content = upload.stream.read(20 * 1024 * 1024 + 1)
+    upload.stream.seek(0)
+    if len(content) > 20 * 1024 * 1024:
+        raise ValueError("Der Briefbogen darf höchstens 20 MB groß sein.")
+    try:
+        reader = PdfReader(BytesIO(content))
+        if not content.startswith(b"%PDF-") or reader.is_encrypted or not reader.pages:
+            raise ValueError("Ungültiger Briefbogen.")
+    except Exception as exc:
+        raise ValueError("Der Briefbogen muss eine lesbare, unverschlüsselte PDF-Datei mit mindestens einer Seite sein.") from exc
+
+
 def store_company_code_stationery(
     item: WowiCompanyCode,
     upload: Any,
+    *, attribute="stationery_filename",
 ) -> None:
-    prefix = upload.stream.read(5)
-    upload.stream.seek(0)
-
-    if prefix != b"%PDF-":
-        raise ValueError(
-            "Der Briefbogen muss eine "
-            "gültige PDF-Datei sein."
-        )
+    validate_company_code_stationery(upload)
 
     directory = invoice_stationery_directory()
     filename = (
@@ -11731,10 +11864,8 @@ def store_company_code_stationery(
 
     upload.save(file_path)
 
-    previous_filename = (
-        item.stationery_filename
-    )
-    item.stationery_filename = filename
+    previous_filename = getattr(item, attribute)
+    setattr(item, attribute, filename)
 
     if (
         previous_filename
@@ -11751,18 +11882,19 @@ def store_company_code_stationery(
 
 def remove_company_code_stationery(
     item: WowiCompanyCode,
+    *, attribute="stationery_filename",
 ) -> None:
-    if not item.stationery_filename:
+    if not getattr(item, attribute):
         return
 
     file_path = (
         invoice_stationery_directory()
-        / item.stationery_filename
+        / getattr(item, attribute)
     )
     file_path.unlink(
         missing_ok=True
     )
-    item.stationery_filename = None
+    setattr(item, attribute, None)
 
 
 def optional_form_text(
