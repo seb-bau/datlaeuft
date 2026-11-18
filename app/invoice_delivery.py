@@ -190,6 +190,13 @@ def delivery_preview(invoice_id):
     return invoice_response({"recipient": recipient, **content})
 
 
+def validate_delivery_retry(item, official_id, body):
+    if str(item.payload.get("official_id")) != str(official_id):
+        raise ValueError("Die Versandkennung wurde bereits für einen anderen Empfänger verwendet. Bitte den Dialog erneut öffnen.")
+    if body is not None and item.payload.get("body") != body:
+        raise ValueError("Diese Mail wurde bereits mit einem anderen Text zum Versand vorgemerkt. Bitte den Versandstatus prüfen.")
+
+
 @invoice_delivery_bp.post("/admin/invoices/<int:invoice_id>/delivery/send")
 @invoice_required
 def delivery_send(invoice_id):
@@ -198,6 +205,12 @@ def delivery_send(invoice_id):
     if not isinstance(data, dict):
         return invoice_response({"message": "Bitte gültige Versandangaben übermitteln."}, 400)
     try:
+        body = None
+        if "body" in data:
+            body = data["body"]
+            if not isinstance(body, str) or len(body) > 250000 or "\x00" in body:
+                raise ValueError("Der Mailtext muss ein Text mit höchstens 250.000 Zeichen sein und darf keine ungültigen Zeichen enthalten.")
+            body = body.replace("\r\n", "\n").replace("\r", "\n")
         try:
             token = str(UUID(str(data.get("request_id") or "")))
         except ValueError as exc:
@@ -205,19 +218,21 @@ def delivery_send(invoice_id):
         key = f"invoice-mail:{invoice.id}:{token}"
         existing = WorkflowNotification.query.filter_by(notification_key=key).one_or_none()
         if existing is not None:
-            if str(existing.payload.get("official_id")) != str(data.get("official_id")):
-                raise ValueError("Die Versandkennung wurde bereits für einen anderen Empfänger verwendet. Bitte den Dialog erneut öffnen.")
+            validate_delivery_retry(existing, data.get("official_id"), body)
             return invoice_response(delivery_data(existing), 200)
         if not settings.get(SettingKeys.SMTP_HOST).strip() or not settings.get(SettingKeys.SMTP_SENDER).strip():
             raise ValueError("SMTP-Server oder Absenderadresse fehlen. Bitte die E-Mail-Einstellungen ergänzen.")
         final_invoice_pdf(invoice)
         official, recipient = selected_official(data.get("official_id"))
         content = invoice_mail_content(invoice, official)
+        if body is not None:
+            content["body"] = body
         item = enqueue_notification(key, "invoice_delivery", payload={
             "invoice_id": invoice.id, "invoice_number": invoice.invoice_number,
             "document_filename": invoice.document_filename, "document_sha256": invoice.document_sha256,
             "official_id": official.erp_id, "recipient": recipient, "requested_by_user_id": current_user.id, **content,
         })
+        validate_delivery_retry(item, data.get("official_id"), body)
         audit("invoice.mail_queued", "invoice", invoice.id, {"notification_id": item.id, "recipient": recipient, "official_id": official.erp_id})
         db.session.commit()
     except ValueError as exc:
