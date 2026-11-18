@@ -30,6 +30,16 @@
     value="{{ csrf_token() }}"
   >
 
+  <div class="col-12">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="documentCreationDisabled"
+             name="document_creation_disabled" {% if item.document_creation_disabled %}checked{% endif %}>
+      <label class="form-check-label" for="documentCreationDisabled">
+        Neue Angebote und Rechnungen für dieses Buchwerk deaktivieren
+      </label>
+    </div>
+  </div>
+
   <div class="col-lg-6">
     <div class="card shadow-sm h-100">
       <div class="card-header">

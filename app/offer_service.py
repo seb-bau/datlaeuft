@@ -92,6 +92,9 @@ def create_offer_draft(
             "ist nicht aktiv."
         )
 
+    if company_code.document_creation_disabled:
+        raise ValueError("Für dieses Buchwerk können keine neuen Angebote erstellt werden.")
+
     offer_date = date.today()
     validity_days = max(
         0,

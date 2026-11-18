@@ -5742,6 +5742,7 @@ def offers() -> Any:
         "admin/offers.html",
         items=items,
         status_labels=OFFER_STATUS_LABELS,
+        available_codes=WowiCompanyCode.available_for_documents().limit(2).all(),
     )
 
 
@@ -5752,10 +5753,7 @@ def offers() -> Any:
 @offer_required
 def offer_create() -> Any:
     company_codes = (
-        WowiCompanyCode.query
-        .filter(
-            WowiCompanyCode.active.is_(True)
-        )
+        WowiCompanyCode.available_for_documents()
         .order_by(
             WowiCompanyCode.code.asc()
         )
@@ -7039,10 +7037,7 @@ def invoice_correspondence(invoice_id):
 @invoice_required
 def invoice_create() -> Any:
     company_codes = (
-        WowiCompanyCode.query
-        .filter(
-            WowiCompanyCode.active.is_(True)
-        )
+        WowiCompanyCode.available_for_documents()
         .order_by(
             WowiCompanyCode.code.asc()
         )
@@ -11900,6 +11895,7 @@ def save_company_code_invoice_form(
             "zweistellig sein."
         )
 
+    item.document_creation_disabled = "document_creation_disabled" in request.form
     item.invoice_number_mask = (
         invoice_number_mask
     )

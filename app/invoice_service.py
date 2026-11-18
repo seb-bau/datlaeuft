@@ -102,13 +102,14 @@ def available_invoice_commissions(
 
     return (
         Commission.query
+        .join(WowiCompanyCode, WowiCompanyCode.erp_id == Commission.company_code_erp_id)
         .filter(
+            WowiCompanyCode.active.is_(True),
+            WowiCompanyCode.document_creation_disabled.is_(False),
             Commission.deleted_at.is_(None),
             Commission.local_status
             == CommissionLocalStatus
             .TENANT_CHARGE_REVIEW.value,
-            Commission.company_code_erp_id
-            .isnot(None),
             Commission.id.notin_(
                 reserved_commission_ids
             ),
@@ -383,6 +384,9 @@ def create_invoice_draft(
         created_by: User,
         commissions: list[Commission],
 ) -> Invoice:
+    if not company_code.active or company_code.document_creation_disabled:
+        raise ValueError("Für dieses Buchwerk können keine neuen Rechnungen erstellt werden.")
+
     first_commission = (
         commissions[0]
         if commissions
