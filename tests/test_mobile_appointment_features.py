@@ -123,6 +123,18 @@ class MobileAppointmentFeaturesTests(unittest.TestCase):
     def manual_appointment(self, commission, **values):
         return self.client.post(f"/api/commissions/{commission.id}/appointments/accepted", headers=self.headers(), json={"date": "2027-01-15", "time": "10:30", **values})
 
+    def test_order_details_expose_the_creator_when_known(self):
+        creator = self.models.User(email="office@example.invalid", display_name="Sachbearbeitung Weber")
+        created = self.commission(created_by=creator, local_official=self.other_user, source="web")
+        imported = self.commission(local_official=self.other_user, source="wowiport")
+
+        for commission, expected_name in ((created, creator.display_name), (imported, None)):
+            with self.subTest(commission_id=commission.id):
+                response = self.client.get(f"/api/commissions/{commission.id}", headers=self.headers())
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json["item"]["created_by_name"], expected_name)
+                self.assertEqual(response.json["item"]["assigned_user"]["display_name"], self.user.display_name)
+
     def test_administrator_sees_all_assigned_and_external_orders_without_visibility_selections(self):
         self.user.is_admin = True
         own = self.commission()
@@ -316,7 +328,7 @@ class MobileAppointmentFeaturesTests(unittest.TestCase):
 
     def test_related_orders_are_classified_without_duplicates_and_open_read_only(self):
         anchor = self.commission()
-        contract = self.commission(user=self.other_user)
+        contract = self.commission(user=self.other_user, created_by=self.user, source="web")
         unit = self.commission(user=self.other_user, license_agreement_id=3001, license_agreement_idnum="V-2")
         building = self.commission(user=self.other_user, license_agreement_id=None, license_agreement_idnum=None, use_unit_id=None, use_unit_idnum=None)
         unrelated = self.commission(building_erp_id=1001, building_idnum="B-2", use_unit_id=2001, use_unit_idnum="W-2", license_agreement_id=3002, license_agreement_idnum="V-3")
@@ -328,7 +340,9 @@ class MobileAppointmentFeaturesTests(unittest.TestCase):
         for item in result.json["items"]:
             self.assertFalse(item["direct_access"])
             self.assertFalse(item["commission"]["can_edit"])
-        self.assertEqual(self.client.get(f"/api/commissions/{anchor.id}/related/{contract.id}", headers=self.headers()).status_code, 200)
+        detail = self.client.get(f"/api/commissions/{anchor.id}/related/{contract.id}", headers=self.headers())
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json["item"]["created_by_name"], self.user.display_name)
         self.assertEqual(self.client.get(f"/api/commissions/{anchor.id}/related/{unrelated.id}", headers=self.headers()).status_code, 404)
         self.assertEqual(self.client.post(f"/api/commissions/{contract.id}/start", headers=self.headers()).status_code, 403)
         self.assertEqual(self.client.get(f"/api/commissions/{contract.id}/related", headers=self.headers()).status_code, 403)
