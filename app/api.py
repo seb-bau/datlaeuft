@@ -438,7 +438,7 @@ def commissions() -> Any:
         Commission.execution_from.asc(),
         Commission.id.asc(),
     )
-    return jsonify({"items": [serialize_commission(item, viewer=user) for item in query.all()]})
+    return jsonify({"items": [serialize_commission(item, viewer=user, include_creator=False) for item in query.all()]})
 
 
 @api_bp.get("/commissions/users")
@@ -990,7 +990,7 @@ def commission_related(commission_id: int) -> Any:
     result["items"] = []
     for related, relationship in items:
         direct_access = visible_ids is None or related.user_id in visible_ids
-        item = serialize_commission(related, viewer=user)
+        item = serialize_commission(related, viewer=user, include_creator=False)
         item["can_edit"] = direct_access and item["can_edit"]
         result["items"].append({"commission": item, "relationship": relationship, "direct_access": direct_access})
     return jsonify(result)
@@ -4307,7 +4307,9 @@ def serialize_user(user: User) -> dict[str, Any]:
 def serialize_commission(
         commission: Commission,
         include_details: bool = False,
-        viewer: User | None = None
+        viewer: User | None = None,
+        *,
+        include_creator: bool = True,
 ) -> dict[str, Any]:
     item = {
         "id": commission.id,
@@ -4384,6 +4386,10 @@ def serialize_commission(
         "accepted_appointment_has_time": commission.accepted_appointment_has_time,
         "accepted_appointment_is_manual": commission.accepted_appointment_is_manual,
     }
+
+    if include_creator:
+        creator = commission.created_by
+        item["created_by_name"] = creator.display_name if creator else None
 
     if viewer is not None:
         item["is_own"] = commission.user_id == viewer.id
