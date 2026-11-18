@@ -46,7 +46,8 @@ class MobileAppointmentFeaturesTests(unittest.TestCase):
         real_modules = {
             "models", "extensions", "settings", "utils", "blacklist", "email_templates", "email_layout",
             "mail_service", "workflow_notifications", "appointment_service", "appointment_calendar", "appointments",
-            "commission_object_history", "commission_related", "mobile_transaction", "push_preferences", "api",
+            "commission_object_history", "commission_related", "commission_workflow_service",
+            "mobile_transaction", "push_preferences", "api",
         }
         for source_name in real_modules - {"extensions"}:
             source = ast.parse((cls.root / "app" / (source_name + ".py")).read_text())
@@ -198,21 +199,77 @@ class MobileAppointmentFeaturesTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/commissions/{pending.id}", headers=self.headers()).status_code, 403)
         self.assertFalse(self.api.can_edit_commission(own_pending, self.user))
 
-    def test_regular_users_still_need_explicit_craftsman_visibility_and_cannot_edit_colleagues_orders(self):
+    def test_regular_users_can_edit_orders_of_selected_colleagues(self):
         own = self.commission()
         colleague = self.commission(user=self.other_user)
         external = self.commission(user=None)
-        response = self.client.get("/api/commissions?scope=all", headers=self.headers())
+        unselected_user = self.models.User(
+            email="unselected@example.invalid", display_name="Weiterer Handwerker", craftsman_erp_id=102,
+        )
+        unselected = self.commission(user=unselected_user)
+        headers = self.headers()
+        colleague_path = f"/api/commissions/{colleague.id}"
+        response = self.client.get("/api/commissions?scope=all", headers=headers)
         self.assertEqual([item["id"] for item in response.json["items"]], [own.id])
-        self.assertEqual(self.client.get(f"/api/commissions/{colleague.id}", headers=self.headers()).status_code, 403)
-        self.assertEqual(self.client.get(f"/api/commissions?scope=all&user_id={self.other_user.id}", headers=self.headers()).status_code, 403)
+        self.assertEqual(self.client.get(colleague_path, headers=headers).status_code, 403)
+        filtered = self.client.get(f"/api/commissions?scope=all&user_id={self.other_user.id}", headers=headers)
+        self.assertEqual(filtered.status_code, 403)
         self.user.visible_commission_users = [self.other_user]
         self.db.session.commit()
-        response = self.client.get("/api/commissions?scope=all", headers=self.headers())
-        self.assertEqual({item["id"] for item in response.json["items"]}, {own.id, colleague.id})
-        self.assertEqual(self.client.get(f"/api/commissions/{colleague.id}", headers=self.headers()).status_code, 200)
-        self.assertEqual(self.client.get(f"/api/commissions/{external.id}", headers=self.headers()).status_code, 403)
-        self.assertEqual(self.client.post(f"/api/commissions/{colleague.id}/start", headers=self.headers()).status_code, 403)
+        response = self.client.get("/api/commissions?scope=all", headers=headers)
+        self.assertEqual(
+            {item["id"]: item["can_edit"] for item in response.json["items"]},
+            {own.id: True, colleague.id: True},
+        )
+        detail = self.client.get(colleague_path, headers=headers)
+        self.assertEqual(detail.status_code, 200)
+        self.assertTrue(detail.json["item"]["can_edit"])
+        self.assertFalse(detail.json["item"]["is_own"])
+        for order in (external, unselected):
+            path = f"/api/commissions/{order.id}"
+            self.assertEqual(self.client.get(path, headers=headers).status_code, 403)
+            completion = self.client.post(f"{path}/complete", headers=headers, json={"completed": True})
+            self.assertEqual(completion.status_code, 403)
+
+        self.user.visible_commission_users = []
+        self.db.session.commit()
+        completion = self.client.post(f"{colleague_path}/complete", headers=headers, json={"completed": True})
+        self.assertEqual(completion.status_code, 403)
+
+    def test_representative_can_accept_and_complete_a_selected_colleagues_order(self):
+        self.user.visible_commission_users = [self.other_user]
+        commission = self.commission(
+            user=self.other_user, craftsman_erp_id=self.other_user.craftsman_erp_id,
+            local_status="waiting_for_acceptance",
+        )
+        path = f"/api/commissions/{commission.id}"
+        headers = self.headers()
+
+        accepted = self.client.post(f"{path}/start", headers=headers)
+        self.assertEqual(accepted.status_code, 202, accepted.json)
+        self.assertEqual(accepted.json["item"]["local_status"], "in_progress")
+
+        completed = self.client.post(
+            f"{path}/complete", headers=headers,
+            json={"completed": True, "confirm_missing_material": True},
+        )
+        self.assertEqual(completed.status_code, 202, completed.json)
+        self.assertEqual(completed.json["item"]["local_status"], "done")
+        self.assertEqual(completed.json["item"]["assigned_user"]["id"], self.other_user.id)
+        self.assertEqual(commission.completion_submitted_by_user_id, self.user.id)
+
+    def test_order_awaiting_approval_stays_read_only_for_its_creator_with_visibility(self):
+        self.user.visible_commission_users = [self.other_user]
+        commission = self.commission(
+            user=self.other_user, created_by=self.user, approval_state="pending",
+            local_status="waiting_for_approval",
+        )
+        path = f"/api/commissions/{commission.id}"
+        headers = self.headers()
+        detail = self.client.get(path, headers=headers)
+        self.assertEqual(detail.status_code, 200)
+        self.assertFalse(detail.json["item"]["can_edit"])
+        self.assertEqual(self.client.post(f"{path}/start", headers=headers).status_code, 403)
 
     def process(self):
         self.db.session.commit()

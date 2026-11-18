@@ -81,13 +81,32 @@ class CompletedCommissionTimeTests(unittest.TestCase):
         response = self.client.delete(f"/api/commissions/{commission.id}/time/{entry['id']}", headers=self.headers())
         self.assertEqual(response.status_code, 200)
 
-    def test_enabling_late_entries_does_not_bypass_colleague_permissions(self):
+    def test_late_entries_require_delegation_and_are_booked_for_the_representative(self):
         self.set_allowed(True)
         commission = self.commission(user=self.other_user, local_status="done")
-        self.user.visible_commission_users = [self.other_user]
-        self.db.session.commit()
-        self.assertEqual(self.client.get(f"/api/commissions/{commission.id}/time", headers=self.headers()).status_code, 200)
         self.assertEqual(self.book(commission).status_code, 403)
+
+        self.user.visible_commission_users = [self.other_user]
+        other_entry = self.models.TimeEntry(commission=commission, user=self.other_user, minutes=30)
+        self.db.session.add(other_entry)
+        self.db.session.commit()
+
+        path = f"/api/commissions/{commission.id}/time"
+        headers = self.headers()
+        entries = self.client.get(path, headers=headers)
+        self.assertEqual(entries.status_code, 200)
+        self.assertFalse(entries.json["items"][0]["can_edit"])
+        change = self.client.patch(f"{path}/{other_entry.id}", headers=headers, json={"minutes": 45})
+        self.assertEqual(change.status_code, 403)
+
+        booked = self.book(commission)
+        self.assertEqual(booked.status_code, 201, booked.data)
+        self.assertEqual(booked.json["item"]["user"]["id"], self.user.id)
+
+        self.set_allowed(False)
+        rejected = self.book(commission)
+        self.assertEqual(rejected.status_code, 409)
+        self.assertEqual(rejected.json["code"], "completed_commission_time_disabled")
 
     def test_offline_replay_checks_the_current_policy_and_preserves_successful_receipts(self):
         commission = self.commission(local_status="done")

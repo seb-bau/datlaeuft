@@ -3665,7 +3665,14 @@ def viewable_commission_user_ids(
 
 
 def can_edit_commission(commission: Commission, user: User) -> bool:
-    return commission.approval_state != "pending" and (user.is_admin or user.is_foreman or commission.user_id == user.id)
+    if commission.approval_state == "pending":
+        return False
+
+    if user.is_admin or user.is_foreman or commission.user_id == user.id:
+        return True
+
+    allowed_user_ids = viewable_commission_user_ids(user)
+    return allowed_user_ids is not None and commission.user_id in allowed_user_ids
 
 
 def can_edit_time_entry(entry: TimeEntry, user: User) -> bool:
