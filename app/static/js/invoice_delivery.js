@@ -148,13 +148,17 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("invoiceDeliverySystemPanel").hidden = !system.checked;
     if (!system.checked || recipientsLoaded) return;
     official.disabled = true;
-    feedback("Sachbearbeiter werden geladen …");
+    const companyRecipient = modal.dataset.companyRecipient === "true";
+    feedback(companyRecipient ? "Rechnungsempfänger wird geladen …" : "Sachbearbeiter werden geladen …");
     try {
       const data = await jsonResponse(await fetch(modal.dataset.recipientsUrl, {cache: "no-store", headers: {Accept: "application/json"}}));
       official.replaceChildren(new Option("Bitte auswählen", ""));
       data.items.forEach(item => official.add(new Option(item.name, String(item.id))));
       recipientsLoaded = true;
-      feedback(data.items.length ? "" : "Keine verfügbaren Sachbearbeiter gefunden.");
+      const missingRecipient = companyRecipient
+        ? "Für das empfangende Buchwerk ist keine E-Mail-Adresse für Rechnungseingang hinterlegt."
+        : "Keine verfügbaren Sachbearbeiter gefunden.";
+      feedback(data.items.length ? "" : missingRecipient);
     } catch (error) { feedback(error.message, true); }
     finally { official.disabled = false; }
   }

@@ -14,10 +14,13 @@ import re
 from typing import Any
 
 from sqlalchemy import (
+    func,
     inspect as sqlalchemy_inspect,
     or_,
     select,
 )
+
+from sqlalchemy.orm import aliased
 
 from .audit import audit
 from .erp_sync import enqueue_erp_operation
@@ -46,6 +49,7 @@ from .models import (
     TimeReviewStatus,
     User,
     WowiCompanyCode,
+    WowiLicenseAgreement,
     utc_now,
     Offer,
     OfferPositionSource,
@@ -53,6 +57,14 @@ from .models import (
 )
 from .settings import SettingKeys, settings
 from .invoice_payments import freeze_invoice_payment_information, invoice_payment_context
+from .tenant_billing import (
+    agreement_company_code,
+    agreement_uses_tenant_billing,
+    apply_contract_recipient,
+    apply_tenant_billing,
+    tenant_billing_agreement,
+    tenant_billing_issuer,
+)
 
 
 INVOICE_TIME_TYPES = (
@@ -100,12 +112,15 @@ def available_invoice_commissions(
         )
     )
 
+    issuer = aliased(WowiCompanyCode)
     return (
         Commission.query
         .join(WowiCompanyCode, WowiCompanyCode.erp_id == Commission.company_code_erp_id)
+        .join(issuer, issuer.id == func.coalesce(WowiCompanyCode.tenant_billing_issuer_id, WowiCompanyCode.id))
         .filter(
             WowiCompanyCode.active.is_(True),
-            WowiCompanyCode.document_creation_disabled.is_(False),
+            issuer.active.is_(True),
+            issuer.document_creation_disabled.is_(False),
             Commission.deleted_at.is_(None),
             Commission.local_status
             == CommissionLocalStatus
@@ -134,6 +149,21 @@ def create_free_invoice_draft(
     )
 
 
+def create_agreement_invoice_draft(
+    agreement: WowiLicenseAgreement, recipient: dict, created_by: User,
+) -> Invoice:
+    company = agreement_company_code(agreement)
+    issuer = tenant_billing_issuer(company)
+    invoice = create_free_invoice_draft(issuer, created_by)
+
+    if company.tenant_billing_issuer_id is not None:
+        apply_tenant_billing(invoice, agreement, company, recipient)
+    else:
+        apply_contract_recipient(invoice, agreement, recipient)
+
+    return invoice
+
+
 def create_offer_invoice_draft(
     offer: Offer,
 ) -> Invoice:
@@ -157,46 +187,29 @@ def create_offer_invoice_draft(
             "der zuständige Benutzer."
         )
 
-    invoice = create_free_invoice_draft(
-        offer.company_code,
-        created_by,
-    )
-    invoice.recipient_type = (
-        offer.recipient_type
-    )
-    invoice.recipient_person_erp_id = (
-        offer.recipient_person_erp_id
-    )
-    invoice.recipient_license_agreement_erp_id = (
-        offer.license_agreement_erp_id
-    )
-    invoice.recipient_license_agreement_idnum = (
-        offer.license_agreement_idnum
-    )
-    invoice.recipient_name = (
-        offer.recipient_name
-    )
-    invoice.recipient_name_addition = (
-        offer.recipient_name_addition
-    )
-    invoice.recipient_street = (
-        offer.recipient_street
-    )
-    invoice.recipient_postal_code = (
-        offer.recipient_postal_code
-    )
-    invoice.recipient_town = (
-        offer.recipient_town
-    )
-    invoice.recipient_country_code = (
-        offer.recipient_country_code
-    )
-    invoice.recipient_email = (
-        offer.recipient_email
-    )
-    invoice.recipient_vat_id = (
-        offer.recipient_vat_id
-    )
+    agreement_id = offer.license_agreement_erp_id or offer.commission.license_agreement_id
+    if offer.company_code.tenant_billing_issuer_id is not None and agreement_id is not None:
+        agreement = tenant_billing_agreement(agreement_id)
+        company = agreement_company_code(agreement)
+        if company.id != offer.company_code_id:
+            raise ValueError("Mietvertrag und Buchwerk des Angebots stimmen nicht überein.")
+        invoice = create_free_invoice_draft(tenant_billing_issuer(company), created_by)
+        recipient = {"name": offer.tenant_name or offer.commission.tenant_name}
+        if offer.license_agreement_erp_id == agreement_id and offer.recipient_person_erp_id is not None:
+            recipient = {
+                field: getattr(offer, "recipient_" + field)
+                for field in ("name", "name_addition", "street", "postal_code", "town", "country_code")
+            }
+            recipient["person_id"] = offer.recipient_person_erp_id
+        apply_tenant_billing(invoice, agreement, company, recipient)
+    else:
+        invoice = create_free_invoice_draft(offer.company_code, created_by)
+        for field in ("type", "person_erp_id", "name", "name_addition", "street", "postal_code",
+                      "town", "country_code", "email", "vat_id"):
+            attribute = "recipient_" + field
+            setattr(invoice, attribute, getattr(offer, attribute))
+        invoice.recipient_license_agreement_erp_id = offer.license_agreement_erp_id
+        invoice.recipient_license_agreement_idnum = offer.license_agreement_idnum
 
     service_date = (
         offer.commission.completed_at
@@ -307,11 +320,21 @@ def create_commission_invoice_draft(
             "ist nicht verfügbar."
         )
 
-    return create_invoice_draft(
-        company_code=company_code,
+    issuer = tenant_billing_issuer(company_code)
+    invoice = create_invoice_draft(
+        company_code=issuer,
         created_by=created_by,
         commissions=commissions,
     )
+
+    if company_code.tenant_billing_issuer_id is not None:
+        commission = commissions[0]
+        agreement = tenant_billing_agreement(commission.license_agreement_id)
+        if agreement_company_code(agreement).id != company_code.id:
+            raise ValueError("Mietvertrag und Buchwerk des Auftrags stimmen nicht überein.")
+        apply_tenant_billing(invoice, agreement, company_code, {"name": commission.tenant_name})
+
+    return invoice
 
 
 def validate_commission_selection(
@@ -1362,6 +1385,15 @@ def _validate_invoice_for_finalization(
         )
 
     if invoice.invoice_kind != InvoiceKind.CANCELLATION.value:
+        if (
+            not invoice.tenant_billing_reference
+            and invoice.recipient_license_agreement_erp_id is not None
+            and agreement_uses_tenant_billing(invoice.recipient_license_agreement_erp_id)
+        ):
+            raise InvoiceFinalizationError(
+                "Für den Mietvertrag ist eine Firmenrechnung vorgesehen. "
+                "Bitte verwenden Sie den Einstieg „Rechnung mit Mietvertrag“."
+            )
         try:
             invoice_payment_context(invoice, complete=True)
         except ValueError as exc:
@@ -1902,6 +1934,7 @@ INVOICE_CANCELLATION_EXCLUDED_COLUMNS = {
     "cover_letter_title",
     "cover_letter_text",
     "cover_letter_date",
+    "tenant_charge_letter",
     "id",
     "public_id",
     "invoice_number",

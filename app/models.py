@@ -3176,6 +3176,13 @@ class WowiCompanyCode(db.Model):
         db.String(40)
     )
     seller_creditor_id: Mapped[str | None] = mapped_column(db.String(80))
+    tenant_billing_issuer_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("wowi_company_code.id", name="fk_company_code_tenant_billing_issuer"),
+    )
+    tenant_billing_issuer: Mapped["WowiCompanyCode | None"] = relationship(
+        remote_side=[id],
+    )
+    tenant_billing_recipient_email: Mapped[str | None] = mapped_column(db.String(255))
 
     invoice_billing_rules: Mapped[
         list["InvoiceBillingRule"]
@@ -4152,6 +4159,8 @@ class Invoice(db.Model):
         db.String(160)
     )
     payment_information: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
+    tenant_billing_reference: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
+    tenant_charge_letter: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     introductory_text: Mapped[str | None] = mapped_column(
         db.Text
     )
@@ -4292,6 +4301,14 @@ class Invoice(db.Model):
         back_populates="original_invoice",
         uselist=False,
     )
+
+
+    @property
+    def billing_contract_number(self) -> str | None:
+        if self.tenant_billing_reference:
+            return self.tenant_billing_reference["agreement_number"]
+        return self.recipient_license_agreement_idnum
+
 
 
 class InvoicePosition(db.Model):

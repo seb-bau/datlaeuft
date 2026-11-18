@@ -185,6 +185,7 @@ from .wowiport import (
 from .invoice_service import (
     add_invoice_suggestions,
     available_invoice_commissions,
+    create_agreement_invoice_draft,
     create_commission_invoice_draft,
     create_free_invoice_draft,
     replace_invoice_positions,
@@ -268,6 +269,13 @@ from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
 from .document_articles import attach_article_fields
 from .document_previews import render_document_preview
 from .invoice_payments import invoice_payment_information, payment_options_from_wowiport, save_invoice_payment_form
+from .tenant_billing import (
+    agreement_company_code,
+    choose_contract_recipient,
+    contract_recipients,
+    tenant_billing_agreement,
+    tenant_billing_issuer,
+)
 from .ticket_ai_service import (
     enqueue_ticket_ai, ticket_ai_enabled, ticket_ai_is_current,
     ticket_ai_lease_seconds,
@@ -1313,6 +1321,11 @@ def company_code_invoicing(
         item_id,
     )
 
+    issuer_choices = WowiCompanyCode.query.filter(
+        WowiCompanyCode.id != item.id,
+        or_(WowiCompanyCode.active.is_(True), WowiCompanyCode.id == item.tenant_billing_issuer_id),
+    ).order_by(WowiCompanyCode.code).all()
+
     if request.method == "POST":
         try:
             save_company_code_invoice_form(
@@ -1366,6 +1379,7 @@ def company_code_invoicing(
             return render_template(
                 "admin/company_code_invoicing.html",
                 item=item,
+                issuer_choices=issuer_choices,
             )
 
         flash(
@@ -1384,6 +1398,7 @@ def company_code_invoicing(
     return render_template(
         "admin/company_code_invoicing.html",
         item=item,
+        issuer_choices=issuer_choices,
     )
 
 
@@ -7030,6 +7045,118 @@ def invoice_correspondence(invoice_id):
     return document_preview_response(content, secure_filename(f"Rechnung-{item.invoice_number or item.id}-mit-Anschreiben.pdf"))
 
 
+def tenant_charge_invoice(invoice_id: int, *, lock: bool = False) -> Invoice:
+    query = Invoice.query.filter_by(id=invoice_id)
+    if lock:
+        query = query.populate_existing().with_for_update()
+    invoice = query.first_or_404()
+    if not invoice.tenant_billing_reference or invoice.invoice_kind != InvoiceKind.INVOICE.value:
+        abort(404)
+    if invoice.status != InvoiceStatus.FINALIZED.value:
+        abort(409, description="Die Mieterbelastung setzt eine festgeschriebene Rechnung voraus.")
+    return invoice
+
+
+@admin_bp.route("/admin/invoices/<int:invoice_id>/tenant-charge", methods=["GET", "POST"])
+@invoice_required
+def invoice_tenant_charge(invoice_id: int):
+    from .invoice_correspondence import letter_date
+    from .tenant_charge_letter import (
+        render_tenant_charge_letter, tenant_letter_payment, tenant_letter_purpose, tenant_letter_recipients,
+    )
+
+    item = tenant_charge_invoice(invoice_id, lock=request.method == "POST")
+    company = db.get_or_404(WowiCompanyCode, item.tenant_billing_reference["company_code_id"])
+    today = letter_date()
+    saved = item.tenant_charge_letter or {}
+    values = {
+        "purpose": saved.get("purpose", tenant_letter_purpose(item)),
+        "due_date": saved.get("due_date", ""),
+        "person_id": (saved.get("recipient") or {}).get("person_id"),
+        "caseworker_name": saved.get("caseworker_name", current_user.display_name),
+        "include_work_reports": saved.get("include_work_reports", False),
+    }
+    has_work_reports = bool(work_report_counts(item))
+    recipients = []
+    payment = None
+    try:
+        service = WowiportService()
+        recipients = tenant_letter_recipients(item, service)
+        payment = tenant_letter_payment(item, company, service)
+
+        if request.method == "POST":
+            values = {
+                "purpose": request.form.get("purpose", "").strip(),
+                "due_date": request.form.get("due_date", ""),
+                "person_id": optional_form_int(request.form.get("person_id"), "Vertragspartner"),
+                "caseworker_name": request.form.get("caseworker_name", "").strip(),
+                "include_work_reports": "include_work_reports" in request.form and has_work_reports,
+            }
+            if request.form.get("revision", type=int) != saved.get("revision", 0):
+                raise ValueError("Das Anschreiben wurde inzwischen geändert. Bitte laden Sie die Seite neu.")
+            if request.form.get("payment_method") != payment["method"]:
+                raise ValueError("Die Zahlungsart hat sich geändert. Bitte prüfen Sie die Angaben erneut.")
+            recipient = choose_contract_recipient(recipients, values["person_id"])
+            due = optional_form_date(values["due_date"], "Zahlungstermin")
+            if due is None or due < today:
+                raise ValueError("Bitte geben Sie einen Zahlungstermin ab dem Datum des Anschreibens an.")
+            if not values["purpose"] or len(values["purpose"]) > 4000 or len(values["caseworker_name"]) > 255:
+                raise ValueError("Bitte geben Sie den Anlass mit höchstens 4.000 Zeichen und einen gültigen Ansprechpartner an.")
+            letter = {
+                "purpose": values["purpose"], "due_date": due.isoformat(), "letter_date": today.isoformat(),
+                "caseworker_name": values["caseworker_name"], "include_work_reports": values["include_work_reports"],
+                "recipient": {field: recipient.get(field) for field in (
+                    "person_id", "name", "name_addition", "street", "postal_code", "town", "country_code",
+                )},
+                "payment": payment, "revision": saved.get("revision", 0) + 1,
+            }
+            render_tenant_charge_letter(item, company, letter)
+            item.tenant_charge_letter = letter
+            audit("invoice.tenant_charge.save", "invoice", item.id, {"payment_method": payment["method"]})
+            db.session.commit()
+            flash("Anschreiben „Mieterbelastung“ gespeichert.", "success")
+            return redirect(url_for("admin.invoice_tenant_charge", invoice_id=item.id))
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("tenant_charge_letter_failed invoice_id=%s", invoice_id)
+        flash("Das Mieteranschreiben konnte nicht vorbereitet werden. Bitte prüfen Sie Wowiport und den Briefbogen.", "danger")
+
+    response = current_app.make_response(render_template(
+        "admin/invoice_tenant_charge.html", item=item, company=company, today=today,
+        values=values, has_work_reports=has_work_reports, recipients=recipients, payment=payment,
+    ))
+    response.headers["Cache-Control"] = "private, no-store, max-age=0"
+    return response
+
+
+@admin_bp.get("/admin/invoices/<int:invoice_id>/tenant-charge/document")
+@invoice_required
+def invoice_tenant_charge_document(invoice_id: int):
+    from .tenant_charge_letter import tenant_charge_package
+
+    item = tenant_charge_invoice(invoice_id)
+    if not item.tenant_charge_letter:
+        abort(404)
+    company = db.get_or_404(WowiCompanyCode, item.tenant_billing_reference["company_code_id"])
+    try:
+        content = tenant_charge_package(item, company, item.tenant_charge_letter)
+        db.session.commit()
+    except (ValueError, WorkReportDocumentError) as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+        return redirect(url_for("admin.invoice_tenant_charge", invoice_id=invoice_id))
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("tenant_charge_package_failed invoice_id=%s", invoice_id)
+        flash("Die Mieterunterlagen konnten nicht als PDF erstellt werden.", "danger")
+        return redirect(url_for("admin.invoice_tenant_charge", invoice_id=invoice_id))
+
+    return document_preview_response(content, secure_filename(f"Mieterbelastung-{item.invoice_number}.pdf"))
+
+
 @admin_bp.route(
     "/admin/invoices/new",
     methods=["GET", "POST"],
@@ -7083,6 +7210,14 @@ def invoice_create() -> Any:
                         current_user,
                     )
                 )
+
+            elif mode == "agreement":
+                agreement_id = required_form_int(request.form.get("agreement_id"), "Mietvertrag")
+                person_id = optional_form_int(request.form.get("person_id"), "Vertragspartner")
+                agreement = tenant_billing_agreement(agreement_id)
+                tenant_billing_issuer(agreement_company_code(agreement))
+                recipient = choose_contract_recipient(invoice_creation_recipients(agreement_id), person_id)
+                invoice = create_agreement_invoice_draft(agreement, recipient, current_user)
 
             elif mode == "selected":
                 commission_ids = (
@@ -7145,11 +7280,7 @@ def invoice_create() -> Any:
                 "danger",
             )
 
-            return render_template(
-                "admin/invoice_create.html",
-                company_codes=company_codes,
-                commissions=commissions,
-            )
+            return render_invoice_create(company_codes, commissions)
 
         flash(
             "Rechnungsentwurf angelegt.",
@@ -7163,10 +7294,56 @@ def invoice_create() -> Any:
             )
         )
 
+    return render_invoice_create(company_codes, commissions)
+
+
+def invoice_creation_recipients(agreement_id: int) -> list[dict]:
+    try:
+        return contract_recipients(WowiportService(), agreement_id)
+    except Exception as exc:
+        current_app.logger.exception("invoice_creation_recipients_failed agreement_id=%s", agreement_id)
+        raise ValueError("Die Empfängeranschrift konnte nicht aus Wowiport geladen werden.") from exc
+
+
+def render_invoice_create(company_codes, commissions):
+    search_text = request.args.get("q", "").strip()[:160]
+    results = []
+    if len(search_text) >= 2:
+        companies = {
+            company.erp_id: company for company in WowiCompanyCode.query.filter_by(active=True).all()
+        }
+        for match in search_commission_objects(search_text, search_context="all", limit=50):
+            if match["object_type"] != "license_agreement" or match["is_vacancy"]:
+                continue
+            company = companies.get(match["company_code"]["erp_id"])
+            if company is None:
+                continue
+            try:
+                tenant_billing_issuer(company)
+            except ValueError:
+                continue
+            results.append(match)
+
+    selection = None
+    try:
+        agreement_id = optional_form_int(request.args.get("agreement_id"), "Mietvertrag")
+        if agreement_id is not None:
+            agreement = tenant_billing_agreement(agreement_id)
+            company = agreement_company_code(agreement)
+            issuer = tenant_billing_issuer(company)
+            recipients = invoice_creation_recipients(agreement_id)
+            if not recipients:
+                raise ValueError("Für den Mietvertrag wurde keine Empfängeranschrift gefunden.")
+            selection = {
+                "agreement_id": agreement_id, "agreement_number": agreement.id_num,
+                "issuer": issuer, "company": company, "recipients": recipients,
+            }
+    except ValueError as exc:
+        flash(str(exc), "danger")
+
     return render_template(
-        "admin/invoice_create.html",
-        company_codes=company_codes,
-        commissions=commissions,
+        "admin/invoice_create.html", company_codes=company_codes, commissions=commissions,
+        search_text=search_text, contract_results=results, contract_selection=selection,
     )
 
 
@@ -7503,19 +7680,11 @@ def invoice_recipient_candidates(
         Invoice,
         invoice_id,
     )
-    license_agreement_id = (
-        required_form_int(
-            request.args.get(
-                "license_agreement_id"
-            ),
-            "Vertrag",
-        )
-    )
-
-    agreement = invoice_agreement(
-        invoice,
-        license_agreement_id,
-    )
+    try:
+        license_agreement_id = required_form_int(request.args.get("license_agreement_id"), "Vertrag")
+        agreement = invoice_agreement(invoice, license_agreement_id)
+    except ValueError as exc:
+        return jsonify(message=str(exc)), 400
 
     try:
         service = WowiportService()
@@ -7570,6 +7739,8 @@ def invoice_payment_information_fetch(invoice_id: int):
     invoice = db.get_or_404(Invoice, invoice_id)
     if invoice.status != InvoiceStatus.DRAFT.value:
         return jsonify(message="Zahlungsinformationen können nur für einen Entwurf abgerufen werden."), 409
+    if invoice.tenant_billing_reference:
+        return jsonify(message="Die Zahlungsinformationen zum Mietvertrag werden im Mieteranschreiben verwendet."), 409
     try:
         agreement_id = required_form_int(request.args.get("license_agreement_id"), "Vertrag")
         agreement = invoice_agreement(invoice, agreement_id)
@@ -7930,9 +8101,7 @@ def optional_position_id(
         return None
 
 
-def save_invoice_draft_form(
-    item: Invoice,
-) -> None:
+def save_invoice_recipient_form(item: Invoice) -> None:
     recipient_type = request.form.get(
         "recipient_type",
         InvoiceRecipientType.PRIVATE.value,
@@ -8012,6 +8181,12 @@ def save_invoice_draft_form(
     item.recipient_vat_id = optional_form_text(
         "recipient_vat_id"
     )
+
+
+def save_invoice_draft_form(item: Invoice) -> None:
+    if not item.tenant_billing_reference:
+        save_invoice_recipient_form(item)
+
     item.invoice_date = optional_form_date(
         request.form.get(
             "invoice_date"
@@ -8110,6 +8285,9 @@ def invoice_agreement(
             "Der ausgewählte Vertrag gehört "
             "nicht zum Buchwerk der Rechnung."
         )
+
+    if invoice.tenant_billing_reference or invoice.company_code.tenant_billing_issuer_id is not None:
+        raise ValueError("Bitte verwenden Sie für diesen Mietvertrag den Einstieg „Rechnung mit Mietvertrag“.")
 
     return agreement
 
@@ -11894,6 +12072,20 @@ def save_company_code_invoice_form(
             "Der Ländercode muss "
             "zweistellig sein."
         )
+
+    if "tenant_billing_issuer_id" in request.form:
+        issuer_id = optional_form_int(request.form.get("tenant_billing_issuer_id"), "Ausstellendes Buchwerk")
+        if issuer_id is not None and (issuer_id == item.id or db.session.get(WowiCompanyCode, issuer_id) is None):
+            raise ValueError("Bitte wählen Sie ein anderes Buchwerk als Aussteller aus.")
+        item.tenant_billing_issuer_id = issuer_id
+    if "tenant_billing_recipient_email" in request.form:
+        from .settings import validate_debug_email_address
+
+        email = request.form.get("tenant_billing_recipient_email", "").strip()
+        try:
+            item.tenant_billing_recipient_email = validate_debug_email_address(email) or None
+        except ValueError as exc:
+            raise ValueError("Bitte eine gültige E-Mail-Adresse für den Rechnungseingang eingeben.") from exc
 
     item.document_creation_disabled = "document_creation_disabled" in request.form
     item.invoice_number_mask = (

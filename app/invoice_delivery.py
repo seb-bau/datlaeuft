@@ -155,10 +155,20 @@ def selected_official(official_id):
     return official, recipient
 
 
-def invoice_mail_content(invoice, official):
+def selected_invoice_recipient(invoice, selection):
+    if invoice.tenant_billing_reference:
+        if selection != "company" or not invoice.recipient_email:
+            raise ValueError("Bitte wählen Sie die hinterlegte Rechnungsadresse des empfangenden Buchwerks.")
+        return "company", invoice.recipient_name, validate_debug_email_address(invoice.recipient_email)
+
+    official, recipient = selected_official(selection)
+    return official.erp_id, official.name, recipient
+
+
+def invoice_mail_content(invoice, recipient_name):
     return render_email_template("invoice_tenant_charge", {
         "invoice_number": invoice.invoice_number, "invoice_recipient_name": invoice.recipient_name or "",
-        "contract_number": invoice.recipient_license_agreement_idnum or "", "recipient_name": official.name or "",
+        "contract_number": invoice.billing_contract_number or "", "recipient_name": recipient_name or "",
         "total_gross": f"{invoice.total_gross:,.2f}".replace(",", "_").replace(".", ",").replace("_", "."),
         "currency": invoice.currency_code, "invoice_date": invoice.invoice_date.strftime("%d.%m.%Y") if invoice.invoice_date else "",
         "due_date": invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "",
@@ -169,7 +179,11 @@ def invoice_mail_content(invoice, official):
 @invoice_delivery_bp.get("/admin/invoices/<int:invoice_id>/delivery/recipients")
 @invoice_required
 def delivery_recipients(invoice_id):
-    final_invoice(invoice_id)
+    invoice = final_invoice(invoice_id)
+    if invoice.tenant_billing_reference:
+        items = [{"id": "company", "name": invoice.recipient_name}] if invoice.recipient_email else []
+        return invoice_response({"items": items})
+
     query = WowiResponsibleOfficial.query.filter_by(active=True).filter(~WowiResponsibleOfficial.erp_id.in_(blacklist_ids("official")))
     items = [item for item in query.order_by(WowiResponsibleOfficial.name, WowiResponsibleOfficial.erp_id).all() if not is_blacklisted("person", item.person_erp_id)]
     return invoice_response({"items": [{"id": item.erp_id, "name": item.name or f"Sachbearbeiter {item.erp_id}"} for item in items]})
@@ -180,8 +194,8 @@ def delivery_recipients(invoice_id):
 def delivery_preview(invoice_id):
     invoice = final_invoice(invoice_id)
     try:
-        official, recipient = selected_official(request.args.get("official_id"))
-        content = invoice_mail_content(invoice, official)
+        _, recipient_name, recipient = selected_invoice_recipient(invoice, request.args.get("official_id"))
+        content = invoice_mail_content(invoice, recipient_name)
     except ValueError as exc:
         return invoice_response({"message": str(exc)}, 400)
     except Exception:
@@ -224,8 +238,8 @@ def delivery_send(invoice_id):
         if not settings.get(SettingKeys.SMTP_HOST).strip() or not settings.get(SettingKeys.SMTP_SENDER).strip():
             raise ValueError("SMTP-Server oder Absenderadresse fehlen. Bitte die E-Mail-Einstellungen ergänzen.")
         final_invoice_pdf(invoice)
-        official, recipient = selected_official(data.get("official_id"))
-        content = invoice_mail_content(invoice, official)
+        destination_id, recipient_name, recipient = selected_invoice_recipient(invoice, data.get("official_id"))
+        content = invoice_mail_content(invoice, recipient_name)
         if body is not None:
             content["body"] = body
         if invoice.cover_letter_title is not None:
@@ -234,13 +248,13 @@ def delivery_send(invoice_id):
         item = enqueue_notification(key, "invoice_delivery", payload={
             "invoice_id": invoice.id, "invoice_number": invoice.invoice_number,
             "document_filename": invoice.document_filename, "document_sha256": invoice.document_sha256,
-            "official_id": official.erp_id, "recipient": recipient, "requested_by_user_id": current_user.id, **content, **correspondence,
+            "official_id": destination_id, "recipient": recipient, "requested_by_user_id": current_user.id, **content, **correspondence,
         })
         validate_delivery_retry(item, data.get("official_id"), body)
         if correspondence and item.payload.get("correspondence_filename") != correspondence["correspondence_filename"]:
             resolve_invoice_document_path(correspondence["correspondence_filename"]).unlink(missing_ok=True)
             correspondence = {}
-        audit("invoice.mail_queued", "invoice", invoice.id, {"notification_id": item.id, "recipient": recipient, "official_id": official.erp_id})
+        audit("invoice.mail_queued", "invoice", invoice.id, {"notification_id": item.id, "recipient": recipient, "official_id": destination_id})
         db.session.commit()
     except ValueError as exc:
         db.session.rollback()
@@ -281,6 +295,8 @@ def delivery_draft(invoice_id):
         message = EmailMessage(policy=policy.SMTP)
         message["Subject"] = "Mieterbelastung - Rechnung " + " ".join(invoice.invoice_number.split())
         message["X-Unsent"] = "1"
+        if invoice.tenant_billing_reference and invoice.recipient_email:
+            message["To"] = validate_debug_email_address(invoice.recipient_email)
         message.set_content("")
         content = final_invoice_pdf(invoice)
         if invoice.cover_letter_title is not None:

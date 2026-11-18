@@ -19,6 +19,74 @@
   </a>
 </div>
 
+<div class="card shadow-sm mb-4">
+  <div class="card-header">Rechnung mit Mietvertrag</div>
+  <div class="card-body">
+    <form method="get" action="{{ url_for('admin.invoice_create') }}" class="row g-2 align-items-end">
+      <div class="col-md-8">
+        <label class="form-label" for="invoiceContractSearch">Mieter oder Mietvertrag suchen</label>
+        <input class="form-control" id="invoiceContractSearch" name="q" type="search"
+               value="{{ search_text }}" minlength="2" maxlength="160"
+               placeholder="Name, Objektanschrift oder Vertragsnummer" required>
+      </div>
+      <div class="col-md-auto">
+        <button class="btn btn-outline-primary" type="submit">Suchen</button>
+      </div>
+    </form>
+
+    {% if contract_selection %}
+    <form method="post" class="border rounded p-3 mt-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="agreement_id" value="{{ contract_selection.agreement_id }}">
+      <dl class="row mb-2">
+        <dt class="col-sm-4">Mietvertrag</dt>
+        <dd class="col-sm-8">{{ contract_selection.agreement_number or contract_selection.agreement_id }}</dd>
+        <dt class="col-sm-4">Aussteller</dt>
+        <dd class="col-sm-8">{{ contract_selection.issuer.seller_name or contract_selection.issuer.name }}</dd>
+        <dt class="col-sm-4">Rechnungsempfänger</dt>
+        <dd class="col-sm-8">
+          {% if contract_selection.company.tenant_billing_issuer_id %}
+            {{ contract_selection.company.seller_name or contract_selection.company.name }}
+          {% elif contract_selection.recipients|length == 1 %}
+            {{ contract_selection.recipients[0].name }}
+          {% else %}
+            Ausgewählter Vertragspartner
+          {% endif %}
+        </dd>
+      </dl>
+      {% if contract_selection.recipients|length > 1 %}
+      <label class="form-label" for="invoiceContractPerson">Vertragspartner</label>
+      <select class="form-select mb-3" id="invoiceContractPerson" name="person_id" required>
+        <option value="">Bitte auswählen</option>
+        {% for party in contract_selection.recipients %}
+        <option value="{{ party.person_id }}">{{ party.name }}{% if party.street %} · {{ party.street }}{% endif %}</option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <input type="hidden" name="person_id" value="{{ contract_selection.recipients[0].person_id }}">
+      {% endif %}
+      <button class="btn btn-primary" type="submit" name="mode" value="agreement">Entwurf anlegen</button>
+    </form>
+    {% elif search_text %}
+      {% if contract_results %}
+      <div class="list-group mt-3">
+        {% for contract in contract_results %}
+        <a class="list-group-item list-group-item-action"
+           href="{{ url_for('admin.invoice_create', q=search_text, agreement_id=contract.license_agreement.erp_id) }}">
+          <strong>{{ contract.label }}</strong>
+          <span> · {{ contract.license_agreement.id_num }} · {{ contract.company_code.code }}</span>
+          {% set address = contract.use_unit.address or (contract.building.address if contract.building else '') %}
+          {% if address %}<div class="text-muted">{{ address }}</div>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-muted mt-3 mb-0">Keine passenden Mietverträge gefunden.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
 <form method="post">
   <input
     type="hidden"
@@ -26,10 +94,10 @@
     value="{{ csrf_token() }}"
   >
 
-  <div class="card shadow-sm mb-4">
-    <div class="card-header">
-      Freie Rechnung
-    </div>
+  <details class="card shadow-sm mb-4">
+    <summary class="card-header">
+      Freie Rechnung ohne Mietvertrag
+    </summary>
 
     <div class="card-body">
       <div class="row g-3 align-items-end">
@@ -71,7 +139,7 @@
         </div>
       </div>
     </div>
-  </div>
+  </details>
 
   <div class="card shadow-sm">
     <div class="card-header">

@@ -88,6 +88,8 @@ def masked_payment_iban(value):
 
 
 def invoice_payment_context(invoice, complete=False):
+    if getattr(invoice, "tenant_billing_reference", None):
+        return {"payment_terms_text": ""}
     value = normalize_payment_information(invoice_payment_information(invoice), complete=complete)
     display_iban = masked_payment_iban(value["iban"]) if value["method"] == "sepa_debit" else value["iban"]
     number = invoice.invoice_number or "Entwurf"
@@ -111,6 +113,8 @@ def invoice_payment_context(invoice, complete=False):
 
 
 def freeze_invoice_payment_information(invoice):
+    if invoice.tenant_billing_reference:
+        return
     context = invoice_payment_context(invoice, complete=True)
     invoice.payment_information = {**normalize_payment_information(invoice_payment_information(invoice), complete=True),
                                    "terms_text": context["payment_terms_text"]}

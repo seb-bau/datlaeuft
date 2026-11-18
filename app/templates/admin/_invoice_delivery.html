@@ -1,5 +1,6 @@
 {% if item.status == 'finalized' %}
 <div class="modal fade" id="invoiceDeliveryModal" tabindex="-1" aria-labelledby="invoiceDeliveryTitle" aria-hidden="true"
+     data-company-recipient="{{ 'true' if item.tenant_billing_reference else 'false' }}"
      data-recipients-url="{{ url_for('invoice_delivery.delivery_recipients', invoice_id=item.id) }}"
      data-preview-url="{{ url_for('invoice_delivery.delivery_preview', invoice_id=item.id) }}"
      data-send-url="{{ url_for('invoice_delivery.delivery_send', invoice_id=item.id) }}"
@@ -19,7 +20,7 @@
         <a class="btn btn-primary" href="{{ url_for('invoice_delivery.delivery_draft', invoice_id=item.id) }}">E-Mail-Entwurf öffnen / herunterladen</a>
       </div>
       <div id="invoiceDeliverySystemPanel" hidden>
-        <label class="form-label" for="invoiceDeliveryOfficial">Sachbearbeiter</label>
+        <label class="form-label" for="invoiceDeliveryOfficial">{{ 'Rechnungsempfänger' if item.tenant_billing_reference else 'Sachbearbeiter' }}</label>
         <select class="form-select mb-3" id="invoiceDeliveryOfficial"><option value="">Bitte auswählen</option></select>
         <div id="invoiceDeliveryPreview" hidden>
           <dl class="row small"><dt class="col-sm-2">An</dt><dd class="col-sm-10 text-break" id="invoiceDeliveryRecipient"></dd><dt class="col-sm-2">Betreff</dt><dd class="col-sm-10" id="invoiceDeliverySubject"></dd></dl>

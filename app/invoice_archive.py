@@ -93,7 +93,7 @@ def _archive_values(
             company_code.name or ""
         ),
         "contract_number": str(
-            invoice.recipient_license_agreement_idnum
+            invoice.billing_contract_number
             or ""
         ),
         "recipient_name": str(

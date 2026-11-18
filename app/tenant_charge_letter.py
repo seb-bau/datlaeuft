@@ -1,0 +1,124 @@
+from datetime import date
+from types import SimpleNamespace
+
+from .document_previews import address_lines
+from .invoice_correspondence import letter_date, prepend_letter_pdf, render_letter_pdf
+from .invoice_document import _format_money
+from .invoice_payments import normalize_payment_information, payment_options_from_wowiport
+from .tenant_billing import choose_contract_recipient, contract_recipients
+
+
+def tenant_letter_recipients(invoice, service) -> list[dict]:
+    reference = invoice.tenant_billing_reference
+    address = reference["tenant_address"]
+    person_id = reference["person_erp_id"]
+    if person_id is not None and all(address.get(field) for field in ("name", "street", "postal_code", "town")):
+        return [{**address, "person_id": person_id}]
+
+    recipients = contract_recipients(service, reference["agreement_erp_id"])
+    if person_id is not None:
+        recipients = [choose_contract_recipient(recipients, person_id)]
+    recipients = [
+        recipient for recipient in recipients
+        if all(recipient.get(field) for field in ("street", "postal_code", "town"))
+    ]
+    if not recipients:
+        raise ValueError("Für das Mieteranschreiben fehlt eine vollständige Postanschrift.")
+    return recipients
+
+
+def tenant_letter_payment(invoice, company, service) -> dict:
+    agreement_id = invoice.tenant_billing_reference["agreement_erp_id"]
+    creditor_id = (company.seller_creditor_id or "").strip()
+    available = payment_options_from_wowiport(service, agreement_id, creditor_id)
+    debit_options = [option for option in available["options"] if option["method"] == "sepa_debit"]
+
+    if debit_options:
+        eligible = [
+            option for option in debit_options
+            if option["iban"] and option["mandate_reference"] and option["creditor_id"]
+            and (not creditor_id or option["creditor_id"] == creditor_id)
+        ]
+        if len(eligible) != 1:
+            raise ValueError("Bitte prüfen Sie das zum Buchwerk passende SEPA-Mandat in Wowiport.")
+        return {"method": "sepa_debit"}
+
+    transfer = next((option for option in available["options"] if option["method"] == "bank_transfer"), {})
+    iban = company.seller_iban or transfer.get("iban")
+    if not iban:
+        raise ValueError("Für die Überweisung fehlt eine Bankverbindung des Mietvertragsbuchwerks.")
+    value = normalize_payment_information({
+        "method": "bank_transfer", "iban": iban,
+        "bic": company.seller_bic if company.seller_iban else transfer.get("bic"),
+    }, complete=True)
+    return {"method": "bank_transfer", "iban": value["iban"], "bic": value["bic"]}
+
+
+def tenant_letter_purpose(invoice) -> str:
+    descriptions = list(dict.fromkeys(
+        link.commission.display_title for link in invoice.commission_links if link.commission.display_title
+    ))
+    if not descriptions:
+        descriptions = list(dict.fromkeys(
+            position.description for position in invoice.positions if position.description
+        ))
+    work = "; ".join(descriptions)[:2000]
+    return f"Für die ausgeführten Arbeiten berechnen wir Ihnen die Kosten gemäß der beigefügten Rechnung.\n{work}".strip()
+
+
+def tenant_letter_context(invoice, company, letter) -> dict:
+    name = company.seller_name or company.name
+    recipient = letter["recipient"]
+    address = SimpleNamespace(**{f"recipient_{field}": value for field, value in recipient.items()})
+    amount = _format_money(invoice.total_gross)
+    currency = invoice.currency_code
+    due = date.fromisoformat(letter["due_date"]).strftime("%d.%m.%Y")
+    agreement = invoice.tenant_billing_reference["agreement_number"]
+    payment = letter["payment"]
+    if payment["method"] == "sepa_debit":
+        terms = (
+            f"Den Betrag von {amount} {currency} ziehen wir aufgrund Ihres SEPA-Mandats zum {due} ein. "
+            "Fällt der Termin auf ein Wochenende oder einen Feiertag, verschiebt er sich auf den nächsten Werktag."
+        )
+    else:
+        terms = (
+            f"Bitte überweisen Sie {amount} {currency} bis zum {due} an {name} "
+            f"auf das Konto mit der IBAN {payment['iban']}."
+        )
+        if payment.get("bic"):
+            terms += f" Die BIC lautet {payment['bic']}."
+        terms += f" Bitte geben Sie den Mietvertrag {agreement} als Verwendungszweck an."
+
+    text = (
+        f"Guten Tag {recipient['name']},\n\n{letter['purpose']}\n\n{terms}\n\n"
+        f"Eine Kopie der Rechnung ist beigefügt.\n\nMit freundlichen Grüßen\n{name}"
+    )
+    return {
+        **vars(address),
+        "title": "Mieterbelastung", "text": text,
+        "recipient_address": "\n".join(address_lines(address)),
+        "sender_line": " · ".join(address_lines(company, "seller")),
+        "seller_name": invoice.seller_name or invoice.company_code.name,
+        "invoice_number": invoice.invoice_number,
+        "invoice_date": invoice.invoice_date.strftime("%d.%m.%Y"),
+        "contract_number": agreement,
+        "letter_date": date.fromisoformat(letter["letter_date"]).strftime("%d.%m.%Y"),
+        "amount": amount, "currency": currency, "due_date": due, "payment_terms": terms,
+        "caseworker_name": letter["caseworker_name"],
+        "caseworker_email": company.seller_email, "caseworker_phone": company.seller_phone,
+        "preview": False,
+    }
+
+
+def render_tenant_charge_letter(invoice, company, letter) -> bytes:
+    return render_letter_pdf(tenant_letter_context(invoice, company, letter), company)
+
+
+def tenant_charge_package(invoice, company, letter) -> bytes:
+    from .invoice_delivery import final_invoice_pdf
+    from .work_report_document import WORK_REPORT_SCOPE_ALL, create_invoice_with_work_reports_pdf
+
+    original = final_invoice_pdf(invoice)
+    if letter["include_work_reports"]:
+        original = create_invoice_with_work_reports_pdf(invoice, WORK_REPORT_SCOPE_ALL).getvalue()
+    return prepend_letter_pdf(original, render_tenant_charge_letter(invoice, company, letter))

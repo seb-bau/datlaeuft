@@ -246,7 +246,7 @@
                 <td>Rechnungsdatum</td>
                 <td>{{ invoice_date_formatted }}</td>
             </tr>
-            {% if due_date_formatted %}
+            {% if due_date_formatted and not tenant_billing_reference %}
                 <tr>
                     <td>Fällig am</td>
                     <td>{{ due_date_formatted }}</td>
@@ -266,6 +266,15 @@
             {% endif %}
         </table>
     </div>
+
+    {% if tenant_billing_reference %}
+        <div class="text-section">
+            <strong>Leistungsbezug</strong><br>
+            {{ tenant_billing_reference.tenant_name }}<br>
+            {{ tenant_billing_reference.property_address }}<br>
+            Mietvertrag {{ tenant_billing_reference.agreement_number }}
+        </div>
+    {% endif %}
 
     {% if intro_text %}
         <div class="text-section">{{ intro_text }}</div>
@@ -370,7 +379,7 @@
         <div class="text-section">{{ closing_text }}</div>
     {% endif %}
 
-    {% if not is_cancellation %}
+    {% if not is_cancellation and not tenant_billing_reference %}
         <div class="payment">
             {% if payment_terms_text %}
                 <div class="payment-terms">{{ payment_terms_text }}</div>

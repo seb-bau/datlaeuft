@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Mieterbelastung{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Mieterbelastung</h1>
+    <div class="text-muted">Rechnung {{ item.invoice_number }} · Mietvertrag {{ item.tenant_billing_reference.agreement_number }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.invoice_edit', invoice_id=item.id) }}">Zur Rechnung</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <p class="mb-3"><strong>Absender</strong> {{ company.seller_name or company.name }}</p>
+    {% if item.tenant_charge_letter %}
+    <a class="btn btn-outline-secondary mb-3" target="_blank" rel="noopener"
+       href="{{ url_for('admin.invoice_tenant_charge_document', invoice_id=item.id) }}">Mieterunterlagen als PDF öffnen</a>
+    {% endif %}
+
+    {% if recipients and payment %}
+    <form method="post" class="row g-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="revision" value="{{ item.tenant_charge_letter.revision if item.tenant_charge_letter else 0 }}">
+      <input type="hidden" name="payment_method" value="{{ payment.method }}">
+      <div class="col-12">
+        {% if recipients|length == 1 %}
+        {% set party = recipients[0] %}
+        <input type="hidden" name="person_id" value="{{ party.person_id }}">
+        <strong>Empfänger</strong>
+        <div>{{ party.name }}{% if party.name_addition %} · {{ party.name_addition }}{% endif %}</div>
+        <div>{{ party.street }} · {{ party.postal_code }} {{ party.town }}</div>
+        {% else %}
+        <label class="form-label" for="tenantChargeRecipient">Empfänger</label>
+        <select class="form-select" id="tenantChargeRecipient" name="person_id" required>
+          <option value="">Bitte auswählen</option>
+          {% for party in recipients %}
+          <option value="{{ party.person_id }}" {% if party.person_id == values.person_id %}selected{% endif %}>
+            {{ party.name }} · {{ party.street }} · {{ party.postal_code }} {{ party.town }}
+          </option>
+          {% endfor %}
+        </select>
+        {% endif %}
+      </div>
+      <div class="col-12">
+        <label class="form-label" for="tenantChargePurpose">Anlass der Belastung</label>
+        <textarea class="form-control" id="tenantChargePurpose" name="purpose" rows="5" maxlength="4000" required>{{ values.purpose }}</textarea>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="tenantChargeContact">Ansprechpartner</label>
+        <input class="form-control" id="tenantChargeContact" name="caseworker_name" value="{{ values.caseworker_name }}" maxlength="255">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="tenantChargeDueDate">
+          {{ 'Einzugstermin' if payment.method == 'sepa_debit' else 'Fälligkeit der Überweisung' }}
+        </label>
+        <input class="form-control" id="tenantChargeDueDate" name="due_date" type="date" min="{{ today }}"
+               value="{{ values.due_date }}" required>
+      </div>
+      <div class="col-12">
+        <div class="form-text">
+          {% if payment.method == 'sepa_debit' %}
+          Im Anschreiben wird der Einzug per SEPA-Mandat des Mietvertrags angekündigt.
+          {% else %}
+          Im Anschreiben wird um Überweisung an {{ company.seller_name or company.name }} gebeten.
+          {% endif %}
+        </div>
+      </div>
+      {% if has_work_reports %}
+      <div class="col-12">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="tenantChargeReports" name="include_work_reports"
+                 {% if values.include_work_reports %}checked{% endif %}>
+          <label class="form-check-label" for="tenantChargeReports">Arbeitsnachweise beifügen</label>
+        </div>
+      </div>
+      {% endif %}
+      <div class="col-12">
+        <button class="btn btn-primary" type="submit">Anschreiben speichern</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
