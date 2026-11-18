@@ -5,11 +5,13 @@ import os
 import sys
 from threading import Barrier
 import unittest
+from unittest.mock import patch
 
 from flask import Flask, template_rendered
 from flask_login import login_user
 import sqlalchemy as sa
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from werkzeug.datastructures import FileStorage, MultiDict
 
 import test_ticket_attachment_selection as fixtures
@@ -208,6 +210,16 @@ class CommissionFollowupTests(unittest.TestCase):
         self.db.session.commit()
         self.client.post(f"/admin/commissions/{self.source.id}/acknowledge")
         self.assertEqual(self.source.review_resolved_by, self.reviewer)
+
+    def test_locking_retries_mariadb_snapshot_conflicts_before_any_changes(self):
+        for error_code in (1020, 1205, 1213):
+            with self.subTest(error_code=error_code):
+                error = OperationalError("SELECT", {}, Exception(error_code, "Parallel geändert"))
+                with patch.object(sa.orm.Query, "one_or_none", side_effect=[error, self.source]) as query:
+                    item = self.followup.review_commission(self.source.id, self.creator, lock=True)
+                self.assertEqual(query.call_count, 2)
+                self.assertEqual(item, self.source)
+                self.assertIsNone(item.review_resolved_at)
 
     @unittest.skipUnless(os.environ.get("DATLAEUFT_TEST_DATABASE_URL", "").startswith("mysql"), "Benötigt MariaDB für gleichzeitige Neuvergaben")
     def test_simultaneous_reissues_resolve_the_original_exactly_once(self):

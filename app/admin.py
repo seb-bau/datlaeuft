@@ -8567,7 +8567,7 @@ def commission_detail(
 
     history_titles = {
         "commission.reject": "Auftrag vom Handwerker abgelehnt",
-        "commission.review.acknowledged": "Ablehnung zur Kenntnis genommen",
+        "commission.review.acknowledged": "Prüfauftrag zur Kenntnis genommen",
         "commission.review.reissued": "Auftrag neu erteilt",
         "commission.create.web": "Auftrag im Web erfasst",
         "commission.create.ios": "Auftrag in der App erfasst",

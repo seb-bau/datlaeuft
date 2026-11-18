@@ -1,5 +1,6 @@
 from io import BytesIO
 
+from sqlalchemy.exc import OperationalError
 from werkzeug.datastructures import FileStorage
 
 from .audit import audit
@@ -18,7 +19,15 @@ def review_commission(commission_id, user, *, lock=False, require_open=True):
     query = Commission.query.filter_by(id=commission_id).populate_existing()
     if lock:
         query = query.with_for_update()
-    commission = query.one_or_none()
+    for attempt in range(3):
+        try:
+            commission = query.one_or_none()
+            break
+        except OperationalError as exc:
+            db.session.rollback()
+            error_code = exc.orig.args[0] if exc.orig.args else None
+            if not lock or error_code not in (1020, 1205, 1213) or attempt == 2:
+                raise
     if commission is None or not can_handle_commission_review(commission, user):
         raise ValueError("Der Auftrag ist für Ihre Auftragsprüfung nicht verfügbar.")
     if require_open and (not commission.requires_office_review or commission.deleted_at is not None):
