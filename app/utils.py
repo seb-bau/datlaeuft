@@ -10,9 +10,9 @@ import pycountry
 from flask import request, url_for
 
 
-def commission_list_return_url() -> str:
-    fallback = url_for("admin.commissions")
-    value = request.values.get("return_to", "")
+def _list_return_url(endpoint: str, parameter: str) -> str:
+    fallback = url_for(endpoint)
+    value = request.values.get(parameter, "")
     if "\\" in value or any(ord(character) < 32 or ord(character) == 127 for character in value):
         return fallback
     try:
@@ -22,6 +22,14 @@ def commission_list_return_url() -> str:
     if parsed.scheme or parsed.netloc or parsed.path != fallback:
         return fallback
     return fallback + ("?" + parsed.query if parsed.query else "")
+
+
+def commission_list_return_url() -> str:
+    return _list_return_url("admin.commissions", "return_to")
+
+
+def ticket_list_return_url() -> str:
+    return _list_return_url("admin.tickets", "next")
 
 
 def commission_detail_url(commission_id: int, anchor: str | None = None) -> str:
@@ -157,3 +165,4 @@ def iso_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
     return value.isoformat()
+

@@ -9,6 +9,34 @@ document.addEventListener("DOMContentLoaded", () => {
     let composing = false;
     const searchFocusKey = "ticketSearchFocus";
 
+    if (form.dataset?.stateKey && form.dataset.currentUrl) {
+        try {
+            const current = new URL(window.location.href);
+            const canonical = new URL(form.dataset.currentUrl, current);
+            const storageKey = `${form.dataset.stateKey}:${canonical.pathname}`;
+            const storage = window.sessionStorage;
+            const names = new Set(["owner", "state", "priority", "department", "ai_state", "q", "page"]);
+            if (current.searchParams.get("reset") === "1") {
+                storage.removeItem(storageKey);
+                storage.removeItem(searchFocusKey);
+                window.history.replaceState(null, "", canonical.pathname);
+            } else if (![...current.searchParams.keys()].some(name => names.has(name))) {
+                let saved = null;
+                try { saved = JSON.parse(storage.getItem(storageKey) || "null"); } catch {}
+                if (typeof saved?.query === "string") {
+                    const parameters = new URLSearchParams(saved.query);
+                    const keys = [...parameters.keys()];
+                    if (keys.length && keys.every(name => names.has(name)) && parameters.toString() !== canonical.searchParams.toString()) {
+                        canonical.search = parameters.toString();
+                        window.location.replace(canonical.href);
+                        return;
+                    }
+                }
+            }
+            storage.setItem(storageKey, JSON.stringify({query: canonical.searchParams.toString()}));
+        } catch {}
+    }
+
     try {
         const saved = JSON.parse(window.sessionStorage.getItem(searchFocusKey) || "null");
         window.sessionStorage.removeItem(searchFocusKey);
@@ -22,6 +50,11 @@ document.addEventListener("DOMContentLoaded", () => {
         clearTimeout(searchTimer);
         searchTimer = null;
     }
+
+    document.getElementById("ticketFilterReset")?.addEventListener("click", cancelSearch);
+    document.addEventListener("submit", event => {
+        if (event.target !== form) cancelSearch();
+    });
 
     function submitFilters() {
         cancelSearch();
@@ -108,3 +141,4 @@ document.addEventListener("DOMContentLoaded", () => {
 
     updateSummary();
 });
+

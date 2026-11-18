@@ -19,8 +19,15 @@ class LinkParser(HTMLParser):
         super().__init__()
         self.links = []
         self.current_link = None
+        self.forms = []
+        self.current_form = None
 
     def handle_starttag(self, tag, attrs):
+        if tag == "form":
+            self.current_form = {"attributes": dict(attrs), "fields": {}}
+        elif tag == "input" and self.current_form is not None:
+            values = dict(attrs)
+            self.current_form["fields"].setdefault(values.get("name"), []).append(values.get("value"))
         if tag == "a":
             self.current_link = {**dict(attrs), "text": ""}
 
@@ -29,6 +36,9 @@ class LinkParser(HTMLParser):
             self.current_link["text"] += data
 
     def handle_endtag(self, tag):
+        if tag == "form" and self.current_form is not None:
+            self.forms.append(self.current_form)
+            self.current_form = None
         if tag == "a" and self.current_link is not None:
             self.current_link["text"] = " ".join(self.current_link["text"].split())
             self.links.append(self.current_link)
@@ -81,6 +91,7 @@ class TicketViewTests(unittest.TestCase):
             cls.models.Commission, cls.models.TicketMirror, cls.models.CommissionTicketLink,
             cls.models.CommissionPosition,
             cls.models.WorkflowNotification,
+            cls.models.TicketAiJob,
             cls.models.TimeEntry, cls.models.InventoryMovement, cls.models.InventoryItem,
             cls.models.CraftActivity, cls.models.TimeTaskTemplate, cls.models.TicketCraftFallback,
             cls.models.WowiCommissionType, cls.models.WowiCompanyCode,
@@ -438,7 +449,110 @@ class TicketViewTests(unittest.TestCase):
         self.assertEqual(view["pagination"].total, 0)
         self.assertFalse(view["owner_mapping_available"])
 
+    def test_ticket_actions_and_reset_expose_the_current_filter_context(self):
+        view, links = self.get("/admin/tickets?owner=mine&owner=erp:12&state=all&q=Ticket")
+        response = self.client.get(view["ticket_list_url"])
+        parser = LinkParser()
+        parser.feed(response.get_data(as_text=True))
+        form = next(item for item in parser.forms if item["attributes"].get("id") == "ticketFilters")
+        self.assertEqual(form["attributes"]["data-state-key"], f"ticket-filters-{self.user.id}")
+        self.assertEqual(form["attributes"]["data-current-url"], view["ticket_list_url"])
+        actions = [item for item in parser.forms if item["attributes"].get("method") == "post"]
+        self.assertTrue(actions)
+        for action in actions:
+            self.assertEqual(action["fields"]["next"], [view["ticket_list_url"]])
+        reset = next(link for link in links if link["text"] == "Filter zurücksetzen")
+        self.assertEqual(parse_qs(urlsplit(reset["href"]).query), {"reset": ["1"]})
+
+    def test_ignore_restore_and_reply_keep_all_active_filters(self):
+        self.first_open_ticket.priority_erp_id = 3
+        self.first_open_ticket.department_erp_id = 7
+        self.first_open_ticket.department_name = "Technik"
+        self.first_open_ticket.ai_state = "ready"
+        self.db.session.commit()
+        original, _ = self.get("/admin/tickets?owner=mine&owner=erp:12&state=all&priority=3&department=7&ai_state=ready&q=Ticket")
+        target = original["ticket_list_url"]
+        for action in ("ignore", "restore"):
+            response = self.client.post(f"/admin/tickets/{self.first_open_ticket.id}/{action}", data={"next": target})
+            self.assertEqual(response.location, target)
+            returned, _ = self.get(response.location)
+            self.assertEqual(returned["pagination_filters"], original["pagination_filters"])
+        for effect in (None, ValueError("Bitte Antwort prüfen.")):
+            with patch.object(self.admin, "enqueue_ticket_reply", return_value=types.SimpleNamespace(id=1), side_effect=effect):
+                response = self.client.post(f"/admin/tickets/{self.first_open_ticket.id}/ignore-with-reply", data={"next": target, "response_text": "Antwort", "recipient": "tenant@example.invalid"})
+            self.assertEqual(response.location, target)
+            returned, _ = self.get(response.location)
+            self.assertEqual(returned["pagination_filters"], original["pagination_filters"])
+
+    def test_analysis_retry_and_configuration_errors_keep_the_ticket_list_context(self):
+        view, _ = self.get("/admin/tickets?owner=all&state=all&q=Ticket")
+        target = view["ticket_list_url"]
+        with patch.object(self.admin, "ticket_ai_is_current", return_value=False), patch.object(self.admin, "enqueue_ticket_ai", return_value=True):
+            response = self.client.post(f"/admin/tickets/{self.first_open_ticket.id}/analyze", data={"next": target})
+            self.assertEqual(parse_qs(urlsplit(response.location).query)["next"], [target])
+            _, links = self.get(response.location)
+            self.assertEqual(next(link["href"] for link in links if link["text"] == "Zurück zu den Tickets"), target)
+            retried = self.client.post(f"/admin/tickets/{self.first_open_ticket.id}/regenerate", data={"next": target})
+            self.assertEqual(parse_qs(urlsplit(retried.location).query)["next"], [target])
+        with patch.object(self.admin, "ticket_ai_is_current", return_value=False), patch.object(self.admin, "enqueue_ticket_ai", return_value=False):
+            for action in ("analyze", "regenerate"):
+                response = self.client.post(f"/admin/tickets/{self.first_open_ticket.id}/{action}", data={"next": target})
+                self.assertEqual(response.location, target)
+
+    def test_ticket_order_form_returns_to_the_filtered_list(self):
+        self.prepare_commission_defaults()
+        self.first_open_ticket.ai_state = "ready"
+        self.first_open_ticket.ai_craft_activity_id = 1
+        self.first_open_ticket.ai_task_template_id = 12
+        self.db.session.commit()
+        view, _ = self.get("/admin/tickets?owner=all&state=all&q=Ticket")
+        target = view["ticket_list_url"]
+        with patch.object(self.admin, "ticket_ai_is_current", return_value=True):
+            response = self.client.post(f"/admin/tickets/{self.first_open_ticket.id}/analyze", data={"next": target})
+        response, _ = self.commission_form_response(response.location)
+        parser = LinkParser()
+        parser.feed(response.get_data(as_text=True))
+        self.assertEqual(next(link["href"] for link in parser.links if link["text"] == "Zurück"), target)
+        for form in parser.forms:
+            if "source_ticket_id" in form["fields"] or form["attributes"].get("action", "").endswith("/regenerate"):
+                self.assertEqual(form["fields"]["next"], [target])
+
+    def test_associated_ticket_orders_return_to_the_original_filters(self):
+        commission = self.models.Commission(title="Ticketauftrag")
+        self.db.session.add(commission)
+        self.db.session.flush()
+        self.db.session.add(self.models.CommissionTicketLink(ticket_erp_id=self.first_open_ticket.erp_id, commission_id=commission.id))
+        self.db.session.commit()
+        view, links = self.get("/admin/tickets?owner=all&state=all&q=Eigenes")
+        target = view["ticket_list_url"]
+        detail = next(link["href"] for link in links if link["text"].startswith("Aufträge anzeigen"))
+        self.assertEqual(parse_qs(urlsplit(detail).query)["next"], [target])
+        _, links = self.get(detail)
+        self.assertEqual(next(link["href"] for link in links if link["text"] == "Zurück"), target)
+
+    def test_removing_the_last_ticket_on_a_page_keeps_filters_and_uses_the_last_remaining_page(self):
+        for index in range(51):
+            self.ticket(subject=f"Bleibender Filter {index}")
+        self.db.session.commit()
+        view, _ = self.get("/admin/tickets?owner=mine&state=open&q=Bleibender&page=2")
+        self.assertEqual(len(view["pagination"].items), 1)
+        ticket = view["pagination"].items[0]
+        response = self.client.post(f"/admin/tickets/{ticket.id}/ignore", data={"next": view["ticket_list_url"]})
+        returned, _ = self.get(response.location)
+        self.assertEqual(returned["pagination_filters"], view["pagination_filters"])
+        self.assertEqual(returned["pagination"].page, 1)
+        self.assertEqual(returned["pagination"].total, 50)
+        self.assertEqual(parse_qs(urlsplit(returned["ticket_list_url"]).query)["page"], ["1"])
+
+    def test_ticket_return_urls_only_accept_the_local_ticket_list(self):
+        for value in (None, "https://example.invalid/admin/tickets", "//example.invalid/admin/tickets", "/admin/users", "/\\example.invalid", "/admin/tickets\n?owner=all"):
+            with self.subTest(value=value), self.app.test_request_context(method="POST", data={"next": value} if value else {}):
+                self.assertEqual(self.admin.ticket_list_return_url(), "/admin/tickets")
+        with self.app.test_request_context(method="POST", data={"next": "/admin/tickets?owner=erp%3A11&owner=unassigned&q=Suche&page=2"}):
+            self.assertEqual(self.admin.ticket_list_return_url(), "/admin/tickets?owner=erp%3A11&owner=unassigned&q=Suche&page=2")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

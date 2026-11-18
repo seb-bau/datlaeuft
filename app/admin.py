@@ -236,7 +236,7 @@ from .commission_approval import approve_commission, approval_user_choices, can_
 from .push_preferences import admin_push_preference_rows, save_admin_push_preferences
 from .workflow_notifications import overdue_commission_filter
 from .ticket_replies import enqueue_ticket_reply, ticket_reply_recipients
-from .utils import commission_detail_url, commission_list_return_url, format_local_datetime, parse_local_datetime
+from .utils import commission_detail_url, commission_list_return_url, format_local_datetime, parse_local_datetime, ticket_list_return_url
 
 from .process_info_service import (
     create_office_info,
@@ -4270,14 +4270,19 @@ def tickets() -> Any:
             or_(*conditions)
         )
 
-    pagination = query.order_by(
+    ordered_query = query.order_by(
         TicketMirror.received_at.desc(),
         TicketMirror.id.desc(),
-    ).paginate(
+    )
+    pagination = ordered_query.paginate(
         page=page,
         per_page=50,
         error_out=False,
     )
+    if pagination.page > max(pagination.pages, 1):
+        pagination = ordered_query.paginate(page=max(pagination.pages, 1), per_page=50, error_out=False)
+    pagination_filters = {**selected_filters, "owner": selected_owners, "q": search_text}
+    ticket_list_url = url_for("admin.tickets", page=pagination.page, **pagination_filters)
 
     openai_configured = bool(
         settings.get(
@@ -4324,7 +4329,8 @@ def tickets() -> Any:
             )
         ],
         ticket_owner_labels=filter_options["owner"],
-        pagination_filters={**selected_filters, "owner": selected_owners, "q": search_text},
+        pagination_filters=pagination_filters,
+        ticket_list_url=ticket_list_url,
     )
 
 
@@ -4373,6 +4379,7 @@ def ticket_commissions(
 
     return render_template(
         "admin/ticket_commissions.html",
+        ticket_list_url=ticket_list_return_url(),
         ticket=ticket,
         commissions=ticket.commissions,
         local_status_labels=local_status_labels,
@@ -4386,15 +4393,15 @@ def ticket_analyze(ticket_id: int) -> Any:
     if ticket.deleted_at is not None or ticket.state == TicketMirrorState.IGNORED.value:
         abort(404)
     if ticket_ai_is_current(ticket):
-        return redirect(url_for("admin.commission_create", ticket_id=ticket.id))
+        return redirect(url_for("admin.commission_create", ticket_id=ticket.id, next=ticket_list_return_url()))
     if not enqueue_ticket_ai(
         ticket, current_user.id, automatic=False,
         force=ticket.ai_state == TicketAiState.FAILED.value,
     ):
         flash("Die KI-Analyse ist nicht vollständig konfiguriert.", "warning")
-        return redirect(url_for("admin.tickets"))
+        return redirect(ticket_list_return_url())
     db.session.commit()
-    return redirect(url_for("admin.ticket_analysis_status", ticket_id=ticket.id))
+    return redirect(url_for("admin.ticket_analysis_status", ticket_id=ticket.id, next=ticket_list_return_url()))
 
 
 @admin_bp.post("/admin/tickets/<int:ticket_id>/regenerate")
@@ -4405,10 +4412,10 @@ def ticket_regenerate(ticket_id: int) -> Any:
         abort(404)
     if not enqueue_ticket_ai(ticket, current_user.id, automatic=False, force=True):
         flash("Die KI-Analyse ist nicht vollständig konfiguriert.", "warning")
-        return redirect(url_for("admin.tickets"))
+        return redirect(ticket_list_return_url())
     audit("ticket.ai.regenerate", "ticket", ticket.erp_id)
     db.session.commit()
-    return redirect(url_for("admin.ticket_analysis_status", ticket_id=ticket.id))
+    return redirect(url_for("admin.ticket_analysis_status", ticket_id=ticket.id, next=ticket_list_return_url()))
 
 
 @admin_bp.get("/admin/tickets/<int:ticket_id>/analysis")
@@ -4418,10 +4425,11 @@ def ticket_analysis_status(ticket_id: int) -> Any:
     if ticket.deleted_at is not None:
         abort(404)
     if ticket_ai_is_current(ticket):
-        return redirect(url_for("admin.commission_create", ticket_id=ticket.id))
+        return redirect(url_for("admin.commission_create", ticket_id=ticket.id, next=ticket_list_return_url()))
     job = db.session.get(TicketAiJob, ticket.id)
     return render_template(
         "admin/ticket_analysis_status.html",
+        ticket_list_url=ticket_list_return_url(),
         ticket=ticket,
         pending=job is not None and (job.locked_at is not None or job.attempt_count < 3),
     )
@@ -4453,9 +4461,7 @@ def ticket_ignore(
         )
         db.session.commit()
 
-    return redirect(
-        url_for("admin.tickets")
-    )
+    return redirect(ticket_list_return_url())
 
 
 @admin_bp.get("/admin/tickets/<int:ticket_id>/reply-recipients")
@@ -4481,7 +4487,7 @@ def ticket_ignore_with_reply(ticket_id: int) -> Any:
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
-    return redirect(safe_next_url("admin.tickets"))
+    return redirect(ticket_list_return_url())
 
 
 @admin_bp.post(
@@ -4508,9 +4514,7 @@ def ticket_restore(
         )
         db.session.commit()
 
-    return redirect(
-        url_for("admin.tickets")
-    )
+    return redirect(ticket_list_return_url())
 
 
 def preferred_commission_type_id(
@@ -4803,13 +4807,13 @@ def commission_create() -> Any:
                 "danger",
             )
             return redirect(
-                url_for("admin.tickets")
+                ticket_list_return_url()
             )
 
         if not ticket_ai_is_current(source_ticket):
             if request.method == "POST":
                 flash("Die KI-Vorgaben haben sich geändert. Bitte den Auftrag erneut prüfen.", "warning")
-            return redirect(url_for("admin.ticket_analysis_status", ticket_id=source_ticket.id))
+            return redirect(url_for("admin.ticket_analysis_status", ticket_id=source_ticket.id, next=ticket_list_return_url()))
 
         if request.method == "GET":
             form_values = {
@@ -5347,6 +5351,7 @@ def commission_create() -> Any:
         form_values=form_values,
         selected_object=selected_object,
         source_ticket=source_ticket,
+        ticket_list_url=ticket_list_return_url() if source_ticket is not None else None,
         selected_ticket_attachment_guids=(request.form.getlist("ticket_attachment_guid")
                                     if request.method == "POST" and request.form.get("ticket_attachment_selection_ready") == "true" else None),
         selected_service_position=(
