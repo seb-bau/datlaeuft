@@ -317,6 +317,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
         before = self.client.get(f"/admin/invoices/{invoice.id}/correspondence").data
         self.assertNotIn("Betriebsweg 1", PdfReader(BytesIO(before)).pages[0].extract_text())
         self.assertEqual(self.queue(invoice).status_code, 202)
+        delivery = self.models.WorkflowNotification.query.filter_by(kind="invoice_delivery").one()
+        queued = self.invoice_document.resolve_invoice_document_path(delivery.payload["correspondence_filename"]).read_bytes()
         self.settings.settings.set(self.settings.SettingKeys.INVOICE_COVER_LETTER_LAYOUT, '<h1>GEAENDERTES LAYOUT</h1><p>{{ text }}</p>')
         self.db.session.commit()
         current = self.client.get(f"/admin/invoices/{invoice.id}/correspondence")
@@ -324,7 +326,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertEqual(self.delivery.final_invoice_pdf(invoice), original)
         self.workflow.process_workflow_notification_batch()
         sent = next(self.mail.call_args.args[0].iter_attachments()).get_payload(decode=True)
-        self.assertEqual(sent, before)
+        self.assertEqual(sent, queued)
+        self.assertNotIn("GEAENDERTES LAYOUT", PdfReader(BytesIO(sent)).pages[0].extract_text())
 
     def test_general_settings_do_not_overwrite_the_layout_and_fetches_are_limited_to_data(self):
         definition = self.settings.SettingKeys.INVOICE_COVER_LETTER_LAYOUT
