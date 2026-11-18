@@ -77,6 +77,9 @@
         {% elif definition.key in ("invoice.transfer_payment_text", "invoice.sepa_payment_text") %}
         <textarea class="form-control" name="{{ definition.key }}" rows="4" maxlength="4000">{{ value }}</textarea>
         <div class="form-text">Platzhalter: {% raw %}{due_date}, {invoice_number}, {payment_reference}, {amount}, {currency}, {iban}, {bic}, {mandate_reference}, {creditor_id}, {account_holder}{% endraw %}</div>
+        {% elif definition.key == "invoice.cover_letter_layout" %}
+        <div><a class="btn btn-outline-primary" href="{{ url_for('admin.invoice_cover_letter_layout') }}">Aufbau und Gestaltung bearbeiten</a></div>
+        <div class="form-text">Anschrift, Kontaktblock, Überschrift, Text, Seitenränder und Abstände im vollständigen HTML- und CSS-Layout anpassen.</div>
         {% elif definition.key in ("invoice.cover_letter_title", "invoice.cover_letter_text") %}
         {% if definition.key == "invoice.cover_letter_title" %}
         <input class="form-control" name="{{ definition.key }}" maxlength="200" value="{{ value }}" required>

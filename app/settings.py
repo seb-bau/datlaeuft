@@ -12,6 +12,7 @@ from .models import AppSetting, Commission, SettingValueType
 from email.errors import HeaderParseError
 from email.headerregistry import Address
 from .health_rules import DEFAULT_HEALTH_RULES, normalize_health_rules
+from .invoice_cover_letter_layout import DEFAULT_COVER_LETTER_LAYOUT, validate_cover_letter_layout
 
 T = TypeVar("T")
 
@@ -541,6 +542,10 @@ class SettingKeys:
         "Mit freundlichen Grüßen\n{seller_name}",
         "Anschreiben: Standardtext", "Rechnungen",
     )
+    INVOICE_COVER_LETTER_LAYOUT = SettingDefinition[str](
+        "invoice.cover_letter_layout", SettingValueType.STRING, DEFAULT_COVER_LETTER_LAYOUT,
+        "Anschreiben: Aufbau und Gestaltung", "Rechnungen",
+    )
     OFFER_VALIDITY_DAYS = SettingDefinition[int](
         "offer.validity_days",
         SettingValueType.INT,
@@ -891,6 +896,8 @@ class SettingsService:
         return cast(T, self._deserialize(row.value_text, definition.value_type))
 
     def set(self, definition: SettingDefinition[T], value: T) -> None:
+        if definition.key == SettingKeys.INVOICE_COVER_LETTER_LAYOUT.key:
+            value = cast(T, validate_cover_letter_layout(value))
         if definition.key in {SettingKeys.INVOICE_COVER_LETTER_TITLE.key, SettingKeys.INVOICE_COVER_LETTER_TEXT.key}:
             value = cast(T, validate_cover_letter_text(value, title=definition.key == SettingKeys.INVOICE_COVER_LETTER_TITLE.key))
         if definition.key in {SettingKeys.INVOICE_TRANSFER_PAYMENT_TEXT.key, SettingKeys.INVOICE_SEPA_PAYMENT_TEXT.key}:

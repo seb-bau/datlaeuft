@@ -5,13 +5,14 @@ from tempfile import TemporaryDirectory
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from flask import current_app, render_template
+from flask import current_app
 from pypdf import PdfReader, PdfWriter
-from weasyprint import HTML
+from weasyprint import HTML, default_url_fetcher
 
 from .document_previews import address_lines, invoice_preview_context, render_document_preview
 from .invoice_document import InvoiceDocumentError, _apply_stationery, _stationery_path, resolve_invoice_document_path
 from .models import utc_now
+from .invoice_cover_letter_layout import render_cover_letter_html
 from .settings import SettingKeys, settings, validate_cover_letter_text
 
 
@@ -48,9 +49,12 @@ def cover_letter_context(invoice, title, text):
         "caseworker_name": contact["name"], "caseworker_email": contact["email"], "caseworker_phone": contact["phone"],
     }
     return {
+        **fields,
         "title": title.format_map(fields), "text": text.format_map(fields),
-        "contact": contact, "invoice_reference": fields["invoice_number"],
-        "contract_number": fields["contract_number"], "recipient_address": address_lines(invoice),
+        "recipient_address": "\n".join(address_lines(invoice)),
+        **{field: getattr(invoice, field, None) or "" for field in (
+            "recipient_name_addition", "recipient_street", "recipient_postal_code", "recipient_town", "recipient_country_code",
+        )},
         "sender_line": " · ".join(address_lines(invoice, "seller") or address_lines(invoice.company_code, "seller")),
         "letter_date": (invoice.cover_letter_date or letter_date()).strftime("%d.%m.%Y"),
         "preview": invoice.status == "draft",
@@ -70,10 +74,17 @@ def cover_letter_stationery(invoice):
     return path
 
 
-def render_cover_letter(invoice, title, text):
+def cover_letter_url_fetcher(url):
+    if not url.casefold().startswith("data:"):
+        raise ValueError("Grafiken und Schriften im Anschreiben-Layout müssen als Daten-URL eingebunden sein.")
+    return default_url_fetcher(url)
+
+
+def render_cover_letter(invoice, title, text, *, layout=None):
+    layout = settings.get(SettingKeys.INVOICE_COVER_LETTER_LAYOUT) if layout is None else layout
     content = HTML(
-        string=render_template("admin/invoice_cover_letter_pdf.html", **cover_letter_context(invoice, title, text)),
-        base_url=current_app.root_path,
+        string=render_cover_letter_html(cover_letter_context(invoice, title, text), layout),
+        url_fetcher=cover_letter_url_fetcher,
     ).write_pdf()
     background = cover_letter_stationery(invoice)
     if background is not None:

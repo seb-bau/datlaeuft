@@ -168,6 +168,10 @@ Unter Einstellungen → Rechnungen lassen sich Überschrift und Text für Anschr
 
 Ein eigener Briefbogen kann unter Buchwerke → Rechnungs- und Angebotseinstellungen hinterlegt werden. Ohne eigenen Briefbogen gilt das vorhandene Geschäftspapier des Buchwerks. Name und E-Mail des Sachbearbeiters stammen vom Ersteller; seine Telefonnummer kann in der Benutzerverwaltung gepflegt werden. Ohne persönliche Telefonnummer wird die Telefonnummer des Rechnungsausstellers verwendet.
 
+Administratoren können unter Einstellungen → Rechnungen → Aufbau und Gestaltung bearbeiten das vollständige HTML- und CSS-Layout der Anschreiben ändern. Anschrift, Kontaktangaben, Überschrift, Text, Fußzeile, Seitenränder und Abstände lassen sich entfernen, ergänzen oder verschieben. Der Standard gibt keine zusätzliche Absenderzeile aus; bei Bedarf steht dafür der Platzhalter `sender_line` zur Verfügung. Die verfügbaren Platzhalter und ein Beispiel für optionale Elemente werden im Editor angezeigt. Grafiken und Schriften lassen sich über Daten-URLs einbinden.
+
+Die PDF-Vorschau prüft auch ungespeicherte Layoutänderungen, wahlweise mit Beispieldaten oder den Daten und dem Geschäftspapier einer gespeicherten Rechnung. „Standard wiederherstellen“ ersetzt das gespeicherte Layout durch die mitgelieferte Vorlage. Layoutänderungen gelten für anschließend erzeugte PDFs; bereits für den Systemversand gespeicherte Fassungen bleiben erhalten.
+
 Die gemeinsame PDF stellt das Anschreiben vor die Rechnung und erhält die eingebettete ZUGFeRD-Datei. Die festgeschriebene Originalrechnung bleibt unverändert. Sowohl der E-Mail-Entwurf als auch der Systemversand verwenden ein gespeichertes Anschreiben. Beim Vormerken zum Systemversand wird die gemeinsame PDF fest gespeichert, sodass spätere Änderungen am Anschreiben den vorbereiteten Versand nicht verändern.
 
 # Webhooks
