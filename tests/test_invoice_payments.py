@@ -115,7 +115,7 @@ class InvoicePaymentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unterschiedliche IBANs"):
             self.invoice_payments.payment_options_from_wowiport(service, self.agreement.erp_id)
 
-    def test_fetch_checks_permissions_company_and_draft_status_without_saving(self):
+    def test_fetch_checks_permissions_and_uses_issuer_account_for_foreign_contract(self):
         invoice = self.draft("invoice")
         agreement, mode = self.api_rows()
         self.remote.read_all_rows.side_effect = [[agreement], [mode]]
@@ -134,7 +134,21 @@ class InvoicePaymentTests(unittest.TestCase):
         self.login(self.creator)
         self.economic.company_code_erp_id = 999
         self.db.session.commit()
-        self.assertEqual(self.client.get(f"/admin/invoices/{invoice.id}/payment-information?license_agreement_id={self.agreement.erp_id}").status_code, 400)
+        self.remote.reset_mock()
+        response = self.client.get(f"/admin/invoices/{invoice.id}/payment-information?license_agreement_id={self.agreement.erp_id}")
+        self.assertEqual(response.status_code, 200)
+        selected = response.json["selected"]
+        self.assertEqual(selected["source"], "company")
+        self.assertEqual(selected["method"], "bank_transfer")
+        self.assertEqual(selected["iban"], self.company.seller_iban)
+        self.assertEqual(selected["license_agreement_erp_id"], self.agreement.erp_id)
+        self.remote.read_all_rows.assert_not_called()
+        values = self.draft_form()
+        values.update(recipient_license_agreement_erp_id=str(self.agreement.erp_id), payment_information_data=json.dumps(selected))
+        with self.app.test_request_context(method="POST", data=values):
+            self.admin.save_invoice_draft_form(invoice)
+        self.assertEqual(invoice.recipient_license_agreement_erp_id, self.agreement.erp_id)
+        self.assertEqual(invoice.company_code_erp_id, self.company.erp_id)
         invoice.status = "finalized"
         self.db.session.commit()
         self.assertEqual(self.client.get(f"/admin/invoices/{invoice.id}/payment-information?license_agreement_id={self.agreement.erp_id}").status_code, 409)

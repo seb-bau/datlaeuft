@@ -60,9 +60,13 @@ def invoice_payment_information(invoice):
         if value.get("license_agreement_erp_id") != agreement_id:
             return {"method": "", "iban": "", "bic": "", "source": "unresolved", "license_agreement_erp_id": agreement_id}
         return dict(value)
-    company = invoice.company_code
     if agreement_id is not None and invoice.status == "draft":
         return {"method": "", "iban": "", "bic": "", "source": "unresolved", "license_agreement_erp_id": agreement_id}
+    return company_payment_information(invoice, agreement_id)
+
+
+def company_payment_information(invoice, agreement_id):
+    company = invoice.company_code
     return {"method": "bank_transfer", "iban": invoice.seller_iban or company.seller_iban or "",
             "bic": invoice.seller_bic or company.seller_bic or "", "source": "company", "license_agreement_erp_id": agreement_id}
 

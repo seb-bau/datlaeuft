@@ -267,7 +267,7 @@ from .appointment_service import format_manual_appointment
 from .blacklist import blacklist_ids, include_blacklisted, is_blacklisted
 from .document_articles import attach_article_fields
 from .document_previews import render_document_preview
-from .invoice_payments import invoice_payment_information, payment_options_from_wowiport, save_invoice_payment_form
+from .invoice_payments import company_payment_information, invoice_payment_information, payment_options_from_wowiport, save_invoice_payment_form
 from .ticket_ai_service import (
     enqueue_ticket_ai, ticket_ai_enabled, ticket_ai_is_current,
     ticket_ai_lease_seconds,
@@ -7451,7 +7451,7 @@ def invoice_add_suggestions(
 def invoice_recipient_search(
     invoice_id: int,
 ) -> Any:
-    invoice = db.get_or_404(
+    db.get_or_404(
         Invoice,
         invoice_id,
     )
@@ -7460,30 +7460,10 @@ def invoice_recipient_search(
         "",
     ).strip()
 
-    items = []
-
-    for item in search_commission_objects(
-        search_text,
-        limit=50,
-    ):
-        if (
-            item.get("object_type")
-            != "license_agreement"
-        ):
-            continue
-
-        company_code = (
-            item.get("company_code")
-            or {}
-        )
-
-        if (
-            company_code.get("erp_id")
-            != invoice.company_code_erp_id
-        ):
-            continue
-
-        items.append(item)
+    items = [
+        item for item in search_commission_objects(search_text, limit=50)
+        if item.get("object_type") == "license_agreement"
+    ]
 
     return jsonify(
         {
@@ -7512,10 +7492,10 @@ def invoice_recipient_candidates(
         )
     )
 
-    agreement = invoice_agreement(
-        invoice,
-        license_agreement_id,
-    )
+    try:
+        agreement = invoice_agreement(license_agreement_id)
+    except ValueError as exc:
+        return jsonify(message=str(exc)), 400
 
     try:
         service = WowiportService()
@@ -7572,11 +7552,15 @@ def invoice_payment_information_fetch(invoice_id: int):
         return jsonify(message="Zahlungsinformationen können nur für einen Entwurf abgerufen werden."), 409
     try:
         agreement_id = required_form_int(request.args.get("license_agreement_id"), "Vertrag")
-        agreement = invoice_agreement(invoice, agreement_id)
+        agreement = invoice_agreement(agreement_id)
     except ValueError as exc:
         return jsonify(message=str(exc)), 400
     try:
-        values = payment_options_from_wowiport(WowiportService(), agreement.erp_id, invoice.company_code.seller_creditor_id or "")
+        if agreement.use_unit.economic_unit.company_code_erp_id == invoice.company_code_erp_id:
+            values = payment_options_from_wowiport(WowiportService(), agreement.erp_id, invoice.company_code.seller_creditor_id or "")
+        else:
+            payment = company_payment_information(invoice, agreement.erp_id)
+            values = {"selected": payment, "options": [payment], "requires_selection": False}
     except Exception:
         current_app.logger.exception("invoice_payment_information_fetch_failed invoice_id=%s license_agreement_id=%s", invoice.id, agreement.erp_id)
         return jsonify(message="Die Zahlungsinformationen konnten nicht aus Wowiport geladen werden. Bitte erneut versuchen oder über „ändern“ eingeben."), 502
@@ -7956,10 +7940,7 @@ def save_invoice_draft_form(
     )
 
     if license_agreement_id is not None:
-        agreement = invoice_agreement(
-            item,
-            license_agreement_id,
-        )
+        agreement = invoice_agreement(license_agreement_id)
         item.recipient_license_agreement_erp_id = (
             agreement.erp_id
         )
@@ -8082,7 +8063,6 @@ def save_invoice_draft_form(
 
 
 def invoice_agreement(
-    invoice: Invoice,
     license_agreement_erp_id: int,
 ) -> WowiLicenseAgreement:
     agreement = (
@@ -8099,16 +8079,9 @@ def invoice_agreement(
         or agreement.use_unit is None
         or agreement.use_unit.economic_unit
         is None
-        or (
-            agreement.use_unit
-            .economic_unit
-            .company_code_erp_id
-            != invoice.company_code_erp_id
-        )
     ):
         raise ValueError(
-            "Der ausgewählte Vertrag gehört "
-            "nicht zum Buchwerk der Rechnung."
+            "Der ausgewählte Vertrag ist nicht verfügbar."
         )
 
     return agreement

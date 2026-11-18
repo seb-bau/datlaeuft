@@ -78,6 +78,7 @@ document.addEventListener("DOMContentLoaded", () => {
       commit(data.selected);
       message.textContent = data.requires_selection ? "Mehrere gültige Zahlungsmodalitäten gefunden. Bitte über „ändern“ auswählen."
         : data.selected.method === "sepa_debit" && (!data.selected.mandate_reference || !data.selected.creditor_id) ? "Bitte Mandatsreferenz und Gläubiger-ID über „ändern“ vervollständigen."
+        : data.selected.source === "company" ? (data.selected.iban ? "Überweisung an das ausstellende Buchwerk." : "Für das ausstellende Buchwerk fehlt die IBAN. Bitte über „ändern“ ergänzen.")
         : !data.selected.iban ? "In Wowiport ist keine passende Bankverbindung hinterlegt. Bitte über „ändern“ ergänzen." : "Aus Wowiport übernommen.";
     } catch (error) {
       if (agreement.value !== selectedAgreement || active.signal.aborted && !timedOut) return;
