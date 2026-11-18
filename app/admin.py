@@ -7556,11 +7556,12 @@ def invoice_payment_information_fetch(invoice_id: int):
     except ValueError as exc:
         return jsonify(message=str(exc)), 400
     try:
-        if agreement.use_unit.economic_unit.company_code_erp_id == invoice.company_code_erp_id:
-            values = payment_options_from_wowiport(WowiportService(), agreement.erp_id, invoice.company_code.seller_creditor_id or "")
-        else:
-            payment = company_payment_information(invoice, agreement.erp_id)
-            values = {"selected": payment, "options": [payment], "requires_selection": False}
+        same_company = agreement.use_unit.economic_unit.company_code_erp_id == invoice.company_code_erp_id
+        values = payment_options_from_wowiport(
+            WowiportService(), agreement.erp_id,
+            creditor_id=invoice.company_code.seller_creditor_id if same_company else "",
+            transfer_override=None if same_company else company_payment_information(invoice, agreement.erp_id),
+        )
     except Exception:
         current_app.logger.exception("invoice_payment_information_fetch_failed invoice_id=%s license_agreement_id=%s", invoice.id, agreement.erp_id)
         return jsonify(message="Die Zahlungsinformationen konnten nicht aus Wowiport geladen werden. Bitte erneut versuchen oder über „ändern“ eingeben."), 502

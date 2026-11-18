@@ -120,7 +120,7 @@ def freeze_invoice_payment_information(invoice):
                                    "terms_text": context["payment_terms_text"]}
 
 
-def payment_options_from_wowiport(service, agreement_id, creditor_id=""):
+def payment_options_from_wowiport(service, agreement_id, creditor_id="", *, transfer_override=None):
     today = datetime.now(ZoneInfo("Europe/Berlin")).date()
     agreements = service.read_all_rows("RentAccounting/LicenseAgreements", {
         "licenseAgreementId": agreement_id, "includeBanking": "true", "showNullValues": "true",
@@ -130,7 +130,7 @@ def payment_options_from_wowiport(service, agreement_id, creditor_id=""):
         raise ValueError("Der Vertrag konnte nicht aus Wowiport geladen werden.")
     banking = payment_value(agreement, "Banking") or {}
     collective = payment_value(banking, "CollectiveAccount") or {}
-    transfer = {"method": "bank_transfer", "iban": payment_value(banking, "VirtualIban") or "", "bic": payment_value(collective, "Bic") or "",
+    transfer = transfer_override or {"method": "bank_transfer", "iban": payment_value(banking, "VirtualIban") or "", "bic": payment_value(collective, "Bic") or "",
                 "account_holder": payment_value(collective, "AccountHolder") or "", "source": "wowiport", "license_agreement_erp_id": agreement_id}
     rows = service.read_all_rows("RentAccountingPersonDetails/PaymentModes", {
         "licenseAgreementId": agreement_id, "paymentModeActiveOn": today.isoformat(), "showNullValues": "true",
