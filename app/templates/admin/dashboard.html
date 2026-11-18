@@ -30,6 +30,14 @@
 
   {% if current_user.can_review_work %}
   <div class="col-md-4">
+    <a class="card shadow-sm text-decoration-none text-body h-100" href="{{ url_for('admin.commission_reviews', status='rejected') }}">
+      <div class="card-body">
+        <div class="text-muted">Abgelehnte Aufträge</div>
+        <div class="display-6 text-danger">{{ rejected_review_count }}</div>
+      </div>
+    </a>
+  </div>
+  <div class="col-md-4">
     <a
       class="card shadow-sm text-decoration-none text-body h-100"
       href="{{ url_for('admin.commission_reviews', status='completion_review') }}"

@@ -30,7 +30,7 @@ def resolve_completion_notification_choice(source: CommissionSource, value: Any)
 
 
 def completion_is_reported(commission: Commission) -> bool:
-    return not commission.needs_completion_review and (
+    return commission.rejected_at is None and commission.review_resolved_at is None and not commission.needs_completion_review and (
         commission.status_id == 9 or (
             commission.status_id == 11 and commission.completion_successful is True
         )
@@ -76,6 +76,7 @@ def ensure_completion_notifications(limit: int = 200) -> int:
             ),
         ).filter(
             Commission.local_status == CommissionLocalStatus.COMPLETION_REVIEW.value,
+            Commission.review_resolved_at.is_(None),
             Commission.completion_successful.is_(False),
             Commission.completion_submitted_at.is_not(None),
             Commission.deleted_at.is_(None),

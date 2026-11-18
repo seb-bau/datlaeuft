@@ -233,6 +233,7 @@ from .commission_priority import set_manual_commission_priority
 from .commission_links import commission_wowiport_url
 from .commission_object_history import commission_object_history
 from .commission_approval import approve_commission, approval_user_choices, can_approve_commission, save_user_approval_settings
+from .commission_followup import can_handle_commission_review, review_commission, resolve_commission_review, commission_reissue_data, copy_commission_files
 from .push_preferences import admin_push_preference_rows, save_admin_push_preferences
 from .workflow_notifications import overdue_commission_filter
 from .ticket_replies import enqueue_ticket_reply, ticket_reply_recipients
@@ -349,6 +350,7 @@ def root() -> Any:
 def commission_review_query():
     query = Commission.query.filter(
         Commission.deleted_at.is_(None),
+        Commission.review_resolved_at.is_(None),
         or_(Commission.local_status.in_([
             CommissionLocalStatus.COMPLETION_REVIEW.value,
             CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
@@ -366,6 +368,7 @@ def commission_review_query():
                 Commission.created_by_user_id
                 == current_user.id,
                 Commission.created_by_user_id.is_(None),
+                Commission.local_official_user_id == current_user.id,
                 and_(Commission.approval_state == "pending", Commission.approval_approver_user_id == current_user.id),
             )
         )
@@ -409,8 +412,8 @@ def dashboard() -> Any:
 
     open_count = Commission.query.filter(
         Commission.deleted_at.is_(None),
-        Commission.local_status
-        != CommissionLocalStatus.DONE.value,
+        Commission.review_resolved_at.is_(None),
+        Commission.local_status.notin_([CommissionLocalStatus.DONE.value, CommissionLocalStatus.DELETED.value]),
     ).count()
 
     review_count = TimeEntry.query.filter_by(
@@ -429,9 +432,11 @@ def dashboard() -> Any:
     commission_reviews = commission_review_query()
 
     completion_review_count = commission_reviews.filter(
+        Commission.rejected_at.is_(None),
         Commission.local_status
         == CommissionLocalStatus.COMPLETION_REVIEW.value
     ).count()
+    rejected_review_count = commission_reviews.filter(Commission.rejected_at.is_not(None)).count()
 
     tenant_charge_review_count = commission_reviews.filter(
         Commission.local_status
@@ -488,6 +493,7 @@ def dashboard() -> Any:
         my_invoice_count=my_invoice_count,
         my_open_ticket_count=my_open_ticket_count,
         open_count=open_count,
+        rejected_review_count=rejected_review_count,
         review_count=review_count,
         material_review_count=material_review_count,
         low_stock_count=low_stock_count,
@@ -3779,20 +3785,22 @@ def save_web_commission_upload(
     upload: Any,
     caption: str | None,
     stored_paths: list[Path],
+    as_attachment: bool = False,
 ) -> tuple[CommissionPhoto | CommissionAttachment, bool]:
     raw_data = upload.stream.read(MAX_ATTACHMENT_BYTES + 1)
     if not raw_data:
         raise ValueError("Die Datei ist leer.")
     if len(raw_data) > MAX_ATTACHMENT_BYTES:
         raise ValueError("Die Datei darf höchstens 25 MB groß sein.")
-    try:
-        render_ticket_photo(raw_data, thumbnail=True)
-    except ValueError as exc:
-        if Path(upload.filename).suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"} and not raw_data.lstrip().startswith(b"%PDF-"):
-            raise ValueError("Die Bilddatei konnte nicht gelesen werden.") from exc
-    else:
-        upload.stream.seek(0)
-        return save_web_commission_photo(commission, upload, caption, stored_paths)
+    if not as_attachment:
+        try:
+            render_ticket_photo(raw_data, thumbnail=True)
+        except ValueError as exc:
+            if Path(upload.filename).suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff"} and not raw_data.lstrip().startswith(b"%PDF-"):
+                raise ValueError("Die Bilddatei konnte nicht gelesen werden.") from exc
+        else:
+            upload.stream.seek(0)
+            return save_web_commission_photo(commission, upload, caption, stored_paths)
 
     stored = store_commission_attachment_bytes(commission, raw_data, upload.filename)
     paths = [commission_attachment_path(stored.storage_name)]
@@ -4669,6 +4677,7 @@ def commission_create() -> Any:
 
     source_ticket = None
     source_offer = None
+    source_commission = None
     form_values = request.form
 
     source_ticket_id = (
@@ -4695,19 +4704,32 @@ def commission_create() -> Any:
         )
     )
 
-    if (
-            source_ticket_id is not None
-            and source_offer_id is not None
-    ):
+    source_commission_id = request.form.get("source_commission_id", type=int) if request.method == "POST" else request.args.get("reissue_id", type=int)
+
+    if sum(value is not None for value in (source_ticket_id, source_offer_id, source_commission_id)) > 1:
         flash(
-            "Ein Auftrag kann nicht gleichzeitig "
-            "aus einem Ticket und einem Angebot "
-            "erstellt werden.",
+            "Bitte nur eine Vorlage für den neuen Auftrag auswählen.",
             "danger",
         )
         return redirect(
             url_for("admin.commissions")
         )
+
+    if source_commission_id is not None:
+        try:
+            source_commission = review_commission(source_commission_id, current_user, lock=request.method == "POST")
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return redirect(url_for("admin.commission_reviews"))
+        if request.method == "GET":
+            draft = commission_reissue_data(source_commission)
+            form_values, position_rows = draft["form_values"], draft["position_rows"] or [{}]
+            if form_values["object_id"]:
+                try:
+                    selected_object = get_commission_object_choice(form_values["object_type"], form_values["object_id"])
+                except ValueError:
+                    flash("Das bisherige Objekt ist nicht mehr verfügbar. Bitte ein Objekt auswählen.", "warning")
 
     if source_offer_id is not None:
         source_offer_query = (
@@ -5185,6 +5207,16 @@ def commission_create() -> Any:
 
             db.session.flush()
 
+            if source_commission is not None:
+                if commission.craftsman_erp_id != source_commission.craftsman_erp_id:
+                    commission.creditor_erp_id = None
+                copy_commission_files(
+                    source_commission, commission,
+                    partial(save_web_commission_photo, stored_paths=stored_file_paths),
+                    partial(save_web_commission_upload, stored_paths=stored_file_paths, as_attachment=True),
+                )
+                resolve_commission_review(source_commission, current_user, replacement=commission)
+
             if source_ticket is not None:
                 store_selected_ticket_attachments(
                     commission, ticket_attachment_selection, ticket_attachment_service,
@@ -5283,6 +5315,10 @@ def commission_create() -> Any:
             db.session.commit()
             stored_file_paths.clear()
 
+            if source_commission is not None:
+                flash("Der neue Auftrag wurde erfasst. Die Prüfung des ursprünglichen Auftrags ist abgeschlossen.", "success")
+                return redirect(url_for("admin.commission_detail", commission_id=commission.id))
+
             if source_offer is not None:
                 flash(
                     "Die Annahme wurde erfasst. Der Auftrag wartet auf die Freigabe."
@@ -5320,6 +5356,11 @@ def commission_create() -> Any:
                 str(exc),
                 "danger",
             )
+        except IntegrityError as exc:
+            db.session.rollback()
+            if source_commission is None or not any(name in str(exc.orig) for name in ("reissued_from_commission_id", "uq_commission_reissued_from")):
+                raise
+            flash("Der Prüfauftrag wurde zwischenzeitlich bearbeitet. Bitte die Auftragsprüfung neu öffnen.", "warning")
         finally:
             for stored_path in stored_file_paths:
                 try:
@@ -5365,6 +5406,7 @@ def commission_create() -> Any:
         ),
         external_craftsmen=external_craftsmen,
         source_offer=source_offer,
+        source_commission=source_commission,
         notify_tenants_default=settings.get(
             SettingKeys.COMMISSION_NOTIFY_TENANTS_DEFAULT
         ),
@@ -8209,14 +8251,15 @@ def commissions() -> Any:
         "open": "Beauftragt",
         "in_progress": "In Bearbeitung",
         "completion_review": "Nicht abgeschlossen",
+        "rejected": "Abgelehnt",
         "tenant_charge_review": "Mieterbelastung",
         "done": "Erledigt",
         "awaiting_invoice": "Rechnungseingang erwartet",
         "deleted": "Gelöscht",
     }
-    creator_filter = str(request.args.get("creator") or "mine").strip()
+    creator_filter = str(request.args.get("creator") or "all").strip()
     if creator_filter not in {"mine", "all"} and not (creator_filter.isdecimal() and len(creator_filter) <= 18):
-        creator_filter = "mine"
+        creator_filter = "all"
     official_filter = str(
         request.args.get("official") or "all"
     ).strip()
@@ -8234,7 +8277,7 @@ def commissions() -> Any:
         priority_filter = "all"
     view_mode = str(
         request.args.get("view")
-        or "active"
+        or "all"
     ).strip().casefold()
     assignment_type = str(
         request.args.get("assignment_type")
@@ -8274,17 +8317,17 @@ def commissions() -> Any:
                 == CommissionLocalStatus.DELETED.value,
             )
         )
-    elif view_mode == "all":
-        pass
-    else:
-        view_mode = "active"
+    elif view_mode == "active":
         query = query.filter(
             Commission.deleted_at.is_(None),
+            Commission.review_resolved_at.is_(None),
             Commission.local_status.notin_([
                 CommissionLocalStatus.DONE.value,
                 CommissionLocalStatus.DELETED.value,
             ]),
         )
+    else:
+        view_mode = "all"
 
     if assignment_type != "all":
         query = query.filter(
@@ -8313,7 +8356,7 @@ def commissions() -> Any:
     if local_status_filter != "all":
         items = [
             item for item in items
-            if item.local_status == local_status_filter
+            if item.display_local_status == local_status_filter
         ]
     if priority_filter != "all":
         items = [
@@ -8506,6 +8549,7 @@ def commission_detail(
         "open": "Beauftragt",
         "in_progress": "In Bearbeitung",
         "completion_review": "Nicht abgeschlossen",
+        "rejected": "Abgelehnt",
         "tenant_charge_review": "Mieterbelastung",
         "done": "Erledigt",
         "awaiting_invoice": "Rechnungseingang erwartet",
@@ -8522,6 +8566,9 @@ def commission_detail(
     }
 
     history_titles = {
+        "commission.reject": "Auftrag vom Handwerker abgelehnt",
+        "commission.review.acknowledged": "Ablehnung zur Kenntnis genommen",
+        "commission.review.reissued": "Auftrag neu erteilt",
         "commission.create.web": "Auftrag im Web erfasst",
         "commission.create.ios": "Auftrag in der App erfasst",
         "commission.approval.requested": "Auftrag zur Freigabe vorgelegt",
@@ -8550,6 +8597,7 @@ def commission_detail(
         format_execution_datetime=format_local_datetime,
         wowiport_url=commission_wowiport_url(item),
         can_approve=can_approve_commission(item, current_user),
+        can_handle_review=item.requires_office_review and can_handle_commission_review(item, current_user),
         photos=photos,
         attachments=attachments,
         appointment_requests=appointment_requests,
@@ -8644,6 +8692,7 @@ def commission_reviews() -> Any:
     ).strip()
 
     status_labels = {
+        "rejected": "Abgelehnt",
         CommissionLocalStatus.WAITING_FOR_APPROVAL.value: "Freigabe ausstehend",
         CommissionLocalStatus.COMPLETION_REVIEW.value:
             "Nicht abgeschlossen",
@@ -8654,13 +8703,17 @@ def commission_reviews() -> Any:
 
     query = commission_review_query()
 
-    if selected_status == "overdue":
+    if selected_status == "rejected":
+        query = query.filter(Commission.rejected_at.is_not(None))
+    elif selected_status == "overdue":
         query = query.filter(overdue_commission_filter())
     elif selected_status in status_labels:
         query = query.filter(
             Commission.local_status
             == selected_status
         )
+        if selected_status == CommissionLocalStatus.COMPLETION_REVIEW.value:
+            query = query.filter(Commission.rejected_at.is_(None))
     else:
         selected_status = ""
 
@@ -8677,6 +8730,25 @@ def commission_reviews() -> Any:
         selected_status=selected_status,
         status_labels=status_labels,
     )
+
+
+@admin_bp.post("/admin/commissions/<int:commission_id>/acknowledge")
+@office_review_required
+def commission_acknowledge(commission_id: int) -> Any:
+    try:
+        item = review_commission(commission_id, current_user, lock=True, require_open=False)
+        if item.review_resolved_at is not None:
+            flash("Dieser Prüfauftrag wurde bereits bearbeitet.", "info")
+        elif item.deleted_at is not None:
+            raise ValueError("Dieser Prüfauftrag ist nicht mehr verfügbar.")
+        else:
+            resolve_commission_review(item, current_user)
+            db.session.commit()
+            flash("Zur Kenntnis genommen. Der Auftrag ist nicht mehr zur Prüfung offen.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("admin.commission_reviews"))
 
 
 @admin_bp.post("/admin/commissions/<int:commission_id>/approve")

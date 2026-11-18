@@ -200,6 +200,7 @@ class CommissionDateTests(unittest.TestCase):
         ):
             with self.subTest(status=status):
                 commission.local_status = "in_progress"
+                commission.rejected_at = None
                 commission.status_changed_at = self.previous_date
                 self.db.session.commit()
                 with patch.object(self.workflow, "utc_now", return_value=self.now):
@@ -283,6 +284,41 @@ class CommissionDateTests(unittest.TestCase):
         self.db.session.commit()
         self.assert_status_date(commission, self.now)
 
+    def test_rejection_survives_erp_deletion_and_later_status_changes(self):
+        commission = self.commission(local_status="waiting_for_acceptance")
+        self.workflow.reject_commission(commission, "Nicht zuständig", user=self.user)
+        commission.erp_sync_state = "synced"
+        self.db.session.commit()
+        self.wowiport.mark_commission_deleted(commission.erp_id)
+        self.db.session.commit()
+        self.assertEqual(commission.local_status, "completion_review")
+        self.assertIsNone(commission.deleted_at)
+        self.assertEqual(commission.display_local_status, "rejected")
+        self.synchronize(CommissionStatus={"Id": 10, "Code": "Canceled"})
+        self.assertTrue(commission.requires_office_review)
+        commission.review_resolved_at = self.now
+        commission.review_resolution = "acknowledged"
+        self.db.session.commit()
+        self.synchronize(CommissionStatus={"Id": 7, "Code": "Accepted"})
+        self.assertEqual(commission.local_status, "completion_review")
+        self.assertFalse(commission.requires_office_review)
+        self.assertFalse(commission.is_actionable)
+
+    def test_regular_sync_does_not_delete_a_missing_rejected_order(self):
+        commission = self.commission(local_status="waiting_for_acceptance", craftsman_erp_id=101, recording_date=self.now)
+        self.workflow.reject_commission(commission, "Nicht zuständig", user=self.user)
+        self.db.session.commit()
+        result = {"deleted_marked": 0}
+        self.wowiport.mark_missing_regular_sync_commissions_deleted(
+            datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 12, 1, tzinfo=timezone.utc),
+            "recording_date", {101}, {7}, set(), result,
+        )
+        self.db.session.commit()
+        self.assertEqual(result["deleted_marked"], 0)
+        self.assertIsNone(commission.deleted_at)
+        self.assertTrue(commission.requires_office_review)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -321,23 +321,27 @@ class TicketViewTests(unittest.TestCase):
         self.assertNotIn("ERP-Status nicht anzeigen", html)
         self.assertIn("<th>Bearbeitungsstand</th>", html)
 
-    def test_commission_creator_filter_defaults_to_orders_created_by_the_current_user(self):
+    def test_commission_filters_default_to_all_caseworkers_and_all_orders(self):
         other = self.models.User(email="other@example.invalid", display_name="Andere Sachbearbeitung")
         own = self.models.Commission(title="Von mir angelegt", created_by=self.user, local_official=other)
-        assigned = self.models.Commission(title="Mir zugewiesen", created_by=other, local_official=self.user)
-        imported = self.models.Commission(title="Import ohne Ersteller")
+        assigned = self.models.Commission(title="Mir zugewiesen", created_by=other, local_official=self.user, local_status="done")
+        imported = self.models.Commission(title="Import ohne Ersteller", local_status="deleted", deleted_at=self.models.utc_now())
         self.db.session.add_all([other, own, assigned, imported])
         self.db.session.commit()
         for path in ("/admin/commissions", "/admin/commissions?creator=invalid"):
             view, _ = self.get(path)
-            self.assertEqual(view["creator_filter"], "mine")
-            self.assertEqual([item.id for item in view["items"]], [own.id])
+            self.assertEqual(view["creator_filter"], "all")
+            self.assertEqual(view["view_mode"], "all")
+            self.assertTrue({own.id, assigned.id, imported.id}.issubset({item.id for item in view["items"]}))
         view, links = self.get("/admin/commissions?creator=all")
         self.assertTrue({own.id, assigned.id, imported.id}.issubset({item.id for item in view["items"]}))
         reset = next(link for link in links if link["text"] == "Filter zurücksetzen")
         reset_view, _ = self.get(reset["href"])
-        self.assertEqual(reset_view["creator_filter"], "mine")
-        self.assertEqual([item.id for item in reset_view["items"]], [own.id])
+        self.assertEqual(reset_view["creator_filter"], "all")
+        self.assertEqual(reset_view["view_mode"], "all")
+        self.assertTrue({own.id, assigned.id, imported.id}.issubset({item.id for item in reset_view["items"]}))
+        view, _ = self.get("/admin/commissions?creator=mine")
+        self.assertEqual([item.id for item in view["items"]], [own.id])
 
     def test_ticket_filter_combines_multiple_employees_without_including_others(self):
         self.ticket(subject="Weiterer Mitarbeiter", assigned_user_erp_id=13)

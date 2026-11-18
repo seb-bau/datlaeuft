@@ -105,6 +105,7 @@ def reject_commission(
         )
 
     now = utc_now()
+    commission.rejected_at = now
     commission.completion_successful = False
     commission.tenant_charge_requested = False
     commission.completion_reason = normalized_reason
@@ -289,6 +290,8 @@ def complete_commission(
 def validate_actionable(
     commission: Commission,
 ) -> None:
+    if commission.rejected_at is not None or commission.review_resolved_at is not None:
+        raise CommissionWorkflowError("Dieser Auftrag wurde bereits abgelehnt oder abschließend geprüft.", 409)
     if not commission.is_actionable:
         raise CommissionWorkflowError(
             (

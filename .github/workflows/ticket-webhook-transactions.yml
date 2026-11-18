@@ -53,6 +53,8 @@ on:
       - app/ticket_attachments.py
       - app/document_sync.py
       - app/static/js/ticket_attachment_selection.js
+      - app/commission_followup.py
+      - migrations/versions/*commission_review_resolution.py
       - app/commission_approval.py
       - app/auth.py
       - app/performance_review_service.py
@@ -156,6 +158,8 @@ on:
       - app/ticket_attachments.py
       - app/document_sync.py
       - app/static/js/ticket_attachment_selection.js
+      - app/commission_followup.py
+      - migrations/versions/*commission_review_resolution.py
       - app/commission_approval.py
       - app/auth.py
       - app/performance_review_service.py
@@ -277,6 +281,8 @@ jobs:
         run: |
           python -m unittest discover -s tests -p test_invoice_delivery_migration.py -v
           python -m unittest discover -s tests -p test_invoice_workflow_migration.py -v
+          python -m unittest discover -s tests -p test_commission_followup_migration.py -v
+          python -m unittest discover -s tests -p test_commission_followup.py -v
           python -m unittest discover -s tests -p test_approval_migration_recovery.py -v
           python -m unittest discover -s tests -p test_commission_approval.py -v
           python -m unittest discover -s tests -p test_commission_object_history.py -v
@@ -290,5 +296,6 @@ jobs:
           python -m unittest discover -s tests -p test_completed_commission_time.py -v
           python -m unittest discover -s tests -p test_accounting_catalog.py -v
           python -m unittest discover -s tests -p test_invoice_payments.py -v
+
 
 

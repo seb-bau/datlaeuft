@@ -8,7 +8,7 @@
   <div class="flex-grow-1">
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
       <span class="badge text-bg-primary">
-        {{ external_status_labels.get(item.local_status, item.local_status) }}
+        {{ external_status_labels.get(item.display_local_status, item.display_local_status) }}
       </span>
       {% if item.is_high_priority %}
       <span class="badge text-bg-danger">Priorität</span>

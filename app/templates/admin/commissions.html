@@ -267,7 +267,10 @@
             {% endif %}
           </td>
           <td>{{ format_execution_datetime(item.execution_from, "%d.%m.%Y") if item.execution_from else "" }}</td>
-          <td>{{ local_status_labels.get(item.local_status, "Unbekannt") }}</td>
+          <td>{{ local_status_labels.get(item.display_local_status, "Unbekannt") }}
+            {% if item.review_resolved_at %}
+            <div class="small text-muted">{{ 'Neu erteilt' if item.review_resolution == 'reissued' else 'Zur Kenntnis genommen' }} · Prüfung abgeschlossen</div>
+            {% endif %}</td>
           <td class="text-end">
   {% if item.erp_id %}
   <form method="post" action="{{ url_for('admin.commission_sync', commission_id=item.id) }}">

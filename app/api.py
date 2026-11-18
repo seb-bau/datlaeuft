@@ -3665,7 +3665,7 @@ def viewable_commission_user_ids(
 
 
 def can_edit_commission(commission: Commission, user: User) -> bool:
-    if commission.approval_state == "pending":
+    if commission.approval_state == "pending" or commission.rejected_at is not None or commission.review_resolved_at is not None:
         return False
 
     if user.is_admin or user.is_foreman or commission.user_id == user.id:
