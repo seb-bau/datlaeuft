@@ -3063,6 +3063,14 @@ class WowiCompanyCode(db.Model):
         default=utc_now,
         nullable=False,
     )
+    document_creation_disabled: Mapped[bool] = mapped_column(
+        db.Boolean, default=False, server_default="0", nullable=False,
+    )
+
+    @classmethod
+    def available_for_documents(cls):
+        return cls.query.filter_by(active=True, document_creation_disabled=False)
+
     invoice_number_mask: Mapped[str] = mapped_column(
         db.String(160),
         default="<company_code>-<year>-<counter>",

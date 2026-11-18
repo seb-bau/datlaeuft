@@ -34,6 +34,7 @@
     <div class="card-body">
       <div class="row g-3 align-items-end">
         <div class="col-lg-6">
+          {% if company_codes|length > 1 %}
           <label class="form-label">
             Buchwerk
           </label>
@@ -50,12 +51,18 @@
             </option>
             {% endfor %}
           </select>
+          {% elif company_codes %}
+          <input type="hidden" name="company_code_id" value="{{ company_codes[0].id }}">
+          {{ company_codes[0].code }} · {{ company_codes[0].name }}
+          {% else %}
+          Kein Buchwerk für neue Rechnungen verfügbar.
+          {% endif %}
         </div>
 
         <div class="col-lg-auto">
           <button
             class="btn btn-outline-primary"
-            type="submit"
+            type="submit" {% if not company_codes %}disabled{% endif %}
             name="mode"
             value="free"
           >
