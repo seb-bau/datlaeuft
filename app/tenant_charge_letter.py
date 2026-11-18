@@ -68,6 +68,9 @@ def tenant_letter_purpose(invoice) -> str:
 
 def tenant_letter_context(invoice, company, letter) -> dict:
     name = company.seller_name or company.name
+    sender_address = address_lines(company, "seller")
+    if not company.seller_name:
+        sender_address.insert(0, name)
     recipient = letter["recipient"]
     address = SimpleNamespace(**{f"recipient_{field}": value for field, value in recipient.items()})
     amount = _format_money(invoice.total_gross)
@@ -97,8 +100,8 @@ def tenant_letter_context(invoice, company, letter) -> dict:
         **vars(address),
         "title": "Mieterbelastung", "text": text,
         "recipient_address": "\n".join(address_lines(address)),
-        "sender_line": " · ".join(address_lines(company, "seller")),
-        "seller_name": invoice.seller_name or invoice.company_code.name,
+        "sender_line": " · ".join(sender_address),
+        "seller_name": name,
         "invoice_number": invoice.invoice_number,
         "invoice_date": invoice.invoice_date.strftime("%d.%m.%Y"),
         "contract_number": agreement,
@@ -110,8 +113,8 @@ def tenant_letter_context(invoice, company, letter) -> dict:
     }
 
 
-def render_tenant_charge_letter(invoice, company, letter) -> bytes:
-    return render_letter_pdf(tenant_letter_context(invoice, company, letter), company)
+def render_tenant_charge_letter(invoice, company, letter, *, layout=None) -> bytes:
+    return render_letter_pdf(tenant_letter_context(invoice, company, letter), company, layout=layout)
 
 
 def tenant_charge_package(invoice, company, letter) -> bytes:

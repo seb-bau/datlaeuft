@@ -17,9 +17,18 @@
         <label class="form-label" for="coverLetterLayoutInvoice">Daten für die PDF-Vorschau</label>
         <select class="form-select" id="coverLetterLayoutInvoice" name="invoice_id">
           <option value="">Beispieldaten ohne Geschäftspapier</option>
-          {% for invoice in invoices %}<option value="{{ invoice.id }}">{{ invoice.invoice_number or ('Entwurf ' ~ invoice.id) }} · {{ invoice.recipient_name or 'Ohne Empfänger' }} · {{ invoice.company_code_code }}</option>{% endfor %}
+          {% for invoice in invoices if not invoice.tenant_billing_reference or invoice.tenant_charge_letter %}
+          <option value="{{ invoice.id }}">
+            {{ invoice.invoice_number or ('Entwurf ' ~ invoice.id) }}
+            {% if invoice.tenant_billing_reference %}
+            · Mieterbelastung · {{ invoice.tenant_charge_letter.recipient.name }}
+            {% else %}
+            · {{ invoice.recipient_name or 'Ohne Empfänger' }} · {{ invoice.company_code_code }}
+            {% endif %}
+          </option>
+          {% endfor %}
         </select>
-        <div class="form-text">Bei Auswahl einer Rechnung wird deren Geschäftspapier verwendet. Die Vorschau zeigt Ihre noch nicht gespeicherten Layoutänderungen.</div>
+        <div class="form-text">Bei Auswahl einer Rechnung wird der Briefbogen des Absenders verwendet. Die Vorschau zeigt Ihre noch nicht gespeicherten Layoutänderungen.</div>
       </div>
       <div class="card-footer d-flex flex-wrap gap-2">
         <button class="btn btn-primary" name="action" value="save" type="submit">Layout speichern</button>

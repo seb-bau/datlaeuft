@@ -1266,8 +1266,18 @@ def invoice_cover_letter_layout_preview():
             invoice = db.session.get(Invoice, int(invoice_id))
             if invoice is None:
                 raise ValueError("Die ausgewählte Rechnung ist nicht mehr verfügbar.")
-            values = cover_letter_values(invoice)
-            content = render_cover_letter(invoice, values["title"], values["text"], layout=layout)
+            if invoice.tenant_billing_reference:
+                from .tenant_charge_letter import render_tenant_charge_letter
+
+                if not invoice.tenant_charge_letter:
+                    raise ValueError("Bitte wählen Sie eine Rechnung mit gespeichertem Mieteranschreiben.")
+                company = db.session.get(WowiCompanyCode, invoice.tenant_billing_reference["company_code_id"])
+                if company is None:
+                    raise ValueError("Das Buchwerk des Mietvertrags ist nicht verfügbar.")
+                content = render_tenant_charge_letter(invoice, company, invoice.tenant_charge_letter, layout=layout)
+            else:
+                values = cover_letter_values(invoice)
+                content = render_cover_letter(invoice, values["title"], values["text"], layout=layout)
         else:
             context = {
                 "title": "Ihre Rechnung RE-BEISPIEL-001", "text": "Sehr geehrte Damen und Herren,\n\nbeigefügt erhalten Sie unsere Rechnung über 119,00 EUR.\n\nMit freundlichen Grüßen\nBeispielunternehmen",
@@ -6988,6 +6998,8 @@ def invoice_cover_letter(invoice_id):
     from .invoice_correspondence import cover_letter_values, invoice_correspondence_pdf, letter_date
     from .settings import validate_cover_letter_text
     item = Invoice.query.filter_by(id=invoice_id).populate_existing().with_for_update().first_or_404()
+    if item.tenant_billing_reference:
+        return jsonify(message="Bitte nutzen Sie in der Rechnungsansicht „Anschreiben zur Mieterbelastung“."), 409
     if request.method == "GET":
         response = jsonify(cover_letter_values(item))
         response.headers["Cache-Control"] = "private, no-store, max-age=0"
@@ -7019,6 +7031,8 @@ def invoice_cover_letter(invoice_id):
 def invoice_cover_letter_preview(invoice_id):
     from .invoice_correspondence import invoice_correspondence_pdf
     item = db.get_or_404(Invoice, invoice_id)
+    if item.tenant_billing_reference:
+        return jsonify(message="Bitte nutzen Sie in der Rechnungsansicht „Anschreiben zur Mieterbelastung“."), 409
     try:
         content = invoice_correspondence_pdf(item, title=request.form.get("title", ""), text=request.form.get("text", ""))
     except ValueError as exc:
@@ -7034,7 +7048,7 @@ def invoice_cover_letter_preview(invoice_id):
 def invoice_correspondence(invoice_id):
     from .invoice_correspondence import invoice_correspondence_pdf
     item = db.get_or_404(Invoice, invoice_id)
-    if item.cover_letter_title is None:
+    if item.tenant_billing_reference or item.cover_letter_title is None:
         abort(404)
     try:
         content = invoice_correspondence_pdf(item)

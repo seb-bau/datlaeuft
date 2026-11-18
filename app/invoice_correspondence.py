@@ -102,7 +102,7 @@ def render_cover_letter(invoice, title, text, *, layout=None):
 
 
 def prepend_cover_letter(invoice, data, *, title=None, text=None):
-    if title is None and invoice.cover_letter_title is None:
+    if invoice.tenant_billing_reference or (title is None and invoice.cover_letter_title is None):
         return data
     values = cover_letter_values(invoice)
     letter = render_cover_letter(invoice, values["title"] if title is None else title, values["text"] if text is None else text)
@@ -128,7 +128,7 @@ def invoice_correspondence_pdf(invoice, *, title=None, text=None):
 
 
 def store_delivery_correspondence(invoice):
-    if invoice.cover_letter_title is None:
+    if invoice.tenant_billing_reference or invoice.cover_letter_title is None:
         return {}
     content = invoice_correspondence_pdf(invoice)
     path = Path(current_app.instance_path) / "invoice_documents" / "correspondence" / f"{invoice.id}-{uuid4().hex}.pdf"
@@ -141,7 +141,7 @@ def delivery_correspondence_pdf(invoice, payload):
     from .invoice_delivery import final_invoice_pdf
     original = final_invoice_pdf(invoice)
     filename = payload.get("correspondence_filename")
-    if not filename:
+    if invoice.tenant_billing_reference or not filename:
         return original
     try:
         content = resolve_invoice_document_path(filename).read_bytes()
