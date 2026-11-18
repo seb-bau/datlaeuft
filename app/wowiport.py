@@ -3642,6 +3642,11 @@ def mark_missing_regular_sync_commissions_deleted(
         )
 
     for commission in query.all():
+        if commission.rejected_at is not None:
+            commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
+            commission.deleted_at = None
+            commission.synced_at = utc_now()
+            continue
         if commission.local_status != CommissionLocalStatus.DELETED.value:
             commission.status_changed_at = utc_now()
         commission.local_status = CommissionLocalStatus.DELETED.value
@@ -3863,7 +3868,9 @@ def upsert_commission(
             and commission.status_id == previous_status[0]
             and commission.craftsman_erp_id == previous_craftsman_erp_id
         )
-        if not preserve_completion_review:
+        if commission.rejected_at is not None or commission.review_resolved_at is not None:
+            commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
+        elif not preserve_completion_review:
             commission.local_status = ERP_LOCAL_STATUS.get(
                 commission.status_id,
                 CommissionLocalStatus.OPEN.value,
@@ -4173,6 +4180,12 @@ def mark_commission_deleted(erp_id: int) -> Commission | None:
 
     if commission is None:
         return None
+
+    if commission.rejected_at is not None:
+        commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
+        commission.deleted_at = None
+        commission.synced_at = utc_now()
+        return commission
 
     if commission.local_status != CommissionLocalStatus.DELETED.value:
         commission.status_changed_at = utc_now()
@@ -4643,4 +4656,5 @@ def _signature_value(value: Any) -> str | None:
         return value.isoformat()
 
     return str(value)
+
 

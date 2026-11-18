@@ -111,6 +111,18 @@ class CompletionNotificationTests(unittest.TestCase):
         self.assertEqual(self.process(), 0)
         self.send_email.assert_called_once()
 
+    def test_resolved_reviews_do_not_queue_or_deliver_outdated_notifications(self):
+        commission = self.commission()
+        self.assertEqual(self.notifications.ensure_completion_notifications(), 1)
+        commission.review_resolved_at = self.now
+        commission.review_resolution = "acknowledged"
+        self.db.session.commit()
+        self.assertEqual(self.process(), 1)
+        self.send_email.assert_not_called()
+        self.assertEqual(self.models.CommissionCompletionNotification.query.one().state, "discarded")
+        self.commission(erp_idnum="A-200", review_resolved_at=self.now, review_resolution="reissued")
+        self.assertEqual(self.notifications.ensure_completion_notifications(), 0)
+
     def test_a_later_incomplete_report_on_the_same_order_has_its_own_notification(self):
         commission = self.commission()
         self.process()
@@ -256,3 +268,4 @@ class CompletionNotificationMigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

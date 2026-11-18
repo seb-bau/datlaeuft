@@ -1371,6 +1371,18 @@ class Commission(db.Model):
         index=True,
     )
     completion_submitted_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    rejected_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True), index=True)
+    review_resolved_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True), index=True)
+    review_resolution: Mapped[str | None] = mapped_column(db.String(30))
+    review_resolved_by_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id"), index=True)
+    review_resolved_by: Mapped[User | None] = relationship(foreign_keys=[review_resolved_by_user_id])
+    reissued_from_commission_id: Mapped[int | None] = mapped_column(db.ForeignKey("commission.id"), unique=True)
+    reissued_from: Mapped["Commission | None"] = relationship(
+        remote_side="Commission.id", foreign_keys=[reissued_from_commission_id], back_populates="reissued_commission",
+    )
+    reissued_commission: Mapped["Commission | None"] = relationship(
+        foreign_keys="Commission.reissued_from_commission_id", back_populates="reissued_from", uselist=False,
+    )
     external_assignment_version: Mapped[int] = mapped_column(
         db.Integer,
         default=0,
@@ -1493,6 +1505,8 @@ class Commission(db.Model):
                 self.approval_state != "pending"
                 and self.erp_id is not None
                 and bool(self.erp_idnum)
+                and self.rejected_at is None
+                and self.review_resolved_at is None
                 and self.local_status not in {
                     CommissionLocalStatus.RECORDED.value,
                     CommissionLocalStatus.DELETED.value,
@@ -1540,7 +1554,16 @@ class Commission(db.Model):
             self.local_status == CommissionLocalStatus.COMPLETION_REVIEW.value
             and self.completion_successful is False
             and self.completion_submitted_at is not None
+            and self.review_resolved_at is None
         )
+
+    @property
+    def requires_office_review(self) -> bool:
+        return self.local_status == CommissionLocalStatus.COMPLETION_REVIEW.value and self.review_resolved_at is None
+
+    @property
+    def display_local_status(self) -> str:
+        return "rejected" if self.rejected_at is not None else self.local_status
 
     @property
     def completion_submitted_by_name(

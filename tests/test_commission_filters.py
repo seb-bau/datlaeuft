@@ -39,7 +39,7 @@ class CommissionFilterTests(unittest.TestCase):
     def test_craftsman_defaults_to_all_and_includes_internal_and_external_orders(self):
         view, _ = self.get("/admin/commissions")
         self.assertEqual(view["craftsman_filter"], "all")
-        self.assertEqual({item.id for item in view["items"]}, {self.internal.id, self.other.id, self.external_order.id})
+        self.assertEqual({item.id for item in view["items"]}, {item.id for item in self.models.Commission.query.all()})
         self.assertEqual(view["craftsman_options"][f"user:{self.worker.id}"], "Erster Handwerker (Intern)")
         self.assertEqual(view["craftsman_options"]["erp:701"], "Externe Firma (Extern)")
         for selected, expected in ((f"user:{self.worker.id}", self.internal), ("erp:701", self.external_order)):

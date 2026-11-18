@@ -86,6 +86,7 @@ COMPLETED_STATUSES = (
     CommissionLocalStatus.DONE.value,
 )
 STATUS_LABELS = {
+    "rejected": "Abgelehnt",
     CommissionLocalStatus.AWAITING_INVOICE.value: "Rechnungseingang erwartet",
     CommissionLocalStatus.RECORDED.value: "Erfasst",
     CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value:
@@ -1305,3 +1306,4 @@ def external_info_read(public_id: str) -> Any:
         return jsonify({"message": str(exc)}), 400
 
     return jsonify({"message": "Lesestatus gespeichert."})
+

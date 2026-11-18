@@ -388,7 +388,7 @@ def execute_outbox_operation(
         service.mark_commission_accepted(commission.erp_id)
         commission.status_id = 7
         commission.status_code = "Accepted"
-        if not commission.needs_completion_review:
+        if not commission.needs_completion_review and commission.rejected_at is None and commission.review_resolved_at is None:
             commission.local_status = CommissionLocalStatus.IN_PROGRESS.value
 
     elif operation.operation_type == ErpOperationType.CANCEL_COMMISSION.value:
@@ -911,4 +911,5 @@ def run_worker(
 
         if not any(result.values()):
             sleep(max(poll_seconds, 1))
+
 

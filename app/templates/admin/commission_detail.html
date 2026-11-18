@@ -122,6 +122,12 @@
   </div>
 </div>
 
+{% if item.reissued_from %}
+<div class="alert alert-info">
+  Neuvergabe zu <a href="{{ url_for('admin.commission_detail', commission_id=item.reissued_from.id) }}">Auftrag {{ item.reissued_from.erp_idnum or item.reissued_from.code or item.reissued_from.id }}</a>.
+</div>
+{% endif %}
+
 {% if item.approval_state == 'pending' %}
 <div class="card border-warning shadow-sm mb-4">
   <div class="card-body">
@@ -170,9 +176,28 @@
 </form>
 
 {% if item.local_status == "completion_review" %}
-<div class="alert alert-danger">
-  <strong>Auftrag nicht abgeschlossen.</strong>
-  {{ item.completion_reason or "Es wurde keine Begründung angegeben." }}
+<div class="alert {{ 'alert-secondary' if item.review_resolved_at else 'alert-danger' }}">
+  <strong>{{ 'Auftrag vom Handwerker abgelehnt.' if item.rejected_at else 'Auftrag nicht abgeschlossen.' }}</strong>
+  <div>{{ item.completion_reason or "Es wurde keine Begründung angegeben." }}</div>
+  {% if item.review_resolved_at %}
+  <div class="mt-2">
+    {{ 'Neu erteilt' if item.review_resolution == 'reissued' else 'Zur Kenntnis genommen' }}
+    am {{ format_execution_datetime(item.review_resolved_at) }}
+    {% if item.review_resolved_by %}durch {{ item.review_resolved_by.display_name }}{% endif %}.
+    {% if item.reissued_commission %}
+    <a href="{{ url_for('admin.commission_detail', commission_id=item.reissued_commission.id) }}">Neuen Auftrag öffnen</a>
+    {% endif %}
+    Die Prüfung ist abgeschlossen.
+  </div>
+  {% elif can_handle_review %}
+  <div class="d-flex flex-wrap gap-2 mt-3">
+    <a class="btn btn-primary" href="{{ url_for('admin.commission_create', reissue_id=item.id) }}">Neu erteilen</a>
+    <form method="post" action="{{ url_for('admin.commission_acknowledge', commission_id=item.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-secondary" type="submit">Zur Kenntnis genommen</button>
+    </form>
+  </div>
+  {% endif %}
 </div>
 {% elif item.local_status == "tenant_charge_review" %}
 <div class="alert alert-warning">
@@ -187,7 +212,7 @@
       <div class="card-body">
         <div class="small text-muted">Lokaler Status</div>
         <div class="fw-semibold">
-          {{ local_status_labels.get(item.local_status, item.local_status) }}
+          {{ local_status_labels.get(item.display_local_status, item.display_local_status) }}
         </div>
       </div>
     </div>
@@ -775,3 +800,4 @@
 </div>
 {% include 'admin/_document_preview.html' %}
 {% endblock %}
+

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Auftrag erfassen{% endblock %}
+{% block title %}{{ 'Auftrag neu erteilen' if source_commission else 'Auftrag erfassen' }}{% endblock %}
 {% block head %}
 <style>
   .commission-object-child { padding-inline-start: 1.75rem; font-size: .95em; }
@@ -21,7 +21,9 @@
 >
   <div>
     <h1 class="h3 mb-1">
-      {% if source_offer %}
+      {% if source_commission %}
+        Auftrag neu erteilen
+      {% elif source_offer %}
         Auftrag vorbereiten
       {% else %}
         Auftrag erfassen
@@ -38,11 +40,19 @@
 
   <a
     class="btn btn-outline-secondary"
-    href="{% if source_offer %}{{ url_for('admin.offer_edit', offer_id=source_offer.id) }}{% elif source_ticket %}{{ ticket_list_url }}{% else %}{{ url_for('admin.commissions') }}{% endif %}"
+    href="{% if source_commission %}{{ url_for('admin.commission_reviews') }}{% elif source_offer %}{{ url_for('admin.offer_edit', offer_id=source_offer.id) }}{% elif source_ticket %}{{ ticket_list_url }}{% else %}{{ url_for('admin.commissions') }}{% endif %}"
   >
     Zurück
   </a>
 </div>
+
+{% if source_commission %}
+<div class="alert alert-primary">
+  <div class="fw-semibold">Neuvergabe zu Auftrag {{ source_commission.erp_idnum or source_commission.code or source_commission.id }}</div>
+  <div>{{ source_commission.completion_reason or '' }}</div>
+  <div class="mt-2">Die Auftragsdaten wurden übernommen. Bitte die Angaben prüfen und bei Bedarf den Handwerker wechseln. Aktive Fotos und Dateien werden beim Speichern kopiert. Erst dann ist die Prüfung des ursprünglichen Auftrags abgeschlossen.</div>
+</div>
+{% endif %}
 
 {% if not commission_types %}
 <div class="alert alert-warning">
@@ -170,6 +180,11 @@
     name="csrf_token"
     value="{{ csrf_token() }}"
   >
+  {% if source_commission %}
+  <input type="hidden" name="source_commission_id" value="{{ source_commission.id }}">
+  <input type="hidden" name="crafts_process_id" value="{{ form_values.get('crafts_process_id', '') }}">
+  <input type="hidden" name="creditor_id" value="{{ form_values.get('creditor_id', '') }}">
+  {% endif %}
   {% if source_offer %}
   <input
     type="hidden"
@@ -786,7 +801,7 @@
       {% if source_offer %}
         Auftrag anlegen
       {% else %}
-        Auftrag erfassen
+        {{ 'Auftrag neu erteilen' if source_commission else 'Auftrag erfassen' }}
       {% endif %}
     </button>
   </div>
