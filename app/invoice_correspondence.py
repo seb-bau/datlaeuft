@@ -2,6 +2,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -41,7 +42,7 @@ def cover_letter_context(invoice, title, text):
     fields = {
         "invoice_number": invoice.invoice_number or f"Entwurf {invoice.id}",
         "invoice_date": values["invoice_date_formatted"],
-        "contract_number": invoice.recipient_license_agreement_idnum or "",
+        "contract_number": invoice.billing_contract_number or "",
         "recipient_name": invoice.recipient_name or "",
         "amount": values["total_gross_formatted"], "currency": invoice.currency_code or "EUR",
         "due_date": values["due_date_formatted"], "payment_terms": values["payment_terms_text"],
@@ -61,11 +62,11 @@ def cover_letter_context(invoice, title, text):
     }
 
 
-def cover_letter_stationery(invoice):
-    filename = invoice.company_code.cover_letter_stationery_filename
+def cover_letter_stationery(company):
+    filename = company.cover_letter_stationery_filename
     if not filename:
-        if invoice.company_code.stationery_filename:
-            return _stationery_path(invoice)
+        if company.stationery_filename:
+            return _stationery_path(SimpleNamespace(company_code=company))
         return None
     root = (Path(current_app.instance_path) / "invoice_stationery").resolve()
     path = (root / filename).resolve()
@@ -80,13 +81,13 @@ def cover_letter_url_fetcher(url):
     return default_url_fetcher(url)
 
 
-def render_cover_letter(invoice, title, text, *, layout=None):
+def render_letter_pdf(context, company, *, layout=None):
     layout = settings.get(SettingKeys.INVOICE_COVER_LETTER_LAYOUT) if layout is None else layout
     content = HTML(
-        string=render_cover_letter_html(cover_letter_context(invoice, title, text), layout),
+        string=render_cover_letter_html(context, layout),
         url_fetcher=cover_letter_url_fetcher,
     ).write_pdf()
-    background = cover_letter_stationery(invoice)
+    background = cover_letter_stationery(company)
     if background is not None:
         with TemporaryDirectory() as directory:
             source, target = Path(directory) / "letter.pdf", Path(directory) / "result.pdf"
@@ -96,11 +97,19 @@ def render_cover_letter(invoice, title, text, *, layout=None):
     return content
 
 
+def render_cover_letter(invoice, title, text, *, layout=None):
+    return render_letter_pdf(cover_letter_context(invoice, title, text), invoice.company_code, layout=layout)
+
+
 def prepend_cover_letter(invoice, data, *, title=None, text=None):
     if title is None and invoice.cover_letter_title is None:
         return data
     values = cover_letter_values(invoice)
     letter = render_cover_letter(invoice, values["title"] if title is None else title, values["text"] if text is None else text)
+    return prepend_letter_pdf(data, letter)
+
+
+def prepend_letter_pdf(data, letter):
     writer = PdfWriter(clone_from=PdfReader(BytesIO(data)))
     for index, page in enumerate(PdfReader(BytesIO(letter)).pages):
         writer.insert_page(page, index)

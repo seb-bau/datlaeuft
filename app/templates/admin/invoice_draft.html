@@ -53,6 +53,11 @@
                 Rechnung öffnen
             </a>
             {% if item.status == 'finalized' %}
+            {% if item.tenant_billing_reference and item.invoice_kind == 'invoice' %}
+            <a class="btn btn-outline-primary ms-2" href="{{ url_for('admin.invoice_tenant_charge', invoice_id=item.id) }}">
+              {{ 'Mieterbelastung bearbeiten' if item.tenant_charge_letter else 'Mieterbelastung vorbereiten' }}
+            </a>
+            {% endif %}
             <button type="button" class="btn btn-outline-primary ms-2" data-bs-toggle="modal" data-bs-target="#invoiceDeliveryModal">Rechnung versenden</button>
             <div class="small text-muted mt-2" id="invoiceDeliveryLastState" aria-live="polite"></div>
             {% endif %}
@@ -292,7 +297,15 @@
           </div>
 
           <div class="card-body">
-            {% if editable %}
+            {% if item.tenant_billing_reference %}
+            <div class="border rounded p-3 mb-4 bg-light">
+              <div class="fw-semibold">Leistungsbezug</div>
+              <div>{{ item.tenant_billing_reference.tenant_name }}</div>
+              <div>{{ item.tenant_billing_reference.property_address }}</div>
+              <div>Mietvertrag {{ item.tenant_billing_reference.agreement_number }}</div>
+            </div>
+            {% endif %}
+            {% if editable and not item.tenant_billing_reference %}
             <div class="mb-4">
               <label class="form-label">
                 Mieter oder Vertrag suchen
@@ -350,7 +363,7 @@
             </div>
             {% endif %}
 
-            <div class="row g-3">
+            <fieldset class="row g-3" {% if item.tenant_billing_reference %}disabled{% endif %}>
               <div class="col-md-5">
                 <label class="form-label">
                   Empfängerart
@@ -472,13 +485,15 @@
                   value="{{ item.recipient_vat_id or '' }}"
                 >
               </div>
-            </div>
+            </fieldset>
           </div>
         </div>
       </div>
 
       <div class="col-lg-5">
+        {% if not item.tenant_billing_reference %}
         {% include 'admin/_invoice_payment_information.html' %}
+        {% endif %}
         <div class="card shadow-sm mb-4">
           <div class="card-header">
             Rechnungsdaten
@@ -487,7 +502,7 @@
           <div class="card-body row g-3">
             <div class="col-12">
               <label class="form-label">
-                Buchwerk
+                Ausstellendes Buchwerk
               </label>
               <input
                 class="form-control"

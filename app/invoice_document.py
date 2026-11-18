@@ -947,6 +947,7 @@ def _document_context(
             if value
         ],
         "contract_number": contract_number,
+        "tenant_billing_reference": invoice.tenant_billing_reference,
         "buyer_reference": (
             contract_number or invoice_number
         ),
@@ -1208,7 +1209,15 @@ def _zugferd_data(context: dict) -> dict:
         ),
     }
 
-    if not is_cancellation:
+    reference = context["tenant_billing_reference"]
+    if reference:
+        data["BG-1"] = [{
+            "BT-22": (
+                f"Leistungsbezug: {reference['tenant_name']}, {reference['property_address']}. "
+                f"Mietvertrag {reference['agreement_number']}"
+            ),
+        }]
+    elif not is_cancellation:
         if context["payment_method"] == "sepa_debit":
             data.update({"BT-81": "59", "BT-82": "SEPA-Lastschrift", "BT-83": context["payment_reference"],
                          "BT-89": context["payment_mandate_reference"], "BT-90": context["payment_creditor_id"], "BT-91": context["payment_iban"]})

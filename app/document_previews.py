@@ -31,6 +31,7 @@ def invoice_preview_context(invoice) -> dict:
         "due_date_formatted": due, "service_date_formatted": service_from if service_from == service_to else " bis ".join(value for value in (service_from, service_to) if value),
         "recipient_address": address_lines(invoice) or ["Empfänger noch nicht angegeben"],
         "contract_number": invoice.recipient_license_agreement_idnum or "", "is_cancellation": False,
+        "tenant_billing_reference": invoice.tenant_billing_reference,
         "intro_text": invoice.introductory_text or "", "closing_text": invoice.concluding_text or "",
         "currency": invoice.currency_code or "EUR", "positions": positions, "vat_rows": _prepare_vat_rows(positions),
         "total_net_formatted": _format_money(net), "total_vat_formatted": _format_money(vat),

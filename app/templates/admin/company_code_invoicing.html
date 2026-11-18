@@ -40,6 +40,31 @@
     </div>
   </div>
 
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-header">Mieterbelastung</div>
+      <div class="card-body row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="tenantBillingIssuer">Aussteller bei Mietverträgen dieses Buchwerks</label>
+          <select class="form-select" id="tenantBillingIssuer" name="tenant_billing_issuer_id">
+            <option value="">Dieses Buchwerk rechnet direkt mit dem Vertragspartner ab</option>
+            {% for issuer in issuer_choices %}
+            <option value="{{ issuer.id }}" {% if item.tenant_billing_issuer_id == issuer.id %}selected{% endif %}>
+              {{ issuer.code }} · {{ issuer.name }}{% if not issuer.active or issuer.document_creation_disabled %} (gesperrt){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">Bei einem anderen Aussteller erhält dieses Buchwerk die Rechnung. Seine Anschrift stammt aus den Stammdaten unten.</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="tenantBillingEmail">E-Mail für Rechnungseingang</label>
+          <input class="form-control" id="tenantBillingEmail" name="tenant_billing_recipient_email"
+                 type="email" maxlength="255" value="{{ item.tenant_billing_recipient_email or '' }}">
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="col-lg-6">
     <div class="card shadow-sm h-100">
       <div class="card-header">

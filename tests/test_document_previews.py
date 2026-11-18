@@ -30,7 +30,7 @@ class DocumentPreviewTests(unittest.TestCase):
         fixtures.TicketAttachmentSelectionTests.setUpClass.__func__(cls)
         cls.app.before_request(lambda: g.pop("_login_user", None) and None)
         sys.modules[cls.package_name + ".auth"].accounting_required = lambda view: view
-        for name in ("invoice_payments", "invoice_attachments", "invoice_document", "offer_document", "invoice_service", "offer_service", "document_articles", "document_previews"):
+        for name in ("tenant_billing", "invoice_payments", "invoice_attachments", "invoice_document", "offer_document", "invoice_service", "offer_service", "document_articles", "document_previews"):
             sys.modules.pop(cls.package_name + "." + name, None)
             setattr(cls, name, importlib.import_module(cls.package_name + "." + name))
         cls.admin.render_document_preview = cls.document_previews.render_document_preview
@@ -40,7 +40,7 @@ class DocumentPreviewTests(unittest.TestCase):
         cls.admin.payment_options_from_wowiport = cls.invoice_payments.payment_options_from_wowiport
         source = ast.parse((cls.root / "app/admin.py").read_text())
         for node in source.body:
-            if isinstance(node, ast.ImportFrom) and node.module in {"invoice_service", "offer_service", "invoice_document", "offer_document"}:
+            if isinstance(node, ast.ImportFrom) and node.module in {"invoice_service", "offer_service", "invoice_document", "offer_document", "tenant_billing"}:
                 module = getattr(cls, node.module)
                 for item in node.names:
                     setattr(cls.admin, item.asname or item.name, getattr(module, item.name))
