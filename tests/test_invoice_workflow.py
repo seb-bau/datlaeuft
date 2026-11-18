@@ -1,5 +1,7 @@
 from email import policy
 from email.parser import BytesParser
+import ast
+from functools import wraps
 import importlib
 from io import BytesIO
 from pathlib import Path
@@ -7,7 +9,8 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from flask import render_template
+from flask import abort, redirect, render_template, request, url_for
+from flask_login import current_user
 from pypdf import PdfReader
 from werkzeug.datastructures import FileStorage
 
@@ -41,6 +44,13 @@ class InvoiceWorkflowTests(unittest.TestCase):
         for endpoint in ("invoices", "invoice_edit", "invoice_responsibility", "invoice_cover_letter", "invoice_cover_letter_preview", "invoice_correspondence"):
             view = cls.app.view_functions["admin." + endpoint]
             cls.app.view_functions["admin." + endpoint] = guard(view.__wrapped__)
+        source = ast.parse((cls.root / "app/auth.py").read_text())
+        function = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "admin_required")
+        namespace = dict(F=object, Any=object, wraps=wraps, current_user=current_user, abort=abort, redirect=redirect, request=request, url_for=url_for)
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "auth.py", "exec"), namespace)
+        for endpoint in ("invoice_cover_letter_layout", "invoice_cover_letter_layout_preview", "settings_page"):
+            view = cls.app.view_functions["admin." + endpoint]
+            cls.app.view_functions["admin." + endpoint] = namespace["admin_required"](view.__wrapped__)
 
     def setUp(self):
         fixtures.InvoiceDeliveryTests.setUp(self)
@@ -260,3 +270,78 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/admin/invoices/{invoice.id}/cover-letter/preview").status_code, 403)
         self.assertEqual(self.client.delete(f"/admin/invoices/{invoice.id}/cover-letter").status_code, 403)
         self.assertEqual(self.models.WorkflowNotification.query.count(), 0)
+
+    def test_layout_editor_is_admin_only_and_can_save_validate_and_reset(self):
+        url = "/admin/invoice-cover-letter-layout"
+        definition = self.settings.SettingKeys.INVOICE_COVER_LETTER_LAYOUT
+        custom = '<style>@page {margin:35mm}</style><h1>{{ title }}</h1><p>{{ text }}</p>'
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.post(url, data={"html": custom}).status_code, 403)
+        self.assertEqual(self.client.post(url + "/preview", data={"html": custom}).status_code, 403)
+        self.login(self.administrator)
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"HTML- und CSS-Layout", response.data)
+        self.assertEqual(self.client.post(url, data={"html": custom, "action": "save"}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), custom)
+        invalid = "{{ unknown_layout_field }}"
+        response = self.client.post(url, data={"html": invalid, "action": "save"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(invalid.encode(), response.data)
+        self.assertEqual(self.settings.settings.get(definition), custom)
+        self.assertEqual(self.client.post(url, data={"action": "reset"}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), definition.default)
+
+    def test_layout_preview_uses_unsaved_html_and_actual_stationery_without_saving(self):
+        invoice = self.rendered_invoice()
+        upload = FileStorage(stream=BytesIO(self.pdf("GESCHAEFTSPAPIER VORSCHAU")), filename="briefbogen.pdf")
+        self.admin.store_company_code_stationery(self.company, upload, attribute="cover_letter_stationery_filename")
+        self.db.session.commit()
+        self.login(self.administrator)
+        layout = '<style>@page {size:A4; margin:55mm 20mm}</style><h1>NEUER AUFBAU</h1><p>{{ recipient_address }}</p><p>{{ caseworker_phone }}</p><div>{{ text }}</div>'
+        response = self.client.post("/admin/invoice-cover-letter-layout/preview", data={"html": layout, "invoice_id": invoice.id})
+        text = self.pdf_text(response)
+        for value in ("NEUER AUFBAU", "GESCHAEFTSPAPIER VORSCHAU", invoice.recipient_name, self.creator.phone):
+            self.assertIn(value, text)
+        self.db.session.expire_all()
+        self.assertIsNone(invoice.cover_letter_title)
+        self.assertEqual(self.settings.settings.get(self.settings.SettingKeys.INVOICE_COVER_LETTER_LAYOUT), self.settings.SettingKeys.INVOICE_COVER_LETTER_LAYOUT.default)
+        response = self.client.post("/admin/invoice-cover-letter-layout/preview", data={"html": "<h1>{{ title }}</h1><div>{{ text }}</div>"})
+        self.assertIn("RE-BEISPIEL-001", self.pdf_text(response))
+        self.assertEqual(self.client.post("/admin/invoice-cover-letter-layout/preview", data={"html": "{{ secret }}"}).status_code, 400)
+
+    def test_custom_layout_changes_new_pdfs_and_preserves_queued_mail_documents(self):
+        invoice = self.rendered_invoice()
+        self.assertEqual(self.save_letter(invoice).status_code, 200)
+        original = self.delivery.final_invoice_pdf(invoice)
+        before = self.client.get(f"/admin/invoices/{invoice.id}/correspondence").data
+        self.assertNotIn("Betriebsweg 1", PdfReader(BytesIO(before)).pages[0].extract_text())
+        self.assertEqual(self.queue(invoice).status_code, 202)
+        delivery = self.models.WorkflowNotification.query.filter_by(kind="invoice_delivery").one()
+        queued = self.invoice_document.resolve_invoice_document_path(delivery.payload["correspondence_filename"]).read_bytes()
+        self.settings.settings.set(self.settings.SettingKeys.INVOICE_COVER_LETTER_LAYOUT, '<h1>GEAENDERTES LAYOUT</h1><p>{{ text }}</p>')
+        self.db.session.commit()
+        current = self.client.get(f"/admin/invoices/{invoice.id}/correspondence")
+        self.assertIn("GEAENDERTES LAYOUT", self.pdf_text(current))
+        self.assertEqual(self.delivery.final_invoice_pdf(invoice), original)
+        self.workflow.process_workflow_notification_batch()
+        sent = next(self.mail.call_args.args[0].iter_attachments()).get_payload(decode=True)
+        self.assertEqual(sent, queued)
+        self.assertNotIn("GEAENDERTES LAYOUT", PdfReader(BytesIO(sent)).pages[0].extract_text())
+
+    def test_general_settings_do_not_overwrite_the_layout_and_fetches_are_limited_to_data(self):
+        definition = self.settings.SettingKeys.INVOICE_COVER_LETTER_LAYOUT
+        custom = "<p>{{ text }}</p>"
+        self.settings.settings.set(definition, custom)
+        self.db.session.commit()
+        self.login(self.administrator)
+        with patch.object(self.admin, "all_definitions", return_value=[definition]), patch.object(self.admin, "configure_logging"):
+            self.assertEqual(self.client.post("/admin/settings", data={definition.key: "<p>Unerwartete Änderung</p>"}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), custom)
+        with patch.object(self.invoice_correspondence, "default_url_fetcher") as fetch:
+            for url in ("file:///etc/passwd", "https://example.invalid/logo.png", "http://127.0.0.1/private", "ftp://example.invalid/logo.png"):
+                with self.assertRaises(ValueError):
+                    self.invoice_correspondence.cover_letter_url_fetcher(url)
+            fetch.assert_not_called()
+            self.invoice_correspondence.cover_letter_url_fetcher("data:image/png;base64,AA==")
+            fetch.assert_called_once()

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Anschreiben-Layout{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div><h1 class="h3 mb-1">Aufbau des Anschreibens</h1><div class="text-muted">HTML und CSS für alle Rechnungsanschreiben anpassen.</div></div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.settings_page') }}">Einstellungen</a>
+</div>
+<div class="row g-3">
+  <div class="col-xl-8">
+    <form method="post" id="cover-letter-layout-form" class="card shadow-sm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="card-body">
+        <label class="form-label" for="coverLetterLayoutHtml">Vollständiges HTML- und CSS-Layout</label>
+        <textarea class="form-control font-monospace" id="coverLetterLayoutHtml" name="html" rows="28" maxlength="50000" spellcheck="false" required aria-describedby="coverLetterLayoutHelp">{{ layout }}</textarea>
+        <div class="form-text mb-3" id="coverLetterLayoutHelp">Sie können alle Elemente verschieben, entfernen oder ergänzen. Seitenränder und Papierformat werden mit <code>@page</code> festgelegt. Der Standard enthält keine Absenderzeile, da diese bereits im Geschäftspapier stehen kann.</div>
+        <div class="form-text mb-3">Überschrift und individueller Rechnungstext werden über <code>{{ '{{ title }}' }}</code> und <code>{{ '{{ text }}' }}</code> eingesetzt. Zeilenumbrüche werden beispielsweise mit <code>white-space: pre-wrap</code> dargestellt. Grafiken und Schriften können als Daten-URL eingebunden werden.</div>
+        <label class="form-label" for="coverLetterLayoutInvoice">Daten für die PDF-Vorschau</label>
+        <select class="form-select" id="coverLetterLayoutInvoice" name="invoice_id">
+          <option value="">Beispieldaten ohne Geschäftspapier</option>
+          {% for invoice in invoices %}<option value="{{ invoice.id }}">{{ invoice.invoice_number or ('Entwurf ' ~ invoice.id) }} · {{ invoice.recipient_name or 'Ohne Empfänger' }} · {{ invoice.company_code_code }}</option>{% endfor %}
+        </select>
+        <div class="form-text">Bei Auswahl einer Rechnung wird deren Geschäftspapier verwendet. Die Vorschau zeigt Ihre noch nicht gespeicherten Layoutänderungen.</div>
+      </div>
+      <div class="card-footer d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" name="action" value="save" type="submit">Layout speichern</button>
+        <button class="btn btn-outline-primary" type="button" data-document-preview data-preview-form="cover-letter-layout-form" data-preview-title="Anschreiben · Layout-Vorschau" data-preview-url="{{ url_for('admin.invoice_cover_letter_layout_preview') }}">PDF-Vorschau</button>
+        <button class="btn btn-outline-secondary" name="action" value="reset" type="submit" formnovalidate onclick="return window.confirm('Das gespeicherte Layout durch den Standard ersetzen?')">Standard wiederherstellen</button>
+      </div>
+    </form>
+    <p class="small text-muted mt-3">Gespeicherte Änderungen gelten für alle anschließend erzeugten Anschreiben-PDFs. Bereits zum Systemversand vorgemerkte PDF-Dateien bleiben erhalten. Die Rechnung selbst und das Geschäftspapier werden über ihre bestehenden Einstellungen verwaltet.</p>
+  </div>
+  <div class="col-xl-4">
+    <div class="card shadow-sm">
+      <div class="card-header">Verfügbare Platzhalter</div>
+      <div class="card-body small">
+        {% for name, label in fields.items() %}<div class="mb-2"><code>{{ '{{ ' ~ name ~ ' }}' }}</code><div>{{ label }}</div></div>{% endfor %}
+        <div class="fw-semibold mt-3">Optionales Element</div>
+        <pre class="small mb-0">{{ '{% if caseworker_phone %}\nTelefon: {{ caseworker_phone }}\n{% endif %}' }}</pre>
+      </div>
+    </div>
+  </div>
+</div>
+{% include 'admin/_document_preview.html' %}
+{% endblock %}

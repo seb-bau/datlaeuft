@@ -1148,7 +1148,7 @@ def settings_page() -> Any:
     if request.method == "POST":
         try:
             for definition in all_definitions():
-                if definition.key.startswith("dms.") or definition.key == SettingKeys.HEALTH_RULES.key:
+                if definition.key.startswith("dms.") or definition.key in {SettingKeys.HEALTH_RULES.key, SettingKeys.INVOICE_COVER_LETTER_LAYOUT.key}:
                     continue
                 if definition.key == SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS.key:
                     try:
@@ -1210,6 +1210,69 @@ def settings_page() -> Any:
             key=lambda choice: (choice[1].casefold(), choice[0]),
         ),
     )
+
+
+@admin_bp.route("/admin/invoice-cover-letter-layout", methods=["GET", "POST"])
+@admin_required
+def invoice_cover_letter_layout():
+    from .invoice_cover_letter_layout import COVER_LETTER_LAYOUT_FIELDS, DEFAULT_COVER_LETTER_LAYOUT
+    value = settings.get(SettingKeys.INVOICE_COVER_LETTER_LAYOUT)
+    if request.method == "POST":
+        action = request.form.get("action", "save")
+        value = DEFAULT_COVER_LETTER_LAYOUT if action == "reset" else request.form.get("html", "")
+        try:
+            if action not in {"save", "reset"}:
+                raise ValueError("Die gewählte Aktion ist ungültig.")
+            settings.set(SettingKeys.INVOICE_COVER_LETTER_LAYOUT, value)
+            audit("invoice.cover_letter.layout.reset" if action == "reset" else "invoice.cover_letter.layout.update")
+            db.session.commit()
+            flash("Standardlayout wiederhergestellt." if action == "reset" else "Anschreiben-Layout gespeichert.", "success")
+            return redirect(url_for("admin.invoice_cover_letter_layout"))
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+    return render_template(
+        "admin/invoice_cover_letter_layout.html", layout=value, fields=COVER_LETTER_LAYOUT_FIELDS,
+        invoices=Invoice.query.order_by(Invoice.created_at.desc(), Invoice.id.desc()).limit(100).all(),
+    )
+
+
+@admin_bp.post("/admin/invoice-cover-letter-layout/preview")
+@admin_required
+def invoice_cover_letter_layout_preview():
+    from .invoice_correspondence import cover_letter_url_fetcher, cover_letter_values, letter_date, render_cover_letter
+    from .invoice_cover_letter_layout import render_cover_letter_html
+    from weasyprint import HTML
+    try:
+        layout = request.form.get("html", "")
+        invoice_id = request.form.get("invoice_id", "").strip()
+        if invoice_id:
+            if not invoice_id.isdecimal() or len(invoice_id) > 18:
+                raise ValueError("Bitte eine gültige Rechnung für die Vorschau auswählen.")
+            invoice = db.session.get(Invoice, int(invoice_id))
+            if invoice is None:
+                raise ValueError("Die ausgewählte Rechnung ist nicht mehr verfügbar.")
+            values = cover_letter_values(invoice)
+            content = render_cover_letter(invoice, values["title"], values["text"], layout=layout)
+        else:
+            context = {
+                "title": "Ihre Rechnung RE-BEISPIEL-001", "text": "Sehr geehrte Damen und Herren,\n\nbeigefügt erhalten Sie unsere Rechnung über 119,00 EUR.\n\nMit freundlichen Grüßen\nBeispielunternehmen",
+                "recipient_address": "Max Mustermann\nMusterstraße 12\n12345 Musterstadt",
+                "recipient_name": "Max Mustermann", "recipient_street": "Musterstraße 12", "recipient_postal_code": "12345",
+                "recipient_town": "Musterstadt", "recipient_country_code": "DE", "contract_number": "1000/123/01",
+                "invoice_number": "RE-BEISPIEL-001", "invoice_date": letter_date().strftime("%d.%m.%Y"),
+                "letter_date": letter_date().strftime("%d.%m.%Y"), "caseworker_name": "Erika Musterfrau",
+                "caseworker_phone": "02306 123456", "caseworker_email": "erika@example.invalid",
+                "sender_line": "Beispielunternehmen · Firmenstraße 1 · 12345 Musterstadt", "seller_name": "Beispielunternehmen",
+                "amount": "119,00", "currency": "EUR", "payment_terms": "Bitte überweisen Sie den Rechnungsbetrag zum vereinbarten Fälligkeitstermin.",
+            }
+            content = HTML(string=render_cover_letter_html(context, layout), url_fetcher=cover_letter_url_fetcher).write_pdf()
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("invoice_cover_letter_layout_preview_failed")
+        return jsonify(error="Die Layout-Vorschau konnte nicht erstellt werden. Bitte Layout und Rechnungsdaten prüfen."), 502
+    return document_preview_response(content, "Anschreiben-Layout-Vorschau.pdf")
 
 
 @admin_bp.get(
