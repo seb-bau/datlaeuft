@@ -276,6 +276,7 @@ jobs:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
         run: |
           python -m unittest discover -s tests -p test_invoice_delivery_migration.py -v
+          python -m unittest discover -s tests -p test_invoice_workflow_migration.py -v
           python -m unittest discover -s tests -p test_approval_migration_recovery.py -v
           python -m unittest discover -s tests -p test_commission_approval.py -v
           python -m unittest discover -s tests -p test_commission_object_history.py -v
