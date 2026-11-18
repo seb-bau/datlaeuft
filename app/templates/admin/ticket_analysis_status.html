@@ -17,8 +17,9 @@
 </div>
 <form method="post" action="{{ url_for('admin.ticket_regenerate', ticket_id=ticket.id) }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ ticket_list_url }}">
   <button class="btn btn-primary" type="submit">KI-Vorschläge neu erstellen</button>
 </form>
 {% endif %}
-<a class="btn btn-outline-secondary mt-3" href="{{ url_for('admin.tickets') }}">Zurück zu den Tickets</a>
+<a class="btn btn-outline-secondary mt-3" href="{{ ticket_list_url }}">Zurück zu den Tickets</a>
 {% endblock %}

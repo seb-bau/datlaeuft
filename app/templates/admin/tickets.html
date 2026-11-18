@@ -75,7 +75,7 @@
   <span class="small text-muted">Gespiegelte Tickets aus Wowiport</span>
 </div>
 
-<form id="ticketFilters" method="get" class="d-flex flex-wrap align-items-center gap-1 mb-3">
+<form id="ticketFilters" method="get" action="{{ url_for('admin.tickets') }}" data-state-key="ticket-filters-{{ current_user.id }}" data-current-url="{{ ticket_list_url }}" class="d-flex flex-wrap align-items-center gap-1 mb-3">
   {% for filter_key, filter_label, filter_value, filter_choices in ticket_filters %}
   {% if filter_key == "owner" %}
   <details id="ticketOwnerFilter" class="ticket-owner-filter">
@@ -128,7 +128,7 @@
   <noscript>
     <button class="btn btn-sm btn-outline-primary" type="submit">Suchen</button>
   </noscript>
-  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.tickets') }}">
+  <a id="ticketFilterReset" class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.tickets', reset=1) }}">
     Filter zurücksetzen
   </a>
 </form>
@@ -224,6 +224,7 @@ Einstellungen findest du unter Einstellungen.
               name="csrf_token"
               value="{{ csrf_token() }}"
             >
+            <input type="hidden" name="next" value="{{ ticket_list_url }}">
 
             <button
               class="btn btn-primary w-100"
@@ -259,6 +260,7 @@ Einstellungen findest du unter Einstellungen.
               name="csrf_token"
               value="{{ csrf_token() }}"
             >
+            <input type="hidden" name="next" value="{{ ticket_list_url }}">
             <button
               class="btn btn-outline-secondary w-100"
               type="submit"
@@ -296,6 +298,7 @@ Einstellungen findest du unter Einstellungen.
               name="csrf_token"
               value="{{ csrf_token() }}"
             >
+            <input type="hidden" name="next" value="{{ ticket_list_url }}">
             <button
               class="btn btn-outline-secondary w-100"
               type="submit"
@@ -310,7 +313,8 @@ Einstellungen findest du unter Einstellungen.
             class="btn btn-outline-primary"
             href="{{ url_for(
               'admin.ticket_commissions',
-              ticket_id=ticket.id
+              ticket_id=ticket.id,
+              next=ticket_list_url
             ) }}"
           >
             Aufträge anzeigen
@@ -363,7 +367,7 @@ Einstellungen findest du unter Einstellungen.
   <div class="modal-dialog modal-lg"><div class="modal-content">
     <form method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <input type="hidden" name="next" value="{{ ticket_list_url }}">
       <div class="modal-header">
         <h2 class="modal-title h5" id="ticketReplyTitle">Kein Auftrag – Antwort an den Mieter</h2>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
@@ -390,3 +394,4 @@ Einstellungen findest du unter Einstellungen.
 <script src="{{ url_for('static', filename='js/ticket_filters.js') }}"></script>
 <script src="{{ url_for('static', filename='js/ticket_reply.js') }}"></script>
 {% endblock %}
+

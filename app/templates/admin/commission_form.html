@@ -38,7 +38,7 @@
 
   <a
     class="btn btn-outline-secondary"
-    href="{% if source_offer %}{{ url_for('admin.offer_edit', offer_id=source_offer.id) }}{% else %}{{ url_for('admin.commissions') }}{% endif %}"
+    href="{% if source_offer %}{{ url_for('admin.offer_edit', offer_id=source_offer.id) }}{% elif source_ticket %}{{ ticket_list_url }}{% else %}{{ url_for('admin.commissions') }}{% endif %}"
   >
     Zurück
   </a>
@@ -104,6 +104,7 @@
     <form class="mt-3" method="post"
         action="{{ url_for('admin.ticket_regenerate', ticket_id=source_ticket.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ ticket_list_url }}">
     <button class="btn btn-outline-primary" type="submit"
             onclick="return confirm('KI-Vorschläge und ungespeicherte Formulareingaben verwerfen und neu erstellen?')">
       KI-Vorschläge verwerfen und neu erstellen
@@ -198,6 +199,7 @@
     name="source_ticket_id"
     value="{{ source_ticket.id }}"
   >
+  <input type="hidden" name="next" value="{{ ticket_list_url }}">
   {% endif %}
   <input
     id="objectType"
@@ -914,4 +916,5 @@
 <script src="{{ url_for('static', filename='js/ticket_attachment_selection.js') }}" defer></script>
 {% include 'admin/_document_preview.html' %}
 {% endblock %}
+
 
