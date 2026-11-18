@@ -529,6 +529,18 @@ class SettingKeys:
         "Der Rechnungsbetrag wird am {due_date} über das bestehende SEPA-Mandat von Ihrem unten angegebenen Konto eingezogen.",
         "Zahlungstext für SEPA-Mandat", "Rechnungen",
     )
+    INVOICE_COVER_LETTER_TITLE = SettingDefinition[str](
+        "invoice.cover_letter_title", SettingValueType.STRING, "Ihre Rechnung {invoice_number}",
+        "Anschreiben: Standardüberschrift", "Rechnungen",
+    )
+    INVOICE_COVER_LETTER_TEXT = SettingDefinition[str](
+        "invoice.cover_letter_text", SettingValueType.STRING,
+        "Sehr geehrte Damen und Herren,\n\n"
+        "beigefügt erhalten Sie unsere Rechnung {invoice_number} über {amount} {currency}.\n\n"
+        "{payment_terms}\n\nFür Rückfragen stehen wir Ihnen gerne zur Verfügung.\n\n"
+        "Mit freundlichen Grüßen\n{seller_name}",
+        "Anschreiben: Standardtext", "Rechnungen",
+    )
     OFFER_VALIDITY_DAYS = SettingDefinition[int](
         "offer.validity_days",
         SettingValueType.INT,
@@ -810,6 +822,28 @@ def validate_invoice_payment_text(value: str) -> str:
     return value
 
 
+COVER_LETTER_FIELDS = {
+    "invoice_number", "invoice_date", "contract_number", "recipient_name", "amount", "currency",
+    "due_date", "payment_terms", "seller_name", "caseworker_name", "caseworker_email", "caseworker_phone",
+}
+
+
+def validate_cover_letter_text(value, *, title=False):
+    limit = 200 if title else 20000
+    label = "Die Überschrift" if title else "Der Anschreibentext"
+    if not isinstance(value, str) or not value.strip() or len(value) > limit or any(
+        ord(character) < 32 and character not in "\n\r\t" for character in value
+    ) or (title and any(character in value for character in "\r\n")):
+        raise ValueError(f"{label} muss ausgefüllt sein und darf höchstens {limit} Zeichen enthalten.")
+    try:
+        for literal, field, specification, conversion in Formatter().parse(value):
+            if field is not None and (field not in COVER_LETTER_FIELDS or specification or conversion):
+                raise ValueError("Ungültiger Platzhalter.")
+    except ValueError as exc:
+        raise ValueError("Das Anschreiben enthält einen unbekannten oder ungültigen Platzhalter.") from exc
+    return value.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def validate_debug_email_address(value: str) -> str:
     error_message = (
         "Bitte genau eine gültige Debug-E-Mail-Adresse ohne "
@@ -857,6 +891,8 @@ class SettingsService:
         return cast(T, self._deserialize(row.value_text, definition.value_type))
 
     def set(self, definition: SettingDefinition[T], value: T) -> None:
+        if definition.key in {SettingKeys.INVOICE_COVER_LETTER_TITLE.key, SettingKeys.INVOICE_COVER_LETTER_TEXT.key}:
+            value = cast(T, validate_cover_letter_text(value, title=definition.key == SettingKeys.INVOICE_COVER_LETTER_TITLE.key))
         if definition.key in {SettingKeys.INVOICE_TRANSFER_PAYMENT_TEXT.key, SettingKeys.INVOICE_SEPA_PAYMENT_TEXT.key}:
             value = cast(T, validate_invoice_payment_text(value))
         if definition.key == SettingKeys.SMS_API_KEY.key:

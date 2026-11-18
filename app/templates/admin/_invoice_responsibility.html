@@ -1,0 +1,23 @@
+<div class="card shadow-sm mb-3">
+  <div class="card-body d-flex flex-wrap align-items-end gap-3">
+    <div class="me-auto">
+      <div class="small text-muted">Sachbearbeiter · Ersteller</div>
+      <div>{{ item.created_by.display_name if item.created_by else 'Unbekannt' }}</div>
+    </div>
+    <form method="post" action="{{ url_for('admin.invoice_responsibility', invoice_id=item.id) }}" class="d-flex flex-wrap align-items-end gap-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="revision" value="{{ item.responsibility_revision }}">
+      <div>
+        <label for="invoiceResponsibleUser" class="form-label small">Zuständig</label>
+        <select class="form-select" name="responsible_user_id" id="invoiceResponsibleUser" required aria-describedby="invoiceResponsibilityHelp">
+          {% if item.responsible_user and item.responsible_user not in responsibility_users %}
+          <option value="{{ item.responsible_user.id }}" selected disabled>{{ item.responsible_user.display_name }} · nicht mehr verfügbar</option>
+          {% endif %}
+          {% for user in responsibility_users %}<option value="{{ user.id }}" {% if user.id == item.responsible_user_id %}selected{% endif %}>{{ user.display_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-outline-primary" type="submit">Zuständigkeit speichern</button>
+    </form>
+    <div class="small text-muted w-100" id="invoiceResponsibilityHelp">Bei einer Änderung erhält der neue zuständige Benutzer eine E-Mail.</div>
+  </div>
+</div>

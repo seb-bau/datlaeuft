@@ -1,0 +1,41 @@
+<div class="card shadow-sm mb-4">
+  <div class="card-body d-flex flex-wrap align-items-center gap-2">
+    <div class="me-auto"><h2 class="h6 mb-1">Anschreiben</h2><div class="small text-muted">Wird vor der Rechnung und deren Anlagen eingefügt und beim E-Mail-Versand beigefügt.</div></div>
+    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#invoiceCoverLetterModal">{% if item.cover_letter_title %}Anschreiben bearbeiten{% else %}Anschreiben erstellen{% endif %}</button>
+    <a class="btn btn-outline-secondary" id="invoiceCorrespondenceLink" href="{{ url_for('admin.invoice_correspondence', invoice_id=item.id) }}" target="_blank" rel="noopener" {% if not item.cover_letter_title %}hidden{% endif %}>PDF mit Anschreiben öffnen</a>
+  </div>
+</div>
+<div class="modal fade" id="invoiceCoverLetterModal" tabindex="-1" aria-labelledby="invoiceCoverLetterTitle" aria-hidden="true"
+     data-url="{{ url_for('admin.invoice_cover_letter', invoice_id=item.id) }}"
+     data-preview-url="{{ url_for('admin.invoice_cover_letter_preview', invoice_id=item.id) }}">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content">
+    <div class="modal-header"><h2 class="modal-title fs-5" id="invoiceCoverLetterTitle">Anschreiben erstellen</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Schließen"></button></div>
+    <div class="modal-body">
+      <div class="row g-4">
+        <div class="col-lg-5">
+          <form id="invoiceCoverLetterForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="form-label" for="coverLetterHeading">Überschrift</label>
+            <input class="form-control mb-3" id="coverLetterHeading" name="title" maxlength="200" required>
+            <label class="form-label" for="coverLetterText">Text</label>
+            <textarea class="form-control" id="coverLetterText" name="text" rows="15" maxlength="20000" required></textarea>
+            <div class="form-text">Platzhalter werden in der PDF automatisch ersetzt: {% raw %}{invoice_number}, {amount}, {currency}, {due_date}, {payment_terms}, {recipient_name}, {contract_number}, {seller_name}, {caseworker_name}, {caseworker_email}, {caseworker_phone}, {invoice_date}{% endraw %}.</div>
+            <div class="form-text mt-2">Die Vorschau verwendet die gespeicherten Rechnungsdaten. Die Vorlagen lassen sich unter Einstellungen → Rechnungen anpassen. Der Briefbogen wird am Buchwerk hinterlegt.</div>
+          </form>
+        </div>
+        <div class="col-lg-7">
+          <div id="coverLetterPreviewHint" class="text-muted p-3">Mit „Vorschau aktualisieren“ sehen Sie das Anschreiben zusammen mit der Rechnung.</div>
+          <iframe id="coverLetterPreview" title="Anschreiben und Rechnung als PDF" class="w-100 border rounded" style="height:65vh" hidden></iframe>
+        </div>
+      </div>
+      <div id="coverLetterMessage" class="small mt-3" role="status" aria-live="polite"></div>
+    </div>
+    <div class="modal-footer flex-wrap">
+      <button type="button" class="btn btn-outline-danger me-auto" id="coverLetterRemove" hidden>Anschreiben entfernen</button>
+      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      <button type="button" class="btn btn-outline-primary" id="coverLetterPreviewButton">Vorschau aktualisieren</button>
+      <button type="submit" form="invoiceCoverLetterForm" class="btn btn-primary" id="coverLetterSave">Anschreiben speichern</button>
+    </div>
+  </div></div>
+</div>
+<script src="{{ url_for('static', filename='js/invoice_cover_letter.js') }}" defer></script>

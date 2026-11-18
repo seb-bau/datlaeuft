@@ -156,6 +156,20 @@ Nach 120 Sekunden innerhalb eines Arbeitsschritts protokolliert der Worker `work
 
 Der Health-Heartbeat wird weiterhin höchstens einmal pro Minute und nur bei tatsächlichem Fortschritt geschrieben, jetzt auch zwischen den Arbeitsschritten. Unerwartete Fehler einer Arbeitsrunde werden protokolliert; die Datenbanksitzung wird freigegeben und nach dem Poll-Intervall beginnt eine neue Runde.
 
+# Rechnungszuständigkeit und Anschreiben
+
+Nach dem Update die oben beschriebene Datenbankmigration ausführen. Bestehende Rechnungen erhalten ihren Ersteller als zuständigen Benutzer. Neue Rechnungen, einschließlich Stornorechnungen und Rechnungen aus Angeboten, starten ebenfalls mit ihrem Ersteller als zuständigem Benutzer.
+
+Die Rechnungsübersicht zeigt standardmäßig die eigene Zuständigkeit. Sachbearbeiter bezeichnet den Ersteller; Zuständig bezeichnet die aktuelle Bearbeitung. Beide Angaben und der Status lassen sich unabhängig filtern. Die Dashboard-Kachel „Meine Rechnungen“ öffnet die eigenen Entwürfe und festgeschriebenen Rechnungen.
+
+Die Zuständigkeit kann auch nach der Festschreibung geändert werden. Zur Auswahl stehen aktive Administratoren und Benutzer mit der Berechtigung „Rechnungen bearbeiten“. Die Benachrichtigung läuft über die vorhandene E-Mail-Warteschlange des Hintergrundworkers. SMTP und die öffentliche Anwendungsadresse müssen wie für andere System-E-Mails eingerichtet sein.
+
+Unter Einstellungen → Rechnungen lassen sich Überschrift und Text für Anschreiben vorbelegen. Die aufgeführten Platzhalter werden beim Erzeugen der PDF mit den Rechnungsdaten gefüllt. Im Overlay kann das Anschreiben pro Rechnung angepasst, als gemeinsame PDF mit Rechnung und Anlagen geprüft, gespeichert und entfernt werden. Es verwendet die gespeicherten Rechnungsdaten und steht schon im Entwurf zur Verfügung.
+
+Ein eigener Briefbogen kann unter Buchwerke → Rechnungs- und Angebotseinstellungen hinterlegt werden. Ohne eigenen Briefbogen gilt das vorhandene Geschäftspapier des Buchwerks. Name und E-Mail des Sachbearbeiters stammen vom Ersteller; seine Telefonnummer kann in der Benutzerverwaltung gepflegt werden. Ohne persönliche Telefonnummer wird die Telefonnummer des Rechnungsausstellers verwendet.
+
+Die gemeinsame PDF stellt das Anschreiben vor die Rechnung und erhält die eingebettete ZUGFeRD-Datei. Die festgeschriebene Originalrechnung bleibt unverändert. Sowohl der E-Mail-Entwurf als auch der Systemversand verwenden ein gespeichertes Anschreiben. Beim Vormerken zum Systemversand wird die gemeinsame PDF fest gespeichert, sodass spätere Änderungen am Anschreiben den vorbereiteten Versand nicht verändern.
+
 # Webhooks
 
 URL: https://example.com/webhooks/wowiport

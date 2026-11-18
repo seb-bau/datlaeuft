@@ -686,6 +686,7 @@ class User(UserMixin, db.Model):
     external_commission_approver_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id", ondelete="RESTRICT"), index=True)
     email: Mapped[str] = mapped_column(db.String(255), unique=True, nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(db.String(255), nullable=False)
+    phone: Mapped[str | None] = mapped_column(db.String(80))
     password_hash: Mapped[str | None] = mapped_column(db.String(255))
     entra_oid: Mapped[str | None] = mapped_column(db.String(80), unique=True)
     craftsman_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
@@ -3094,6 +3095,7 @@ class WowiCompanyCode(db.Model):
     stationery_filename: Mapped[str | None] = mapped_column(
         db.String(255)
     )
+    cover_letter_stationery_filename: Mapped[str | None] = mapped_column(db.String(255))
     invoice_default_hourly_rate_net: Mapped[float | None] = mapped_column(
         db.Numeric(12, 4)
     )
@@ -4122,6 +4124,9 @@ class Invoice(db.Model):
     introductory_text: Mapped[str | None] = mapped_column(
         db.Text
     )
+    cover_letter_title: Mapped[str | None] = mapped_column(db.String(200))
+    cover_letter_text: Mapped[str | None] = mapped_column(db.Text)
+    cover_letter_date: Mapped[date | None] = mapped_column(db.Date)
     concluding_text: Mapped[str | None] = mapped_column(
         db.Text
     )
@@ -4171,6 +4176,13 @@ class Invoice(db.Model):
         nullable=False,
         index=True,
     )
+    responsible_user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("user_account.id"), nullable=False, index=True,
+        default=lambda context: context.get_current_parameters()["created_by_user_id"],
+    )
+    responsibility_revision: Mapped[int] = mapped_column(
+        db.Integer, nullable=False, default=0, server_default="0",
+    )
     finalized_by_user_id: Mapped[int | None] = mapped_column(
         db.ForeignKey("user_account.id"),
         index=True,
@@ -4219,6 +4231,7 @@ class Invoice(db.Model):
     created_by: Mapped[User] = relationship(
         foreign_keys=[created_by_user_id]
     )
+    responsible_user: Mapped[User] = relationship(foreign_keys=[responsible_user_id])
     finalized_by: Mapped[User | None] = relationship(
         foreign_keys=[finalized_by_user_id]
     )

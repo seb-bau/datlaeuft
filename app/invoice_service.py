@@ -477,6 +477,7 @@ def create_invoice_draft(
         ),
         created_by=created_by,
         invoice_date=invoice_date,
+        responsible_user=created_by,
         due_date=(invoice_date + timedelta(days=payment_terms_days)),
     )
 
@@ -1892,6 +1893,11 @@ def finalize_invoice(
 
 
 INVOICE_CANCELLATION_EXCLUDED_COLUMNS = {
+    "responsible_user_id",
+    "responsibility_revision",
+    "cover_letter_title",
+    "cover_letter_text",
+    "cover_letter_date",
     "id",
     "public_id",
     "invoice_number",

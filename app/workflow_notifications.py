@@ -126,6 +126,9 @@ def craftsman_contact(commission):
 
 
 def notification_content(item):
+    if item.kind == "invoice_assignment":
+        from .invoice_responsibility import assignment_content
+        return assignment_content(item)
     if item.kind == "appointment_calendar":
         from .appointment_calendar import appointment_calendar_content
         return appointment_calendar_content(item)
@@ -173,6 +176,9 @@ def notification_content(item):
 
 
 def notification_is_current(item):
+    if item.kind == "invoice_assignment":
+        from .invoice_responsibility import assignment_is_current
+        return assignment_is_current(item)
     if item.kind == "invoice_delivery":
         from .invoice_delivery import invoice_delivery_is_current
         return invoice_delivery_is_current(item)

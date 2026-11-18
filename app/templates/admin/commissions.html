@@ -27,14 +27,16 @@
         class="form-select form-select-sm"
         name="creator"
         onchange="this.form.submit()"
-        aria-label="Ersteller filtern"
+        aria-label="Sachbearbeiter filtern"
       >
         <option value="mine" {% if creator_filter == "mine" %}selected{% endif %}>
           Von mir angelegt
         </option>
         <option value="all" {% if creator_filter == "all" %}selected{% endif %}>
-          Alle Ersteller
+          Alle Sachbearbeiter
         </option>
+        {% if creator_filter not in ('all', 'mine') and creator_filter|int not in creator_choices|map(attribute='id')|list %}<option value="{{ creator_filter }}" selected>Auswahl ohne Aufträge</option>{% endif %}
+        {% for user in creator_choices %}<option value="{{ user.id }}" {% if creator_filter == user.id|string %}selected{% endif %}>{{ user.display_name }}</option>{% endfor %}
       </select>
 
       <select
@@ -114,10 +116,10 @@
         class="form-select form-select-sm"
         name="official"
         onchange="this.form.submit()"
-        aria-label="Sachbearbeiter filtern"
+        aria-label="Zuständigkeit filtern"
       >
         <option value="all" {% if official_filter == "all" %}selected{% endif %}>
-          Alle Sachbearbeiter
+          Alle Zuständigkeiten
         </option>
         <option value="unassigned" {% if official_filter == "unassigned" %}selected{% endif %}>
           Nicht zugewiesen
@@ -186,7 +188,7 @@
 </div>
 <div class="card shadow-sm">
   <div class="card-body">
-    <table class="table table-striped datatable" data-state-key="commission-list-{{ current_user.id }}">
+    <table class="table table-striped datatable" data-state-key="commission-list-{{ current_user.id }}-v2">
       <thead>
         <tr>
           <th>Nummer</th>
@@ -197,6 +199,7 @@
           <th>Erstellungsdatum</th>
           <th>Letzter Statuswechsel</th>
           <th>Sachbearbeiter</th>
+          <th>Zuständigkeit</th>
           <th>Handwerker</th>
           <th>Ausführung</th>
           <th>Bearbeitungsstand</th>
@@ -226,6 +229,7 @@
           <td data-order="{{ item.status_changed_at.isoformat() if item.status_changed_at else '' }}">
             {{ item.status_changed_at.strftime("%d.%m.%Y") if item.status_changed_at else "–" }}
           </td>
+          <td>{{ item.created_by.display_name if item.created_by else "Unbekannt" }}</td>
           <td>{{ officials_by_commission_id[item.id][1] }}</td>
           <td>
             {% if item.assignment_type == "external" %}

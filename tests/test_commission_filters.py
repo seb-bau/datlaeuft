@@ -85,3 +85,13 @@ class CommissionFilterTests(unittest.TestCase):
         reset = next(link["href"] for link in links if link["text"] == "Filter zurücksetzen")
         view, _ = self.get(reset)
         self.assertEqual(view["craftsman_filter"], "all")
+
+    def test_creator_filter_accepts_a_specific_caseworker_independently_of_officials(self):
+        self.other.created_by = self.other_worker
+        self.other.local_official = self.worker
+        self.db.session.commit()
+        view, _ = self.get(f"/admin/commissions?creator={self.other_worker.id}")
+        self.assertEqual([item.id for item in view["items"]], [self.other.id])
+        self.assertEqual(view["items"][0].created_by.display_name, "Zweiter Handwerker")
+        self.assertEqual(view["officials_by_commission_id"][self.other.id][1], "Erster Handwerker (lokal)")
+        self.assertIn(self.other_worker.id, [user.id for user in view["creator_choices"]])

@@ -17,6 +17,38 @@
   </a>
 </div>
 
+<form method="get" class="d-flex flex-wrap gap-2 mb-3" aria-label="Rechnungen filtern">
+  <div>
+    <label class="form-label small" for="invoiceCreator">Sachbearbeiter</label>
+    <select class="form-select form-select-sm" name="creator" id="invoiceCreator" onchange="this.form.submit()">
+      <option value="all" {% if creator_filter == 'all' %}selected{% endif %}>Alle Sachbearbeiter</option>
+      <option value="mine" {% if creator_filter == 'mine' %}selected{% endif %}>Von mir angelegt</option>
+      {% if creator_filter not in ('all', 'mine') and creator_filter|int not in creator_choices|map(attribute='id')|list %}<option value="{{ creator_filter }}" selected>Auswahl ohne Rechnungen</option>{% endif %}
+      {% for user in creator_choices %}<option value="{{ user.id }}" {% if creator_filter == user.id|string %}selected{% endif %}>{{ user.display_name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="form-label small" for="invoiceResponsible">Zuständig</label>
+    <select class="form-select form-select-sm" name="responsible" id="invoiceResponsible" onchange="this.form.submit()">
+      <option value="mine" {% if responsible_filter == 'mine' %}selected{% endif %}>Ich bin zuständig</option>
+      <option value="all" {% if responsible_filter == 'all' %}selected{% endif %}>Alle Zuständigkeiten</option>
+      {% if responsible_filter not in ('all', 'mine') and responsible_filter|int not in responsible_choices|map(attribute='id')|list %}<option value="{{ responsible_filter }}" selected>Auswahl ohne Rechnungen</option>{% endif %}
+      {% for user in responsible_choices %}<option value="{{ user.id }}" {% if responsible_filter == user.id|string %}selected{% endif %}>{{ user.display_name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="form-label small" for="invoiceStatus">Status</label>
+    <select class="form-select form-select-sm" name="status" id="invoiceStatus" onchange="this.form.submit()">
+      <option value="all" {% if status_filter == 'all' %}selected{% endif %}>Alle Status</option>
+      {% for key, label in status_labels.items() %}<option value="{{ key }}" {% if status_filter == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="align-self-end d-flex gap-2">
+    <button type="submit" class="btn btn-sm btn-outline-primary">Filtern</button>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.invoices') }}">Filter zurücksetzen</a>
+  </div>
+</form>
+
 <div class="card shadow-sm">
   <div class="card-body">
     <table class="table table-striped datatable align-middle">
@@ -24,6 +56,8 @@
         <tr>
           <th>Rechnungsnummer</th>
           <th>Status</th>
+          <th>Sachbearbeiter</th>
+          <th>Zuständig</th>
           <th>Datum</th>
           <th>Buchwerk</th>
           <th>Empfänger</th>
@@ -68,6 +102,8 @@
             {% endif %}
           </td>
 
+          <td>{{ item.created_by.display_name if item.created_by else 'Unbekannt' }}</td>
+          <td>{{ item.responsible_user.display_name if item.responsible_user else 'Nicht zugewiesen' }}</td>
           <td
             data-order="{{ item.invoice_date.isoformat() if item.invoice_date else '' }}"
           >
@@ -132,7 +168,7 @@
 
     {% if not items %}
     <div class="text-center text-muted py-4">
-      Noch keine Rechnungen vorhanden.
+      Keine Rechnungen für die gewählten Filter vorhanden.
     </div>
     {% endif %}
   </div>

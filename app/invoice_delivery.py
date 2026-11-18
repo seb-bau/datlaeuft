@@ -204,6 +204,7 @@ def delivery_send(invoice_id):
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return invoice_response({"message": "Bitte gültige Versandangaben übermitteln."}, 400)
+    correspondence = {}
     try:
         body = None
         if "body" in data:
@@ -227,19 +228,29 @@ def delivery_send(invoice_id):
         content = invoice_mail_content(invoice, official)
         if body is not None:
             content["body"] = body
+        if invoice.cover_letter_title is not None:
+            from .invoice_correspondence import store_delivery_correspondence
+            correspondence = store_delivery_correspondence(invoice)
         item = enqueue_notification(key, "invoice_delivery", payload={
             "invoice_id": invoice.id, "invoice_number": invoice.invoice_number,
             "document_filename": invoice.document_filename, "document_sha256": invoice.document_sha256,
-            "official_id": official.erp_id, "recipient": recipient, "requested_by_user_id": current_user.id, **content,
+            "official_id": official.erp_id, "recipient": recipient, "requested_by_user_id": current_user.id, **content, **correspondence,
         })
         validate_delivery_retry(item, data.get("official_id"), body)
+        if correspondence and item.payload.get("correspondence_filename") != correspondence["correspondence_filename"]:
+            resolve_invoice_document_path(correspondence["correspondence_filename"]).unlink(missing_ok=True)
+            correspondence = {}
         audit("invoice.mail_queued", "invoice", invoice.id, {"notification_id": item.id, "recipient": recipient, "official_id": official.erp_id})
         db.session.commit()
     except ValueError as exc:
         db.session.rollback()
+        if correspondence:
+            resolve_invoice_document_path(correspondence["correspondence_filename"]).unlink(missing_ok=True)
         return invoice_response({"message": str(exc) or "Die Versandkennung ist ungültig. Bitte den Dialog erneut öffnen."}, 400)
     except Exception:
         db.session.rollback()
+        if correspondence:
+            resolve_invoice_document_path(correspondence["correspondence_filename"]).unlink(missing_ok=True)
         current_app.logger.exception("invoice_mail_queue_failed invoice_id=%s", invoice_id)
         return invoice_response({"message": "Die Rechnung konnte nicht zum Versand vorgemerkt werden."}, 502)
     return invoice_response(delivery_data(item), 202)
@@ -271,9 +282,16 @@ def delivery_draft(invoice_id):
         message["Subject"] = "Mieterbelastung - Rechnung " + " ".join(invoice.invoice_number.split())
         message["X-Unsent"] = "1"
         message.set_content("")
-        message.add_attachment(final_invoice_pdf(invoice), maintype="application", subtype="pdf", filename=invoice_pdf_filename(invoice))
+        content = final_invoice_pdf(invoice)
+        if invoice.cover_letter_title is not None:
+            from .invoice_correspondence import prepend_cover_letter
+            content = prepend_cover_letter(invoice, content)
+        message.add_attachment(content, maintype="application", subtype="pdf", filename=invoice_pdf_filename(invoice))
     except ValueError as exc:
         return invoice_response({"message": str(exc)}, 400)
+    except Exception:
+        current_app.logger.exception("invoice_mail_draft_failed invoice_id=%s", invoice_id)
+        return invoice_response({"message": "Der E-Mail-Entwurf konnte nicht erstellt werden. Bitte den Briefbogen und die Rechnungsdatei prüfen."}, 502)
     response = send_file(BytesIO(message.as_bytes()), mimetype="message/rfc822", as_attachment=True,
                          download_name=secure_filename(f"Mieterbelastung-Rechnung-{invoice.invoice_number}.eml"))
     response.headers["Cache-Control"] = "private, no-store, max-age=0"
@@ -289,4 +307,8 @@ def invoice_delivery_is_current(item):
 
 def attach_invoice_delivery_pdf(message, item):
     invoice = db.session.get(Invoice, item.payload["invoice_id"])
-    message.add_attachment(final_invoice_pdf(invoice), maintype="application", subtype="pdf", filename=invoice_pdf_filename(invoice))
+    content = final_invoice_pdf(invoice)
+    if item.payload.get("correspondence_filename"):
+        from .invoice_correspondence import delivery_correspondence_pdf
+        content = delivery_correspondence_pdf(invoice, item.payload)
+    message.add_attachment(content, maintype="application", subtype="pdf", filename=invoice_pdf_filename(invoice))
