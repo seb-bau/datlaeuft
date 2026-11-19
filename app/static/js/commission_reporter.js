@@ -10,7 +10,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const results = document.getElementById("reporterResults");
     const status = document.getElementById("reporterStatus");
     const selection = document.getElementById("reporterSelection");
-    const summary = document.getElementById("reporterSummary");
     const clear = document.getElementById("clearReporter");
     let revision = 0;
     let selectionRevision = 0;
@@ -27,9 +26,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function updateSelection() {
-        const selected = Boolean(text.value.trim() && agreement.value && contractor.value);
+        const selected = Boolean(agreement.value && contractor.value);
         selection.classList.toggle("d-none", !selected);
-        summary.textContent = selected ? text.value : "";
     }
 
     function clearResults() {

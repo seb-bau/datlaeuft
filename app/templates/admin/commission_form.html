@@ -371,15 +371,15 @@
         <div id="reporterHint" class="form-text">Die Suche startet ab zwei Zeichen. Wählen Sie genau einen aktuell gültigen Mieter unter seinem Mietvertrag aus.</div>
         <div id="reporterResults" class="list-group small mt-2" aria-live="polite"></div>
         <div id="reporterStatus" class="small mt-2" role="status" aria-live="polite"></div>
-        <textarea id="reporter" name="reporter" hidden>{{ form_values.get('reporter', '') or '' }}</textarea>
         <input id="reporterAgreement" name="reporter_agreement_id" type="hidden" value="{{ form_values.get('reporter_agreement_id', '') or '' }}">
         <input id="reporterContractor" name="reporter_contractor_id" type="hidden" value="{{ form_values.get('reporter_contractor_id', '') or '' }}">
         <div id="reporterSelection" class="border rounded bg-body-tertiary p-3 mt-2 d-none">
           <div class="d-flex justify-content-between align-items-start gap-2">
-            <div class="fw-semibold">Ausgewählter Melder</div>
+            <label class="fw-semibold" for="reporter">Ausgewählter Melder</label>
             <button id="clearReporter" type="button" class="btn btn-sm btn-outline-secondary">Melder entfernen</button>
           </div>
-          <div id="reporterSummary" class="small text-break mt-2" style="white-space: pre-wrap"></div>
+          <textarea id="reporter" name="reporter" class="form-control form-control-sm mt-2" rows="5" aria-describedby="reporterTextHint">{{ form_values.get('reporter', '') or '' }}</textarea>
+          <div id="reporterTextHint" class="form-text">Sie können die Angaben bearbeiten. Die Auswahl eines anderen Melders ersetzt den gesamten Text.</div>
         </div>
       </div>
       <div id="otherAffectedField" class="d-none">
