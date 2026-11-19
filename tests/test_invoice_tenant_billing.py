@@ -1,10 +1,12 @@
 from datetime import date, timedelta
 from email import policy
 from email.parser import BytesParser
+from hashlib import sha256
 from io import BytesIO
 import importlib
 import sys
 import unittest
+from unittest.mock import patch
 
 from lxml import etree
 from pypdf import PdfReader
@@ -25,6 +27,7 @@ class InvoiceTenantBillingTests(unittest.TestCase):
     draft_form = fixtures.InvoiceDeliveryTests.draft_form
     pdf = fixtures.InvoiceDeliveryTests.pdf
     upload = fixtures.InvoiceDeliveryTests.upload
+    queue = fixtures.InvoiceDeliveryTests.queue
     prepare_stationery = fixtures.InvoiceDeliveryTests.prepare_stationery
     api_rows = payment_fixtures.InvoicePaymentTests.api_rows
 
@@ -35,12 +38,16 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         for name in ("invoice_correspondence", "tenant_charge_letter"):
             sys.modules.pop(cls.package_name + "." + name, None)
         guard = sys.modules[cls.package_name + ".auth"].invoice_required
-        for endpoint in ("invoice_create", "invoice_tenant_charge", "invoice_tenant_charge_document"):
+        for endpoint in (
+            "invoice_create", "invoice_edit", "invoice_cover_letter", "invoice_cover_letter_preview",
+            "invoice_correspondence", "invoice_tenant_charge", "invoice_tenant_charge_document",
+        ):
             view = cls.app.view_functions["admin." + endpoint]
             cls.app.view_functions["admin." + endpoint] = guard(view.__wrapped__)
 
     def setUp(self):
         fixtures.InvoiceDeliveryTests.setUp(self)
+        self.start_patch(patch.object(self.admin, "work_report_counts", return_value={}))
         self.prepare_stationery()
         self.issuer = self.models.WowiCompanyCode(
             erp_id=99, name="Testbetrieb GmbH", code="GMBH", seller_name="Testbetrieb GmbH",
@@ -87,7 +94,17 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.assertEqual(invoice.tenant_billing_reference["agreement_erp_id"], self.agreement.erp_id)
         self.assertEqual(invoice.tenant_billing_reference["property_address"], self.unit.address)
         self.assertEqual(invoice.billing_contract_number, self.agreement.id_num)
-        self.assertEqual(self.client.get(f"/admin/invoices/{invoice.id}/tenant-charge").status_code, 409)
+        url = f"/admin/invoices/{invoice.id}"
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Anschreiben zur Mieterbelastung", page.data)
+        self.assertNotIn(b"invoiceCoverLetterModal", page.data)
+        self.assertEqual(self.client.get(url + "/tenant-charge").status_code, 409)
+        self.assertEqual(self.client.get(url + "/cover-letter").status_code, 409)
+        for suffix in ("/cover-letter", "/cover-letter/preview"):
+            response = self.client.post(url + suffix, data={"title": "Rechnung", "text": "An {recipient_name}"})
+            self.assertEqual(response.status_code, 409)
+        self.assertIsNone(invoice.cover_letter_title)
 
     def test_inactive_issuer_and_foreign_person_are_rejected(self):
         for person_id, blocked in ((123, False), (self.party["person_id"], True)):
@@ -108,6 +125,7 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.assertEqual(invoice.recipient_name, self.party["name"])
         self.assertEqual(invoice.recipient_license_agreement_erp_id, self.agreement.erp_id)
         self.assertIsNone(invoice.tenant_billing_reference)
+        self.assertIn(b"invoiceCoverLetterModal", self.client.get(f"/admin/invoices/{invoice.id}").data)
 
     def test_commission_and_offer_drafts_use_the_rule_with_a_disabled_contract_book(self):
         commission = self.post_order()
@@ -148,8 +166,14 @@ class InvoiceTenantBillingTests(unittest.TestCase):
 
     def test_final_pdf_and_xml_keep_the_buyer_separate_and_the_letter_announces_sepa(self):
         invoice = self.create_invoice()
+        invoice.cover_letter_title = "Altes Rechnungsanschreiben"
+        invoice.cover_letter_text = "An {recipient_name}, mit freundlichen Grüßen, {seller_name}"
         self.admin.store_company_code_stationery(
             self.company, FileStorage(stream=BytesIO(self.pdf("BRIEFBOGEN DER EG")), filename="eg.pdf"),
+            attribute="cover_letter_stationery_filename",
+        )
+        self.admin.store_company_code_stationery(
+            self.issuer, FileStorage(stream=BytesIO(self.pdf("BRIEFBOGEN DER GMBH")), filename="gmbh.pdf"),
             attribute="cover_letter_stationery_filename",
         )
         self.assertEqual(self.upload(invoice, [(self.pdf("ARBEITSBERICHT"), "bericht.pdf")]).status_code, 201)
@@ -177,8 +201,17 @@ class InvoiceTenantBillingTests(unittest.TestCase):
 
         agreement, mode = self.api_rows()
         self.remote.read_all_rows.side_effect = lambda endpoint, *_args, **_kwargs: [agreement] if endpoint.endswith("LicenseAgreements") else [mode]
-        url = f"/admin/invoices/{invoice.id}/tenant-charge"
-        self.assertIn(b"Einzugstermin", self.client.get(url).data)
+        invoice_url = f"/admin/invoices/{invoice.id}"
+        url = invoice_url + "/tenant-charge"
+        page = self.client.get(invoice_url)
+        self.assertIn(f'href="{url}"'.encode(), page.data)
+        self.assertIn(b"Mieteranschreiben erstellen", page.data)
+        self.assertNotIn(b"invoiceCoverLetterModal", page.data)
+        self.assertEqual(self.client.get(invoice_url + "/correspondence").status_code, 404)
+        charge_page = self.client.get(url)
+        self.assertIn(b"Einzugstermin", charge_page.data)
+        self.assertIn(b"<strong>Absender</strong> Testgenossenschaft eG", charge_page.data)
+        self.assertIn(b"Postweg 2", charge_page.data)
         response = self.client.post(url, data={
             "revision": 0, "person_id": 5000, "payment_method": "sepa_debit",
             "purpose": "Austausch eines Duschkabinen-Seitenteils",
@@ -190,16 +223,45 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         pages = PdfReader(BytesIO(package.data)).pages
         self.assertEqual(len(pages), 3)
         letter = pages[0].extract_text()
-        for value in ("BRIEFBOGEN DER EG", "Mieterbelastung", "Testmieterin", "SEPA-Mandats", "29,75"):
+        for value in ("BRIEFBOGEN DER EG", "Mieterbelastung", "Testmieterin", "Postweg 2", "SEPA-Mandats", "29,75"):
             self.assertIn(value, letter)
+        self.assertNotIn("BRIEFBOGEN DER GMBH", letter)
         self.assertIn("Testgenossenschaft eG", pages[1].extract_text())
         self.assertIn("ARBEITSBERICHT", pages[2].extract_text())
         self.assertEqual(self.delivery.final_invoice_pdf(invoice), original)
 
-        delivery = self.client.get(f"/admin/invoices/{invoice.id}/delivery/recipients")
+        delivery = self.client.get(invoice_url + "/delivery/recipients")
         self.assertEqual(delivery.json["items"], [{"id": "company", "name": "Testgenossenschaft eG"}])
         email = BytesParser(policy=policy.default).parsebytes(
-            self.client.get(f"/admin/invoices/{invoice.id}/delivery/draft.eml").data,
+            self.client.get(invoice_url + "/delivery/draft.eml").data,
         )
         self.assertEqual(email["To"], "rechnungen@example.invalid")
         self.assertEqual(next(email.iter_attachments()).get_payload(decode=True), original)
+
+        self.assertEqual(self.queue(invoice, official_id="company").status_code, 202)
+        queued = self.models.WorkflowNotification.query.filter_by(kind="invoice_delivery").one()
+        self.assertNotIn("correspondence_filename", queued.payload)
+        legacy_filename = "invoice_documents/correspondence/altes-anschreiben.pdf"
+        legacy_pdf = self.pdf("ALTES RECHNUNGSANSCHREIBEN")
+        path = self.invoice_document.resolve_invoice_document_path(legacy_filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(legacy_pdf)
+        queued.payload = {**queued.payload, "correspondence_filename": legacy_filename, "correspondence_sha256": sha256(legacy_pdf).hexdigest()}
+        self.db.session.commit()
+        self.workflow.process_workflow_notification_batch()
+        sent = self.mail.call_args.args[0]
+        self.assertEqual(sent["To"], "rechnungen@example.invalid")
+        self.assertEqual(next(sent.iter_attachments()).get_payload(decode=True), original)
+
+        self.login(self.administrator)
+        preview = self.client.post("/admin/invoice-cover-letter-layout/preview", data={
+            "invoice_id": invoice.id,
+            "html": "<h1>Absender {{ seller_name }}</h1><p>{{ sender_line }}</p><p>An {{ recipient_name }}</p><p>{{ recipient_street }}</p>",
+        })
+        self.assertEqual(preview.status_code, 200, preview.data[:1000])
+        text = PdfReader(BytesIO(preview.data)).pages[0].extract_text()
+        self.assertIn("Absender Testgenossenschaft eG", text)
+        self.assertIn("An Testmieterin", text)
+        self.assertIn("Postweg 2", text)
+        self.assertIn("BRIEFBOGEN DER EG", text)
+        self.assertNotIn("Testbetrieb GmbH", text)

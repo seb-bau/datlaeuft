@@ -24,7 +24,7 @@ COVER_LETTER_LAYOUT_FIELDS = {
     "caseworker_email": "E-Mail-Adresse des Sachbearbeiters",
     "caseworker_phone": "Telefonnummer des Sachbearbeiters",
     "sender_line": "Optionale vollständige Absenderzeile; im Standard ausgeblendet",
-    "seller_name": "Name des Rechnungsausstellers",
+    "seller_name": "Name des Absenders des Anschreibens",
     "amount": "Formatierter Bruttobetrag",
     "currency": "Währung",
     "due_date": "Fälligkeitsdatum",
