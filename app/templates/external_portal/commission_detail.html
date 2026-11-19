@@ -326,6 +326,15 @@
       </div>
     </section>
 
+    {% for label, value in [('Melder', item.reporter), ('Weitere Betroffene', item.other_affected)] %}
+    {% if value and value|trim %}
+    <section class="card shadow-sm mb-4">
+      <div class="card-header fw-semibold">{{ label }}</div>
+      <div class="card-body text-break" style="white-space: pre-wrap">{{ value }}</div>
+    </section>
+    {% endif %}
+    {% endfor %}
+
     <section class="card shadow-sm mb-4">
       <div class="card-header fw-semibold">Fotos</div>
       <div class="card-body">

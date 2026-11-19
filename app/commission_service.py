@@ -319,6 +319,8 @@ def create_pending_commission(
         contact_person=clean_text(
             data.get("contact_person")
         ),
+        reporter=clean_text(data.get("reporter")) if use_unit is None else None,
+        other_affected=clean_text(data.get("other_affected")) if use_unit is not None else None,
         recording_date=now,
         status_changed_at=now,
         completed_at=now if is_retrospective else None,

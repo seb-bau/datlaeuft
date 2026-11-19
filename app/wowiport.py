@@ -1714,6 +1714,8 @@ class WowiportService:
             payload["TransferToCraftsmanPortalWithoutCosts"] = True
 
             payload["CommissionText"] = commission_text
+            if commission.assignment_type == "external" and position_index == len(commission.positions):
+                payload["CommissionText"] = commission.with_contact_information(commission_text)
             payload["Units"] = units
             payload["PositionNumber"] = (
                     payload.get("PositionNumber")
@@ -2586,6 +2588,39 @@ class WowiportService:
             item["use_unit_number"] or "", item["use_unit_location"] or "",
             item["is_future_contract"], item["contract_start"] or "", item["name"] or "",
         ))
+
+    def get_affected_agreement_text(self, license_agreement_id: int, agreement_number: str) -> str:
+        agreement = self._get_license_agreement(license_agreement_id, None)
+        if agreement is None or _as_int(_attr(agreement, "id_")) != license_agreement_id:
+            raise ValueError("Der Mietvertrag ist in Wowiport nicht verfügbar.")
+
+        lines = [f"Mietvertrag: {agreement_number}"]
+        today = datetime.now(ZoneInfo("Europe/Berlin")).date()
+        start = _contact_date(_attr(agreement, "start_contract"))
+        end = _contact_date(_attr(agreement, "end_of_contract"))
+        if _is_vacancy(agreement) or start is not None and start > today or end is not None and end < today:
+            return lines[0]
+
+        contractors = self.client.get_contractors(license_agreement_id=license_agreement_id, fetch_all=True)
+        seen = set()
+        for contractor in contractors:
+            start = _contact_date(_attr(contractor, "contractual_use_valid_from"))
+            end = _contact_date(_attr(contractor, "contractual_use_valid_to"))
+            if start is not None and start > today or end is not None and end < today:
+                continue
+            contact = _build_contact_item(contractor)
+            if contact is None:
+                continue
+            identity = contact["person_id"] or _attr(contractor, "id_")
+            if identity is not None and identity in seen:
+                continue
+            seen.add(identity)
+            lines.extend(["", contact["name"] or "Mieter"])
+            for label, value in (("Telefon", contact["phone"]), ("Mobil", contact["mobile"]), ("E-Mail", contact["email"])):
+                if value:
+                    lines.append(f"{label}: {value}")
+            lines.extend(f"Telefon: {number}" for number in contact["additional_numbers"])
+        return "\n".join(lines)
 
     def get_use_unit_contact_items(self, use_unit_id: int) -> list[dict[str, Any]]:
         license_agreement = self._get_license_agreement(
@@ -4013,11 +4048,11 @@ def replace_commission_positions(
                     )
                 ),
                 code=_read_first(payload, "code", "Code"),
-                commission_text=_read_first(
+                commission_text=commission.without_contact_information(_read_first(
                     payload,
                     "commission_text",
                     "CommissionText",
-                ),
+                )),
                 internal_description=_read_first(
                     payload,
                     "internal_description",

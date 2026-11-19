@@ -5798,6 +5798,26 @@ def commission_object_search() -> Any:
     )
 
 
+@admin_bp.get("/admin/commission-objects/<int:object_id>/affected-contacts")
+@commission_planning_required
+def commission_affected_contacts(object_id: int) -> Any:
+    try:
+        choice = get_commission_object_choice("license_agreement", object_id)
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+
+    agreement = choice["license_agreement"]
+    try:
+        text = WowiportService().get_affected_agreement_text(agreement["erp_id"], agreement["id_num"])
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except Exception:
+        current_app.logger.exception("commission_affected_contacts_failed object_id=%s", object_id)
+        return jsonify({"message": "Die Mieterkontakte konnten nicht aus Wowiport geladen werden. Bitte erneut versuchen."}), 502
+
+    return jsonify({"text": text})
+
+
 @admin_bp.get("/admin/offers")
 @offer_required
 def offers() -> Any:
@@ -13203,6 +13223,8 @@ def read_commission_form() -> dict[str, Any]:
         "contact_person": request.form.get(
             "contact_person"
         ),
+        "reporter": request.form.get("reporter"),
+        "other_affected": request.form.get("other_affected"),
         "execution_from": request.form.get(
             "execution_from"
         ),

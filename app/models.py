@@ -1316,6 +1316,8 @@ class Commission(db.Model):
     description: Mapped[str | None] = mapped_column(db.Text)
     damage_location: Mapped[str | None] = mapped_column(db.String(255))
     contact_person: Mapped[str | None] = mapped_column(db.String(255))
+    reporter: Mapped[str | None] = mapped_column(db.Text)
+    other_affected: Mapped[str | None] = mapped_column(db.Text)
     status_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
     status_code: Mapped[str | None] = mapped_column(db.String(120), index=True)
     craftsman_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
@@ -1570,6 +1572,34 @@ class Commission(db.Model):
         scope = payload.get("commission_scope")
         value = scope.get("economic_unit_name") if isinstance(scope, dict) else None
         return value.strip() or None if isinstance(value, str) else None
+
+    @property
+    def contact_information_text(self) -> str:
+        return "\n\n".join(
+            f"{label}:\n{value.strip()}"
+            for label, value in (
+                ("Melder", self.reporter),
+                ("Weitere Betroffene", self.other_affected),
+            )
+            if value and value.strip()
+        )
+
+    def with_contact_information(self, text: str) -> str:
+        value = text.rstrip()
+        suffix = self.contact_information_text
+        if suffix and value != suffix and not value.endswith("\n\n" + suffix):
+            return "\n\n".join(filter(None, (value, suffix)))
+        return value
+
+    def without_contact_information(self, text: str | None) -> str | None:
+        suffix = self.contact_information_text
+        if text and suffix:
+            value = text.rstrip()
+            if value == suffix:
+                return ""
+            if value.endswith("\n\n" + suffix):
+                return value[:-(len(suffix) + 2)].rstrip()
+        return text
 
     @property
     def needs_completion_review(self) -> bool:

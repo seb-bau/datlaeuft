@@ -63,6 +63,7 @@ def commission_reissue_data(commission):
     values = {
         "object_type": object_type or "", "object_id": directory.id if directory else "",
         "title": commission.title or "", "damage_location": commission.damage_location or "", "contact_person": commission.contact_person or "",
+        "reporter": commission.reporter or "", "other_affected": commission.other_affected or "",
         "craft_activity_id": craft.id if craft else "", "commission_type_id": commission.commission_type_erp_id or "",
         "company_code_erp_id": commission.company_code_erp_id or "", "crafts_process_id": commission.crafts_process_erp_id or "",
         "creditor_id": commission.creditor_erp_id or "", "assignment_type": commission.assignment_type,
