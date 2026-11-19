@@ -114,8 +114,14 @@
             {{ item.company_code_code }}
           </td>
 
-          <td>
-            {{ item.recipient_name or "" }}
+          {% set recipient_name = item.recipient_name or "" %}
+          {% set tenant_name = ((item.tenant_billing_reference or {}).get("tenant_name") or "")|trim %}
+          {% set show_tenant = tenant_name and tenant_name|lower != recipient_name|trim|lower %}
+          <td data-order="{{ recipient_name }}" data-search="{{ recipient_name }}{% if show_tenant %} {{ tenant_name }}{% endif %}">
+            {{ recipient_name }}
+            {% if show_tenant %}
+            <div class="small text-muted">Mieter {{ tenant_name }}</div>
+            {% endif %}
           </td>
 
           <td>

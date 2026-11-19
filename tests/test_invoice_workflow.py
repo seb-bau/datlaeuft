@@ -101,6 +101,26 @@ class InvoiceWorkflowTests(unittest.TestCase):
         response = self.client.get("/admin/invoices?responsible=all")
         self.assertTrue(all(name in response.data for name in (b"Eigene Rechnung", b"Delegierte Rechnung", b"Fremd angelegt")))
 
+    def test_invoice_overview_displays_and_searches_for_a_separate_tenant(self):
+        routed = self.draft("invoice")
+        routed.recipient_name = "Testgenossenschaft eG"
+        routed.tenant_billing_reference = {"agreement_number": "MV-123", "tenant_name": "Anja Müller & Mia Mai"}
+        direct = self.draft("invoice")
+        direct.recipient_name = "Direkter Empfänger"
+        same_name = self.draft("invoice")
+        same_name.recipient_name = "Gleicher Empfänger"
+        same_name.tenant_billing_reference = {"agreement_number": "MV-456", "tenant_name": " gleicher Empfänger "}
+        self.db.session.commit()
+
+        response = self.client.get("/admin/invoices")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('data-order="Testgenossenschaft eG" data-search="Testgenossenschaft eG Anja Müller &amp; Mia Mai"', html)
+        self.assertIn('>Mieter Anja Müller &amp; Mia Mai</div>', html)
+        self.assertIn('data-order="Direkter Empfänger" data-search="Direkter Empfänger"', html)
+        self.assertIn('data-order="Gleicher Empfänger" data-search="Gleicher Empfänger"', html)
+        self.assertEqual(html.count('>Mieter '), 1)
+
     def test_cancellation_starts_with_its_creator_and_without_the_original_letter(self):
         invoice = self.rendered_invoice()
         invoice.responsible_user = self.administrator
