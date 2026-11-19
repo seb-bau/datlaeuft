@@ -320,6 +320,7 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         form = self.draft_form()
         form.update(save_draft="1", service_date_from=form["invoice_date"],
                     recipient_license_agreement_erp_id=str(self.agreement.erp_id),
+                    insurance_claim_number="  VS-2026-74  ",
                     payment_information_data='{"method":"sepa_debit"}')
         response = self.client.post(f"/admin/invoices/{invoice.id}/finalize", data=form)
         self.assertEqual(response.status_code, 302)
@@ -327,16 +328,23 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.assertEqual(invoice.status, "finalized")
         self.assertTrue(invoice.invoice_number.startswith("GMBH-"))
         self.assertIsNone(invoice.payment_information)
+        self.assertEqual(invoice.insurance_claim_number, "VS-2026-74")
 
         original = self.delivery.final_invoice_pdf(invoice)
         reader = PdfReader(BytesIO(original))
-        self.assertIn("Testgenossenschaft eG", reader.pages[0].extract_text())
-        self.assertIn("MV-COMMON", reader.pages[0].extract_text())
-        self.assertNotIn("Bitte überweisen", reader.pages[0].extract_text())
-        self.assertNotIn("Fällig am", reader.pages[0].extract_text())
+        invoice_text = reader.pages[0].extract_text()
+        self.assertIn("Testgenossenschaft eG", invoice_text)
+        self.assertIn(
+            f"Leistungsbezug\n{self.party['name']}\n{self.unit.address}\nMietvertrag MV-COMMON\nVersicherungsfall-Nr. VS-2026-74",
+            invoice_text,
+        )
+        self.assertNotIn("Bitte überweisen", invoice_text)
+        self.assertNotIn("Fällig am", invoice_text)
         xml = etree.fromstring(reader.attachments["factur-x.xml"][0])
         self.assertEqual(xml.xpath("string(//*[local-name()='BuyerTradeParty']/*[local-name()='Name'])"), "Testgenossenschaft eG")
-        self.assertIn("MV-COMMON", xml.xpath("string(//*[local-name()='IncludedNote']/*[local-name()='Content'])"))
+        note = xml.xpath("string(//*[local-name()='IncludedNote']/*[local-name()='Content'])")
+        self.assertIn("MV-COMMON", note)
+        self.assertIn("Versicherungsfall-Nr. VS-2026-74", note)
         self.assertFalse(xml.xpath("//*[local-name()='SpecifiedTradeSettlementPaymentMeans']"))
 
         agreement, mode = self.api_rows()

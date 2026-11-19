@@ -19,6 +19,7 @@ class InvoiceAgreementAssignmentTests(unittest.TestCase):
     upload = fixtures.InvoiceTenantBillingTests.upload
     prepare_stationery = fixtures.InvoiceTenantBillingTests.prepare_stationery
     api_rows = fixtures.InvoiceTenantBillingTests.api_rows
+    create_invoice = fixtures.InvoiceTenantBillingTests.create_invoice
 
     @classmethod
     def setUpClass(cls):
@@ -111,11 +112,12 @@ class InvoiceAgreementAssignmentTests(unittest.TestCase):
         self.assertIsNone(invoice.payment_information)
         self.assertIsNone(invoice.payment_reference)
         self.assertIsNone(invoice.invoice_number)
-        self.assertNotIn(b'id="pendingInvoiceAgreement"', self.client.get(invoice_url).data)
+        self.assertIn(b'id="invoiceAgreementRemove"', self.client.get(invoice_url).data)
 
         self.client.post(invoice_url + "/finalize")
         self.db.session.refresh(invoice)
         self.assertEqual(invoice.status, "finalized")
+        self.assertNotIn(b'id="pendingInvoiceAgreement"', self.client.get(invoice_url).data)
         self.assertTrue(invoice.invoice_number.startswith("GMBH-"))
         self.assertEqual(invoice.payment_reference, invoice.invoice_number)
         pages = PdfReader(BytesIO(self.delivery.final_invoice_pdf(invoice))).pages
@@ -163,7 +165,7 @@ class InvoiceAgreementAssignmentTests(unittest.TestCase):
                 self.db.session.commit()
                 self.assertEqual(self.assign_agreement(invoice, person_id).status_code, 200)
                 self.db.session.refresh(invoice)
-                self.assertTrue(invoice.can_assign_agreement)
+                self.assertIsNone(invoice.billing_contract_erp_id)
                 self.assertEqual(invoice.company_code_id, self.company.id)
         invoice.status = "finalized"
         self.db.session.commit()
@@ -207,7 +209,7 @@ class InvoiceAgreementAssignmentTests(unittest.TestCase):
 
         self.assertEqual(self.assign_agreement(invoice).status_code, 200)
         self.db.session.refresh(invoice)
-        self.assertTrue(invoice.can_assign_agreement)
+        self.assertIsNone(invoice.billing_contract_erp_id)
         self.assertEqual(invoice.company_code_id, self.company.id)
 
         commission.company_code_erp_id = self.company.erp_id
@@ -216,3 +218,161 @@ class InvoiceAgreementAssignmentTests(unittest.TestCase):
         self.db.session.refresh(invoice)
         self.assertEqual(invoice.company_code_id, self.issuer.id)
         self.assertEqual(invoice.commission_links[0].commission_id, commission.id)
+
+    def test_both_entry_points_find_full_and_partial_contract_numbers(self):
+        self.agreement.id_num = "00138.001.002.04"
+        self.db.session.add_all([
+            self.models.WowiLicenseAgreement(erp_id=4008, id_num=self.agreement.id_num + "0", use_unit=self.unit),
+            self.models.WowiLicenseAgreement(erp_id=4009, id_num=self.agreement.id_num, use_unit=self.unit, is_vacancy=True),
+            self.models.WowiLicenseAgreement(erp_id=4010, id_num="MV 73", use_unit=self.unit),
+        ])
+        self.db.session.commit()
+        invoice = self.create_invoice()
+        url = f"/admin/invoices/{invoice.id}/recipients/search"
+        for query, agreement_id in (
+            ("00138.001.002.04", self.agreement.erp_id),
+            ("002.04", self.agreement.erp_id),
+            ("MV 73", 4010),
+            ("Erika COMMON Straße 1", self.agreement.erp_id),
+        ):
+            with self.subTest(query=query):
+                creation = self.client.get("/admin/invoices/new", query_string={"q": query})
+                self.assertIn(f"agreement_id={agreement_id}".encode(), creation.data)
+                self.assertNotIn(b"agreement_id=4009", creation.data)
+                results = self.client.get(url, query_string={"q": query}).json["items"]
+                self.assertEqual(results[0]["license_agreement"]["erp_id"], agreement_id)
+                self.assertNotIn(4009, [result["license_agreement"]["erp_id"] for result in results])
+
+    def test_changing_a_saved_contract_rebuilds_the_issuer_and_recipient_in_both_directions(self):
+        direct_company = self.models.WowiCompanyCode(
+            erp_id=98, name="Direktes Buchwerk", code="DIREKT", seller_name="Direkter Aussteller",
+            seller_iban=self.company.seller_iban,
+        )
+        direct_economic = self.models.WowiEconomicUnit(erp_id=1002, company_code_erp_id=direct_company.erp_id)
+        direct_building = self.models.WowiBuilding(erp_id=2003, economic_unit=direct_economic, address="Direktweg 1")
+        direct_unit = self.models.WowiUseUnit(erp_id=3004, economic_unit=direct_economic, building=direct_building)
+        direct_agreement = self.models.WowiLicenseAgreement(erp_id=4008, id_num="1000.001.01", use_unit=direct_unit)
+        direct_party = {**self.party, "person_id": 5001, "name": "Direkte Mieterin"}
+        self.db.session.add_all([direct_company, direct_agreement])
+        self.db.session.commit()
+        self.remote.get_invoice_recipient_candidates.side_effect = lambda agreement_id: [
+            direct_party if agreement_id == direct_agreement.erp_id else self.party
+        ]
+        invoice = self.create_invoice()
+        invoice.tenant_charge_letter = {"person_erp_id": self.party["person_id"]}
+        self.db.session.commit()
+
+        url = f"/admin/invoices/{invoice.id}"
+        assignments = self.client.get(url + "/recipients/search", query_string={"q": direct_agreement.id_num})
+        self.assertEqual(assignments.json["items"][0]["license_agreement"]["erp_id"], direct_agreement.erp_id)
+        candidates = self.client.get(url + "/recipient-candidates", query_string={"license_agreement_id": direct_agreement.erp_id})
+        self.assertEqual(candidates.json["assignment"]["issuer_name"], direct_company.seller_name)
+        values = {**self.draft_form(), "saved_contract_erp_id": self.agreement.erp_id,
+                  "pending_agreement_erp_id": direct_agreement.erp_id, "pending_agreement_person_id": direct_party["person_id"],
+                  "insurance_claim_number": "VS-2026-42"}
+        preview = self.client.post(url + "/preview", data=values)
+        self.assertEqual(preview.status_code, 200, preview.data[:500])
+        preview_text = PdfReader(BytesIO(preview.data)).pages[0].extract_text()
+        self.assertIn(direct_party["name"], preview_text)
+        self.assertIn("Versicherungsfall-Nr. VS-2026-42", preview_text)
+        self.assertNotIn(self.party["name"], preview_text)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.company_code_id, self.issuer.id)
+
+        self.assertEqual(self.client.post(url, data=values).location, url)
+        self.db.session.refresh(invoice)
+        self.assertEqual((invoice.company_code_id, invoice.company_code_erp_id, invoice.company_code_code),
+                         (direct_company.id, direct_company.erp_id, direct_company.code))
+        self.assertEqual(invoice.seller_name, direct_company.seller_name)
+        self.assertEqual(invoice.billing_contract_number, direct_agreement.id_num)
+        self.assertEqual(invoice.recipient_name, direct_party["name"])
+        self.assertEqual(invoice.recipient_person_erp_id, direct_party["person_id"])
+        self.assertIsNone(invoice.tenant_billing_reference)
+        self.assertIsNone(invoice.tenant_charge_letter)
+        self.assertEqual(invoice.insurance_claim_number, "VS-2026-42")
+        stale = self.client.post(url, data={**values, "pending_agreement_erp_id": "", "remove_agreement": "1"})
+        self.assertEqual(stale.status_code, 200)
+        with self.client.session_transaction() as session:
+            self.assertIn("Mietvertrag des Entwurfs wurde geändert", session["_flashes"][-1][1])
+
+        invoice.payment_information = {"method": "sepa_debit", "mandate_reference": "ALTER VERTRAG"}
+        invoice.payment_reference = "ALT"
+        self.db.session.commit()
+        self.assertEqual(self.client.post(url, data={
+            **self.draft_form(), **self.assignment_values(), "saved_contract_erp_id": direct_agreement.erp_id,
+        }).location, url)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.company_code_id, self.issuer.id)
+        self.assertEqual(invoice.recipient_name, self.company.seller_name)
+        self.assertEqual(invoice.tenant_billing_reference["tenant_name"], self.party["name"])
+        self.assertEqual(invoice.billing_contract_erp_id, self.agreement.erp_id)
+        self.assertIsNone(invoice.recipient_license_agreement_erp_id)
+        self.assertIsNone(invoice.recipient_person_erp_id)
+        self.assertIsNone(invoice.payment_information)
+        self.assertIsNone(invoice.payment_reference)
+        self.assertEqual(invoice.insurance_claim_number, "VS-2026-42")
+
+    def test_removal_keeps_the_issuer_and_turns_the_recipient_into_a_free_address(self):
+        for routed in (True, False):
+            with self.subTest(routed=routed):
+                self.company.tenant_billing_issuer = self.issuer if routed else None
+                self.company.document_creation_disabled = False
+                invoice = self.invoice_service.create_agreement_invoice_draft(self.agreement, self.party, self.creator)
+                invoice.payment_information = {"method": "sepa_debit", "mandate_reference": "ALT"}
+                invoice.payment_reference = "ALTER VERWENDUNGSZWECK"
+                self.db.session.commit()
+                issuer_id = invoice.company_code_id
+                recipient_name = invoice.recipient_name
+                url = f"/admin/invoices/{invoice.id}"
+                values = {
+                    **self.draft_form(), "saved_contract_erp_id": self.agreement.erp_id, "remove_agreement": "1",
+                    "recipient_license_agreement_erp_id": invoice.recipient_license_agreement_erp_id or "",
+                    "recipient_type": invoice.recipient_type, "recipient_name": recipient_name,
+                    "recipient_street": invoice.recipient_street, "payment_information_data": '{"method":"sepa_debit"}',
+                    "recipient_name_addition": "Rechnungsstelle",
+                }
+                preview = self.client.post(url + "/preview", data=values)
+                self.assertEqual(preview.status_code, 200, preview.data[:500])
+                preview_text = PdfReader(BytesIO(preview.data)).pages[0].extract_text()
+                self.assertIn(recipient_name, preview_text)
+                self.assertNotIn("MV-COMMON", preview_text)
+                self.db.session.refresh(invoice)
+                self.assertEqual(invoice.billing_contract_erp_id, self.agreement.erp_id)
+
+                self.client.post(url + "/finalize", data={**values, "save_draft": "1"})
+                self.db.session.refresh(invoice)
+                self.assertEqual(invoice.status, "draft")
+                self.assertEqual(invoice.billing_contract_erp_id, self.agreement.erp_id)
+                self.assertEqual(self.client.post(url, data=values).location, url)
+                self.db.session.refresh(invoice)
+                self.assertEqual(invoice.company_code_id, issuer_id)
+                self.assertEqual(invoice.recipient_name, recipient_name)
+                self.assertEqual(invoice.recipient_name_addition, "Rechnungsstelle")
+                self.assertIsNone(invoice.billing_contract_number)
+                self.assertIsNone(invoice.billing_contract_erp_id)
+                self.assertIsNone(invoice.recipient_person_erp_id)
+                self.assertIsNone(invoice.tenant_billing_reference)
+                self.assertIsNone(invoice.payment_information)
+                self.assertIsNone(invoice.payment_reference)
+                self.assertIn(b"invoicePaymentInformation", self.client.get(url).data)
+                self.assertNotIn(b'id="invoiceAgreementRemove"', self.client.get(url).data)
+
+    def test_optional_insurance_claim_number_can_be_cleared_from_a_free_draft(self):
+        invoice = self.create_free_invoice(self.company)
+        url = f"/admin/invoices/{invoice.id}"
+        self.assertIn(b'id="invoiceInsuranceClaimNumber"', self.client.get(url).data)
+        values = {**self.draft_form(), "insurance_claim_number": "VS-89"}
+        self.assertEqual(self.client.post(url, data=values).location, url)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.insurance_claim_number, "VS-89")
+
+        invalid = self.client.post(url + "/preview", data={**values, "insurance_claim_number": "x" * 121})
+        self.assertEqual(invalid.status_code, 400)
+        preview = self.client.post(url + "/preview", data={**values, "insurance_claim_number": ""})
+        self.assertEqual(preview.status_code, 200, preview.data[:500])
+        self.assertNotIn("Versicherungsfall-Nr.", PdfReader(BytesIO(preview.data)).pages[0].extract_text())
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.insurance_claim_number, "VS-89")
+        self.assertEqual(self.client.post(url, data={**values, "insurance_claim_number": ""}).location, url)
+        self.db.session.refresh(invoice)
+        self.assertIsNone(invoice.insurance_claim_number)

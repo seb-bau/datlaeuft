@@ -13,15 +13,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const candidateSelect = document.getElementById("recipientCandidateSelect");
     const pendingAgreement = document.getElementById("pendingInvoiceAgreement");
     const pendingPerson = document.getElementById("pendingInvoiceAgreementPerson");
+    const removeAgreement = document.getElementById("removeInvoiceAgreement");
+    const removeButton = document.getElementById("invoiceAgreementRemove");
     const saveNotice = document.getElementById("invoiceAgreementSaveNotice");
     const assignmentSummary = document.getElementById("invoiceAgreementAssignment");
+    const serviceReference = document.getElementById("invoiceServiceReference");
     const recipientFields = document.getElementById("invoiceRecipientFields");
     const paymentSection = document.getElementById("invoicePaymentInformation");
     const finalize = document.getElementById("invoiceFinalize");
     const savedAgreementId = isOffer
       ? search.dataset.agreementId || ""
-      : agreementInput.value;
+      : document.getElementById("savedInvoiceAgreement")?.value ?? agreementInput.value;
     const savedAgreementLabel = selected.textContent;
+    const recipientFieldsInitiallyDisabled = Boolean(recipientFields?.disabled);
     let agreementId = savedAgreementId;
     let searchTimer;
     let searchController;
@@ -54,16 +58,21 @@ document.addEventListener("DOMContentLoaded", () => {
       recipientCandidates = [];
     }
 
-    function setPendingAgreement(value) {
-      const pending = Boolean(value);
+    function setPendingAgreement(value, removing = false) {
+      const pendingAssignment = Boolean(value);
+      const changing = pendingAssignment || removing;
       pendingAgreement.value = value;
       pendingPerson.value = "";
+      if (removeAgreement) removeAgreement.value = removing ? "1" : "";
       assignment = null;
       assignmentSummary.hidden = true;
-      recipientFields.hidden = pending;
-      recipientFields.disabled = pending;
-      paymentSection.hidden = pending;
-      finalize.disabled = pending;
+      saveNotice.hidden = !changing;
+      recipientFields.classList.toggle("d-none", pendingAssignment);
+      recipientFields.disabled = pendingAssignment || (recipientFieldsInitiallyDisabled && !removing);
+      if (serviceReference) serviceReference.hidden = changing;
+      if (paymentSection) paymentSection.hidden = changing;
+      finalize.disabled = changing;
+      if (removeButton) removeButton.textContent = removing ? "Entfernen rückgängig machen" : "Mietvertrag entfernen";
     }
 
     function showAssignment(candidate) {
@@ -181,8 +190,10 @@ document.addEventListener("DOMContentLoaded", () => {
         selected.textContent = label;
       } else {
         if (pendingAgreement) setPendingAgreement(agreementId);
-        else agreementInput.value = agreementId;
-        saveNotice.hidden = !agreementId || agreementId === savedAgreementId;
+        else {
+          agreementInput.value = agreementId;
+          saveNotice.hidden = !agreementId || agreementId === savedAgreementId;
+        }
         const tenantName = result.tenant_name || result.label || "Mieter";
         selected.textContent = agreement.id_num
           ? "Vertrag " + agreement.id_num + " · " + tenantName
@@ -261,7 +272,6 @@ document.addEventListener("DOMContentLoaded", () => {
         recipientLoading = false;
         agreementId = savedAgreementId;
         setPendingAgreement("");
-        saveNotice.hidden = true;
         selected.textContent = savedAgreementLabel;
         resetCandidates();
         showMessage("");
@@ -277,6 +287,21 @@ document.addEventListener("DOMContentLoaded", () => {
         clearTimeout(searchTimer);
         searchRecipients();
       }
+    });
+    removeButton?.addEventListener("click", () => {
+      const removing = removeAgreement.value !== "1";
+      clearTimeout(searchTimer);
+      searchController?.abort();
+      recipientController?.abort();
+      recipientLoading = false;
+      search.value = "";
+      agreementId = removing ? "" : savedAgreementId;
+      selected.textContent = removing ? "Kein Mietvertrag ausgewählt" : savedAgreementLabel;
+      setPendingAgreement("", removing);
+      results.replaceChildren();
+      resetCandidates();
+      showMessage("");
+      markChanged();
     });
     candidateSelect.addEventListener("change", () => {
       if (candidateSelect.value === "") {

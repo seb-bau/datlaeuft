@@ -7,7 +7,7 @@ import re
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 from flask import current_app
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, case, func, or_
 
 from .extensions import db
 from .models import (
@@ -1793,6 +1793,18 @@ def _search_patterns_filter(patterns: list[str], *columns):
     return and_(*(or_(*(column.ilike(pattern, escape="\\") for column in columns)) for pattern in patterns))
 
 
+def _search_patterns(text: str) -> list[str]:
+    return ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for term in text.split()]
+
+
+def _unit_search_pattern(pattern: str):
+    return or_(
+        _search_patterns_filter([pattern], WowiUseUnit.id_num, WowiUseUnit.address,
+                                WowiUseUnit.floor_name, WowiUseUnit.position_name, WowiUseUnit.description_of_position),
+        WowiUseUnit.building.has(_search_patterns_filter([pattern], WowiBuilding.id_num, WowiBuilding.address)),
+    )
+
+
 def _address_search_parts(text: str):
     matches = list(re.finditer(r"(?<![\w./-])([0-9]{1,4}(?:\s*[a-z])?(?:\s*[-–/]\s*[0-9]{1,4}(?:\s*[a-z])?)?)(?=\s|,|$)", text, re.IGNORECASE))
     if not matches:
@@ -1817,6 +1829,47 @@ def _building_house_number_filter(house_number):
     return func.lower(street).regexp_match(pattern)
 
 
+def search_invoice_contracts(search_text: str, company_erp_ids: list[int], limit: int = 50) -> list[dict[str, Any]]:
+    normalized = " ".join(search_text.split())
+    if len(normalized) < 2 or not company_erp_ids:
+        return []
+
+    number_match = _search_patterns_filter(_search_patterns(normalized), WowiLicenseAgreement.id_num)
+    address_text, house_number = _address_search_parts(normalized)
+    patterns = _search_patterns(address_text)
+    unit_matches = [_unit_search_pattern(pattern) for pattern in patterns]
+    today = directory_today()
+    tenant_match = WowiLicenseAgreement.contractors.any(and_(
+        WowiContractor.active.is_(True),
+        or_(WowiContractor.contractual_use_to.is_(None), WowiContractor.contractual_use_to >= today),
+        *(or_(_search_patterns_filter([pattern], WowiContractor.display_name), unit_match)
+          for pattern, unit_match in zip(patterns, unit_matches)),
+    ))
+    address_match = and_(_building_house_number_filter(house_number), or_(and_(*unit_matches), tenant_match))
+    agreements = (
+        WowiLicenseAgreement.query.join(WowiLicenseAgreement.use_unit)
+        .join(WowiUseUnit.building).join(WowiUseUnit.economic_unit)
+        .filter(
+            _available_agreement_filter(today),
+            WowiLicenseAgreement.is_vacancy.is_(False),
+            WowiUseUnit.active.is_(True), WowiBuilding.active.is_(True), WowiEconomicUnit.active.is_(True),
+            WowiEconomicUnit.company_code_erp_id.in_(company_erp_ids),
+            or_(number_match, address_match),
+        )
+        .order_by(
+            case((func.lower(WowiLicenseAgreement.id_num) == normalized.lower(), 0), (number_match, 1), else_=2),
+            WowiLicenseAgreement.id_num.asc(), WowiLicenseAgreement.id.asc(),
+        )
+        .limit(limit)
+        .all()
+    )
+    choices = []
+    seen = set()
+    for agreement in agreements:
+        _append_choice(choices, seen, ("license_agreement", agreement.id))
+    return choices
+
+
 def search_commission_objects(
     search_text: str,
     search_context: str = "tenant",
@@ -1829,10 +1882,10 @@ def search_commission_objects(
     if len(normalized) < 2:
         return []
 
-    original_patterns = ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for term in normalized.split()]
+    original_patterns = _search_patterns(normalized)
     address_text, house_number = _address_search_parts(normalized) if search_context in {"tenant", "address", "use_unit", "all"} else (normalized, None)
     terms = address_text.split()
-    patterns = ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for term in terms]
+    patterns = _search_patterns(address_text)
     house_match = _building_house_number_filter(house_number)
     unit_house_match = WowiUseUnit.building.has(house_match) if house_number else True
     agreement_house_match = WowiLicenseAgreement.use_unit.has(unit_house_match) if house_number else True
@@ -1840,14 +1893,7 @@ def search_commission_objects(
     choices = []
     seen = set()
 
-    def unit_search_pattern(pattern):
-        return or_(
-            _search_patterns_filter([pattern], WowiUseUnit.id_num, WowiUseUnit.address,
-                                    WowiUseUnit.floor_name, WowiUseUnit.position_name, WowiUseUnit.description_of_position),
-            WowiUseUnit.building.has(_search_patterns_filter([pattern], WowiBuilding.id_num, WowiBuilding.address)),
-        )
-
-    unit_match = and_(*(unit_search_pattern(pattern) for pattern in patterns), unit_house_match)
+    unit_match = and_(*(_unit_search_pattern(pattern) for pattern in patterns), unit_house_match)
 
     if search_context in {
         "tenant",
@@ -1863,7 +1909,7 @@ def search_commission_objects(
                 or_(WowiContractor.contractual_use_to.is_(None), WowiContractor.contractual_use_to >= today),
                 and_(*(or_(
                     _search_patterns_filter([pattern], WowiContractor.display_name),
-                    WowiLicenseAgreement.use_unit.has(unit_search_pattern(pattern)),
+                    WowiLicenseAgreement.use_unit.has(_unit_search_pattern(pattern)),
                 ) for pattern in patterns)),
             )
             .order_by(
@@ -1891,7 +1937,7 @@ def search_commission_objects(
 
     vacancy_match = and_(*(or_(
         _search_patterns_filter([pattern], WowiLicenseAgreement.id_num),
-        WowiLicenseAgreement.use_unit.has(unit_search_pattern(pattern)),
+        WowiLicenseAgreement.use_unit.has(_unit_search_pattern(pattern)),
         "leerstand".startswith(term.casefold()),
     ) for term, pattern in zip(terms, patterns)))
 
@@ -1999,7 +2045,7 @@ def search_commission_objects(
 
     if search_context in {"tenant", "address"}:
         vacancy_unit_match = and_(*(or_(
-            unit_search_pattern(pattern), "leerstand".startswith(term.casefold()),
+            _unit_search_pattern(pattern), "leerstand".startswith(term.casefold()),
         ) for term, pattern in zip(terms, patterns)))
         if search_context == "address":
             vacancy_unit_match = WowiUseUnit.building_id.in_([building.id for building in buildings])
