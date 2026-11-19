@@ -248,6 +248,50 @@ class InvoiceTenantBillingTests(unittest.TestCase):
             self.assertIn("Rechnung mit Mietvertrag", session.get("_flashes", [])[-1][1])
         self.assertEqual(invoice.status, "draft")
 
+    def test_tenant_charge_purpose_prefills_the_invoice_issuer_and_gross_total(self):
+        invoice = self.create_invoice()
+        form = self.draft_form()
+        form.update(save_draft="1", service_date_from=form["invoice_date"])
+        invoice_url = f"/admin/invoices/{invoice.id}"
+        self.client.post(invoice_url + "/finalize", data=form)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.status, "finalized")
+
+        agreement, mode = self.api_rows()
+        self.remote.read_all_rows.side_effect = lambda endpoint, *_args, **_kwargs: [agreement] if endpoint.endswith("LicenseAgreements") else [mode]
+        url = invoice_url + "/tenant-charge"
+
+        def purpose_value():
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            return etree.HTML(response.get_data(as_text=True)).xpath("string(//textarea[@name='purpose'])")
+
+        self.assertIn("Für die ausgeführten Arbeiten berechnen wir Ihnen die Kosten", purpose_value())
+        definition = self.settings.SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE
+        self.settings.settings.set(definition, "Rechnung von {invoice_issuer}\nBruttobetrag {gross_amount}\n{work_description}")
+        self.issuer.seller_name = "Späterer Firmenname"
+        self.db.session.commit()
+        expected = f"Rechnung von Testbetrieb GmbH\nBruttobetrag 29,75 EUR\n{form['position_description']}"
+        self.assertEqual(purpose_value(), expected)
+
+        purpose = expected + "\nIndividuell ergänzter Anlass."
+        response = self.client.post(url, data={
+            "purpose": purpose, "revision": 0, "payment_method": "sepa_debit",
+            "person_id": self.party["person_id"], "due_date": (date.today() + timedelta(days=10)).isoformat(),
+        })
+        self.assertEqual(response.location, url)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.tenant_charge_letter["purpose"], purpose)
+        self.settings.settings.set(definition, "Neue Vorlage mit {gross_amount}")
+        self.db.session.commit()
+        self.assertEqual(purpose_value(), purpose)
+
+        pdf = self.client.get(url + "/document")
+        self.assertEqual(pdf.status_code, 200)
+        text = PdfReader(BytesIO(pdf.data)).pages[0].extract_text()
+        for marker in ("Rechnung von Testbetrieb GmbH", "Bruttobetrag 29,75 EUR", "Individuell ergänzter Anlass."):
+            self.assertIn(marker, text)
+
     def test_letter_without_mandate_uses_the_contract_iban(self):
         invoice = self.create_invoice()
         self.company.seller_iban = DEBIT_IBAN

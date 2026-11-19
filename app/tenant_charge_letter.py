@@ -5,6 +5,7 @@ from .document_previews import address_lines
 from .invoice_correspondence import letter_date, prepend_letter_pdf, render_letter_pdf
 from .invoice_document import _format_money
 from .invoice_payments import masked_payment_iban, payment_options_from_wowiport
+from .settings import SettingKeys, settings
 from .tenant_billing import choose_contract_recipient, contract_recipients
 
 
@@ -64,8 +65,13 @@ def tenant_letter_purpose(invoice) -> str:
         descriptions = list(dict.fromkeys(
             position.description for position in invoice.positions if position.description
         ))
-    work = "; ".join(descriptions)[:2000]
-    return f"Für die ausgeführten Arbeiten berechnen wir Ihnen die Kosten gemäß der beigefügten Rechnung.\n{work}".strip()
+    issuer = invoice.company_code
+    template = settings.get(SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE)
+    return template.format(
+        invoice_issuer=invoice.seller_name or issuer.seller_name or issuer.name,
+        gross_amount=f"{_format_money(invoice.total_gross)} {invoice.currency_code or 'EUR'}",
+        work_description="; ".join(descriptions)[:2000],
+    ).strip()
 
 
 def tenant_letter_context(invoice, company, letter) -> dict:

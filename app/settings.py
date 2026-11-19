@@ -543,6 +543,11 @@ class SettingKeys:
         "Mit freundlichen Grüßen\n{seller_name}",
         "Anschreiben: Standardtext", "Rechnungen",
     )
+    INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE = SettingDefinition[str](
+        "invoice.tenant_charge_purpose_template", SettingValueType.STRING,
+        "Für die ausgeführten Arbeiten berechnen wir Ihnen die Kosten gemäß der beigefügten Rechnung.\n{work_description}",
+        "Standardtext für „Anlass der Belastung“", "Rechnungen",
+    )
     INVOICE_COVER_LETTER_LAYOUT = SettingDefinition[str](
         "invoice.cover_letter_layout", SettingValueType.STRING, DEFAULT_COVER_LETTER_LAYOUT,
         "Anschreiben: Aufbau und Gestaltung", "Rechnungen",
@@ -836,6 +841,13 @@ COVER_LETTER_FIELDS = {
     "invoice_number", "invoice_date", "contract_number", "recipient_name", "amount", "currency",
     "due_date", "payment_terms", "seller_name", "caseworker_name", "caseworker_email", "caseworker_phone",
 }
+TENANT_CHARGE_PURPOSE_FIELDS = {"invoice_issuer", "gross_amount", "work_description"}
+
+
+def _validate_text_placeholders(value: str, allowed_fields: set[str]) -> None:
+    for _, field, specification, conversion in Formatter().parse(value):
+        if field is not None and (field not in allowed_fields or specification or conversion):
+            raise ValueError("Ungültiger Platzhalter.")
 
 
 def validate_cover_letter_text(value, *, title=False):
@@ -846,12 +858,24 @@ def validate_cover_letter_text(value, *, title=False):
     ) or (title and any(character in value for character in "\r\n")):
         raise ValueError(f"{label} muss ausgefüllt sein und darf höchstens {limit} Zeichen enthalten.")
     try:
-        for literal, field, specification, conversion in Formatter().parse(value):
-            if field is not None and (field not in COVER_LETTER_FIELDS or specification or conversion):
-                raise ValueError("Ungültiger Platzhalter.")
+        _validate_text_placeholders(value, COVER_LETTER_FIELDS)
     except ValueError as exc:
         raise ValueError("Das Anschreiben enthält einen unbekannten oder ungültigen Platzhalter.") from exc
     return value.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def validate_tenant_charge_purpose_template(value: str) -> str:
+    if isinstance(value, str):
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
+    if not isinstance(value, str) or not value.strip() or len(value) > 4000 or any(
+        ord(character) < 32 and character not in "\n\t" for character in value
+    ):
+        raise ValueError("Die Vorlage für den Anlass der Belastung muss ausgefüllt sein und darf höchstens 4.000 Zeichen enthalten.")
+    try:
+        _validate_text_placeholders(value, TENANT_CHARGE_PURPOSE_FIELDS)
+    except ValueError as exc:
+        raise ValueError("Die Vorlage für den Anlass der Belastung enthält einen unbekannten oder ungültigen Platzhalter.") from exc
+    return value.strip()
 
 
 def validate_debug_email_address(value: str) -> str:
@@ -907,6 +931,8 @@ class SettingsService:
             value = cast(T, validate_invoice_layout(value))
         if definition.key in {SettingKeys.INVOICE_COVER_LETTER_TITLE.key, SettingKeys.INVOICE_COVER_LETTER_TEXT.key}:
             value = cast(T, validate_cover_letter_text(value, title=definition.key == SettingKeys.INVOICE_COVER_LETTER_TITLE.key))
+        if definition.key == SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key:
+            value = cast(T, validate_tenant_charge_purpose_template(value))
         if definition.key in {SettingKeys.INVOICE_TRANSFER_PAYMENT_TEXT.key, SettingKeys.INVOICE_SEPA_PAYMENT_TEXT.key}:
             value = cast(T, validate_invoice_payment_text(value))
         if definition.key == SettingKeys.SMS_API_KEY.key:
@@ -954,11 +980,9 @@ class SettingsService:
         definition: SettingDefinition[Any],
         raw_value: str | None,
     ) -> None:
-        if (
-            definition.key
-            == SettingKeys.SMTP_DEBUG_RECIPIENT.key
-            and raw_value is None
-        ):
+        if raw_value is None and definition.key in {
+            SettingKeys.SMTP_DEBUG_RECIPIENT.key, SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key,
+        }:
             return
 
         if definition.secret and not raw_value:
