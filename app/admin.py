@@ -7150,8 +7150,9 @@ def tenant_charge_invoice(invoice_id: int, *, lock: bool = False) -> Invoice:
 @invoice_required
 def invoice_tenant_charge(invoice_id: int):
     from .invoice_correspondence import letter_date
+    from .settings import validate_tenant_charge_closing
     from .tenant_charge_letter import (
-        render_tenant_charge_letter, tenant_letter_payment, tenant_letter_purpose, tenant_letter_recipients,
+        render_tenant_charge_letter, tenant_letter_closing, tenant_letter_payment, tenant_letter_purpose, tenant_letter_recipients,
     )
 
     item = tenant_charge_invoice(invoice_id, lock=request.method == "POST")
@@ -7160,6 +7161,7 @@ def invoice_tenant_charge(invoice_id: int):
     saved = item.tenant_charge_letter or {}
     values = {
         "purpose": saved.get("purpose", ""),
+        "closing": request.form.get("closing"),
         "due_date": saved.get("due_date", ""),
         "person_id": (saved.get("recipient") or {}).get("person_id"),
         "caseworker_name": saved.get("caseworker_name", current_user.display_name),
@@ -7169,6 +7171,8 @@ def invoice_tenant_charge(invoice_id: int):
     recipients = []
     payment = None
     try:
+        if values["closing"] is None:
+            values["closing"] = tenant_letter_closing(company, saved)
         if request.method == "GET" and "purpose" not in saved:
             values["purpose"] = tenant_letter_purpose(item)
         service = WowiportService()
@@ -7178,6 +7182,7 @@ def invoice_tenant_charge(invoice_id: int):
         if request.method == "POST":
             values = {
                 "purpose": request.form.get("purpose", "").strip(),
+                "closing": values["closing"],
                 "due_date": request.form.get("due_date", ""),
                 "person_id": optional_form_int(request.form.get("person_id"), "Vertragspartner"),
                 "caseworker_name": request.form.get("caseworker_name", "").strip(),
@@ -7195,6 +7200,7 @@ def invoice_tenant_charge(invoice_id: int):
                 raise ValueError("Bitte geben Sie den Anlass mit höchstens 4.000 Zeichen und einen gültigen Ansprechpartner an.")
             letter = {
                 "purpose": values["purpose"], "due_date": due.isoformat(), "letter_date": today.isoformat(),
+                "closing": validate_tenant_charge_closing(values["closing"]),
                 "caseworker_name": values["caseworker_name"], "include_work_reports": values["include_work_reports"],
                 "recipient": {field: recipient.get(field) for field in (
                     "person_id", "name", "name_addition", "street", "postal_code", "town", "country_code",

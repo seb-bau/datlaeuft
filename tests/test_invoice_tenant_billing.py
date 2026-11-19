@@ -292,6 +292,53 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         for marker in ("Rechnung von Testbetrieb GmbH", "Bruttobetrag 29,75 EUR", "Individuell ergänzter Anlass."):
             self.assertIn(marker, text)
 
+    def test_tenant_charge_closing_can_be_changed_per_letter_and_in_the_settings(self):
+        invoice = self.create_invoice()
+        form = self.draft_form()
+        form.update(save_draft="1", service_date_from=form["invoice_date"])
+        invoice_url = f"/admin/invoices/{invoice.id}"
+        self.client.post(invoice_url + "/finalize", data=form)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.status, "finalized")
+
+        definition = self.settings.SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE
+        self.settings.settings.set(definition, "Beste Grüße\n{seller_name}")
+        self.db.session.commit()
+        agreement, mode = self.api_rows()
+        self.remote.read_all_rows.side_effect = lambda endpoint, *_args, **_kwargs: [agreement] if endpoint.endswith("LicenseAgreements") else [mode]
+        url = invoice_url + "/tenant-charge"
+
+        def closing_value():
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            return etree.HTML(response.get_data(as_text=True)).xpath("string(//textarea[@name='closing'])")
+
+        self.assertEqual(closing_value(), "Beste Grüße\nTestgenossenschaft eG")
+        closing = "Viele Grüße\nIhr Serviceteam"
+        data = {
+            "purpose": "Reparatur", "person_id": self.party["person_id"], "payment_method": "sepa_debit",
+            "due_date": (date.today() + timedelta(days=10)).isoformat(),
+        }
+        self.assertEqual(self.client.post(url, data={**data, "revision": 0, "closing": closing}).location, url)
+        self.settings.settings.set(definition, "Neuer Standard")
+        self.db.session.commit()
+        self.assertEqual(closing_value(), closing)
+        pdf = self.client.get(url + "/document")
+        self.assertEqual(pdf.status_code, 200)
+        text = PdfReader(BytesIO(pdf.data)).pages[0].extract_text()
+        self.assertIn("Viele Grüße", text)
+        self.assertIn("Ihr Serviceteam", text)
+
+        self.assertEqual(self.client.post(url, data={**data, "revision": 1}).location, url)
+        self.assertEqual(closing_value(), closing)
+        legacy_letter = dict(invoice.tenant_charge_letter)
+        legacy_letter.pop("closing")
+        invoice.tenant_charge_letter = legacy_letter
+        self.db.session.commit()
+        self.assertEqual(closing_value(), "Mit freundlichen Grüßen\nTestgenossenschaft eG")
+        self.assertEqual(self.client.post(url, data={**data, "revision": 2, "closing": ""}).location, url)
+        self.assertEqual(closing_value(), "")
+
     def test_letter_without_mandate_uses_the_contract_iban(self):
         invoice = self.create_invoice()
         self.company.seller_iban = DEBIT_IBAN

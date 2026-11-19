@@ -74,6 +74,14 @@ def tenant_letter_purpose(invoice) -> str:
     ).strip()
 
 
+def tenant_letter_closing(company, letter) -> str:
+    if "closing" in letter:
+        return letter["closing"]
+    definition = SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE
+    template = definition.default if letter else settings.get(definition)
+    return template.format(seller_name=company.seller_name or company.name).strip()
+
+
 def tenant_letter_context(invoice, company, letter) -> dict:
     name = company.seller_name or company.name
     sender_address = address_lines(company, "seller")
@@ -107,8 +115,11 @@ def tenant_letter_context(invoice, company, letter) -> dict:
 
     text = (
         f"Guten Tag {recipient['name']},\n\n{letter['purpose']}\n\n{terms}\n\n"
-        f"Eine Kopie der Rechnung ist beigefügt.\n\nMit freundlichen Grüßen\n{name}"
+        "Eine Kopie der Rechnung ist beigefügt."
     )
+    closing = tenant_letter_closing(company, letter)
+    if closing:
+        text += f"\n\n{closing}"
     return {
         **vars(address),
         "title": "Mieterbelastung", "text": text,
