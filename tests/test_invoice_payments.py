@@ -103,6 +103,21 @@ class InvoicePaymentTests(unittest.TestCase):
         self.assertEqual(selected["iban"], TRANSFER_IBAN)
         self.assertEqual(selected["bic"], "COBADEFFXXX")
 
+    def test_transfer_uses_the_account_selected_in_contract_banking(self):
+        agreement, mode = self.api_rows()
+        banking = agreement["Banking"]
+        collective = banking["CollectiveAccount"]
+        collective["IBAN"] = DEBIT_IBAN
+        mode["SepaMandate"]["Active"] = False
+        for enabled, no_real_account, expected in ((True, False, TRANSFER_IBAN), (False, False, DEBIT_IBAN), (False, True, "")):
+            with self.subTest(enabled=enabled, no_real_account=no_real_account):
+                banking["UseVirtualIban"] = enabled
+                collective["NoRealBankAccount"] = no_real_account
+                self.remote.read_all_rows.side_effect = [[agreement], [mode]]
+                selected = self.invoice_payments.payment_options_from_wowiport(self.remote, self.agreement.erp_id)["selected"]
+                self.assertEqual(selected["method"], "bank_transfer")
+                self.assertEqual(selected["iban"], expected)
+
     def test_ambiguous_active_modes_require_a_choice_and_mismatched_debit_accounts_are_rejected(self):
         agreement, mode = self.api_rows()
         service = Mock()

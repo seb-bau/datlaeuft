@@ -2627,6 +2627,9 @@ def invoice_finalize(
             if invoice.status != InvoiceStatus.DRAFT.value:
                 raise InvoiceFinalizationError("Nur Entwürfe können festgeschrieben werden.")
             save_invoice_draft_form(invoice)
+            if invoice.recipient_license_agreement_erp_id is not None and not invoice.tenant_billing_reference:
+                agreement = invoice_agreement(invoice, invoice.recipient_license_agreement_erp_id)
+                invoice.recipient_license_agreement_idnum = agreement.id_num
             save_invoice_positions_form(invoice)
             audit("invoice.update", "invoice", invoice.id)
 
@@ -7135,13 +7138,16 @@ def invoice_tenant_charge(invoice_id: int):
 @admin_bp.get("/admin/invoices/<int:invoice_id>/tenant-charge/document")
 @invoice_required
 def invoice_tenant_charge_document(invoice_id: int):
-    from .tenant_charge_letter import tenant_charge_package
+    from .tenant_charge_letter import tenant_charge_package, tenant_letter_payment
 
     item = tenant_charge_invoice(invoice_id)
     if not item.tenant_charge_letter:
         abort(404)
     company = db.get_or_404(WowiCompanyCode, item.tenant_billing_reference["company_code_id"])
     try:
+        payment = tenant_letter_payment(item, company, WowiportService())
+        if item.tenant_charge_letter.get("payment") != payment:
+            raise ValueError("Die Zahlungsdaten des Mietvertrags haben sich geändert. Bitte prüfen und speichern Sie das Anschreiben erneut.")
         content = tenant_charge_package(item, company, item.tenant_charge_letter)
         db.session.commit()
     except (ValueError, WorkReportDocumentError) as exc:
@@ -7355,16 +7361,14 @@ def render_invoice_create(company_codes, commissions):
 def invoice_edit(
     invoice_id: int,
 ) -> Any:
-    item = db.get_or_404(
-        Invoice,
-        invoice_id,
-    )
+    saving = request.method == "POST"
+    item = db.get_or_404(Invoice, invoice_id, populate_existing=saving, with_for_update=saving)
     editable = (
         item.status
         == InvoiceStatus.DRAFT.value
     )
 
-    if request.method == "POST":
+    if saving:
         if not editable:
             flash(
                 "Eine festgeschriebene Rechnung "
@@ -7566,10 +7570,7 @@ def commission_preview(commission_id: int):
 def invoice_add_suggestions(
     invoice_id: int,
 ) -> Any:
-    item = db.get_or_404(
-        Invoice,
-        invoice_id,
-    )
+    item = db.get_or_404(Invoice, invoice_id, populate_existing=True, with_for_update=True)
 
     try:
         added_count = add_invoice_suggestions(
@@ -8124,7 +8125,10 @@ def save_invoice_recipient_form(item: Invoice) -> None:
         )
     )
 
-    if license_agreement_id is not None:
+    if license_agreement_id is None:
+        item.recipient_license_agreement_erp_id = None
+        item.recipient_license_agreement_idnum = None
+    elif license_agreement_id != item.recipient_license_agreement_erp_id:
         agreement = invoice_agreement(
             item,
             license_agreement_id,
@@ -8135,9 +8139,6 @@ def save_invoice_recipient_form(item: Invoice) -> None:
         item.recipient_license_agreement_idnum = (
             agreement.id_num
         )
-    else:
-        item.recipient_license_agreement_erp_id = None
-        item.recipient_license_agreement_idnum = None
 
     save_invoice_payment_form(item)
     item.recipient_person_erp_id = (

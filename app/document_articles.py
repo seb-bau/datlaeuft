@@ -11,7 +11,7 @@ from sqlalchemy.orm import joinedload
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .audit import audit
-from .auth import accounting_required
+from .auth import accounting_required, invoice_required
 from .local_catalog import MAX_IMPORT_BYTES, article_decimal, catalog_values, parse_catalog_import, plan_catalog_import
 from .extensions import db
 from .models import (
@@ -19,8 +19,10 @@ from .models import (
     InventoryItemGroup,
     InventoryItemType,
     Invoice,
+    InvoicePosition,
     LocalCatalogItem,
     Offer,
+    OfferPosition,
 )
 
 
@@ -117,9 +119,12 @@ def items(document_type: str, document_id: int):
             inventory_ids = [row.item_id for row in references if row.source_type == "material"]
             catalog_items = {item.id: item for item in LocalCatalogItem.query.filter(LocalCatalogItem.id.in_(catalog_ids)).all()}
             inventory_items = {item.id: item for item in InventoryItem.query.options(joinedload(InventoryItem.item_type).joinedload(InventoryItemType.group)).filter(InventoryItem.id.in_(inventory_ids)).all()}
-            articles = [(catalog_items if row.source_type == "local_catalog" else inventory_items)[row.item_id] for row in references]
+            articles = [
+                article for row in references
+                if (article := (catalog_items if row.source_type == "local_catalog" else inventory_items).get(row.item_id)) is not None
+            ]
             item_types = InventoryItemType.query.join(InventoryItemType.group).filter(InventoryItemType.active.is_(True), InventoryItemGroup.active.is_(True)).order_by(InventoryItemType.name).all()
-            return jsonify(items=[serialize_article(item) for item in articles[:50]], has_more=len(articles) > 50,
+            return jsonify(items=[serialize_article(item) for item in articles[:50]], has_more=len(references) > 50,
                            item_types=[{"id": item.id, "name": item.name, "unit": item.unit} for item in item_types])
         query = article_model.query.filter(
             article_model.active.is_(True)
@@ -338,6 +343,29 @@ def catalog_active(item_id: int):
     return redirect(url_for("document_articles.catalog", state="all"))
 
 
+@document_articles_bp.post("/admin/local-catalog/<int:item_id>/delete")
+@invoice_required
+def catalog_delete(item_id: int):
+    item = db.get_or_404(LocalCatalogItem, item_id, with_for_update=True)
+    for model in (InvoicePosition, OfferPosition):
+        positions = model.query.filter_by(local_catalog_item_id=item.id).with_for_update().all()
+        for position in positions:
+            source_data = position.source_data
+            snapshot = dict(source_data) if isinstance(source_data, dict) else {}
+            snapshot.setdefault("article_number", position.article_number)
+            for field in ("business_area", "product_group", "tax_label"):
+                snapshot.setdefault(field, getattr(item, field))
+            position.source_data = snapshot
+            position.local_catalog_item_id = None
+
+    db.session.flush()
+    audit("local_catalog.delete", "local_catalog_item", item.id, {"item_number": item.item_number, "name": item.name})
+    db.session.delete(item)
+    db.session.commit()
+    flash("Katalogartikel gelöscht.", "success")
+    return redirect(url_for("document_articles.catalog", state="all"))
+
+
 def catalog_import_serializer():
     return URLSafeTimedSerializer(current_app.secret_key, salt="local-catalog-import")
 
@@ -482,19 +510,24 @@ def attach_article_fields(rows: list[dict], positions) -> None:
             "local_catalog_item_id" if local else "inventory_item_id"
         ]
 
-        item = (
-            db.session.get(
-                LocalCatalogItem if local else InventoryItem,
-                article_id,
-            )
-            if article_id
-            else None
-        )
-
         key = (
             source,
             row["inventory_item_id"],
             row["local_catalog_item_id"],
+        )
+
+        if article_id is None and key in previous:
+            continue
+
+        item = (
+            db.session.get(
+                LocalCatalogItem if local else InventoryItem,
+                article_id,
+                with_for_update={"read": True} if local else None,
+                populate_existing=local,
+            )
+            if article_id
+            else None
         )
 
         if item is None or (

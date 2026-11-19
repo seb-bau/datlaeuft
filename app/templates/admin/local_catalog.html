@@ -22,7 +22,21 @@
     <tbody>{% for article in pagination.items %}<tr>
       <td>{{ article.item_number }}</td><td>{{ article.name }}</td><td>{{ article.business_area or '–' }}</td><td>{{ article.product_group or '–' }}</td><td>{{ article.unit }}</td>
       <td class="text-end text-nowrap">{{ ('%.4f'|format(article.price_net)).replace('.', ',') }} €</td><td>{{ article.tax_label }}</td><td class="text-nowrap">{{ ('%.2f'|format(article.vat_rate)).replace('.', ',') }} %</td><td>{{ 'Aktiv' if article.active else 'Inaktiv' }}</td>
-      <td><div class="d-flex gap-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('document_articles.catalog_edit', item_id=article.id) }}">Bearbeiten</a><form method="post" action="{{ url_for('document_articles.catalog_active', item_id=article.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="active" value="{{ 'false' if article.active else 'true' }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Deaktivieren' if article.active else 'Aktivieren' }}</button></form></div></td>
+      <td><div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('document_articles.catalog_edit', item_id=article.id) }}">Bearbeiten</a>
+        <form method="post" action="{{ url_for('document_articles.catalog_active', item_id=article.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="active" value="{{ 'false' if article.active else 'true' }}">
+          <button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Deaktivieren' if article.active else 'Aktivieren' }}</button>
+        </form>
+        {% if current_user.is_admin or current_user.can_manage_invoices %}
+        <form method="post" action="{{ url_for('document_articles.catalog_delete', item_id=article.id) }}"
+              onsubmit="return window.confirm('Katalogartikel wirklich löschen?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm btn-outline-danger" type="submit">Löschen</button>
+        </form>
+        {% endif %}
+      </div></td>
     </tr>{% else %}<tr><td colspan="10" class="text-muted p-4">Keine passenden Artikel vorhanden.</td></tr>{% endfor %}</tbody>
   </table>
 </div></div>
