@@ -21,6 +21,7 @@ from .object_directory import (
     resolve_commission_assignment,
     resolve_commission_creator_official_id,
     resolve_commission_object,
+    resolve_commission_reporter,
 )
 from .external_craftsman_service import (
     resolve_external_craftsman,
@@ -157,6 +158,8 @@ def create_pending_commission(
         data.get("client_request_id")
     )
     use_unit = object_context.use_unit
+    has_reporter = any(data.get(key) not in (None, "") for key in ("reporter", "reporter_agreement_id", "reporter_contractor_id"))
+    reporter, reporter_selection = resolve_commission_reporter(data) if use_unit is None and has_reporter else (None, None)
     building = object_context.building
     agreement = (
         object_context.license_agreement
@@ -319,6 +322,8 @@ def create_pending_commission(
         contact_person=clean_text(
             data.get("contact_person")
         ),
+        reporter=reporter,
+        other_affected=clean_text(data.get("other_affected")) if use_unit is not None else None,
         recording_date=now,
         status_changed_at=now,
         completed_at=now if is_retrospective else None,
@@ -595,6 +600,7 @@ def create_pending_commission(
         commission.description = position_text
 
     commission.raw_payload = {
+        "reporter_selection": reporter_selection,
         "commission_scope": {
             "object_type": str(data.get("object_type") or "").strip() or commission.object_type,
             "economic_unit_name": object_context.economic_unit.name,

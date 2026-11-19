@@ -301,6 +301,14 @@
             <th>Ansprechpartner</th>
             <td>{{ item.contact_person or "–" }}</td>
           </tr>
+          {% for label, value in [('Melder', item.reporter), ('Weitere Betroffene', item.other_affected)] %}
+          {% if value and value|trim %}
+          <tr>
+            <th>{{ label }}</th>
+            <td colspan="3" class="text-break" style="white-space: pre-wrap">{{ value }}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
           <tr>
             <th>Schadensort</th>
             <td>{{ item.damage_location or "–" }}</td>

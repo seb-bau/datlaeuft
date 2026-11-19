@@ -164,6 +164,9 @@
   data-can-create="{{ 'true' if commission_types and service_positions else 'false' }}"
   data-initial-object='{{ (selected_object or none)|tojson|forceescape }}'
   data-object-search-url="{{ url_for('admin.commission_object_search') }}"
+  data-affected-contacts-url="{{ url_for('admin.commission_affected_contacts', object_id=0) }}"
+  data-reporter-search-url="{{ url_for('admin.commission_reporter_search') }}"
+  data-reporter-contact-url="{{ url_for('admin.commission_reporter_contact', agreement_id=0, contractor_id=0) }}"
   data-object-commissions-url="{{ url_for('admin.commission_object_commissions') if current_user.is_admin or current_user.is_foreman else '' }}"
   data-assignment-preview-url="{{ url_for('admin.commission_assignment_preview') }}"
   data-default-commission-type-id="{{ default_commission_type_id }}"
@@ -358,6 +361,32 @@
             </div>
           </div>
                 </div>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div id="reporterField" class="d-none">
+        <label class="form-label small fw-semibold" for="reporterSearch">Melder</label>
+        <input id="reporterSearch" class="form-control form-control-sm" type="search" autocomplete="off" placeholder="Mietername, MV-Nummer oder Adresse" aria-controls="reporterResults" aria-describedby="reporterHint" aria-expanded="false">
+        <div id="reporterHint" class="form-text">Die Suche startet ab zwei Zeichen. Wählen Sie genau einen aktuell gültigen Mieter unter seinem Mietvertrag aus.</div>
+        <div id="reporterResults" class="list-group small mt-2" aria-live="polite"></div>
+        <div id="reporterStatus" class="small mt-2" role="status" aria-live="polite"></div>
+        <textarea id="reporter" name="reporter" hidden>{{ form_values.get('reporter', '') or '' }}</textarea>
+        <input id="reporterAgreement" name="reporter_agreement_id" type="hidden" value="{{ form_values.get('reporter_agreement_id', '') or '' }}">
+        <input id="reporterContractor" name="reporter_contractor_id" type="hidden" value="{{ form_values.get('reporter_contractor_id', '') or '' }}">
+        <div id="reporterSelection" class="border rounded bg-body-tertiary p-3 mt-2 d-none">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div class="fw-semibold">Ausgewählter Melder</div>
+            <button id="clearReporter" type="button" class="btn btn-sm btn-outline-secondary">Melder entfernen</button>
+          </div>
+          <div id="reporterSummary" class="small text-break mt-2" style="white-space: pre-wrap"></div>
+        </div>
+      </div>
+      <div id="otherAffectedField" class="d-none">
+        <textarea id="otherAffectedValue" name="other_affected" hidden>{{ form_values.get('other_affected', '') or '' }}</textarea>
+        <button id="otherAffectedButton" class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#otherAffectedModal">
+          <i id="otherAffectedIcon" class="bi bi-people me-1" aria-hidden="true"></i>Weitere Betroffene...
+        </button>
       </div>
     </div>
 
@@ -807,6 +836,35 @@
   </div>
 </form>
 
+<div class="modal fade" id="otherAffectedModal" tabindex="-1" aria-labelledby="otherAffectedTitle" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="otherAffectedTitle">Weitere Betroffene</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label" for="affectedSearch">Betroffene suchen</label>
+        <div class="input-group input-group-sm">
+          <label class="input-group-text" for="affectedSearchContext">Suche in</label>
+          <select id="affectedSearchContext" class="form-select flex-grow-0 w-auto" aria-label="Suchkontext für weitere Betroffene"></select>
+          <input id="affectedSearch" class="form-control" type="search" autocomplete="off" placeholder="Mindestens zwei Zeichen eingeben">
+        </div>
+        <div class="form-text">Suchen Sie wie bei der Objektauswahl, auch nach Gebäuden. Nur Mietverträge können übernommen werden.</div>
+        <div id="affectedResults" class="list-group small my-3" aria-live="polite"></div>
+        <div id="affectedContactStatus" class="small mb-2" role="status" aria-live="polite"></div>
+        <label class="form-label" for="affectedEditor">Informationen für den Handwerker</label>
+        <textarea id="affectedEditor" class="form-control" rows="12" aria-describedby="affectedEditorHint"></textarea>
+        <div id="affectedEditorHint" class="form-text">Die MV-Nummer und die Kontaktdaten der aktuell gültigen Mieter werden angehängt. Sie können den Text frei bearbeiten.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button id="applyAffected" type="button" class="btn btn-primary">Übernehmen</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% if current_user.is_admin or current_user.is_foreman %}
 <div class="modal fade" id="objectCommissionModal" tabindex="-1" aria-labelledby="objectCommissionTitle" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
@@ -929,6 +987,8 @@
   defer
 ></script>
 <script src="{{ url_for('static', filename='js/ticket_attachment_selection.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/commission_contacts.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/commission_reporter.js') }}" defer></script>
 {% include 'admin/_document_preview.html' %}
 {% endblock %}
 

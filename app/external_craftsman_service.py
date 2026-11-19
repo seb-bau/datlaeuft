@@ -35,7 +35,7 @@ from .user_sync import (
     extract_craftsman_erp_id,
 )
 from .blacklist import include_blacklisted
-from .email_templates import apply_email_template, commission_email_context
+from .email_templates import apply_email_template, commission_email_context, set_email_content
 
 
 @dataclass
@@ -671,7 +671,10 @@ def send_external_assignment_email(
     message = EmailMessage()
     message["From"] = smtp_sender
     message["To"] = craftsman.email
-    apply_email_template(message, "external_assignment", context)
+    content = apply_email_template(message, "external_assignment", context)
+    if commission.contact_information_text:
+        message.clear_content()
+        set_email_content(message, content["subject"], commission.with_contact_information(content["body"]) + "\n")
     send_external_email(
         message,
         smtp_host=smtp_host,

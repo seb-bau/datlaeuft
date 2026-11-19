@@ -4331,6 +4331,8 @@ def serialize_commission(
         "description": commission.description,
         "damage_location": commission.damage_location,
         "contact_person": commission.contact_person,
+        "reporter": commission.reporter,
+        "other_affected": commission.other_affected,
         "status_id": commission.status_id,
         "status_code": commission.status_code,
         "local_status": commission.local_status,

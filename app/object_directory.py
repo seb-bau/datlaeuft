@@ -1789,6 +1789,83 @@ def _current_agreement_filter(today: date):
     )
 
 
+def _current_contractor_filter(today: date):
+    return and_(
+        WowiContractor.active.is_(True),
+        or_(WowiContractor.contractual_use_from.is_(None), WowiContractor.contractual_use_from <= today),
+        or_(WowiContractor.contractual_use_to.is_(None), WowiContractor.contractual_use_to >= today),
+    )
+
+
+def search_commission_reporters(search_text: str, limit: int = 20) -> list[dict[str, Any]]:
+    normalized = " ".join(search_text.split())
+    if len(normalized) < 2:
+        return []
+    today = directory_today()
+    address_text, house_number = _address_search_parts(normalized)
+    patterns = _search_patterns(address_text)
+    unit_matches = [_unit_search_pattern(pattern) for pattern in patterns]
+    current_tenant = _current_contractor_filter(today)
+    tenant_match = WowiLicenseAgreement.contractors.any(and_(
+        current_tenant,
+        *(or_(_search_patterns_filter([pattern], WowiContractor.display_name), unit_match)
+          for pattern, unit_match in zip(patterns, unit_matches)),
+    ))
+    agreements = (
+        WowiLicenseAgreement.query.join(WowiLicenseAgreement.use_unit)
+        .join(WowiUseUnit.building).join(WowiUseUnit.economic_unit)
+        .filter(
+            _current_agreement_filter(today), WowiLicenseAgreement.is_vacancy.is_(False),
+            WowiUseUnit.active.is_(True), WowiBuilding.active.is_(True), WowiEconomicUnit.active.is_(True),
+            WowiLicenseAgreement.contractors.any(current_tenant),
+            or_(
+                _search_patterns_filter(_search_patterns(normalized), WowiLicenseAgreement.id_num),
+                and_(_building_house_number_filter(house_number), or_(and_(*unit_matches), tenant_match)),
+            ),
+        )
+        .order_by(WowiLicenseAgreement.id_num.asc(), WowiLicenseAgreement.id.asc())
+        .limit(limit).all()
+    )
+    items = []
+    for agreement in agreements:
+        choice = get_commission_object_choice("license_agreement", agreement.id)
+        tenants = WowiContractor.query.filter(
+            WowiContractor.license_agreement_id == agreement.id, current_tenant,
+        ).order_by(WowiContractor.display_name.asc(), WowiContractor.erp_id.asc()).all()
+        choice["tenants"] = [{"contractor_id": tenant.erp_id, "name": tenant.display_name} for tenant in tenants]
+        choice["label"] = agreement.id_num or "Mietvertrag"
+        choice["tenant_name"] = ", ".join(tenant.display_name for tenant in tenants)
+        items.append(choice)
+    return items
+
+
+def resolve_commission_reporter(data: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+    values = [data.get("reporter_agreement_id"), data.get("reporter_contractor_id")]
+    if all(value is None or value == "" for value in values):
+        if str(data.get("reporter") or "").strip():
+            raise ValueError("Bitte den Melder über die Mietersuche auswählen.")
+        return None, None
+    if any(isinstance(value, bool) or not isinstance(value, (int, str)) or not str(value).strip().isdigit() or int(value) <= 0 for value in values):
+        raise ValueError("Bitte genau einen gültigen Mieter als Melder auswählen.")
+    agreement_id, contractor_id = (int(value) for value in values)
+    get_commission_object_choice("license_agreement", agreement_id)
+    today = directory_today()
+    tenant = WowiContractor.query.join(WowiContractor.license_agreement).filter(
+        WowiContractor.license_agreement_id == agreement_id, WowiContractor.erp_id == contractor_id,
+        _current_contractor_filter(today), _current_agreement_filter(today),
+        WowiLicenseAgreement.is_vacancy.is_(False),
+    ).one_or_none()
+    if tenant is None:
+        raise ValueError("Der ausgewählte Mieter ist nicht mehr als Melder verfügbar. Bitte erneut suchen.")
+    contact = WowiportService().get_reporter_contact_item(
+        tenant.license_agreement_erp_id, contractor_id, on_date=today,
+    )
+    return contact["text"], {
+        "agreement_id": agreement_id, "contractor_id": contractor_id,
+        "name": contact["name"], "agreement_number": contact["agreement_number"],
+    }
+
+
 def _search_patterns_filter(patterns: list[str], *columns):
     return and_(*(or_(*(column.ilike(pattern, escape="\\") for column in columns)) for pattern in patterns))
 
