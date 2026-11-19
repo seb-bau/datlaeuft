@@ -1165,7 +1165,9 @@ def settings_page() -> Any:
     if request.method == "POST":
         try:
             for definition in all_definitions():
-                if definition.key.startswith("dms.") or definition.key in {SettingKeys.HEALTH_RULES.key, SettingKeys.INVOICE_COVER_LETTER_LAYOUT.key}:
+                if definition.key.startswith("dms.") or definition.key in {
+                    SettingKeys.HEALTH_RULES.key, SettingKeys.INVOICE_COVER_LETTER_LAYOUT.key, SettingKeys.INVOICE_LAYOUT.key,
+                }:
                     continue
                 if definition.key == SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS.key:
                     try:
@@ -1300,6 +1302,67 @@ def invoice_cover_letter_layout_preview():
         current_app.logger.exception("invoice_cover_letter_layout_preview_failed")
         return jsonify(error="Die Layout-Vorschau konnte nicht erstellt werden. Bitte Layout und Rechnungsdaten prüfen."), 502
     return document_preview_response(content, "Anschreiben-Layout-Vorschau.pdf")
+
+
+@admin_bp.route("/admin/invoice-layout", methods=["GET", "POST"])
+@admin_required
+def invoice_layout():
+    from .invoice_layout import (
+        DEFAULT_INVOICE_LAYOUT, INVOICE_LAYOUT_FIELDS, INVOICE_LAYOUT_LIMIT, INVOICE_POSITION_FIELDS, INVOICE_VAT_FIELDS,
+    )
+
+    definition = SettingKeys.INVOICE_LAYOUT
+    value = settings.get(definition) or DEFAULT_INVOICE_LAYOUT
+    if request.method == "POST":
+        action = request.form.get("action", "save")
+        html = request.form.get("html", "").replace("\r\n", "\n").replace("\r", "\n")
+        value = DEFAULT_INVOICE_LAYOUT if action == "reset" else html
+        try:
+            if action not in {"save", "reset"}:
+                raise ValueError("Die gewählte Aktion ist ungültig.")
+            if not value.strip():
+                raise ValueError("Bitte geben Sie ein Rechnungs-Layout ein.")
+            settings.set(definition, "" if value == DEFAULT_INVOICE_LAYOUT else value)
+            audit("invoice.layout.reset" if action == "reset" else "invoice.layout.update")
+            db.session.commit()
+            flash("Standardlayout wiederhergestellt." if action == "reset" else "Rechnungs-Layout gespeichert.", "success")
+            return redirect(url_for("admin.invoice_layout"))
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+    return render_template(
+        "admin/invoice_layout.html", layout=value, layout_limit=INVOICE_LAYOUT_LIMIT, fields=INVOICE_LAYOUT_FIELDS,
+        position_fields=INVOICE_POSITION_FIELDS, vat_fields=INVOICE_VAT_FIELDS,
+        selected_invoice_id=request.form.get("invoice_id", ""),
+        invoices=Invoice.query.order_by(Invoice.created_at.desc(), Invoice.id.desc()).limit(100).all(),
+    )
+
+
+@admin_bp.post("/admin/invoice-layout/preview")
+@admin_required
+def invoice_layout_preview():
+    from .document_previews import render_invoice_preview
+    from .invoice_document import render_invoice_content_pdf
+    from .invoice_layout import example_invoice_layout_context
+
+    try:
+        layout = request.form.get("html", "")
+        invoice_id = request.form.get("invoice_id", "").strip()
+        if invoice_id:
+            if not invoice_id.isdecimal() or len(invoice_id) > 18:
+                raise ValueError("Bitte eine gültige Rechnung für die Vorschau auswählen.")
+            invoice = db.session.get(Invoice, int(invoice_id))
+            if invoice is None:
+                raise ValueError("Die ausgewählte Rechnung ist nicht mehr verfügbar.")
+            content = render_invoice_preview(invoice, layout=layout, include_attachments=False)
+        else:
+            content = render_invoice_content_pdf({**example_invoice_layout_context(), "preview": True}, layout=layout)
+    except (ValueError, InvoiceDocumentError) as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("invoice_layout_preview_failed")
+        return jsonify(error="Die Layout-Vorschau konnte nicht erstellt werden. Bitte Layout und Rechnungsdaten prüfen."), 502
+    return document_preview_response(content, "Rechnungs-Layout-Vorschau.pdf")
 
 
 @admin_bp.get(

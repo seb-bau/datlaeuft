@@ -18,6 +18,7 @@ def address_lines(item, prefix="recipient") -> list[str]:
 
 def invoice_preview_context(invoice) -> dict:
     from .invoice_document import _company_value, _format_date, _format_money, _prepare_positions, _prepare_vat_rows
+    from .models import InvoiceKind
 
     positions = _prepare_positions(invoice)
     net = sum((position["total_net"] for position in positions), Decimal("0"))
@@ -26,24 +27,49 @@ def invoice_preview_context(invoice) -> dict:
     service_from = _format_date(invoice.service_date_from)
     service_to = _format_date(invoice.service_date_to)
     number = invoice.invoice_number or "Entwurf"
+    is_cancellation = invoice.invoice_kind == InvoiceKind.CANCELLATION.value
+    original = invoice.original_invoice if is_cancellation else None
     context = {
-        "document_title": "Rechnung", "invoice_number": number, "invoice_date_formatted": _format_date(invoice.invoice_date),
+        "document_title": "Stornorechnung" if is_cancellation else "Rechnung",
+        "invoice_number": number, "invoice_date_formatted": _format_date(invoice.invoice_date),
         "due_date_formatted": due, "service_date_formatted": service_from if service_from == service_to else " bis ".join(value for value in (service_from, service_to) if value),
         "recipient_address": address_lines(invoice) or ["Empfänger noch nicht angegeben"],
-        "contract_number": invoice.recipient_license_agreement_idnum or "", "is_cancellation": False,
+        "seller_address": address_lines(invoice, "seller") or address_lines(invoice.company_code, "seller"),
+        "contract_number": invoice.recipient_license_agreement_idnum or "", "is_cancellation": is_cancellation,
+        "original_invoice_number": original.invoice_number if original else "",
+        "original_invoice_date_formatted": _format_date(original.invoice_date) if original else "",
+        "cancellation_reason": invoice.cancellation_reason or "",
         "tenant_billing_reference": invoice.tenant_billing_reference,
         "insurance_claim_number": invoice.insurance_claim_number,
         "intro_text": invoice.introductory_text or "", "closing_text": invoice.concluding_text or "",
         "currency": invoice.currency_code or "EUR", "positions": positions, "vat_rows": _prepare_vat_rows(positions),
         "total_net_formatted": _format_money(net), "total_vat_formatted": _format_money(vat),
-        "total_gross_formatted": _format_money(net + vat), "total_label": "Rechnungsbetrag",
+        "total_gross_formatted": _format_money(net + vat), "total_label": "Stornobetrag" if is_cancellation else "Rechnungsbetrag",
         "payment_reference": number, "payment_terms_text": f"Bitte überweisen Sie den Rechnungsbetrag bis zum {due}." if due else "",
     }
     for field, company_field in (("seller_iban", "invoice_iban"), ("seller_bic", "invoice_bic"), ("seller_bank_name", "invoice_bank_name")):
         context[field] = str(_company_value(invoice, (field,), (company_field, field), default="") or "")
     from .invoice_payments import invoice_payment_context
-    context.update(invoice_payment_context(invoice))
+    if not is_cancellation:
+        context.update(invoice_payment_context(invoice))
     return context
+
+
+def render_invoice_preview(invoice, *, layout=None, include_attachments=True) -> bytes:
+    from .invoice_attachments import append_invoice_attachments
+    from .invoice_document import _apply_stationery, _stationery_path, render_invoice_content_pdf
+
+    content = render_invoice_content_pdf({**invoice_preview_context(invoice), "preview": True}, layout=layout)
+    company = invoice.company_code
+    if getattr(company, "invoice_stationery_filename", None) or company.stationery_filename:
+        with TemporaryDirectory() as directory:
+            source, target = Path(directory) / "content.pdf", Path(directory) / "preview.pdf"
+            source.write_bytes(content)
+            _apply_stationery(source, target, _stationery_path(invoice))
+            content = target.read_bytes()
+    if include_attachments:
+        content = append_invoice_attachments(invoice, content)
+    return content
 
 
 def render_document_preview(kind: str, document) -> bytes:
@@ -52,12 +78,7 @@ def render_document_preview(kind: str, document) -> bytes:
     background = None
     merge = None
     if kind == "invoice":
-        from .invoice_document import _apply_stationery, _stationery_path
-        context = invoice_preview_context(document)
-        filename = getattr(document.company_code, "invoice_stationery_filename", None) or getattr(document.company_code, "stationery_filename", None)
-        if filename:
-            background, merge = _stationery_path(document), _apply_stationery
-        template = "admin/invoice_pdf.html"
+        return render_invoice_preview(document)
     elif kind == "offer":
         from .offer_document import apply_stationery, document_context, prepare_positions, prepare_vat_rows, stationery_path
         positions = prepare_positions(document)
@@ -79,7 +100,4 @@ def render_document_preview(kind: str, document) -> bytes:
             source.write_bytes(raw_data)
             merge(source, target, background)
             raw_data = target.read_bytes()
-    if kind == "invoice":
-        from .invoice_attachments import append_invoice_attachments
-        raw_data = append_invoice_attachments(document, raw_data)
     return raw_data

@@ -252,10 +252,11 @@ class InvoicePaymentTests(unittest.TestCase):
                     position.net_amount = Decimal("1234567890.12")
                     if kind == "invoice":
                         context = self.document_previews.invoice_preview_context(item)
+                        html = self.invoice_document.render_invoice_html(context, self.invoice_document.DEFAULT_INVOICE_LAYOUT)
                     else:
                         positions = self.offer_document.prepare_positions(item)
                         context = self.offer_document.document_context(item, positions, self.offer_document.prepare_vat_rows(positions), preview=True)
-                    html = render_template(f"admin/{kind}_pdf.html", **context)
+                        html = render_template("admin/offer_pdf.html", **context)
                     self.assertEqual("<th class=\"article-number\">Artikel-Nr.</th>" in html, bool(number))
                     document = HTML(string=html, base_url=self.app.root_path).render()
                     for page in document.pages:
