@@ -124,7 +124,7 @@ document.addEventListener("DOMContentLoaded", () => {
     bootstrap.Modal.getOrCreateInstance(modal).hide();
   });
   form.addEventListener("submit", event => {
-    if (!loading) return;
+    if (!loading || section.hidden) return;
     event.preventDefault();
     message.textContent = "Die Zahlungsinformationen werden noch geladen. Bitte kurz warten.";
   });

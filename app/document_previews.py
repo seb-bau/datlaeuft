@@ -32,6 +32,7 @@ def invoice_preview_context(invoice) -> dict:
         "recipient_address": address_lines(invoice) or ["Empfänger noch nicht angegeben"],
         "contract_number": invoice.recipient_license_agreement_idnum or "", "is_cancellation": False,
         "tenant_billing_reference": invoice.tenant_billing_reference,
+        "insurance_claim_number": invoice.insurance_claim_number,
         "intro_text": invoice.introductory_text or "", "closing_text": invoice.concluding_text or "",
         "currency": invoice.currency_code or "EUR", "positions": positions, "vat_rows": _prepare_vat_rows(positions),
         "total_net_formatted": _format_money(net), "total_vat_formatted": _format_money(vat),

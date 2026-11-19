@@ -72,6 +72,19 @@
             white-space: pre-line;
         }
 
+        .service-reference {
+            margin-bottom: 4mm;
+            line-height: 1.15;
+            overflow-wrap: anywhere;
+            break-inside: avoid;
+        }
+
+        .service-reference h2 {
+            margin: 0;
+            font-size: inherit;
+            font-weight: 600;
+        }
+
         .positions {
             width: 100%;
             border-collapse: collapse;
@@ -267,12 +280,17 @@
         </table>
     </div>
 
-    {% if tenant_billing_reference %}
-        <div class="text-section">
-            <strong>Leistungsbezug</strong><br>
-            {{ tenant_billing_reference.tenant_name }}<br>
-            {{ tenant_billing_reference.property_address }}<br>
-            Mietvertrag {{ tenant_billing_reference.agreement_number }}
+    {% if tenant_billing_reference or insurance_claim_number %}
+        <div class="service-reference">
+            <h2>Leistungsbezug</h2>
+            {% if tenant_billing_reference %}
+                <div>{{ tenant_billing_reference.tenant_name }}</div>
+                <div>{{ tenant_billing_reference.property_address }}</div>
+                <div>Mietvertrag {{ tenant_billing_reference.agreement_number }}</div>
+            {% endif %}
+            {% if insurance_claim_number %}
+                <div>Versicherungsfall-Nr. {{ insurance_claim_number }}</div>
+            {% endif %}
         </div>
     {% endif %}
 

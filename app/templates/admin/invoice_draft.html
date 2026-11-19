@@ -307,10 +307,11 @@
     name="recipient_license_agreement_erp_id"
     value="{{ item.recipient_license_agreement_erp_id or '' }}"
   >
-  <input type="hidden" name="saved_contract_erp_id" value="{{ item.billing_contract_erp_id or '' }}">
-  {% if item.can_assign_agreement %}
+  <input type="hidden" id="savedInvoiceAgreement" name="saved_contract_erp_id" value="{{ item.billing_contract_erp_id or '' }}">
+  {% if item.can_edit_agreement %}
   <input type="hidden" id="pendingInvoiceAgreement" name="pending_agreement_erp_id">
   <input type="hidden" id="pendingInvoiceAgreementPerson" name="pending_agreement_person_id">
+  <input type="hidden" id="removeInvoiceAgreement" name="remove_agreement">
   {% endif %}
 
   <fieldset {% if not editable %}disabled{% endif %}>
@@ -323,17 +324,17 @@
 
           <div class="card-body">
             {% if item.tenant_billing_reference %}
-            <div class="border rounded p-3 mb-4 bg-light">
+            <div class="border rounded p-3 mb-4 bg-light" id="invoiceServiceReference">
               <div class="fw-semibold">Leistungsbezug</div>
               <div>{{ item.tenant_billing_reference.tenant_name }}</div>
               <div>{{ item.tenant_billing_reference.property_address }}</div>
               <div>Mietvertrag {{ item.tenant_billing_reference.agreement_number }}</div>
             </div>
             {% endif %}
-            {% if editable and not item.tenant_billing_reference %}
+            {% if item.can_edit_agreement %}
             <div class="mb-4">
               <label class="form-label" for="tenantSearch">
-                Mieter oder Vertrag suchen
+                Mieter oder Mietvertrag suchen
               </label>
 
               <div class="input-group">
@@ -341,6 +342,7 @@
                 class="form-control"
                 id="tenantSearch"
                 type="search"
+                maxlength="160"
                 placeholder="Name, Objektanschrift oder Vertragsnummer"
                 data-recipient-search
                 data-document-type="invoice"
@@ -360,19 +362,21 @@
                 Ausgewählter Vertrag
               </div>
               <div id="selectedAgreement">
-                {% if item.recipient_license_agreement_idnum %}
-                Vertrag
-                {{ item.recipient_license_agreement_idnum }}
+                {% if item.billing_contract_number %}
+                Mietvertrag {{ item.billing_contract_number }}
                 {% else %}
-                Kein Vertrag ausgewählt
+                Kein Mietvertrag ausgewählt
                 {% endif %}
               </div>
 
               <p class="small mt-2 mb-0" id="invoiceAgreementSaveNotice" role="status" hidden>
-                Speichern Sie den Entwurf, um den ausgewählten Mietvertrag zu übernehmen.
+                Speichern Sie den Entwurf, um die Änderung am Mietvertrag zu übernehmen.
               </p>
-              {% if item.can_assign_agreement %}
               <p class="small text-muted mt-2 mb-0" id="invoiceAgreementAssignment" hidden></p>
+              {% if item.billing_contract_erp_id or item.billing_contract_number %}
+              <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="invoiceAgreementRemove">
+                Mietvertrag entfernen
+              </button>
               {% endif %}
 
               <div
@@ -589,6 +593,14 @@
                 name="service_date_to"
                 value="{{ item.service_date_to.isoformat() if item.service_date_to else '' }}"
               >
+            </div>
+
+            <div class="col-12">
+              <label class="form-label" for="invoiceInsuranceClaimNumber">
+                Versicherungsfall-Nr.
+              </label>
+              <input class="form-control" id="invoiceInsuranceClaimNumber" name="insurance_claim_number"
+                     maxlength="120" value="{{ item.insurance_claim_number or '' }}">
             </div>
           </div>
         </div>

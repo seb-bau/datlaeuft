@@ -27,12 +27,14 @@ class Element {
   replaceChildren(...children) { this.children = children; this.value = ""; }
 }
 
-function fixture({assigning = true, parties = [firstParty], assignment = {issuer_name: "GmbH", recipient_name: "eG"}} = {}) {
+function fixture({assigning = true, saved = false, routed = false, parties = [firstParty], assignment = {issuer_name: "GmbH", recipient_name: "eG"}} = {}) {
   const ids = ["tenantSearch", "tenantSearchResults", "selectedAgreement", "invoiceAgreementSaveNotice", "recipientLicenseAgreementErpId",
     "recipientPersonErpId", "recipientMessage", "recipientCandidateContainer", "recipientCandidateSelect", "invoiceRecipientFields",
-    "invoicePaymentInformation", "invoiceFinalize", "recipientType", "recipientName", "recipientNameAddition", "recipientStreet",
+    "invoiceFinalize", "recipientType", "recipientName", "recipientNameAddition", "recipientStreet",
     "recipientPostalCode", "recipientTown", "recipientCountryCode", "recipientEmail", "recipientVatId"];
-  if (assigning) ids.push("pendingInvoiceAgreement", "pendingInvoiceAgreementPerson", "invoiceAgreementAssignment");
+  if (assigning) ids.push("savedInvoiceAgreement", "pendingInvoiceAgreement", "pendingInvoiceAgreementPerson", "removeInvoiceAgreement", "invoiceAgreementAssignment");
+  if (saved) ids.push("invoiceAgreementRemove");
+  ids.push(routed ? "invoiceServiceReference" : "invoicePaymentInformation");
   const elements = Object.fromEntries(ids.map(id => [id, new Element()]));
   const form = new Element();
   const search = elements.tenantSearch;
@@ -40,8 +42,10 @@ function fixture({assigning = true, parties = [firstParty], assignment = {issuer
   search.dataset = {documentType: "invoice", searchUrl: "/search", recipientUrl: "/recipients"};
   search.closest = () => form;
   elements.invoiceAgreementSaveNotice.hidden = true;
-  elements.selectedAgreement.textContent = assigning ? "Kein Vertrag ausgewählt" : "Vertrag MV-99";
-  elements.recipientLicenseAgreementErpId.value = assigning ? "" : "99";
+  elements.selectedAgreement.textContent = saved || !assigning ? "Mietvertrag MV-99" : "Kein Mietvertrag ausgewählt";
+  elements.recipientLicenseAgreementErpId.value = (saved || !assigning) && !routed ? "99" : "";
+  if (assigning) elements.savedInvoiceAgreement.value = saved ? "99" : "";
+  elements.invoiceRecipientFields.disabled = routed;
   elements.recipientName.value = "Bisheriger Empfänger";
 
   const event = class { constructor(type, options) { this.type = type; this.detail = options?.detail; } };
@@ -120,5 +124,44 @@ test("an existing direct invoice still loads the selected recipient and refreshe
   assert.equal(state.elements.recipientName.value, firstParty.name);
   assert.equal(state.elements.invoiceAgreementSaveNotice.hidden, false);
   assert.equal(state.form.events.find(event => event.type === "invoice-agreement-selected").detail.agreementId, "101");
+  assert.equal(state.submit(), true);
+});
+
+test("a change of a saved routed contract can be canceled without enabling its recipient fields", async () => {
+  const state = fixture({saved: true, routed: true});
+  await state.select();
+  const elements = state.elements;
+  assert.equal(elements.pendingInvoiceAgreement.value, "101");
+  assert.equal(elements.savedInvoiceAgreement.value, "99");
+  assert.equal(elements.invoiceServiceReference.hidden, true);
+  elements.tenantSearch.value = "";
+  elements.tenantSearch.dispatchEvent({type: "input"});
+  assert.equal(elements.pendingInvoiceAgreement.value, "");
+  assert.equal(elements.selectedAgreement.textContent, "Mietvertrag MV-99");
+  assert.equal(elements.invoiceServiceReference.hidden, false);
+  assert.equal(elements.invoiceRecipientFields.disabled, true);
+});
+
+test("removing a saved contract uses the ordinary save and the removal can be canceled or replaced", async () => {
+  const state = fixture({saved: true, routed: true});
+  const elements = state.elements;
+  const remove = () => elements.invoiceAgreementRemove.dispatchEvent({type: "click"});
+  remove();
+  assert.equal(elements.removeInvoiceAgreement.value, "1");
+  assert.equal(elements.selectedAgreement.textContent, "Kein Mietvertrag ausgewählt");
+  assert.equal(elements.invoiceRecipientFields.disabled, false);
+  assert.equal(elements.invoiceFinalize.disabled, true);
+  assert.equal(elements.invoiceAgreementSaveNotice.hidden, false);
+  assert.equal(state.submit(), true);
+  remove();
+  assert.equal(elements.removeInvoiceAgreement.value, "");
+  assert.equal(elements.selectedAgreement.textContent, "Mietvertrag MV-99");
+  assert.equal(elements.invoiceServiceReference.hidden, false);
+  assert.equal(elements.invoiceRecipientFields.disabled, true);
+  assert.equal(elements.invoiceFinalize.disabled, false);
+  remove();
+  await state.select();
+  assert.equal(elements.removeInvoiceAgreement.value, "");
+  assert.equal(elements.pendingInvoiceAgreement.value, "101");
   assert.equal(state.submit(), true);
 });

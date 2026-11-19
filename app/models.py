@@ -4161,6 +4161,7 @@ class Invoice(db.Model):
     payment_information: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     tenant_billing_reference: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     tenant_charge_letter: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
+    insurance_claim_number: Mapped[str | None] = mapped_column(db.String(120))
     introductory_text: Mapped[str | None] = mapped_column(
         db.Text
     )
@@ -4316,14 +4317,8 @@ class Invoice(db.Model):
         return self.recipient_license_agreement_erp_id
 
     @property
-    def can_assign_agreement(self) -> bool:
-        return (
-            self.status == InvoiceStatus.DRAFT.value
-            and self.invoice_kind == InvoiceKind.INVOICE.value
-            and self.recipient_license_agreement_erp_id is None
-            and not self.recipient_license_agreement_idnum
-            and not self.tenant_billing_reference
-        )
+    def can_edit_agreement(self) -> bool:
+        return self.status == InvoiceStatus.DRAFT.value and self.invoice_kind == InvoiceKind.INVOICE.value
 
 
 class InvoicePosition(db.Model):

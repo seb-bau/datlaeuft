@@ -185,11 +185,28 @@ def invoice_agreement_companies(
 
 
 def assign_invoice_agreement(invoice: Invoice, agreement: WowiLicenseAgreement, recipient: dict) -> None:
-    if not invoice.can_assign_agreement:
-        raise ValueError("Ein Mietvertrag kann nur einem Rechnungsentwurf ohne Vertrag zugeordnet werden.")
+    if not invoice.can_edit_agreement:
+        raise ValueError("Der Mietvertrag kann nur in einem Rechnungsentwurf geändert werden.")
     company, issuer = invoice_agreement_companies(agreement, invoice)
+    _clear_invoice_agreement(invoice)
     _apply_agreement_invoice_recipient(invoice, agreement, company, recipient)
     _set_invoice_issuer(invoice, issuer)
+
+
+def remove_invoice_agreement(invoice: Invoice) -> None:
+    if not invoice.can_edit_agreement:
+        raise ValueError("Der Mietvertrag kann nur aus einem Rechnungsentwurf entfernt werden.")
+    if invoice.billing_contract_erp_id is None and not invoice.billing_contract_number:
+        raise ValueError("Dem Rechnungsentwurf ist kein Mietvertrag zugeordnet.")
+    _clear_invoice_agreement(invoice)
+
+
+def _clear_invoice_agreement(invoice: Invoice) -> None:
+    invoice.recipient_license_agreement_erp_id = None
+    invoice.recipient_license_agreement_idnum = None
+    invoice.recipient_person_erp_id = None
+    invoice.tenant_billing_reference = None
+    invoice.tenant_charge_letter = None
     invoice.payment_information = None
     invoice.payment_reference = None
 
@@ -1414,7 +1431,7 @@ def _validate_invoice_for_finalization(
         ):
             raise InvoiceFinalizationError(
                 "Für den Mietvertrag ist eine Firmenrechnung vorgesehen. "
-                "Bitte verwenden Sie den Einstieg „Rechnung mit Mietvertrag“."
+                "Bitte wählen Sie den Mietvertrag im Entwurf erneut aus und speichern Sie den Entwurf."
             )
         try:
             invoice_payment_context(invoice, complete=True)
