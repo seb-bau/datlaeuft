@@ -548,6 +548,11 @@ class SettingKeys:
         "Für die ausgeführten Arbeiten berechnen wir Ihnen die Kosten gemäß der beigefügten Rechnung.\n{work_description}",
         "Standardtext für „Anlass der Belastung“", "Rechnungen",
     )
+    INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE = SettingDefinition[str](
+        "invoice.tenant_charge_closing_template", SettingValueType.STRING,
+        "Mit freundlichen Grüßen\n{seller_name}",
+        "Standardgrußformel für Mieteranschreiben", "Rechnungen",
+    )
     INVOICE_COVER_LETTER_LAYOUT = SettingDefinition[str](
         "invoice.cover_letter_layout", SettingValueType.STRING, DEFAULT_COVER_LETTER_LAYOUT,
         "Anschreiben: Aufbau und Gestaltung", "Rechnungen",
@@ -878,6 +883,25 @@ def validate_tenant_charge_purpose_template(value: str) -> str:
     return value.strip()
 
 
+def validate_tenant_charge_closing(value: str) -> str:
+    if isinstance(value, str):
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
+    if not isinstance(value, str) or len(value) > 4000 or any(
+        ord(character) < 32 and character not in "\n\t" for character in value
+    ):
+        raise ValueError("Bitte eine Grußformel mit höchstens 4.000 Zeichen und ohne ungültige Steuerzeichen eingeben.")
+    return value.strip()
+
+
+def validate_tenant_charge_closing_template(value: str) -> str:
+    value = validate_tenant_charge_closing(value)
+    try:
+        _validate_text_placeholders(value, {"seller_name"})
+    except ValueError as exc:
+        raise ValueError("Die Grußformel enthält einen unbekannten oder ungültigen Platzhalter. Verfügbar ist {seller_name}.") from exc
+    return value
+
+
 def validate_debug_email_address(value: str) -> str:
     error_message = (
         "Bitte genau eine gültige Debug-E-Mail-Adresse ohne "
@@ -933,6 +957,8 @@ class SettingsService:
             value = cast(T, validate_cover_letter_text(value, title=definition.key == SettingKeys.INVOICE_COVER_LETTER_TITLE.key))
         if definition.key == SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key:
             value = cast(T, validate_tenant_charge_purpose_template(value))
+        if definition.key == SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE.key:
+            value = cast(T, validate_tenant_charge_closing_template(value))
         if definition.key in {SettingKeys.INVOICE_TRANSFER_PAYMENT_TEXT.key, SettingKeys.INVOICE_SEPA_PAYMENT_TEXT.key}:
             value = cast(T, validate_invoice_payment_text(value))
         if definition.key == SettingKeys.SMS_API_KEY.key:
@@ -981,7 +1007,9 @@ class SettingsService:
         raw_value: str | None,
     ) -> None:
         if raw_value is None and definition.key in {
-            SettingKeys.SMTP_DEBUG_RECIPIENT.key, SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key,
+            SettingKeys.SMTP_DEBUG_RECIPIENT.key,
+            SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key,
+            SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE.key,
         }:
             return
 

@@ -16,7 +16,9 @@
     <div class="row g-3">
       {% for definition in definitions %}
       <div class="col-md-6">
-        <label class="form-label"{% if definition.key == "invoice.tenant_charge_purpose_template" %} for="tenantChargePurposeTemplate"{% endif %}>{{ definition.label }}</label>
+        <label class="form-label"
+               {% if definition.key == "invoice.tenant_charge_purpose_template" %}for="tenantChargePurposeTemplate"
+               {% elif definition.key == "invoice.tenant_charge_closing_template" %}for="tenantChargeClosingTemplate"{% endif %}>{{ definition.label }}</label>
         {% set value = settings.get(definition) %}
         {% if definition.key == "commissions.ticket_writeback_excluded_source_ids" %}
         {% for source_id, source_label in tenant_ticket_source_choices %}
@@ -97,6 +99,13 @@
           <code>{invoice_issuer}</code> setzt den Namen des ausstellenden Buchwerks ein,
           <code>{gross_amount}</code> den Bruttobetrag mit Währung und <code>{work_description}</code> die Auftrags- oder Positionsbezeichnungen.
           Der ausgefüllte Anlass kann im Mieteranschreiben bearbeitet werden.
+        </div>
+        {% elif definition.key == "invoice.tenant_charge_closing_template" %}
+        <textarea class="form-control" id="tenantChargeClosingTemplate" name="{{ definition.key }}" rows="3"
+                  maxlength="4000" aria-describedby="tenantChargeClosingTemplateHelp">{{ value }}</textarea>
+        <div class="form-text" id="tenantChargeClosingTemplateHelp">
+          <code>{seller_name}</code> setzt den Namen des Absenders aus dem Buchwerk des Mietvertrags ein.
+          Die Grußformel kann im einzelnen Mieteranschreiben bearbeitet werden.
         </div>
         {% elif definition.value_type.value == "json" %}
         <textarea

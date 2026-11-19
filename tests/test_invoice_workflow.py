@@ -230,6 +230,26 @@ class InvoiceWorkflowTests(unittest.TestCase):
             self.assertEqual(self.client.post("/admin/settings", data={}).status_code, 302)
             self.assertEqual(self.settings.settings.get(definition), template)
 
+    def test_settings_save_and_validate_the_tenant_charge_closing_template(self):
+        definition = self.settings.SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE
+        self.login(self.administrator)
+        page = self.client.get("/admin/settings").get_data(as_text=True)
+        self.assertIn("Standardgrußformel für Mieteranschreiben", page)
+        self.assertIn('<code>{seller_name}</code>', page)
+
+        template = "Beste Grüße\n{seller_name}"
+        with patch.object(self.admin, "all_definitions", return_value=[definition]), patch.object(self.admin, "configure_logging"):
+            self.assertEqual(self.client.post("/admin/settings", data={definition.key: template.replace("\n", "\r\n")}).status_code, 302)
+            self.assertEqual(self.settings.settings.get(definition), template)
+            for invalid in ("{invoice_issuer}", "{seller_name.name}", "{seller_name!r}", "{seller_name", "x" * 4001):
+                with self.subTest(template=invalid[:30]):
+                    self.client.post("/admin/settings", data={definition.key: invalid})
+                    self.assertEqual(self.settings.settings.get(definition), template)
+            self.client.post("/admin/settings", data={})
+            self.assertEqual(self.settings.settings.get(definition), template)
+            self.client.post("/admin/settings", data={definition.key: ""})
+            self.assertEqual(self.settings.settings.get(definition), "")
+
     def test_settings_and_per_invoice_texts_reject_invalid_placeholders_and_lengths(self):
         invoice = self.draft("invoice")
         self.settings.settings.set(self.settings.SettingKeys.INVOICE_COVER_LETTER_TITLE, "Mieterbelastung {contract_number}")
