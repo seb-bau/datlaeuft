@@ -7159,7 +7159,7 @@ def invoice_tenant_charge(invoice_id: int):
     today = letter_date()
     saved = item.tenant_charge_letter or {}
     values = {
-        "purpose": saved.get("purpose", tenant_letter_purpose(item)),
+        "purpose": saved.get("purpose", ""),
         "due_date": saved.get("due_date", ""),
         "person_id": (saved.get("recipient") or {}).get("person_id"),
         "caseworker_name": saved.get("caseworker_name", current_user.display_name),
@@ -7169,6 +7169,8 @@ def invoice_tenant_charge(invoice_id: int):
     recipients = []
     payment = None
     try:
+        if request.method == "GET" and "purpose" not in saved:
+            values["purpose"] = tenant_letter_purpose(item)
         service = WowiportService()
         recipients = tenant_letter_recipients(item, service)
         payment = tenant_letter_payment(item, company, service)
