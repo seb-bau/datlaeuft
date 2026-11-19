@@ -184,10 +184,12 @@ from .wowiport import (
 )
 from .invoice_service import (
     add_invoice_suggestions,
+    assign_invoice_agreement,
     available_invoice_commissions,
     create_agreement_invoice_draft,
     create_commission_invoice_draft,
     create_free_invoice_draft,
+    invoice_agreement_companies,
     replace_invoice_positions,
     InvoiceFinalizationError,
     finalize_invoice,
@@ -270,7 +272,6 @@ from .document_articles import attach_article_fields
 from .document_previews import render_document_preview
 from .invoice_payments import invoice_payment_information, payment_options_from_wowiport, save_invoice_payment_form
 from .tenant_billing import (
-    agreement_company_code,
     choose_contract_recipient,
     contract_recipients,
     tenant_billing_agreement,
@@ -7215,8 +7216,8 @@ def invoice_create() -> Any:
                 agreement_id = required_form_int(request.form.get("agreement_id"), "Mietvertrag")
                 person_id = optional_form_int(request.form.get("person_id"), "Vertragspartner")
                 agreement = tenant_billing_agreement(agreement_id)
-                tenant_billing_issuer(agreement_company_code(agreement))
-                recipient = choose_contract_recipient(invoice_creation_recipients(agreement_id), person_id)
+                invoice_agreement_companies(agreement)
+                recipient = choose_contract_recipient(invoice_contract_recipients(agreement_id), person_id)
                 invoice = create_agreement_invoice_draft(agreement, recipient, current_user)
 
             elif mode == "selected":
@@ -7297,15 +7298,18 @@ def invoice_create() -> Any:
     return render_invoice_create(company_codes, commissions)
 
 
-def invoice_creation_recipients(agreement_id: int) -> list[dict]:
+def invoice_contract_recipients(agreement_id: int) -> list[dict]:
     try:
         return contract_recipients(WowiportService(), agreement_id)
     except Exception as exc:
-        current_app.logger.exception("invoice_creation_recipients_failed agreement_id=%s", agreement_id)
+        current_app.logger.exception("invoice_contract_recipients_failed agreement_id=%s", agreement_id)
         raise ValueError("Die Empfängeranschrift konnte nicht aus Wowiport geladen werden.") from exc
 
 
-def render_invoice_create(company_codes, commissions):
+def invoice_contract_selection_context(invoice: Invoice | None = None) -> dict:
+    endpoint = "admin.invoice_assign_agreement" if invoice is not None else "admin.invoice_create"
+    route_args = {"invoice_id": invoice.id} if invoice is not None else {}
+    existing_issuer_id = invoice.company_code_id if invoice is not None else None
     search_text = request.args.get("q", "").strip()[:160]
     results = []
     if len(search_text) >= 2:
@@ -7319,19 +7323,21 @@ def render_invoice_create(company_codes, commissions):
             if company is None:
                 continue
             try:
-                tenant_billing_issuer(company)
+                tenant_billing_issuer(company, existing_issuer_id=existing_issuer_id)
             except ValueError:
                 continue
-            results.append(match)
+            results.append({
+                **match,
+                "url": url_for(endpoint, q=search_text, agreement_id=match["license_agreement"]["erp_id"], **route_args),
+            })
 
     selection = None
     try:
         agreement_id = optional_form_int(request.args.get("agreement_id"), "Mietvertrag")
         if agreement_id is not None:
             agreement = tenant_billing_agreement(agreement_id)
-            company = agreement_company_code(agreement)
-            issuer = tenant_billing_issuer(company)
-            recipients = invoice_creation_recipients(agreement_id)
+            company, issuer = invoice_agreement_companies(agreement, invoice)
+            recipients = invoice_contract_recipients(agreement_id)
             if not recipients:
                 raise ValueError("Für den Mietvertrag wurde keine Empfängeranschrift gefunden.")
             selection = {
@@ -7341,10 +7347,53 @@ def render_invoice_create(company_codes, commissions):
     except ValueError as exc:
         flash(str(exc), "danger")
 
+    return {
+        "search_text": search_text,
+        "contract_results": results,
+        "contract_selection": selection,
+        "contract_search_url": url_for(endpoint, **route_args),
+        "assigning_agreement": invoice is not None,
+    }
+
+
+def render_invoice_create(company_codes, commissions):
     return render_template(
         "admin/invoice_create.html", company_codes=company_codes, commissions=commissions,
-        search_text=search_text, contract_results=results, contract_selection=selection,
+        **invoice_contract_selection_context(),
     )
+
+
+@admin_bp.route("/admin/invoices/<int:invoice_id>/agreement", methods=["GET", "POST"])
+@invoice_required
+def invoice_assign_agreement(invoice_id: int):
+    saving = request.method == "POST"
+    item = db.get_or_404(Invoice, invoice_id, populate_existing=saving, with_for_update=saving)
+    invoice_url = url_for("admin.invoice_edit", invoice_id=invoice_id)
+    if not item.can_assign_agreement:
+        flash("Ein Mietvertrag kann nur einem Rechnungsentwurf ohne Vertrag zugeordnet werden.", "warning")
+        return redirect(invoice_url)
+
+    if saving:
+        try:
+            agreement_id = required_form_int(request.form.get("agreement_id"), "Mietvertrag")
+            agreement = tenant_billing_agreement(agreement_id)
+            person_id = optional_form_int(request.form.get("person_id"), "Vertragspartner")
+            recipient = choose_contract_recipient(invoice_contract_recipients(agreement_id), person_id)
+            previous_company_id = item.company_code_id
+            assign_invoice_agreement(item, agreement, recipient)
+            audit("invoice.agreement.assign", "invoice", item.id, {
+                "agreement_erp_id": agreement_id, "previous_company_code_id": previous_company_id,
+                "company_code_id": item.company_code_id,
+            })
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+        else:
+            flash("Der Mietvertrag wurde zugeordnet.", "success")
+            return redirect(invoice_url)
+
+    return render_template("admin/invoice_assign_agreement.html", item=item, **invoice_contract_selection_context(item))
 
 
 @admin_bp.route(
@@ -7355,16 +7404,14 @@ def render_invoice_create(company_codes, commissions):
 def invoice_edit(
     invoice_id: int,
 ) -> Any:
-    item = db.get_or_404(
-        Invoice,
-        invoice_id,
-    )
+    saving = request.method == "POST"
+    item = db.get_or_404(Invoice, invoice_id, populate_existing=saving, with_for_update=saving)
     editable = (
         item.status
         == InvoiceStatus.DRAFT.value
     )
 
-    if request.method == "POST":
+    if saving:
         if not editable:
             flash(
                 "Eine festgeschriebene Rechnung "
@@ -7410,6 +7457,9 @@ def invoice_edit(
             "Rechnungsentwurf gespeichert.",
             "success",
         )
+
+        if item.can_assign_agreement and request.form.get("assign_agreement") == "1":
+            return redirect(url_for("admin.invoice_assign_agreement", invoice_id=item.id))
 
         return redirect(
             url_for(
@@ -8184,6 +8234,10 @@ def save_invoice_recipient_form(item: Invoice) -> None:
 
 
 def save_invoice_draft_form(item: Invoice) -> None:
+    saved_contract_id = request.form.get("saved_contract_erp_id")
+    if saved_contract_id is not None and saved_contract_id != str(item.billing_contract_erp_id or ""):
+        raise ValueError("Der Mietvertrag des Entwurfs wurde geändert. Bitte laden Sie die Rechnung neu.")
+
     if not item.tenant_billing_reference:
         save_invoice_recipient_form(item)
 

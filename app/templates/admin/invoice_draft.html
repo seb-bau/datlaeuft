@@ -287,6 +287,7 @@
     name="recipient_license_agreement_erp_id"
     value="{{ item.recipient_license_agreement_erp_id or '' }}"
   >
+  <input type="hidden" name="saved_contract_erp_id" value="{{ item.billing_contract_erp_id or '' }}">
 
   <fieldset {% if not editable %}disabled{% endif %}>
     <div class="row g-4">
@@ -305,7 +306,14 @@
               <div>Mietvertrag {{ item.tenant_billing_reference.agreement_number }}</div>
             </div>
             {% endif %}
-            {% if editable and not item.tenant_billing_reference %}
+            {% if editable and item.can_assign_agreement %}
+            <div class="mb-4">
+              <button type="submit" hidden>Entwurf speichern</button>
+              <button type="submit" name="assign_agreement" value="1" class="btn btn-outline-primary">
+                Entwurf speichern und Mietvertrag zuordnen
+              </button>
+            </div>
+            {% elif editable and not item.tenant_billing_reference %}
             <div class="mb-4">
               <label class="form-label">
                 Mieter oder Vertrag suchen

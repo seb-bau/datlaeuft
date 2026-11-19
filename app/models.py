@@ -4309,6 +4309,21 @@ class Invoice(db.Model):
             return self.tenant_billing_reference["agreement_number"]
         return self.recipient_license_agreement_idnum
 
+    @property
+    def billing_contract_erp_id(self) -> int | None:
+        if self.tenant_billing_reference:
+            return self.tenant_billing_reference["agreement_erp_id"]
+        return self.recipient_license_agreement_erp_id
+
+    @property
+    def can_assign_agreement(self) -> bool:
+        return (
+            self.status == InvoiceStatus.DRAFT.value
+            and self.invoice_kind == InvoiceKind.INVOICE.value
+            and self.recipient_license_agreement_erp_id is None
+            and not self.recipient_license_agreement_idnum
+            and not self.tenant_billing_reference
+        )
 
 
 class InvoicePosition(db.Model):
