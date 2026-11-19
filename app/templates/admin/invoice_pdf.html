@@ -290,7 +290,6 @@
         </div>
     {% endif %}
 
-    {% set show_article_numbers = positions|selectattr('article_number')|list|length > 0 %}
     <table class="positions">
       <colgroup>
         <col style="width: 5%;">
@@ -385,7 +384,7 @@
                 <div class="payment-terms">{{ payment_terms_text }}</div>
             {% endif %}
 
-            {% if payment_iban %}
+            {% if payment_iban_display %}
                 <table class="bank-details">
                     {% if payment_account_holder %}
                         <tr>

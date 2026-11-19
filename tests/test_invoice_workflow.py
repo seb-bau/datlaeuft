@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from flask import abort, redirect, render_template, request, url_for
 from flask_login import current_user
+from lxml import etree
 from pypdf import PdfReader
 from werkzeug.datastructures import FileStorage
 
@@ -48,7 +49,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
         function = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "admin_required")
         namespace = dict(F=object, Any=object, wraps=wraps, current_user=current_user, abort=abort, redirect=redirect, request=request, url_for=url_for)
         exec(compile(ast.Module(body=[function], type_ignores=[]), "auth.py", "exec"), namespace)
-        for endpoint in ("invoice_cover_letter_layout", "invoice_cover_letter_layout_preview", "settings_page"):
+        for endpoint in ("invoice_cover_letter_layout", "invoice_cover_letter_layout_preview", "invoice_layout",
+                         "invoice_layout_preview", "settings_page"):
             view = cls.app.view_functions["admin." + endpoint]
             cls.app.view_functions["admin." + endpoint] = namespace["admin_required"](view.__wrapped__)
 
@@ -344,4 +346,116 @@ class InvoiceWorkflowTests(unittest.TestCase):
                     self.invoice_correspondence.cover_letter_url_fetcher(url)
             fetch.assert_not_called()
             self.invoice_correspondence.cover_letter_url_fetcher("data:image/png;base64,AA==")
+            fetch.assert_called_once()
+
+    def test_invoice_layout_is_admin_only_and_the_default_can_be_restored(self):
+        url = "/admin/invoice-layout"
+        definition = self.settings.SettingKeys.INVOICE_LAYOUT
+        custom = "<h1>{{ invoice_number }}</h1>{% for line in recipient_address %}<p>{{ line }}</p>{% endfor %}"
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.post(url, data={"html": custom}).status_code, 403)
+        self.assertEqual(self.client.post(url + "/preview", data={"html": custom}).status_code, 403)
+
+        self.login(self.administrator)
+        self.assertIn(b'href="/admin/invoice-layout"', self.client.get("/admin/settings").data)
+        self.assertIn(b"Vollst", self.client.get(url).data)
+        self.assertEqual(self.client.post(url, data={"html": custom}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), custom)
+        for invalid in (
+            "", "{{ config }}", "{{ payment_iban }}", "{{ positions[0] }}", "{{ invoice_number.upper() }}",
+            "{% include 'admin/settings.html' %}", "{{ tenant_billing_reference.tenant_name }}", "{{ positions > 1 }}",
+            "{% for row in positions %}{% for tax in vat_rows %}{{ tax.rate_formatted }}{% endfor %}{% endfor %}",
+        ):
+            with self.subTest(layout=invalid):
+                self.assertEqual(self.client.post(url, data={"html": invalid}).status_code, 200)
+                self.assertEqual(self.settings.settings.get(definition), custom)
+        with patch.object(self.admin, "all_definitions", return_value=[definition]), patch.object(self.admin, "configure_logging"):
+            self.assertEqual(self.client.post("/admin/settings", data={definition.key: "Unerwartete Änderung"}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), custom)
+        self.assertEqual(self.client.post(url, data={"action": "reset"}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), definition.default)
+        self.assertIn(b"invoice-header", self.client.get(url).data)
+        standard = self.invoice_document.DEFAULT_INVOICE_LAYOUT.replace("\n", "\r\n")
+        self.assertEqual(self.client.post(url, data={"html": standard}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), definition.default)
+
+    def test_invoice_layout_preview_uses_unsaved_html_and_the_books_stationery(self):
+        invoice = self.rendered_invoice()
+        before = self.delivery.final_invoice_pdf(invoice)
+        stationery = self.invoice_document._stationery_path(invoice)
+        stationery.write_bytes(self.pdf("GESCHAEFTSPAPIER"))
+        self.login(self.administrator)
+        url = "/admin/invoice-layout/preview"
+        custom = (
+            "<style>@page {size:A4; margin:55mm 20mm}</style><h1>NEUER AUFBAU</h1>"
+            "<p>{{ invoice_number }}</p><p>{{ recipient_address | join(' · ') }}</p>"
+            "{% for position in positions %}<p>{{ position.description }}</p>{% endfor %}"
+        )
+        response = self.client.post(url, data={"html": custom, "invoice_id": invoice.id})
+        text = self.pdf_text(response)
+        for value in ("NEUER AUFBAU", "GESCHAEFTSPAPIER", invoice.recipient_name, invoice.invoice_number, invoice.positions[0].description):
+            self.assertIn(value, text)
+        sample = self.pdf_text(self.client.post(url, data={"html": custom}))
+        self.assertIn("RE-BEISPIEL-001", sample)
+        self.assertNotIn("GESCHAEFTSPAPIER", sample)
+        self.assertEqual(self.client.post(url, data={"html": custom, "invoice_id": "999999"}).status_code, 400)
+        self.assertEqual(self.client.post(url, data={"html": "{{ unknown }}"}).status_code, 400)
+        definition = self.settings.SettingKeys.INVOICE_LAYOUT
+        self.assertEqual(self.settings.settings.get(definition), definition.default)
+        self.assertEqual(self.delivery.final_invoice_pdf(invoice), before)
+
+    def test_saved_invoice_layout_is_used_for_previews_and_new_pdfs_with_the_same_xml_data(self):
+        old_invoice = self.rendered_invoice()
+        old_document = self.delivery.final_invoice_pdf(old_invoice)
+        draft = self.draft("invoice")
+        self.assertEqual(self.upload(draft, [(self.pdf("ANLAGE"), "beleg.pdf")]).status_code, 201)
+        custom = (
+            "<h1>GESTALTETE {{ document_title }}</h1><p>{{ invoice_number }}</p>"
+            "<p>{{ total_gross_formatted }} {{ currency }}</p>"
+            "{% if not is_cancellation %}<p>{{ payment_iban_display }}</p>{% endif %}"
+            "{% for position in positions %}<p>{{ position.description }}</p>{% endfor %}"
+        )
+        self.login(self.administrator)
+        self.assertEqual(self.client.post("/admin/invoice-layout", data={"html": custom}).status_code, 302)
+        url = f"/admin/invoices/{draft.id}"
+        form = self.draft_form()
+        form.update(save_draft="1", service_date_from=form["invoice_date"])
+        self.assertIn("GESTALTETE Rechnung", self.pdf_text(self.client.post(url + "/preview", data=form)))
+        self.assertEqual(self.client.post(url + "/finalize", data=form).status_code, 302)
+        self.db.session.refresh(draft)
+        self.assertEqual(draft.status, "finalized")
+        pdf = PdfReader(BytesIO(self.delivery.final_invoice_pdf(draft)))
+        self.assertIn("GESTALTETE Rechnung", pdf.pages[0].extract_text())
+        self.assertIn(form["position_description"], pdf.pages[0].extract_text())
+        self.assertIn("ANLAGE", pdf.pages[1].extract_text())
+        xml = etree.fromstring(pdf.attachments["factur-x.xml"][0])
+        self.assertEqual(xml.xpath("string(//*[local-name()='ExchangedDocument']/*[local-name()='ID'])"), draft.invoice_number)
+        self.assertEqual(xml.xpath("string(//*[local-name()='GrandTotalAmount'])"), "29.75")
+        self.assertEqual(self.delivery.final_invoice_pdf(old_invoice), old_document)
+
+        old_number = old_invoice.invoice_number
+        self.assertEqual(self.client.post(f"/admin/invoices/{old_invoice.id}/document/regenerate").status_code, 302)
+        self.db.session.refresh(old_invoice)
+        regenerated = PdfReader(BytesIO(self.delivery.final_invoice_pdf(old_invoice)))
+        self.assertIn("GESTALTETE Rechnung", regenerated.pages[0].extract_text())
+        self.assertIn(old_number, regenerated.pages[0].extract_text())
+
+        _, result = self.invoice_service.create_cancellation_invoice(draft, "Korrektur", self.creator)
+        self.db.session.commit()
+        pdf = PdfReader(self.invoice_document.resolve_invoice_document_path(result.pdf_storage_name))
+        self.assertIn("GESTALTETE Stornorechnung", pdf.pages[0].extract_text())
+
+    def test_invoice_layout_escapes_values_and_limits_resource_fetches_to_data(self):
+        html = self.invoice_document.render_invoice_html(
+            {"invoice_number": '<img src="file:///tmp/logo.png"> {{ config }}'},
+            "<p>{{ invoice_number }}</p>",
+        )
+        self.assertIn("&lt;img", html)
+        self.assertIn("{{ config }}", html)
+        with patch.object(self.invoice_document, "default_url_fetcher") as fetch:
+            for url in ("file:///tmp/logo.png", "https://example.invalid/logo.png", "http://127.0.0.1/private"):
+                with self.assertRaises(ValueError):
+                    self.invoice_document._invoice_layout_url_fetcher(url)
+            fetch.assert_not_called()
+            self.invoice_document._invoice_layout_url_fetcher("data:image/png;base64,AA==")
             fetch.assert_called_once()

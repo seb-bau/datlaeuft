@@ -80,6 +80,9 @@
         {% elif definition.key == "invoice.cover_letter_layout" %}
         <div><a class="btn btn-outline-primary" href="{{ url_for('admin.invoice_cover_letter_layout') }}">Aufbau und Gestaltung bearbeiten</a></div>
         <div class="form-text">Anschrift, Kontaktblock, Überschrift, Text, Seitenränder und Abstände im vollständigen HTML- und CSS-Layout anpassen.</div>
+        {% elif definition.key == "invoice.layout" %}
+        <div><a class="btn btn-outline-primary" href="{{ url_for('admin.invoice_layout') }}">Rechnungs-Layout bearbeiten</a></div>
+        <div class="form-text">Anschrift, Rechnungsdaten, Leistungsbezug, Positionen und Summen im HTML- und CSS-Layout anpassen.</div>
         {% elif definition.key in ("invoice.cover_letter_title", "invoice.cover_letter_text") %}
         {% if definition.key == "invoice.cover_letter_title" %}
         <input class="form-control" name="{{ definition.key }}" maxlength="200" value="{{ value }}" required>

@@ -10,9 +10,9 @@ from tempfile import TemporaryDirectory
 import re
 
 from facturx import generate_cii_xml, generate_from_file
-from flask import current_app, render_template
+from flask import current_app
 from pypdf import PdfReader, PdfWriter
-from weasyprint import HTML
+from weasyprint import HTML, default_url_fetcher
 
 from .models import (
     Invoice,
@@ -20,6 +20,8 @@ from .models import (
 )
 from .invoice_payments import invoice_payment_context
 from .invoice_attachments import append_invoice_attachments
+from .invoice_layout import DEFAULT_INVOICE_LAYOUT, render_invoice_html
+from .settings import SettingKeys, settings
 
 MONEY_QUANTIZER = Decimal("0.01")
 QUANTITY_QUANTIZER = Decimal("0.001")
@@ -1266,6 +1268,18 @@ def _apply_stationery(
         writer.write(output_file)
 
 
+def _invoice_layout_url_fetcher(url):
+    if not url.casefold().startswith("data:"):
+        raise ValueError("Grafiken und Schriften im Rechnungs-Layout müssen als Daten-URL eingebunden sein.")
+    return default_url_fetcher(url)
+
+
+def render_invoice_content_pdf(context, *, layout=None) -> bytes:
+    if layout is None:
+        layout = settings.get(SettingKeys.INVOICE_LAYOUT) or DEFAULT_INVOICE_LAYOUT
+    return HTML(string=render_invoice_html(context, layout), url_fetcher=_invoice_layout_url_fetcher).write_pdf()
+
+
 def create_invoice_document(
     invoice: Invoice,
 ) -> InvoiceDocumentResult:
@@ -1363,16 +1377,10 @@ def create_invoice_document(
             / "factur-x.xml"
         )
 
-        html = render_template(
-            "admin/invoice_pdf.html",
-            **context,
-        )
-        HTML(
-            string=html,
-            base_url=current_app.root_path,
-        ).write_pdf(
-            str(content_pdf_path)
-        )
+        try:
+            content_pdf_path.write_bytes(render_invoice_content_pdf(context))
+        except ValueError as exc:
+            raise InvoiceDocumentError(str(exc)) from exc
         _apply_stationery(
             content_pdf_path,
             stationery_pdf_path,
