@@ -440,7 +440,7 @@
                 {{ operation.commission.erp_idnum or operation.commission.code or operation.commission.id }}
               </a>
             </td>
-            <td>{{ operation.operation_type }}</td>
+            <td>{{ 'Auftrag stornieren' if operation.operation_type == 'cancel_commission_from_office' else operation.operation_type }}</td>
             <td>{{ operation.attempt_count }}</td>
             <td
               data-order="{{ operation.available_at.isoformat() }}"

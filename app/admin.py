@@ -239,6 +239,7 @@ from .commission_links import commission_wowiport_url
 from .commission_object_history import commission_object_history
 from .commission_approval import approve_commission, approval_user_choices, can_approve_commission, save_user_approval_settings
 from .commission_followup import can_handle_commission_review, review_commission, resolve_commission_review, commission_reissue_data, copy_commission_files
+from .commission_workflow_service import CommissionWorkflowError, cancel_commission
 from .push_preferences import admin_push_preference_rows, save_admin_push_preferences
 from .workflow_notifications import overdue_commission_filter
 from .ticket_replies import enqueue_ticket_reply, ticket_reply_recipients
@@ -361,6 +362,7 @@ def root() -> Any:
 def commission_review_query():
     query = Commission.query.filter(
         Commission.deleted_at.is_(None),
+        Commission.local_status != CommissionLocalStatus.CANCELED.value,
         Commission.review_resolved_at.is_(None),
         or_(Commission.local_status.in_([
             CommissionLocalStatus.COMPLETION_REVIEW.value,
@@ -424,7 +426,9 @@ def dashboard() -> Any:
     open_count = Commission.query.filter(
         Commission.deleted_at.is_(None),
         Commission.review_resolved_at.is_(None),
-        Commission.local_status.notin_([CommissionLocalStatus.DONE.value, CommissionLocalStatus.DELETED.value]),
+        Commission.local_status.notin_([
+            CommissionLocalStatus.DONE.value, CommissionLocalStatus.CANCELED.value, CommissionLocalStatus.DELETED.value,
+        ]),
     ).count()
 
     review_count = TimeEntry.query.filter_by(
@@ -8503,6 +8507,7 @@ def commissions() -> Any:
         "tenant_charge_review": "Mieterbelastung",
         "done": "Erledigt",
         "awaiting_invoice": "Rechnungseingang erwartet",
+        "canceled": "Storniert",
         "deleted": "Gelöscht",
     }
     creator_filter = str(request.args.get("creator") or "all").strip()
@@ -8571,6 +8576,7 @@ def commissions() -> Any:
             Commission.review_resolved_at.is_(None),
             Commission.local_status.notin_([
                 CommissionLocalStatus.DONE.value,
+                CommissionLocalStatus.CANCELED.value,
                 CommissionLocalStatus.DELETED.value,
             ]),
         )
@@ -8801,6 +8807,7 @@ def commission_detail(
         "tenant_charge_review": "Mieterbelastung",
         "done": "Erledigt",
         "awaiting_invoice": "Rechnungseingang erwartet",
+        "canceled": "Storniert",
         "deleted": "Gelöscht",
     }
 
@@ -8814,6 +8821,7 @@ def commission_detail(
     }
 
     history_titles = {
+        "commission.cancel": "Auftragsstorno im Web veranlasst",
         "commission.reject": "Auftrag vom Handwerker abgelehnt",
         "commission.review.acknowledged": "Prüfauftrag zur Kenntnis genommen",
         "commission.review.reissued": "Auftrag neu erteilt",
@@ -8866,6 +8874,20 @@ def commission_detail(
             ),
         ).order_by(User.display_name.asc()).all(),
     )
+
+
+@admin_bp.post("/admin/commissions/<int:commission_id>/cancel")
+@foreman_required
+def commission_cancel(commission_id: int) -> Any:
+    commission = db.get_or_404(Commission, commission_id, populate_existing=True, with_for_update=True)
+    try:
+        cancel_commission(commission, user=current_user)
+        db.session.commit()
+        flash("Die Stornierung wurde vorgemerkt und wird an Wowiport übertragen.", "success")
+    except CommissionWorkflowError as exc:
+        db.session.rollback()
+        flash(exc.message, "danger")
+    return redirect(commission_detail_url(commission_id))
 
 
 @admin_bp.post(
@@ -13269,10 +13291,10 @@ def sync_health_retry_outbox(
     operation.locked_at = None
     operation.last_error = None
 
-    operation.commission.erp_sync_state = (
-        CommissionSyncState.PENDING.value
-    )
-    operation.commission.erp_sync_message = None
+    commission = operation.commission
+    if not commission.has_pending_cancellation or operation.operation_type == ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE.value:
+        commission.erp_sync_state = CommissionSyncState.PENDING.value
+        commission.erp_sync_message = None
 
     audit(
         "erp.outbox.retry",

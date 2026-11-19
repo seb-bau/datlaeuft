@@ -30,6 +30,22 @@ class CommissionWorkflowError(ValueError):
         self.code = code
 
 
+def cancel_commission(commission: Commission, *, user: User) -> None:
+    if not commission.can_be_canceled:
+        raise CommissionWorkflowError("Der Auftrag kann in diesem Status nicht storniert werden.", 409)
+
+    commission.local_status = CommissionLocalStatus.CANCELED.value
+    commission.status_changed_at = utc_now()
+    enqueue_erp_operation(
+        commission,
+        ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE,
+        f"commission:office-canceled:{commission.id}",
+        actor_user_id=user.id,
+    )
+    audit("commission.cancel", "commission", commission.id, actor_user_id=user.id)
+    sync_offer_from_commission(commission)
+
+
 def accept_commission(
     commission: Commission,
     *,
@@ -290,6 +306,8 @@ def complete_commission(
 def validate_actionable(
     commission: Commission,
 ) -> None:
+    if commission.local_status == CommissionLocalStatus.CANCELED.value:
+        raise CommissionWorkflowError("Dieser Auftrag wurde storniert.", 409)
     if commission.rejected_at is not None or commission.review_resolved_at is not None:
         raise CommissionWorkflowError("Dieser Auftrag wurde bereits abgelehnt oder abschließend geprüft.", 409)
     if not commission.is_actionable:

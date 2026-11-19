@@ -1,5 +1,6 @@
 import importlib
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from io import BytesIO
 import os
 import sys
@@ -27,6 +28,12 @@ class CommissionFollowupTests(unittest.TestCase):
         fixtures.TicketAttachmentSelectionTests.setUpClass.__func__(cls)
         sys.modules.pop(cls.package_name + ".commission_followup", None)
         cls.followup = importlib.import_module(cls.package_name + ".commission_followup")
+        sys.modules.pop(cls.package_name + ".commission_workflow_service", None)
+        commission_workflow = importlib.import_module(cls.package_name + ".commission_workflow_service")
+        cls.admin.cancel_commission = commission_workflow.cancel_commission
+        cls.admin.CommissionWorkflowError = commission_workflow.CommissionWorkflowError
+        for endpoint in ("process_info_web.local_official", "process_info_web.office_chat_read", "process_info_web.office_chat_status"):
+            cls.app.add_url_rule("/test/" + endpoint + "/<int:commission_id>", endpoint=endpoint, view_func=lambda commission_id: "")
         cls.tables.append(cls.models.TicketCraftFallback.__table__)
         for name in ("can_handle_commission_review", "review_commission", "resolve_commission_review", "commission_reissue_data", "copy_commission_files"):
             setattr(cls.admin, name, getattr(cls.followup, name))
@@ -197,6 +204,68 @@ class CommissionFollowupTests(unittest.TestCase):
         response, context = self.view("/admin/commissions?local_status=rejected")
         self.assertEqual([item.id for item in context["items"]], [self.source.id])
         self.assertIn("Abgelehnt", response.get_data(as_text=True))
+
+    def test_office_can_cancel_an_order_from_details_and_it_leaves_the_review_list(self):
+        commission = self.models.Commission(
+            erp_id=9002, erp_idnum="A-9002", title="Abfluss prüfen", created_by=self.creator,
+            user=self.craftsman, local_status="in_progress", status_id=7, status_code="Accepted",
+            execution_to=self.models.utc_now() - timedelta(days=1),
+        )
+        self.db.session.add(commission)
+        self.db.session.commit()
+        url = f"/admin/commissions/{commission.id}"
+        response, context = self.view("/admin/commission-reviews")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(commission.id, {item.id for item in context["items"]})
+        detail = self.client.get(url).get_data(as_text=True)
+        self.assertIn(f'action="{url}/cancel"', detail)
+        self.assertIn("window.confirm('Diesen Auftrag wirklich stornieren?", detail)
+
+        response = self.client.post(url + "/cancel", data={"return_to": "/admin/commissions?view=active"})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("return_to=", response.location)
+        self.db.session.refresh(commission)
+        self.assertEqual(commission.local_status, "canceled")
+        self.assertEqual(commission.erp_sync_state, "pending")
+        self.assertIsNone(commission.rejected_at)
+        self.assertIsNone(commission.deleted_at)
+        audit = self.models.AuditLog.query.filter_by(action="commission.cancel", entity_id=str(commission.id)).one()
+        self.assertEqual(audit.actor_user_id, self.creator.id)
+
+        _, context = self.view("/admin/commission-reviews")
+        self.assertIn(self.source.id, {item.id for item in context["items"]})
+        self.assertNotIn(commission.id, {item.id for item in context["items"]})
+        _, context = self.view("/admin/commissions?view=active")
+        self.assertNotIn(commission.id, {item.id for item in context["items"]})
+        detail = self.client.get(url).get_data(as_text=True)
+        self.assertNotIn(f'action="{url}/cancel"', detail)
+        self.assertIn("Stornierung ausstehend", detail)
+        self.assertEqual(self.client.post(url + "/cancel").status_code, 302)
+        self.assertEqual(self.models.ErpOutboxOperation.query.filter_by(commission_id=commission.id).count(), 1)
+
+    def test_office_cancellation_requires_staff_and_an_open_order_in_wowiport(self):
+        commission = self.models.Commission(
+            erp_id=9003, erp_idnum="A-9003", title="Lüftung prüfen", user=self.craftsman,
+            local_status="waiting_for_acceptance", status_id=12, status_code="WaitForCraftsmanFeedback",
+        )
+        self.db.session.add(commission)
+        self.db.session.commit()
+        url = f"/admin/commissions/{commission.id}"
+        self.login(self.craftsman)
+        self.assertEqual(self.client.post(url + "/cancel").status_code, 403)
+        self.login(self.creator)
+        for status, erp_status in (("done", 9), ("awaiting_invoice", 11), ("recorded", None)):
+            with self.subTest(status=status):
+                commission.local_status = status
+                commission.status_id = erp_status
+                self.db.session.commit()
+                self.assertNotIn(f'action="{url}/cancel"', self.client.get(url).get_data(as_text=True))
+                self.assertEqual(self.client.post(url + "/cancel").status_code, 302)
+                self.db.session.refresh(commission)
+                self.assertEqual(commission.local_status, status)
+        self.assertEqual(self.client.post(f"/admin/commissions/{self.source.id}/cancel").status_code, 302)
+        self.assertTrue(self.source.requires_office_review)
+        self.assertEqual(self.models.ErpOutboxOperation.query.count(), 0)
 
     def test_other_staff_cannot_resolve_or_copy_someone_elses_review(self):
         self.login(self.reviewer)

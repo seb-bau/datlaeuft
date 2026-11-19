@@ -86,6 +86,7 @@ def _crafts_process_short_description(
 ERP_OPERATION_STATUS = {
     ErpOperationType.ACCEPT_COMMISSION.value: (7, "Accepted"),
     ErpOperationType.REFUSE_COMMISSION.value: (10, "Canceled"),
+    ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE.value: (10, "Canceled"),
     ErpOperationType.COMPLETE_COMMISSION.value: (9, "Done"),
     ErpOperationType.AWAIT_INVOICE.value: (11, "AwaitInvoice"),
 }
@@ -865,6 +866,16 @@ class WowiportService:
         self.client.set_commissioning_commission_to_canceled(
             commission_id=erp_id,
         )
+
+    def cancel_open_commission(self, erp_id: int) -> None:
+        commission = self.get_commission(erp_id)
+        if commission is None:
+            raise RuntimeError("Der zu stornierende Auftrag wurde in Wowiport nicht gefunden.")
+        status = _commission_status_id(commission)
+        if status in (9, 11):
+            raise RuntimeError("Der Auftrag wurde in Wowiport bereits abgeschlossen.")
+        if status != 10:
+            self.mark_commission_canceled(erp_id)
 
     @staticmethod
     def _row_value(row: dict[str, Any], *names: str) -> Any:
@@ -2993,7 +3004,10 @@ def enqueue_synced_commission_push(
     actor_user_id: int | None = None,
     priority_raised: bool = False,
 ) -> None:
-    if commission.approval_state == "pending" or commission.is_retrospective:
+    if (
+        commission.approval_state == "pending" or commission.is_retrospective
+        or commission.local_status == CommissionLocalStatus.CANCELED.value
+    ):
         return
 
     current_user_id = commission.user.id if commission.user is not None else None
@@ -3615,7 +3629,7 @@ def mark_missing_regular_sync_commissions_deleted(
 
     query = Commission.query.filter(
         Commission.erp_id.isnot(None),
-        Commission.local_status != CommissionLocalStatus.DELETED.value,
+        Commission.local_status.notin_((CommissionLocalStatus.DELETED.value, CommissionLocalStatus.CANCELED.value)),
         Commission.craftsman_erp_id.in_(allowed_craftsman_erp_ids),
         Commission.status_id.in_(visible_status_ids),
     )
@@ -3641,7 +3655,7 @@ def mark_missing_regular_sync_commissions_deleted(
             Commission.recording_date < date_to,
         )
 
-    for commission in query.all():
+    for commission in query.populate_existing().with_for_update().all():
         if commission.rejected_at is not None:
             commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
             commission.deleted_at = None
@@ -3660,7 +3674,7 @@ def upsert_commission(
         sync_signature: str | None = None,
 ) -> Commission:
     erp_id = int(_read_first(payload, "id_", "id", "Id"))
-    commission = Commission.query.filter_by(erp_id=erp_id).one_or_none()
+    commission = Commission.query.filter_by(erp_id=erp_id).populate_existing().with_for_update().one_or_none()
 
     previous_status = (
         (commission.status_id, commission.status_code, commission.local_status)
@@ -3683,6 +3697,7 @@ def upsert_commission(
         )
         db.session.add(commission)
 
+    canceled_locally = commission.local_status == CommissionLocalStatus.CANCELED.value
     commission_status = _read_first(
         payload,
         "commission_status",
@@ -3780,14 +3795,15 @@ def upsert_commission(
             erp_id,
             commission.responsible_official_repair_erp_id,
         )
-    commission.status_id = _as_int(
-        _read_first(commission_status, "id_", "id", "Id")
-    )
-    commission.status_code = _read_first(
-        commission_status,
-        "code",
-        "Code",
-    )
+    if not canceled_locally or commission.status_id != 10:
+        commission.status_id = _as_int(
+            _read_first(commission_status, "id_", "id", "Id")
+        )
+        commission.status_code = _read_first(
+            commission_status,
+            "code",
+            "Code",
+        )
     if previous_craftsman_erp_id != craftsman_erp_id:
         commission.overdue_notification_deadline = None
         commission.external_assignment_version = (
@@ -3856,7 +3872,7 @@ def upsert_commission(
     if not commission.source:
         commission.source = CommissionSource.WOWIPORT.value
 
-    if commission.erp_sync_state not in {
+    if not canceled_locally and commission.erp_sync_state not in {
         CommissionSyncState.PENDING.value,
         CommissionSyncState.FAILED.value,
     }:
@@ -4176,10 +4192,10 @@ def apply_commission_context(commission: Commission, context: dict[str, Any]) ->
 
 
 def mark_commission_deleted(erp_id: int) -> Commission | None:
-    commission = db.session.query(Commission).filter_by(erp_id=erp_id).one_or_none()
+    commission = Commission.query.filter_by(erp_id=erp_id).populate_existing().with_for_update().one_or_none()
 
-    if commission is None:
-        return None
+    if commission is None or commission.local_status == CommissionLocalStatus.CANCELED.value:
+        return commission
 
     if commission.rejected_at is not None:
         commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value

@@ -508,8 +508,7 @@ def commissions() -> Any:
         == craftsman.craftsman_erp_id,
         Commission.deleted_at.is_(None),
         Commission.approval_state != "pending",
-        Commission.local_status
-        != CommissionLocalStatus.DELETED.value,
+        Commission.local_status.notin_((CommissionLocalStatus.DELETED.value, CommissionLocalStatus.CANCELED.value)),
     )
 
     if scope == "aktiv":
@@ -1004,8 +1003,7 @@ def external_commission_or_404(
         Commission.craftsman_erp_id
         == craftsman.craftsman_erp_id,
         Commission.deleted_at.is_(None),
-        Commission.local_status
-        != CommissionLocalStatus.DELETED.value,
+        Commission.local_status.notin_((CommissionLocalStatus.DELETED.value, CommissionLocalStatus.CANCELED.value)),
     ).one_or_none()
 
     if commission is None:

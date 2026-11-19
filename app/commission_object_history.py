@@ -21,6 +21,7 @@ STATUS_LABELS = {
     "in_progress": "In Bearbeitung", "completion_review": "Nicht abgeschlossen",
     "tenant_charge_review": "Mieterbelastung", "done": "Erledigt",
     "awaiting_invoice": "Rechnungseingang erwartet",
+    "canceled": "Storniert",
 }
 
 
@@ -32,6 +33,7 @@ def open_commission_filter():
             Commission.local_status.notin_((
                 CommissionLocalStatus.DONE.value, CommissionLocalStatus.AWAITING_INVOICE.value,
                 CommissionLocalStatus.TENANT_CHARGE_REVIEW.value, CommissionLocalStatus.DELETED.value,
+                CommissionLocalStatus.CANCELED.value,
             )),
             or_(Commission.status_id.is_(None), Commission.status_id.notin_((9, 10, 11))),
         ),

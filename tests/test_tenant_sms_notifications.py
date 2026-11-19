@@ -160,6 +160,20 @@ class TenantSmsTests(unittest.TestCase):
             self.assertIn(value, text)
         self.assertNotIn("<", text)
 
+    def test_canceling_in_the_office_stops_queued_tenant_messages_before_erp_confirms(self):
+        commission, sms_item = self.enqueue()
+        commission.local_status = self.models.CommissionLocalStatus.CANCELED.value
+        commission.erp_sync_state = self.models.CommissionSyncState.PENDING.value
+        self.commission(local_status=self.models.CommissionLocalStatus.CANCELED.value)
+        self.db.session.commit()
+        self.assertEqual(self.mail.ensure_tenant_notifications(), 0)
+        self.assertEqual(self.mail.process_tenant_notification_batch(), 1)
+        self.assertEqual(self.sms.process_tenant_sms_notification_batch(), 1)
+        self.assertEqual(self.models.CommissionTenantNotification.query.one().state, "discarded")
+        self.assertEqual(sms_item.state, "discarded")
+        self.mail_sender.assert_not_called()
+        self.sms_sender.assert_not_called()
+
     def test_confirmed_sms_logs_the_recipient_order_reason_and_provider_receipt_once(self):
         commission, item = self.enqueue()
         with self.assertLogs(self.app.logger, level="INFO") as logs:

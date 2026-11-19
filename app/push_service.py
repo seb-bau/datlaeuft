@@ -773,7 +773,7 @@ def _deliver(delivery_id: int) -> None:
             commission is None
             or commission.user_id != delivery.user_id
             or commission.deleted_at is not None
-            or commission.local_status == CommissionLocalStatus.DELETED.value
+            or commission.local_status in {CommissionLocalStatus.DELETED.value, CommissionLocalStatus.CANCELED.value}
         ):
             _discard_delivery(
                 delivery,

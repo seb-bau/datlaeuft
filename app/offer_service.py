@@ -1206,6 +1206,7 @@ def sync_offer_from_commission(
             CommissionLocalStatus
             .COMPLETION_REVIEW.value
         ),
+        CommissionLocalStatus.CANCELED.value,
         CommissionLocalStatus.DELETED.value,
     }:
         item.status = (
@@ -1213,7 +1214,9 @@ def sync_offer_from_commission(
             .REVIEW_REQUIRED.value
         )
 
-        if commission.completion_reason:
+        if commission.local_status == CommissionLocalStatus.CANCELED.value:
+            item.status_note = "Der zugehörige Auftrag wurde storniert."
+        elif commission.completion_reason:
             item.status_note = (
                 commission.completion_reason
             )

@@ -356,8 +356,7 @@ def commissions() -> Any:
     user_id_filter = request.args.get("user_id", "").strip()
 
     query = Commission.query.filter(
-        Commission.local_status
-        != CommissionLocalStatus.DELETED.value
+        Commission.local_status.notin_((CommissionLocalStatus.DELETED.value, CommissionLocalStatus.CANCELED.value))
     )
     allowed_user_ids = (
         viewable_commission_user_ids(user)
@@ -670,6 +669,8 @@ def _existing_simple_commission(public_id, user):
 
         if commission.local_status == CommissionLocalStatus.DELETED.value:
             abort(409, description="Dieser Auftrag wurde bereits gelöscht.")
+        if commission.local_status == CommissionLocalStatus.CANCELED.value:
+            abort(409, description="Dieser Auftrag wurde bereits storniert.")
 
     return commission
 
@@ -3665,7 +3666,10 @@ def viewable_commission_user_ids(
 
 
 def can_edit_commission(commission: Commission, user: User) -> bool:
-    if commission.approval_state == "pending" or commission.rejected_at is not None or commission.review_resolved_at is not None:
+    if (
+        commission.approval_state == "pending" or commission.rejected_at is not None
+        or commission.review_resolved_at is not None or commission.local_status == CommissionLocalStatus.CANCELED.value
+    ):
         return False
 
     if user.is_admin or user.is_foreman or commission.user_id == user.id:
@@ -3681,7 +3685,7 @@ def can_edit_time_entry(entry: TimeEntry, user: User) -> bool:
 
 def viewable_commission(commission_id: int, user: User) -> Commission:
     commission = db.session.get(Commission, commission_id)
-    if commission is None or commission.local_status == CommissionLocalStatus.DELETED.value:
+    if commission is None or commission.local_status in {CommissionLocalStatus.DELETED.value, CommissionLocalStatus.CANCELED.value}:
         abort(404)
     if commission.approval_state == "pending":
         if commission.created_by_user_id != user.id:

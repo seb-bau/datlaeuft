@@ -85,6 +85,7 @@ class CommissionLocalStatus(str, Enum):
     TENANT_CHARGE_REVIEW = "tenant_charge_review"
     DONE = "done"
     AWAITING_INVOICE = "awaiting_invoice"
+    CANCELED = "canceled"
     DELETED = "deleted"
 
 
@@ -130,6 +131,7 @@ class ErpOperationType(str, Enum):
     ACCEPT_COMMISSION = "accept_commission"
     REFUSE_COMMISSION = "refuse_commission"
     CANCEL_COMMISSION = "cancel_commission"
+    CANCEL_COMMISSION_FROM_OFFICE = "cancel_commission_from_office"
     COMPLETE_COMMISSION = "complete_commission"
     AWAIT_INVOICE = "await_invoice"
     UPLOAD_COMMISSION_PHOTO = "upload_commission_photo"
@@ -1509,9 +1511,30 @@ class Commission(db.Model):
                 and self.review_resolved_at is None
                 and self.local_status not in {
                     CommissionLocalStatus.RECORDED.value,
+                    CommissionLocalStatus.CANCELED.value,
                     CommissionLocalStatus.DELETED.value,
                 }
         )
+
+    @property
+    def can_be_canceled(self) -> bool:
+        return (
+            self.erp_id is not None
+            and self.deleted_at is None
+            and self.approval_state != "pending"
+            and self.rejected_at is None
+            and self.status_id not in (9, 10, 11)
+            and self.local_status in {
+                CommissionLocalStatus.OPEN.value,
+                CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
+                CommissionLocalStatus.IN_PROGRESS.value,
+                CommissionLocalStatus.COMPLETION_REVIEW.value,
+            }
+        )
+
+    @property
+    def has_pending_cancellation(self) -> bool:
+        return self.local_status == CommissionLocalStatus.CANCELED.value and self.status_id != 10
 
     @property
     def display_title(self) -> str:

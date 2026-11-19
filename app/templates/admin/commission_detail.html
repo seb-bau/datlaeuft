@@ -63,7 +63,7 @@
     </div>
   </div>
 
-  <div class="d-flex gap-2">
+  <div class="d-flex flex-wrap justify-content-end gap-2">
     <button type="button" class="btn btn-outline-primary" data-document-preview data-preview-title="Auftrag · PDF-Vorschau"
             data-preview-url="{{ url_for('admin.commission_preview', commission_id=item.id) }}">PDF-Vorschau</button>
         {% if has_work_report or item.completed_at %}
@@ -112,6 +112,14 @@
        target="_blank" rel="noopener noreferrer" title="Auftrag in Wowiport öffnen">
       <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i> Wowiport
     </a>
+    {% endif %}
+    {% if item.can_be_canceled %}
+    <form method="post" action="{{ url_for('admin.commission_cancel', commission_id=item.id) }}"
+          onsubmit="return window.confirm('Diesen Auftrag wirklich stornieren? Die Stornierung wird an Wowiport übertragen.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ list_return_url }}">
+      <button class="btn btn-outline-danger" type="submit">Auftrag stornieren</button>
+    </form>
     {% endif %}
     <a
       class="btn btn-outline-secondary"
@@ -212,7 +220,11 @@
       <div class="card-body">
         <div class="small text-muted">Lokaler Status</div>
         <div class="fw-semibold">
+          {% if item.has_pending_cancellation %}
+          {{ 'Stornierung fehlgeschlagen' if item.erp_sync_state == 'failed' else 'Stornierung ausstehend' }}
+          {% else %}
           {{ local_status_labels.get(item.display_local_status, item.display_local_status) }}
+          {% endif %}
         </div>
       </div>
     </div>
