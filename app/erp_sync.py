@@ -100,8 +100,9 @@ def enqueue_erp_operation(
         state=ErpOutboxState.PENDING.value,
         available_at=utc_now(),
     )
-    commission.erp_sync_state = CommissionSyncState.PENDING.value
-    commission.erp_sync_message = None
+    if not commission.has_pending_cancellation or operation_type == ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE:
+        commission.erp_sync_state = CommissionSyncState.PENDING.value
+        commission.erp_sync_message = None
     db.session.add(operation)
     return operation
 
@@ -273,6 +274,13 @@ def process_outbox_batch(limit: int) -> int:
 
 
 def claim_outbox_operation() -> int | None:
+    previous = ErpOutboxOperation.__table__.alias()
+    status_update_in_progress = db.select(previous.c.id).where(
+        previous.c.commission_id == ErpOutboxOperation.commission_id,
+        previous.c.id < ErpOutboxOperation.id,
+        previous.c.state == ErpOutboxState.PROCESSING.value,
+        previous.c.operation_type.in_(ERP_OPERATION_STATUS),
+    ).exists()
     operation = ErpOutboxOperation.query.filter(
         ErpOutboxOperation.state.in_(
             [
@@ -282,6 +290,8 @@ def claim_outbox_operation() -> int | None:
         ),
         ErpOutboxOperation.available_at <= utc_now(),
         ErpOutboxOperation.commission.has(Commission.approval_state != "pending"),
+        (ErpOutboxOperation.operation_type != ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE.value)
+        | ~status_update_in_progress,
     ).order_by(
         ErpOutboxOperation.available_at.asc(),
         ErpOutboxOperation.id.asc(),
@@ -313,6 +323,12 @@ def execute_outbox_operation(
     if commission.approval_state == "pending":
         raise RuntimeError("Der Auftrag wartet noch auf die Freigabe durch einen anderen Sachbearbeiter.")
     previous_local_status = commission.local_status
+    if (
+        previous_local_status == CommissionLocalStatus.CANCELED.value
+        and operation.operation_type != ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE.value
+        and operation.operation_type in (*ERP_OPERATION_STATUS, ErpOperationType.CANCEL_COMMISSION.value)
+    ):
+        return
 
     if (
             operation.operation_type
@@ -395,6 +411,15 @@ def execute_outbox_operation(
         if commission.completion_successful is False:
             commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
             commission.completed_at = None
+
+    elif operation.operation_type == ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE.value:
+        require_erp_id(commission)
+        status_id, status_code = ERP_OPERATION_STATUS[operation.operation_type]
+        if commission.status_id != status_id:
+            service.cancel_open_commission(commission.erp_id)
+        commission.status_id = status_id
+        commission.status_code = status_code
+        commission.local_status = CommissionLocalStatus.CANCELED.value
 
     elif operation.operation_type == ErpOperationType.REFUSE_COMMISSION.value:
         require_erp_id(commission)
@@ -545,8 +570,10 @@ def finish_outbox_operation(operation_id: int) -> None:
     operation.completed_at = utc_now()
     operation.locked_at = None
     operation.last_error = None
-    operation.commission.erp_sync_state = CommissionSyncState.SYNCED.value
-    operation.commission.erp_sync_message = None
+    commission = operation.commission
+    if not commission.has_pending_cancellation or operation.operation_type == ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE.value:
+        commission.erp_sync_state = CommissionSyncState.SYNCED.value
+        commission.erp_sync_message = None
 
     audit(
         "erp.outbox.succeeded",
@@ -615,8 +642,10 @@ def fail_outbox_operation(
     operation.available_at = utc_now() + timedelta(seconds=delay_seconds)
     operation.locked_at = None
     operation.last_error = message
-    operation.commission.erp_sync_state = CommissionSyncState.FAILED.value
-    operation.commission.erp_sync_message = message
+    commission = operation.commission
+    if not commission.has_pending_cancellation or operation.operation_type == ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE.value:
+        commission.erp_sync_state = CommissionSyncState.FAILED.value
+        commission.erp_sync_message = message
 
     audit(
         "erp.outbox.failed",

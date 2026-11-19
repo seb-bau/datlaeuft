@@ -273,6 +273,109 @@ class CommissionDateTests(unittest.TestCase):
         service = Mock()
         self.outbox.execute_outbox_operation(operation.id, service)
         service.mark_commission_canceled.assert_called_once_with(commission.erp_id)
+        self.assertTrue(commission.requires_office_review)
+        self.assertEqual(commission.display_local_status, "rejected")
+
+    def test_office_cancellation_sends_the_real_erp_status_and_preserves_the_local_history(self):
+        commission = self.commission(
+            local_status="completion_review", completion_successful=False,
+            completion_submitted_at=self.previous_date, completion_reason="Ersatzteil fehlt",
+        )
+        with patch.object(self.workflow, "utc_now", return_value=self.now):
+            self.workflow.cancel_commission(commission, user=self.user)
+        self.db.session.commit()
+        operation = self.models.ErpOutboxOperation.query.one()
+        self.assertEqual(operation.operation_type, "cancel_commission_from_office")
+        self.assertEqual(commission.display_local_status, "canceled")
+        self.assertFalse(commission.is_actionable)
+        self.assertFalse(commission.requires_office_review)
+        self.assertIsNone(commission.rejected_at)
+        self.assertEqual(commission.completion_reason, "Ersatzteil fehlt")
+        self.assertEqual(commission.status_id, 7)
+        self.assertEqual(commission.erp_sync_state, "pending")
+        self.assertEqual(self.outbox.claim_outbox_operation(), operation.id)
+        service = object.__new__(self.wowiport.WowiportService)
+        service.get_commission = Mock(return_value={"CommissionStatus": {"Id": 7, "Code": "Accepted"}})
+        service.mark_commission_canceled = Mock()
+        self.outbox.execute_outbox_operation(operation.id, service)
+        self.outbox.finish_outbox_operation(operation.id)
+        service.mark_commission_canceled.assert_called_once_with(commission.erp_id)
+        self.assertEqual(commission.status_id, 10)
+        self.assertEqual(commission.status_code, "Canceled")
+        self.assertEqual(commission.erp_sync_state, "synced")
+        self.assert_status_date(commission, self.now)
+
+        self.wowiport.mark_commission_deleted(commission.erp_id)
+        self.db.session.commit()
+        for status_id, status_code in ((10, "Canceled"), (7, "Accepted")):
+            self.synchronize(CommissionStatus={"Id": status_id, "Code": status_code})
+            self.assertEqual(commission.display_local_status, "canceled")
+            self.assertEqual(commission.status_id, 10)
+            self.assertIsNone(commission.deleted_at)
+            self.assert_status_date(commission, self.now)
+
+    def test_office_cancellation_waits_for_work_in_flight_and_skips_obsolete_acceptance(self):
+        commission = self.commission()
+        previous = self.outbox.enqueue_erp_operation(commission, self.models.ErpOperationType.ACCEPT_COMMISSION, "in-flight")
+        self.db.session.commit()
+        self.assertEqual(self.outbox.claim_outbox_operation(), previous.id)
+        self.workflow.cancel_commission(commission, user=self.user)
+        self.db.session.commit()
+        cancellation = self.models.ErpOutboxOperation.query.filter_by(operation_type="cancel_commission_from_office").one()
+        self.assertIsNone(self.outbox.claim_outbox_operation())
+        service = Mock()
+        self.outbox.execute_outbox_operation(previous.id, service)
+        service.mark_commission_accepted.assert_not_called()
+        self.outbox.finish_outbox_operation(previous.id)
+        self.assertEqual(commission.erp_sync_state, "pending")
+        self.assertEqual(self.outbox.claim_outbox_operation(), cancellation.id)
+
+    def test_a_failed_office_cancellation_can_retry_after_wowiport_applied_it(self):
+        commission = self.commission(
+            craftsman_erp_id=101, recording_date=self.now,
+        )
+        self.workflow.cancel_commission(commission, user=self.user)
+        self.db.session.commit()
+        operation_id = self.outbox.claim_outbox_operation()
+        service = object.__new__(self.wowiport.WowiportService)
+        service.get_commission = Mock(side_effect=[
+            {"CommissionStatus": {"Id": 7}}, {"CommissionStatus": {"Id": 10}},
+        ])
+        service.mark_commission_canceled = Mock(side_effect=TimeoutError("Zeitüberschreitung"))
+        with self.assertRaises(TimeoutError) as failure:
+            self.outbox.execute_outbox_operation(operation_id, service)
+        self.outbox.fail_outbox_operation(operation_id, failure.exception)
+        self.assertEqual(commission.erp_sync_state, "failed")
+        self.assertEqual(commission.display_local_status, "canceled")
+        self.assertEqual(commission.status_id, 7)
+        self.assertFalse(commission.requires_office_review)
+
+        result = {"deleted_marked": 0}
+        self.wowiport.mark_missing_regular_sync_commissions_deleted(
+            datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 12, 1, tzinfo=timezone.utc),
+            "recording_date", {101}, {7}, set(), result,
+        )
+        self.assertEqual(result["deleted_marked"], 0)
+        self.assertIsNone(commission.deleted_at)
+        operation = self.db.session.get(self.models.ErpOutboxOperation, operation_id)
+        operation.available_at = self.models.utc_now()
+        self.db.session.commit()
+        self.assertEqual(self.outbox.claim_outbox_operation(), operation_id)
+        self.outbox.execute_outbox_operation(operation_id, service)
+        self.outbox.finish_outbox_operation(operation_id)
+        service.mark_commission_canceled.assert_called_once_with(commission.erp_id)
+        self.assertEqual(commission.status_id, 10)
+        self.assertEqual(commission.erp_sync_state, "synced")
+
+    def test_office_cancellation_does_not_overwrite_a_completed_erp_order(self):
+        service = object.__new__(self.wowiport.WowiportService)
+        service.mark_commission_canceled = Mock()
+        for status_id in (9, 11):
+            with self.subTest(status_id=status_id):
+                service.get_commission = Mock(return_value={"CommissionStatus": {"Id": status_id}})
+                with self.assertRaisesRegex(RuntimeError, "in Wowiport bereits abgeschlossen"):
+                    service.cancel_open_commission(100)
+        service.mark_commission_canceled.assert_not_called()
 
     def test_repeated_deletion_does_not_move_the_status_date(self):
         commission = self.commission()

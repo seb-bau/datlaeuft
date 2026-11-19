@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from .extensions import db
 from .mail_service import send_email
 from .models import (
-    AppSetting, Commission, CommissionSource, CommissionSyncState,
+    AppSetting, Commission, CommissionLocalStatus, CommissionSource, CommissionSyncState,
     CommissionTenantNotification, CommissionTenantSmsNotification, CommissionTicketLink, CraftActivity,
     ExternalCraftsman, TicketMirror, User, WowiLicenseAgreement, utc_now,
 )
@@ -183,6 +183,7 @@ def ensure_tenant_notifications(limit: int = 200) -> int:
             Commission.craftsman_erp_id.is_not(None),
             Commission.erp_sync_state == CommissionSyncState.SYNCED.value,
             Commission.deleted_at.is_(None),
+            Commission.local_status != CommissionLocalStatus.CANCELED.value,
             Commission.status_id.in_((7, 12)),
             CommissionTenantNotification.id.is_(None),
             or_(
@@ -370,7 +371,8 @@ def execute_tenant_notification(item_id: int) -> None:
     )
     if not mail_complete and (
         not commission.notify_tenants or commission.license_agreement_id is None
-        or commission.deleted_at is not None or commission.status_id not in (7, 12)
+        or commission.deleted_at is not None or commission.local_status == CommissionLocalStatus.CANCELED.value
+        or commission.status_id not in (7, 12)
     ):
         item.state = "discarded"
         item.locked_at = None

@@ -7,7 +7,7 @@ from typing import Any
 from flask import current_app
 
 from .extensions import db
-from .models import Commission, CommissionSyncState, CommissionTenantSmsNotification, utc_now
+from .models import Commission, CommissionLocalStatus, CommissionSyncState, CommissionTenantSmsNotification, utc_now
 from .settings import SMS_DEBUG_SUPPRESSED_COMMISSION_ID, SettingKeys, settings
 from .sms_service import (
     SmsDeliveryUncertain, SmsDisabled, SmsSendError, SmsSuppressed,
@@ -158,7 +158,8 @@ def execute_tenant_sms_notification(item_id: int) -> None:
         return
     commission = item.commission
     if (commission.approval_state == "pending" or commission.is_retrospective or not commission.notify_tenants or commission.license_agreement_id is None
-            or commission.deleted_at is not None or commission.status_id not in (7, 12)):
+            or commission.deleted_at is not None or commission.local_status == CommissionLocalStatus.CANCELED.value
+            or commission.status_id not in (7, 12)):
         item.state = "discarded"
         item.locked_at = None
         db.session.commit()
