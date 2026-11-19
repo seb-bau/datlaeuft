@@ -1847,6 +1847,9 @@ def resolve_commission_reporter(data: dict[str, Any]) -> tuple[str | None, dict[
         return None, None
     if any(isinstance(value, bool) or not isinstance(value, (int, str)) or not str(value).strip().isdigit() or int(value) <= 0 for value in values):
         raise ValueError("Bitte genau einen gültigen Mieter als Melder auswählen.")
+    reporter_text = data.get("reporter")
+    if reporter_text is not None and not isinstance(reporter_text, str):
+        raise ValueError("Die Angaben zum Melder müssen als Text eingegeben werden.")
     agreement_id, contractor_id = (int(value) for value in values)
     get_commission_object_choice("license_agreement", agreement_id)
     today = directory_today()
@@ -1860,7 +1863,11 @@ def resolve_commission_reporter(data: dict[str, Any]) -> tuple[str | None, dict[
     contact = WowiportService().get_reporter_contact_item(
         tenant.license_agreement_erp_id, contractor_id, on_date=today,
     )
-    return contact["text"], {
+    if "reporter" in data:
+        reporter_text = (reporter_text or "").strip() or None
+    else:
+        reporter_text = contact["text"]
+    return reporter_text, {
         "agreement_id": agreement_id, "contractor_id": contractor_id,
         "name": contact["name"], "agreement_number": contact["agreement_number"],
     }

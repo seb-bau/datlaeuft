@@ -266,7 +266,7 @@ class CommissionContactInformationTests(unittest.TestCase):
                 "reporter_agreement_id": self.agreement.id, "reporter_contractor_id": self.tenant.erp_id,
                 "positions": [{"service_catalog_id": 600, "commission_text": "Reparatur", "units": "1"}],
             })
-            self.assertEqual(context["reporter"], "Erika\nTelefon: 123" if object_type == "building" else None)
+            self.assertEqual(context["reporter"], "Erika" if object_type == "building" else None)
             self.assertEqual(context["other_affected"], "MV-2" if object_type == "license_agreement" else None)
 
     def add_reporter_tenant(self, name, *, start=None, end=None, active=True, identity=6001):
@@ -356,12 +356,37 @@ class CommissionContactInformationTests(unittest.TestCase):
                 self.directory.resolve_commission_reporter(data)
         self.reporter_contact.get_reporter_contact_item.assert_not_called()
 
-    def test_saving_uses_confirmed_contact_data_instead_of_submitted_text(self):
+    def test_saving_preserves_edited_text_and_the_validated_reporter_selection(self):
+        edited = "Erika Beispiel\nTelefon: 987\nBitte erst nach 17 Uhr anrufen"
         order = fixtures.CommissionObjectLevelTests.create_order(self, "building", self.building.id,
-            reporter="Manipulierter Text mit mehreren Personen", reporter_agreement_id=str(self.agreement.id), reporter_contractor_id=str(self.tenant.erp_id))
-        self.assertEqual(order.reporter, "Erika\nTelefon: 123")
+            reporter=edited, reporter_agreement_id=str(self.agreement.id), reporter_contractor_id=str(self.tenant.erp_id))
+        self.db.session.expire(order)
+        self.assertEqual(order.reporter, edited)
         self.assertEqual(order.raw_payload["reporter_selection"]["contractor_id"], 5005)
         self.assertEqual(order.raw_payload["reporter_selection"]["agreement_id"], self.agreement.id)
+        self.assertEqual(self.api.serialize_commission(order)["reporter"], edited)
+        self.assertEqual(self.preview_context(commission=order)["reporter"], edited)
+        message = self.send_assignment(order)
+        self.assertIn(edited, message.get_body(preferencelist=("plain",)).get_content())
+        self.reporter_contact.get_reporter_contact_item.assert_called_once_with(4004, 5005, on_date=self.directory.directory_today())
+
+    def test_a_deliberately_empty_reporter_text_is_not_replaced_with_automatic_contacts(self):
+        for value in ("", " \n\t", None):
+            with self.subTest(value=value):
+                order = fixtures.CommissionObjectLevelTests.create_order(self, "building", self.building.id,
+                    reporter=value, reporter_agreement_id=self.agreement.id, reporter_contractor_id=self.tenant.erp_id)
+                self.assertIsNone(order.reporter)
+                self.assertIsNone(self.api.serialize_commission(order)["reporter"])
+                self.assertEqual(order.contact_information_text, "")
+                self.assertEqual(order.raw_payload["reporter_selection"]["contractor_id"], self.tenant.erp_id)
+
+    def test_reporter_text_must_be_a_text_value_after_selecting_a_valid_tenant(self):
+        for value in (["Erika", "Max"], {"name": "Erika"}, 123, True):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "als Text"):
+                self.directory.resolve_commission_reporter({
+                    "reporter_agreement_id": self.agreement.id, "reporter_contractor_id": self.tenant.erp_id, "reporter": value,
+                })
+        self.reporter_contact.get_reporter_contact_item.assert_not_called()
 
     def test_a_reporter_no_longer_valid_at_save_time_does_not_create_an_order(self):
         self.reporter_contact.get_reporter_contact_item.side_effect = ValueError("Mieter ist ausgezogen")
