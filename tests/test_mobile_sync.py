@@ -115,6 +115,11 @@ class MobileSynchronizationTests(unittest.TestCase):
             cls.transactions.commit_mobile_changes()
             return jsonify(item={"id": commission.id, "local_status": commission.local_status}), 202
 
+        @cls.app.post("/api/commissions/simple")
+        def existing_simple_commission():
+            cls.db.session.rollback()
+            return jsonify(item={"id": 10})
+
         @cls.app.post("/api/commissions/<int:commission_id>/materials")
         def material(commission_id):
             commission = viewable(commission_id, current_user())
@@ -190,6 +195,14 @@ class MobileSynchronizationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.models.TimeEntry.query.count(), 0)
         self.assertEqual(self.models.MobileSyncOperation.query.count(), 0)
+
+    def test_existing_order_returned_after_inner_rollback_still_receives_confirmation(self):
+        operation = self.operation(path="/api/commissions/simple", body={})
+        operation.pop("base")
+        result = self.post(operation)
+        self.assertEqual(result.status_code, 200, result.json)
+        self.assertEqual(self.models.MobileSyncOperation.query.count(), 1)
+        self.assertEqual(self.post(operation).json, result.json)
 
     def test_exception_rolls_back_even_after_inner_commit(self):
         with self.assertLogs(self.app.logger, level="ERROR"):

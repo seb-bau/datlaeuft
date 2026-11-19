@@ -287,6 +287,8 @@ def offline_operation():
             result["already_applied"] = True
         if fingerprint:
             result.update(booking_fingerprint=fingerprint, booking_device=device_id)
+        if receipt_row not in db.session:
+            db.session.add(receipt_row)
         receipt_row.response_payload = result
         db.session.commit()
         succeeded = True
