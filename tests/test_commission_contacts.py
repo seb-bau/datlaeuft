@@ -152,6 +152,18 @@ class CommissionContactInformationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.agreement_service(agreement).get_affected_agreement_text(4004, "MV-1")
 
+    def test_live_contract_numbers_are_used_when_the_directory_number_is_missing_or_outdated(self):
+        agreement = self.contact_agreement(4004)
+        agreement.id_num = "MV-AKTUELL"
+        service = self.agreement_service(agreement)
+        for number in (None, "MV-ALT"):
+            self.assertEqual(service.get_affected_agreement_text(4004, number), "Mietvertrag: MV-AKTUELL")
+
+    def test_a_contract_without_any_number_reports_an_error(self):
+        service = self.agreement_service(self.contact_agreement(4004))
+        with self.assertRaisesRegex(ValueError, "MV-Nummer"):
+            service.get_affected_agreement_text(4004, None)
+
     def test_contact_endpoint_resolves_the_local_contract_before_fetching_contacts(self):
         self.contact_lookup.reset_mock(side_effect=True)
         self.contact_lookup.get_affected_agreement_text.return_value = "Mietvertrag: MV-COMMON\nErika"

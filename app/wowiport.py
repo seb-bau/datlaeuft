@@ -2589,11 +2589,14 @@ class WowiportService:
             item["is_future_contract"], item["contract_start"] or "", item["name"] or "",
         ))
 
-    def get_affected_agreement_text(self, license_agreement_id: int, agreement_number: str) -> str:
+    def get_affected_agreement_text(self, license_agreement_id: int, agreement_number: str | None) -> str:
         agreement = self._get_license_agreement(license_agreement_id, None)
         if agreement is None or _as_int(_attr(agreement, "id_")) != license_agreement_id:
             raise ValueError("Der Mietvertrag ist in Wowiport nicht verfügbar.")
 
+        agreement_number = _first_text(_attr(agreement, "id_num"), agreement_number)
+        if not agreement_number:
+            raise ValueError("Die MV-Nummer des Mietvertrags ist nicht verfügbar.")
         lines = [f"Mietvertrag: {agreement_number}"]
         today = datetime.now(ZoneInfo("Europe/Berlin")).date()
         start = _contact_date(_attr(agreement, "start_contract"))
