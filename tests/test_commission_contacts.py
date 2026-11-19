@@ -2,16 +2,19 @@ import __future__
 import ast
 import importlib
 import importlib.util
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from email.message import EmailMessage
 from pathlib import Path
 import types
 import unittest
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from flask import current_app, jsonify, request
+from jinja2 import Environment, FileSystemLoader
 import sqlalchemy as sa
 
 import test_commission_object_levels as fixtures
@@ -121,7 +124,7 @@ class CommissionContactInformationTests(unittest.TestCase):
         service.client.get_contractors.assert_called_once_with(license_agreement_id=4004, fetch_all=True)
 
     def test_former_and_future_tenants_are_excluded_and_today_is_inclusive(self):
-        today = date.today()
+        today = datetime.now(ZoneInfo("Europe/Berlin")).date()
         former = self.contact_tenant(1, "Ausgezogen", end=(today - timedelta(days=1)).isoformat())
         future = self.contact_tenant(2, "Zukünftig")
         future.contractual_use_valid_from = (today + timedelta(days=1)).isoformat()
@@ -134,9 +137,10 @@ class CommissionContactInformationTests(unittest.TestCase):
         self.assertNotIn("Zukünftig", text)
 
     def test_future_expired_and_vacant_contracts_do_not_disclose_current_contact_details(self):
+        today = datetime.now(ZoneInfo("Europe/Berlin")).date()
         for agreement in (
-            self.contact_agreement(4004, start=(date.today() + timedelta(days=1)).isoformat()),
-            self.contact_agreement(4004, end=(date.today() - timedelta(days=1)).isoformat()),
+            self.contact_agreement(4004, start=(today + timedelta(days=1)).isoformat()),
+            self.contact_agreement(4004, end=(today - timedelta(days=1)).isoformat()),
             self.contact_agreement(4004, vacancy=True),
         ):
             service = self.agreement_service(agreement, [self.contact_tenant(1, "Erika")])
@@ -192,6 +196,39 @@ class CommissionContactInformationTests(unittest.TestCase):
         message = self.send_assignment(self.create_order("building", self.building.id))
         self.assertNotIn("Melder:", message.get_body(preferencelist=("plain",)).get_content())
         self.assertNotIn("Weitere Betroffene:", message.get_body(preferencelist=("html",)).get_content())
+
+    def preview_context(self, **arguments):
+        utilities = importlib.import_module(self.package_name + ".utils")
+        namespace = {name: getattr(self.models, name) for name in ("CraftActivity", "ExternalCraftsman", "TimeTaskTemplate", "User")}
+        namespace.update({
+            "db": self.db, "get_commission_object_choice": self.directory.get_commission_object_choice,
+            "format_local_datetime": utilities.format_local_datetime,
+            "parse_local_datetime": utilities.parse_local_datetime,
+            "Decimal": Decimal, "InvalidOperation": InvalidOperation,
+        })
+        for name in ("optional_form_decimal", "required_position_decimal"):
+            load_function(self.root / "app/admin.py", name, namespace)
+        return load_function(self.root / "app/admin.py", "commission_preview_context", namespace)(**arguments)
+
+    def test_saved_order_pdf_includes_filled_sections_after_the_order_text(self):
+        order = self.create_order("building", self.building.id, reporter="Erika <Beispiel>\nTelefon: 123")
+        context = self.preview_context(commission=order)
+        template = Environment(loader=FileSystemLoader(self.root / "app/templates"), autoescape=True).get_template("admin/commission_pdf.html")
+        html = template.render(context)
+        self.assertIn("Melder:", html)
+        self.assertIn("Erika &lt;Beispiel&gt;", html)
+        self.assertGreater(html.index("Melder:"), html.index("Bitte reparieren"))
+        self.assertNotIn("Weitere Betroffene:", html)
+
+    def test_draft_preview_uses_the_same_object_scope_as_saving(self):
+        for object_type, object_id in (("building", self.building.id), ("license_agreement", self.agreement.id)):
+            context = self.preview_context(data={
+                "craft_activity_id": self.craft.id, "object_type": object_type, "object_id": object_id,
+                "reporter": "Erika", "other_affected": "MV-2",
+                "positions": [{"service_catalog_id": 600, "commission_text": "Reparatur", "units": "1"}],
+            })
+            self.assertEqual(context["reporter"], "Erika" if object_type == "building" else None)
+            self.assertEqual(context["other_affected"], "MV-2" if object_type == "license_agreement" else None)
 
 
 class CommissionContactMigrationTests(unittest.TestCase):

@@ -7596,6 +7596,7 @@ def commission_preview_context(data=None, commission=None):
             "craft_name": ", ".join(craft.name for craft in crafts),
             "craftsman_name": commission.user.display_name if commission.user else external.display_name if external else "",
             "contact_person": commission.contact_person, "damage_location": commission.damage_location,
+            "reporter": commission.reporter, "other_affected": commission.other_affected,
             "execution_from": format_local_datetime(commission.execution_from), "execution_to": format_local_datetime(commission.execution_to),
             "positions": [{"article_number": position.display_article_number, "description": position.commission_text or position.description or "",
                            "internal_description": position.internal_description or "", "quantity": str(position.units).replace(".", ",")} for position in commission.positions],
@@ -7644,6 +7645,8 @@ def commission_preview_context(data=None, commission=None):
             "address": (choice.get("use_unit") or choice.get("building") or choice.get("economic_unit") or {}).get("address") or "",
             "tenant_name": choice.get("tenant_name") or "", "craft_name": craft.name, "craftsman_name": craftsman_name,
             "contact_person": data.get("contact_person") or "", "damage_location": data.get("damage_location") or "",
+            "reporter": data.get("reporter") if choice["object_type"] in {"building", "economic_unit"} else None,
+            "other_affected": data.get("other_affected") if choice["object_type"] in {"use_unit", "license_agreement"} else None,
             "execution_from": format_local_datetime(parse_local_datetime(data.get("execution_from"))),
             "execution_to": format_local_datetime(parse_local_datetime(data.get("execution_to"))), "positions": rows}
 

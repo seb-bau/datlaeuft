@@ -26,5 +26,11 @@
   <table class="positions"><thead><tr><th>Pos.</th><th>Artikelnummer</th><th>Auftragstext</th><th>Menge</th></tr></thead><tbody>
     {% for position in positions %}<tr><td>{{ loop.index }}</td><td>{{ position.article_number }}</td><td class="text">{{ position.description }}{% if position.internal_description %}<div class="small">{{ position.internal_description }}</div>{% endif %}</td><td>{{ position.quantity }}</td></tr>{% endfor %}
   </tbody></table>
+  {% for label, value in [('Melder', reporter), ('Weitere Betroffene', other_affected)] %}
+  {% if value and value|trim %}
+  <h2>{{ label }}:</h2>
+  <div class="text">{{ value }}</div>
+  {% endif %}
+  {% endfor %}
 </body>
 </html>
