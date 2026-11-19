@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import HTTPException
 
 from .extensions import db
-from .models import Commission, ErpOutboxOperation, MobileSyncOperation, MobileSyncDelivery, ProcessInfo, User, utc_now
+from .models import Commission, CommissionLocalStatus, ErpOutboxOperation, MobileSyncOperation, MobileSyncDelivery, ProcessInfo, utc_now
 from .mobile_transaction import current_mobile_transaction
 
 
@@ -19,6 +19,7 @@ mobile_sync_bp = Blueprint("mobile_sync", __name__, url_prefix="/api/mobile")
 read_pattern = re.compile(r"^/api/(?:commissions(?:/(?:simple-create-options|create-options|create-tasks|objects|users|[1-9]\d*(?:/(?:history|contacts|appointments|attachments|photos|materials|time|infos|completion-check|related(?:/[1-9]\d*)?))?))?|commission-objects/search|time-tasks(?:/search)?|inventory/(?:search|lookup|locations)|appointment-windows)$")
 write_pattern = re.compile(r"^/api/commissions(?:/simple|/[1-9]\d*/(?:start|reject|complete|time(?:/[1-9]\d*)?|materials(?:/[1-9]\d*/cancel)?|photos(?:/[1-9]\d*)?|appointments(?:/accepted)?|infos(?:/read)?))$")
 parent_pattern = re.compile(r"^/api/commissions/([1-9]\d*)(?:/|$)")
+booking_pattern = re.compile(r"^/api/commissions/[1-9]\d*/(?:time|materials)$")
 
 
 def canonical(value):
@@ -70,6 +71,49 @@ def valid_query(value):
     return isinstance(value, list) and len(value) <= 20 and all(isinstance(item, dict) and isinstance(item.get("name"), str) and isinstance(item.get("value", ""), str) and len(item["name"]) <= 80 and len(item.get("value", "")) <= 1000 for item in value)
 
 
+def already_applied_status(commission, action, body):
+    status = commission.local_status
+    completed_statuses = {CommissionLocalStatus.DONE.value, CommissionLocalStatus.AWAITING_INVOICE.value, CommissionLocalStatus.TENANT_CHARGE_REVIEW.value}
+    if action == "start":
+        return status == CommissionLocalStatus.IN_PROGRESS.value or status in completed_statuses
+    if action != "complete" or type(body.get("completed")) is not bool or commission.completion_submitted_at is None:
+        return False
+    completed = body["completed"]
+    if (completed and status not in completed_statuses) or (not completed and status != CommissionLocalStatus.COMPLETION_REVIEW.value):
+        return False
+    return (
+        commission.completion_successful is completed
+        and bool(commission.tenant_charge_requested) == (completed and bool(body.get("tenant_charge")))
+        and (commission.completion_reason or "") == str(body.get("reason") or "").strip()
+    )
+
+
+def matches_baseline(current, expected, status_change):
+    if not status_change or not isinstance(current, dict) or not isinstance(expected, dict):
+        return same_value(current, expected)
+    fields = ("local_status", "assigned_user", "can_edit", "is_actionable")
+    return all(same_value(current.get(field), expected.get(field)) for field in fields)
+
+
+def matching_booking(user_id, path, fingerprint, device_id, known_ids):
+    candidates = set()
+    payloads = db.session.query(MobileSyncOperation.response_payload).filter(
+        MobileSyncOperation.user_id == user_id,
+        MobileSyncOperation.response_payload["booking_fingerprint"].as_string() == fingerprint,
+    )
+    for (payload,) in payloads:
+        item_id = payload.get("payload", {}).get("item", {}).get("id")
+        if type(item_id) is int and item_id not in known_ids and payload.get("booking_device") != device_id:
+            candidates.add(item_id)
+    if not candidates:
+        return None
+    response = dispatch(path)
+    if response.status_code >= 400:
+        return None
+    return next((item["id"] for item in response.get_json().get("items", [])
+                 if item.get("id") in candidates and not item.get("is_cancelled")), None)
+
+
 @mobile_sync_bp.post("/offline-data")
 @jwt_required()
 def offline_data():
@@ -100,8 +144,9 @@ def offline_data():
 @mobile_sync_bp.post("/offline-operations")
 @jwt_required()
 def offline_operation():
-    from .api import current_api_user, viewable_commission
+    from .api import can_edit_commission, current_api_user, viewable_commission
     user = current_api_user()
+    user_id = user.id
     try:
         operation = json.loads(request.form.get("operation", "{}")) if request.mimetype == "multipart/form-data" else request.get_json(silent=True)
         if not isinstance(operation, dict):
@@ -110,24 +155,32 @@ def offline_operation():
         path, method = operation.get("path", ""), operation.get("method", "")
         if not isinstance(path, str) or not write_pattern.fullmatch(path) or method not in {"POST", "PATCH", "DELETE"}:
             raise ValueError("Dieser Vorgang ist nicht freigegeben.")
-        if not isinstance(operation.get("body", {}), dict):
+        body = operation.get("body", {})
+        if not isinstance(body, dict):
             raise ValueError("Ungültige Vorgangsdaten.")
         predecessor_id = operation.get("predecessor_id")
         if predecessor_id is not None:
             predecessor_id = str(UUID(predecessor_id))
+        device_id = operation.get("device_id")
+        if device_id is not None:
+            device_id = str(UUID(device_id))
+        known_ids = operation.get("known_booking_ids", [])
+        if not isinstance(known_ids, list) or len(known_ids) > 2000 or any(type(value) is not int or value <= 0 for value in known_ids):
+            raise ValueError("Ungültiger Buchungsstand.")
         upload = request.files.get("request_body")
-        raw_body = upload.read(80 * 1024 * 1024 + 1) if upload else canonical(operation.get("body") or {}).encode()
+        raw_body = upload.read(80 * 1024 * 1024 + 1) if upload else canonical(body).encode()
         if len(raw_body) > 80 * 1024 * 1024:
             raise ValueError("Die übermittelten Dateien sind zu groß.")
         content_type = operation.get("content_type", "application/json")
         if not isinstance(content_type, str) or not (content_type == "application/json" or content_type.startswith("multipart/form-data; boundary=")):
             raise ValueError("Ungültiges Datenformat.")
         signature = sha256(canonical(operation).encode() + b"\0" + raw_body).hexdigest()
+        fingerprint = sha256(path.encode() + b"\0" + raw_body).hexdigest() if method == "POST" and booking_pattern.fullmatch(path) else None
     except (ValueError, TypeError, AttributeError) as error:
         return jsonify(message=str(error)), 400
 
     def receipt():
-        row = db.session.get(MobileSyncOperation, (user.id, operation_id), populate_existing=True)
+        row = db.session.get(MobileSyncOperation, (user_id, operation_id), populate_existing=True)
         if row is None:
             return None
         if row.request_sha256 != signature:
@@ -140,44 +193,60 @@ def offline_operation():
     photo_ids = operation.get("local_photo_ids", [])
     if not isinstance(photo_ids, list) or len(photo_ids) > 100 or any(type(value) is not int or value >= 0 for value in photo_ids):
         return jsonify(message="Ungültige lokale Fotokennungen."), 400
-    transaction = {"user_id": user.id, "operation_id": operation_id, "files": [], "local_photo_ids": photo_ids}
+    transaction = {"user_id": user_id, "operation_id": operation_id, "files": [], "local_photo_ids": photo_ids}
     token = current_mobile_transaction.set(transaction)
     succeeded = False
     try:
-        db.session.get(User, user.id, populate_existing=True, with_for_update=True)
-        existing = receipt()
-        if existing is not None:
-            return existing
+        db.session.rollback()
+        receipt_row = MobileSyncOperation(user_id=user_id, operation_id=operation_id, request_sha256=signature, response_payload={})
+        db.session.add(receipt_row)
+        db.session.flush()
         match = parent_pattern.match(path)
         parent = f"/api/commissions/{match.group(1)}" if match else None
+        status_change = bool(parent and method == "POST" and path in {parent + "/start", parent + "/reject", parent + "/complete"})
+        settled = False
         if match:
-            commission = viewable_commission(int(match.group(1)), user)
-            db.session.get(Commission, int(match.group(1)), populate_existing=True, with_for_update=True)
+            commission_id = int(match.group(1))
+            commission = db.session.get(Commission, commission_id, populate_existing=True, with_for_update=True)
+            if commission is None or commission.local_status in {CommissionLocalStatus.CANCELED.value, CommissionLocalStatus.DELETED.value}:
+                return jsonify(message="Der Auftrag ist nicht mehr verfügbar. Lokale Änderungen bleiben zur Prüfung erhalten.", code="commission_unavailable"), 404
+            commission = viewable_commission(commission_id, user)
+            if commission.rejected_at is not None or commission.review_resolved_at is not None:
+                return jsonify(message="Der Auftrag wurde abgelehnt oder abschließend geprüft.", code="commission_closed"), 409
+            if commission.approval_state == "pending" and not re.search(r"/photos(?:/\d+)?$", path):
+                return jsonify(message="Der Auftrag wartet auf die Freigabe.", code="awaiting_approval"), 503
             if not commission.is_actionable and not re.search(r"/photos(?:/\d+)?$", path):
                 return jsonify(message="Der Auftrag wartet noch auf die Wowiport-Bestätigung.", code="awaiting_erp"), 503
-        predecessor = db.session.get(MobileSyncOperation, (user.id, predecessor_id)) if predecessor_id else None
-        if predecessor_id and predecessor is None:
+            settled = status_change and already_applied_status(commission, path.rsplit("/", 1)[-1], body) and can_edit_commission(commission, user)
+        predecessor = db.session.get(MobileSyncOperation, (user_id, predecessor_id)) if predecessor_id and predecessor_id != operation_id else None
+        if not settled and predecessor_id and predecessor is None:
             return jsonify(message="Ein vorheriger Vorgang steht noch aus.", code="dependency_pending"), 409
         base = operation.get("base")
-        if base is not None:
+        if not settled and base is not None:
             if not isinstance(base, dict) or not isinstance(base.get("path"), str) or not read_pattern.fullmatch(base["path"]) or not valid_query(base.get("query", [])):
                 return jsonify(message="Ungültiger Vergleichsstand."), 400
             if parent is None or not (base["path"] == parent or base["path"].startswith(parent + "/")):
                 return jsonify(message="Der Vergleichsstand gehört nicht zum Auftrag."), 400
+            if status_change and base["path"] != parent:
+                return jsonify(message="Der Auftragsstatus fehlt im Vergleichsstand."), 400
             current = dispatch(base["path"], query=base.get("query", []))
             if current.status_code >= 400:
                 return current
             current_value = normalized_value(base["path"], current.get_json(), base.get("target_id"))
             expected_value = base.get("value")
-            if predecessor is not None:
+            if predecessor is not None and not matches_baseline(current_value, expected_value, status_change):
                 key = base["path"] + (f"#{base['target_id']}" if base.get("target_id") is not None else "")
                 if key in predecessor.response_payload.get("baselines", {}):
                     expected_value = predecessor.response_payload["baselines"][key]
-            if not same_value(current_value, expected_value):
+            if not matches_baseline(current_value, expected_value, status_change):
                 return jsonify(message="Der Serverstand wurde zwischenzeitlich geändert.", code="conflict", current=current_value, local=operation.get("body"), base=expected_value), 409
-        elif parent and not path.endswith(("/infos", "/infos/read")) and not (method == "POST" and path.endswith(("/time", "/materials", "/photos"))):
+        elif not settled and parent and not path.endswith(("/infos", "/infos/read")) and not (method == "POST" and path.endswith(("/time", "/materials", "/photos"))):
             return jsonify(message="Der Vergleichsstand fehlt.", code="missing_base"), 409
-        response = dispatch(path, method, body=raw_body, content_type=content_type)
+        if fingerprint and device_id and operation.get("confirm_duplicate") is not True and can_edit_commission(commission, user):
+            duplicate = matching_booking(user_id, path, fingerprint, device_id, set(known_ids))
+            if duplicate is not None:
+                return jsonify(message="Eine gleichartige Buchung ist bereits auf dem Server vorhanden. Prüfe sie, bevor du erneut buchst.", code="duplicate_booking", booking_id=duplicate), 409
+        response = dispatch(parent) if settled else dispatch(path, method, body=raw_body, content_type=content_type)
         payload = response.get_json(silent=True)
         if response.status_code >= 400:
             db.session.rollback()
@@ -188,7 +257,7 @@ def offline_operation():
         if path == "/api/commissions/simple" and isinstance(payload.get("item"), dict):
             parent = f"/api/commissions/{payload['item']['id']}"
         if parent:
-            refreshed = dispatch(parent)
+            refreshed = response if settled else dispatch(parent)
             if refreshed.status_code < 400:
                 baselines[parent] = normalized_value(parent, refreshed.get_json())
             section_match = re.match(r"^/api/commissions/\d+/(time|materials|photos)(?:/(\d+))?", path)
@@ -214,7 +283,11 @@ def offline_operation():
                 if day.status_code < 400:
                     time_days[str(service_date)] = day.get_json()
         result = {"id": operation_id, "payload": payload, "status": response.status_code, "baselines": baselines, "my_time": time_days, "references": transaction.get("references", {})}
-        db.session.add(MobileSyncOperation(user_id=user.id, operation_id=operation_id, request_sha256=signature, response_payload=result))
+        if settled:
+            result["already_applied"] = True
+        if fingerprint:
+            result.update(booking_fingerprint=fingerprint, booking_device=device_id)
+        receipt_row.response_payload = result
         db.session.commit()
         succeeded = True
         return jsonify(result)
