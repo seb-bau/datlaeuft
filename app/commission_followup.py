@@ -60,10 +60,13 @@ def commission_reissue_data(commission):
     craft_ids = {position.craft_activity_erp_id for position in commission.positions if position.craft_activity_erp_id is not None}
     craft = CraftActivity.query.filter(CraftActivity.erp_id.in_(craft_ids)).first() if len(craft_ids) == 1 else None
     external = ExternalCraftsman.query.filter_by(craftsman_erp_id=commission.craftsman_erp_id).one_or_none() if commission.assignment_type == "external" else None
+    selection = (commission.raw_payload or {}).get("reporter_selection") or {}
     values = {
         "object_type": object_type or "", "object_id": directory.id if directory else "",
         "title": commission.title or "", "damage_location": commission.damage_location or "", "contact_person": commission.contact_person or "",
         "reporter": commission.reporter or "", "other_affected": commission.other_affected or "",
+        "reporter_agreement_id": selection.get("agreement_id", ""),
+        "reporter_contractor_id": selection.get("contractor_id", ""),
         "craft_activity_id": craft.id if craft else "", "commission_type_id": commission.commission_type_erp_id or "",
         "company_code_erp_id": commission.company_code_erp_id or "", "crafts_process_id": commission.crafts_process_erp_id or "",
         "creditor_id": commission.creditor_erp_id or "", "assignment_type": commission.assignment_type,

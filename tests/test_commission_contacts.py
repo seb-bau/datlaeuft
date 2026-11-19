@@ -8,7 +8,7 @@ from email.message import EmailMessage
 from pathlib import Path
 import types
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 from alembic.migration import MigrationContext
@@ -29,10 +29,27 @@ def load_function(path, name, namespace):
 
 
 class CommissionContactInformationTests(unittest.TestCase):
-    setUp = fixtures.CommissionObjectLevelTests.setUp
-    create_order = fixtures.CommissionObjectLevelTests.create_order
     contact_agreement = fixtures.CommissionObjectLevelTests.contact_agreement
     contact_tenant = fixtures.CommissionObjectLevelTests.contact_tenant
+
+    def setUp(self):
+        fixtures.CommissionObjectLevelTests.setUp(self)
+        self.reporter_contact = Mock()
+        self.reporter_contact.get_reporter_contact_item.return_value = {
+            "text": "Erika\nTelefon: 123", "name": "Erika", "agreement_number": "MV-COMMON",
+        }
+        service_patch = patch.object(self.directory, "WowiportService", return_value=self.reporter_contact)
+        service_patch.start()
+        self.addCleanup(service_patch.stop)
+
+    def create_order(self, object_type, object_id, **extra):
+        reporter = extra.get("reporter")
+        if reporter and reporter.strip() and object_type in {"building", "economic_unit"}:
+            extra.update(reporter_agreement_id=self.agreement.id, reporter_contractor_id=self.tenant.erp_id)
+            self.reporter_contact.get_reporter_contact_item.return_value = {
+                "text": reporter.strip(), "name": "Erika", "agreement_number": "MV-COMMON",
+            }
+        return fixtures.CommissionObjectLevelTests.create_order(self, object_type, object_id, **extra)
 
     @classmethod
     def setUpClass(cls):
@@ -43,6 +60,12 @@ class CommissionContactInformationTests(unittest.TestCase):
             "request": request, "jsonify": jsonify, "current_app": current_app,
             "get_commission_object_choice": cls.directory.get_commission_object_choice,
             "WowiportService": lambda: cls.contact_lookup,
+        }))
+        cls.app.add_url_rule("/reporter/search", view_func=load_function(cls.root / "app/admin.py", "commission_reporter_search", {
+            "request": request, "jsonify": jsonify, "search_commission_reporters": cls.directory.search_commission_reporters,
+        }))
+        cls.app.add_url_rule("/reporter/<int:agreement_id>/<int:contractor_id>", view_func=load_function(cls.root / "app/admin.py", "commission_reporter_contact", {
+            "jsonify": jsonify, "current_app": current_app, "resolve_commission_reporter": cls.directory.resolve_commission_reporter,
         }))
 
     def test_contact_fields_are_stored_only_for_the_selected_object_scope(self):
@@ -99,6 +122,8 @@ class CommissionContactInformationTests(unittest.TestCase):
         values = reissue(order)["form_values"]
         self.assertEqual(values["reporter"], order.reporter)
         self.assertEqual(values["other_affected"], order.other_affected)
+        self.assertEqual(values["reporter_agreement_id"], self.agreement.id)
+        self.assertEqual(values["reporter_contractor_id"], self.tenant.erp_id)
 
     def agreement_service(self, agreement, contractors=()):
         service = self.gateway.WowiportService.__new__(self.gateway.WowiportService)
@@ -216,6 +241,7 @@ class CommissionContactInformationTests(unittest.TestCase):
             "db": self.db, "get_commission_object_choice": self.directory.get_commission_object_choice,
             "format_local_datetime": utilities.format_local_datetime,
             "parse_local_datetime": utilities.parse_local_datetime,
+            "resolve_commission_reporter": self.directory.resolve_commission_reporter,
             "Decimal": Decimal, "InvalidOperation": InvalidOperation,
         })
         for name in ("optional_form_decimal", "required_position_decimal"):
@@ -237,10 +263,164 @@ class CommissionContactInformationTests(unittest.TestCase):
             context = self.preview_context(data={
                 "craft_activity_id": self.craft.id, "object_type": object_type, "object_id": object_id,
                 "reporter": "Erika", "other_affected": "MV-2",
+                "reporter_agreement_id": self.agreement.id, "reporter_contractor_id": self.tenant.erp_id,
                 "positions": [{"service_catalog_id": 600, "commission_text": "Reparatur", "units": "1"}],
             })
-            self.assertEqual(context["reporter"], "Erika" if object_type == "building" else None)
+            self.assertEqual(context["reporter"], "Erika\nTelefon: 123" if object_type == "building" else None)
             self.assertEqual(context["other_affected"], "MV-2" if object_type == "license_agreement" else None)
+
+    def add_reporter_tenant(self, name, *, start=None, end=None, active=True, identity=6001):
+        tenant = self.models.WowiContractor(
+            erp_id=identity, license_agreement_erp_id=self.agreement.erp_id, license_agreement=self.agreement,
+            display_name=name, contractual_use_from=start, contractual_use_to=end, active=active,
+        )
+        self.db.session.add(tenant)
+        self.db.session.commit()
+        return tenant
+
+    def test_reporter_search_finds_contracts_by_number_address_and_tenant_name(self):
+        for query in ("MV-COMMON", "Erika", "COMMON Straße 1", "erika COMMON"):
+            with self.subTest(query=query):
+                items = self.directory.search_commission_reporters(query)
+                self.assertEqual([item["object_type"] for item in items], ["license_agreement"])
+                self.assertEqual(items[0]["object_id"], self.agreement.id)
+                self.assertEqual(items[0]["tenants"], [{"contractor_id": self.tenant.erp_id, "name": self.tenant.display_name}])
+
+    def test_reporter_search_lists_only_current_tenants_including_today(self):
+        today = self.directory.directory_today()
+        current = self.add_reporter_tenant("Max Aktuell", start=today, end=today)
+        self.add_reporter_tenant("Ausgezogen", end=today - timedelta(days=1), identity=6002)
+        self.add_reporter_tenant("Zukünftig", start=today + timedelta(days=1), identity=6003)
+        self.add_reporter_tenant("Inaktiv", active=False, identity=6004)
+        items = self.directory.search_commission_reporters("MV-COMMON")
+        self.assertEqual({tenant["contractor_id"] for tenant in items[0]["tenants"]}, {self.tenant.erp_id, current.erp_id})
+        for name in ("Ausgezogen", "Zukünftig", "Inaktiv"):
+            self.assertEqual(self.directory.search_commission_reporters(name), [])
+
+    def test_reporter_search_excludes_noncurrent_or_unavailable_contracts(self):
+        today = self.directory.directory_today()
+        for record, attribute, value in (
+            (self.agreement, "start_date", today + timedelta(days=1)),
+            (self.agreement, "end_date", today - timedelta(days=1)),
+            (self.agreement, "is_vacancy", True),
+            (self.agreement, "active", False),
+            (self.unit, "active", False),
+            (self.building, "active", False),
+            (self.economic, "active", False),
+        ):
+            with self.subTest(attribute=attribute, value=value):
+                previous = getattr(record, attribute)
+                setattr(record, attribute, value)
+                self.db.session.flush()
+                self.assertEqual(self.directory.search_commission_reporters("COMMON"), [])
+                setattr(record, attribute, previous)
+
+    def test_reporter_search_has_a_two_character_minimum_and_escapes_wildcards(self):
+        for query in ("", "a", "%%", "__"):
+            self.assertEqual(self.directory.search_commission_reporters(query), [])
+        response = self.client.get("/reporter/search?q=Erika")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["items"][0]["tenants"][0]["name"], "Erika COMMON")
+
+    def test_reporter_contact_endpoint_returns_exactly_the_selected_tenant(self):
+        self.add_reporter_tenant("Max COMMON")
+        response = self.client.get(f"/reporter/{self.agreement.id}/{self.tenant.erp_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["item"]["text"], "Erika\nTelefon: 123")
+        self.assertEqual(response.json["item"]["contractor_id"], self.tenant.erp_id)
+        self.assertEqual(response.json["item"]["agreement_id"], self.agreement.id)
+        self.reporter_contact.get_reporter_contact_item.assert_called_once_with(4004, 5005, on_date=self.directory.directory_today())
+
+    def test_reporter_contact_rejects_other_or_expired_tenants_before_loading_personal_data(self):
+        former = self.add_reporter_tenant("Ausgezogen", end=self.directory.directory_today() - timedelta(days=1))
+        for agreement_id, contractor_id in ((self.building.id, self.tenant.erp_id), (self.agreement.id, 999999), (self.agreement.id, former.erp_id)):
+            response = self.client.get(f"/reporter/{agreement_id}/{contractor_id}")
+            self.assertEqual(response.status_code, 400)
+        self.reporter_contact.get_reporter_contact_item.assert_not_called()
+
+    def test_reporter_contact_errors_are_reported_without_a_partial_selection(self):
+        self.reporter_contact.get_reporter_contact_item.side_effect = RuntimeError("Connection lost")
+        response = self.client.get(f"/reporter/{self.agreement.id}/{self.tenant.erp_id}")
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("item", response.json)
+
+    def test_reporter_selection_rejects_free_text_incomplete_or_multiple_identities(self):
+        for data in (
+            {"reporter": "Erika und Max"}, {"reporter_agreement_id": self.agreement.id},
+            {"reporter_agreement_id": self.agreement.id, "reporter_contractor_id": [5005, 6001]},
+            {"reporter_agreement_id": self.agreement.id, "reporter_contractor_id": True},
+            {"reporter_agreement_id": self.agreement.id, "reporter_contractor_id": 5005.0},
+            {"reporter_agreement_id": 0, "reporter_contractor_id": 5005},
+        ):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                self.directory.resolve_commission_reporter(data)
+        self.reporter_contact.get_reporter_contact_item.assert_not_called()
+
+    def test_saving_uses_confirmed_contact_data_instead_of_submitted_text(self):
+        order = fixtures.CommissionObjectLevelTests.create_order(self, "building", self.building.id,
+            reporter="Manipulierter Text mit mehreren Personen", reporter_agreement_id=str(self.agreement.id), reporter_contractor_id=str(self.tenant.erp_id))
+        self.assertEqual(order.reporter, "Erika\nTelefon: 123")
+        self.assertEqual(order.raw_payload["reporter_selection"]["contractor_id"], 5005)
+        self.assertEqual(order.raw_payload["reporter_selection"]["agreement_id"], self.agreement.id)
+
+    def test_a_reporter_no_longer_valid_at_save_time_does_not_create_an_order(self):
+        self.reporter_contact.get_reporter_contact_item.side_effect = ValueError("Mieter ist ausgezogen")
+        with self.assertRaisesRegex(ValueError, "ausgezogen"):
+            fixtures.CommissionObjectLevelTests.create_order(self, "building", self.building.id,
+                reporter_agreement_id=self.agreement.id, reporter_contractor_id=self.tenant.erp_id)
+        self.assertEqual(self.models.Commission.query.count(), 0)
+        self.service.enqueue_erp_operation.assert_not_called()
+
+    def test_erp_sync_preserves_the_reporter_selection_and_contact_snapshot(self):
+        order = self.create_order("building", self.building.id, reporter="Erika\nTelefon: 123")
+        order.erp_id = 100
+        selection = dict(order.raw_payload["reporter_selection"])
+        self.db.session.commit()
+        with patch.object(self.gateway, "configured_commission_type_ids", return_value={100}), patch.object(self.gateway, "configured_commission_status_ids", return_value={12}):
+            self.gateway.upsert_commission({
+                "Id": 100, "IdNum": "A-100", "CommissionStatus": {"Id": 12, "Code": "WaitForCraftsmanFeedback"},
+                "CommissionType": {"Id": 100}, "Craftsman": {"Id": 2020}, "RecordingDate": "2026-11-01",
+            }, sync_signature="reporter-sync")
+        self.db.session.commit()
+        self.db.session.expire_all()
+        self.assertEqual(order.raw_payload["reporter_selection"], selection)
+        self.assertEqual(order.reporter, "Erika\nTelefon: 123")
+
+    def test_reporter_live_contact_includes_all_phone_numbers_emails_and_contact_notes_for_one_person(self):
+        first = self.contact_tenant(1, "Erika")
+        second = self.contact_tenant(2, "Max")
+        for identity, value, label, note in ((2, "erika@example.invalid", 5, None), (3, "arbeit@example.invalid", 5, "dienstlich"), (4, "02306 123", 1, "ab 17 Uhr")):
+            first.person.communications.append(types.SimpleNamespace(id_=identity, content=value, explanation=note, communication_type=types.SimpleNamespace(id_=label)))
+        service = self.agreement_service(self.contact_agreement(4004), [first, second])
+        contact = service.get_reporter_contact_item(4004, first.id_, on_date=self.directory.directory_today())
+        for value in ("Erika", "Mobil: 0123456789", "E-Mail: erika@example.invalid", "E-Mail: arbeit@example.invalid (dienstlich)", "Telefon: 02306 123 (ab 17 Uhr)"):
+            self.assertIn(value, contact["text"])
+        self.assertNotIn("Max", contact["text"])
+        self.assertEqual(contact["text"].count("0123456789"), 1)
+
+    def test_reporter_live_contact_rejects_expired_future_foreign_or_missing_people(self):
+        today = self.directory.directory_today()
+        for field, value in (("contractual_use_valid_from", today + timedelta(days=1)), ("contractual_use_valid_to", today - timedelta(days=1)), ("license_agreement_id", 9999), ("person", None)):
+            tenant = self.contact_tenant(1, "Erika")
+            setattr(tenant, field, value)
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.agreement_service(self.contact_agreement(4004), [tenant]).get_reporter_contact_item(4004, tenant.id_, on_date=today)
+
+    def test_reporter_live_contract_and_tenant_dates_include_today(self):
+        today = self.directory.directory_today()
+        tenant = self.contact_tenant(1, "Erika", end=today.isoformat())
+        tenant.contractual_use_valid_from = today.isoformat()
+        agreement = self.contact_agreement(4004, start=today.isoformat(), end=today.isoformat())
+        contact = self.agreement_service(agreement, [tenant]).get_reporter_contact_item(4004, tenant.id_, on_date=today)
+        self.assertEqual(contact["name"], "Erika")
+
+    def test_reporter_live_contact_rejects_vacant_future_expired_or_wrong_contracts(self):
+        today = self.directory.directory_today()
+        for agreement in (None, self.contact_agreement(9999), self.contact_agreement(4004, vacancy=True), self.contact_agreement(4004, start=(today + timedelta(days=1)).isoformat()), self.contact_agreement(4004, end=(today - timedelta(days=1)).isoformat())):
+            service = self.agreement_service(agreement, [self.contact_tenant(1, "Erika")])
+            with self.assertRaises(ValueError):
+                service.get_reporter_contact_item(4004, 101, on_date=today)
+            service.client.get_contractors.assert_not_called()
 
 
 class CommissionContactMigrationTests(unittest.TestCase):

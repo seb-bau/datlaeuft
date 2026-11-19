@@ -48,6 +48,8 @@ from .object_directory import (
     get_commission_object_choice,
     resolve_commission_assignment,
     resolve_commission_object,
+    resolve_commission_reporter,
+    search_commission_reporters,
     search_commission_objects,
     search_invoice_contracts,
     sync_object_directory,
@@ -5818,6 +5820,27 @@ def commission_affected_contacts(object_id: int) -> Any:
     return jsonify({"text": text})
 
 
+@admin_bp.get("/admin/commission-reporters/search")
+@commission_planning_required
+def commission_reporter_search() -> Any:
+    return jsonify({"items": search_commission_reporters(request.args.get("q", ""))})
+
+
+@admin_bp.get("/admin/commission-reporters/<int:agreement_id>/<int:contractor_id>")
+@commission_planning_required
+def commission_reporter_contact(agreement_id: int, contractor_id: int) -> Any:
+    try:
+        text, selection = resolve_commission_reporter({
+            "reporter_agreement_id": agreement_id, "reporter_contractor_id": contractor_id,
+        })
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except Exception:
+        current_app.logger.exception("commission_reporter_contact_failed agreement_id=%s contractor_id=%s", agreement_id, contractor_id)
+        return jsonify({"message": "Die Kontaktdaten des Melders konnten nicht geladen werden. Bitte erneut versuchen."}), 502
+    return jsonify({"item": {**selection, "text": text}})
+
+
 @admin_bp.get("/admin/offers")
 @offer_required
 def offers() -> Any:
@@ -7641,11 +7664,14 @@ def commission_preview_context(data=None, commission=None):
             craftsman_name = craftsman.display_name if craftsman else ""
         except (TypeError, ValueError):
             pass
+    reporter = None
+    if choice["object_type"] in {"building", "economic_unit"} and any(data.get(key) not in (None, "") for key in ("reporter", "reporter_agreement_id", "reporter_contractor_id")):
+        reporter, selection = resolve_commission_reporter(data)
     return {"reference": "", "title": data.get("title") or "Auftrag", "object_label": choice.get("label") or "",
             "address": (choice.get("use_unit") or choice.get("building") or choice.get("economic_unit") or {}).get("address") or "",
             "tenant_name": choice.get("tenant_name") or "", "craft_name": craft.name, "craftsman_name": craftsman_name,
             "contact_person": data.get("contact_person") or "", "damage_location": data.get("damage_location") or "",
-            "reporter": data.get("reporter") if choice["object_type"] in {"building", "economic_unit"} else None,
+            "reporter": reporter,
             "other_affected": data.get("other_affected") if choice["object_type"] in {"use_unit", "license_agreement"} else None,
             "execution_from": format_local_datetime(parse_local_datetime(data.get("execution_from"))),
             "execution_to": format_local_datetime(parse_local_datetime(data.get("execution_to"))), "positions": rows}
@@ -13227,6 +13253,8 @@ def read_commission_form() -> dict[str, Any]:
             "contact_person"
         ),
         "reporter": request.form.get("reporter"),
+        "reporter_agreement_id": request.form.get("reporter_agreement_id"),
+        "reporter_contractor_id": request.form.get("reporter_contractor_id"),
         "other_affected": request.form.get("other_affected"),
         "execution_from": request.form.get(
             "execution_from"
