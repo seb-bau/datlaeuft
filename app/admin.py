@@ -8580,6 +8580,12 @@ def commissions() -> Any:
         request.args.get("priority") or "all"
     ).strip()
     craftsman_filter = str(request.args.get("craftsman") or "all").strip()
+    commission_type_filter = str(request.args.get("commission_type") or "all").strip()
+    if commission_type_filter not in {"all", "unassigned"}:
+        if commission_type_filter.isdecimal() and len(commission_type_filter) <= 18 and int(commission_type_filter) > 0:
+            commission_type_filter = str(int(commission_type_filter))
+        else:
+            commission_type_filter = "all"
 
     if local_status_filter not in {"all", *local_status_labels}:
         local_status_filter = "all"
@@ -8651,7 +8657,26 @@ def commissions() -> Any:
     ).all()
 
     candidate_items = list(items)
-    officials_by_commission_id = commission_official_labels(items)
+    commission_type_labels = {
+        item.erp_id: (item.code or "").strip() or f"Auftragsart {item.erp_id}"
+        for item in WowiCommissionType.query.all()
+    }
+    commission_types_by_commission_id = {
+        item.id: (
+            str(item.commission_type_erp_id) if item.commission_type_erp_id is not None else "unassigned",
+            commission_type_labels.get(item.commission_type_erp_id, f"Auftragsart {item.commission_type_erp_id}")
+            if item.commission_type_erp_id is not None else "Ohne Auftragsart",
+        )
+        for item in candidate_items
+    }
+    commission_type_options = dict(commission_types_by_commission_id.values())
+    if commission_type_filter != "all":
+        commission_type_options.setdefault(commission_type_filter,
+            "Ohne Auftragsart" if commission_type_filter == "unassigned" else
+            commission_type_labels.get(int(commission_type_filter), f"Auftragsart {commission_type_filter}"))
+        items = [item for item in items if commission_types_by_commission_id[item.id][0] == commission_type_filter]
+    commission_type_choices = sorted(commission_type_options.items(), key=lambda choice: (choice[1].casefold(), choice[0]))
+    officials_by_commission_id = commission_official_labels(candidate_items)
     official_options = dict(officials_by_commission_id.values())
     official_options.pop("unassigned", None)
     official_choices = sorted(
@@ -8734,6 +8759,9 @@ def commissions() -> Any:
         craftsman_filter=craftsman_filter,
         craftsman_options=craftsman_options,
         craftsman_choices=craftsman_choices,
+        commission_type_filter=commission_type_filter,
+        commission_type_choices=commission_type_choices,
+        commission_types_by_commission_id=commission_types_by_commission_id,
         list_return_url=url_for("admin.commissions") + ("?" + request.full_path.partition("?")[2] if request.query_string else ""),
     )
 
