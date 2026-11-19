@@ -74,6 +74,14 @@ test("different filter selections and users keep independent table states", () =
   assert.equal(fixture({saved: storage()}).instance.loaded, null);
 });
 
+test("type selections and a new column schema use independent saved table states", () => {
+  const first = fixture({search: "?commission_type=100", stateKey: "commission-list-1-v3"});
+  first.instance.options.stateSaveCallback({}, {start: 25});
+  assert.equal(fixture({saved: first.saved, search: "?commission_type=100", stateKey: "commission-list-1-v3"}).instance.loaded.start, 25);
+  assert.equal(fixture({saved: first.saved, search: "?commission_type=200", stateKey: "commission-list-1-v3"}).instance.loaded, null);
+  assert.equal(fixture({saved: first.saved, search: "?commission_type=100", stateKey: "commission-list-1-v2"}).instance.loaded, null);
+});
+
 test("reset clears this order list's saved states and preserves other users and tables", () => {
   const first = fixture();
   first.instance.options.stateSaveCallback({}, {start: 25});

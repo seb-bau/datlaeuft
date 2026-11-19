@@ -99,6 +99,18 @@
 
       <select
         class="form-select form-select-sm"
+        name="commission_type"
+        onchange="this.form.submit()"
+        aria-label="Auftragsart filtern"
+      >
+        <option value="all" {% if commission_type_filter == "all" %}selected{% endif %}>Alle Auftragsarten</option>
+        {% for type_key, type_label in commission_type_choices %}
+        <option value="{{ type_key }}" {% if commission_type_filter == type_key %}selected{% endif %}>{{ type_label }}</option>
+        {% endfor %}
+      </select>
+
+      <select
+        class="form-select form-select-sm"
         name="craftsman"
         onchange="this.form.submit()"
         aria-label="Handwerker filtern"
@@ -172,7 +184,7 @@
       <a
         class="btn btn-sm btn-outline-secondary"
         href="{{ url_for('admin.commissions') }}"
-        data-reset-table-state="commission-list-{{ current_user.id }}"
+        data-reset-table-state="commission-list-{{ current_user.id }}-v3"
       >
         Filter zurücksetzen
       </a>
@@ -188,11 +200,12 @@
 </div>
 <div class="card shadow-sm">
   <div class="card-body">
-    <table class="table table-striped datatable" data-state-key="commission-list-{{ current_user.id }}-v2">
+    <table class="table table-striped datatable" data-state-key="commission-list-{{ current_user.id }}-v3">
       <thead>
         <tr>
           <th>Nummer</th>
           <th>Titel</th>
+          <th>Auftragsart</th>
           <th>Adresse</th>
           <th>Lage</th>
           <th>Mieter</th>
@@ -220,6 +233,7 @@
             <span class="badge text-bg-danger">Hohe Priorität</span>
             {% endif %}
           </td>
+          <td>{{ commission_types_by_commission_id[item.id][1] }}</td>
           <td>{{ item.apartment_address or "" }}</td>
           <td>{{ item.apartment_location or "" }}</td>
           <td>{{ item.tenant_name or "" }}</td>
