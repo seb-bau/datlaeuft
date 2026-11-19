@@ -130,7 +130,13 @@ def payment_options_from_wowiport(service, agreement_id, creditor_id=""):
         raise ValueError("Der Vertrag konnte nicht aus Wowiport geladen werden.")
     banking = payment_value(agreement, "Banking") or {}
     collective = payment_value(banking, "CollectiveAccount") or {}
-    transfer = {"method": "bank_transfer", "iban": payment_value(banking, "VirtualIban") or "", "bic": payment_value(collective, "Bic") or "",
+    virtual_iban = payment_value(banking, "VirtualIban")
+    use_virtual_iban = payment_value(banking, "UseVirtualIban")
+    if use_virtual_iban is True or (use_virtual_iban is not False and virtual_iban):
+        transfer_iban = virtual_iban
+    else:
+        transfer_iban = None if payment_value(collective, "NoRealBankAccount") else payment_value(collective, "Iban")
+    transfer = {"method": "bank_transfer", "iban": transfer_iban or "", "bic": payment_value(collective, "Bic") or "",
                 "account_holder": payment_value(collective, "AccountHolder") or "", "source": "wowiport", "license_agreement_erp_id": agreement_id}
     rows = service.read_all_rows("RentAccountingPersonDetails/PaymentModes", {
         "licenseAgreementId": agreement_id, "paymentModeActiveOn": today.isoformat(), "showNullValues": "true",
@@ -142,7 +148,10 @@ def payment_options_from_wowiport(service, agreement_id, creditor_id=""):
             continue
         start = str(payment_value(row, "ActiveFrom") or "")[:10]
         end = str(payment_value(row, "ActiveTo") or "")[:10]
-        if start and start > today.isoformat() or end and end < today.isoformat():
+        if (
+            (start and start > today.isoformat()) or (end and end < today.isoformat())
+            or payment_value(row, "Active") is False
+        ):
             continue
         mode = payment_value(row, "Mode") or {}
         mandate = payment_value(row, "SepaMandate") or {}
@@ -150,6 +159,8 @@ def payment_options_from_wowiport(service, agreement_id, creditor_id=""):
         mode_name = str(payment_value(mode, "Name") or "").casefold()
         is_transfer = any(word in mode_name for word in ("überweisung", "bank transfer", "keine lastschrift", "ohne lastschrift"))
         is_sepa = not is_transfer and (bool(mandate) or any(word in mode_name for word in ("sepa", "lastschrift")))
+        if is_sepa and payment_value(mandate, "Active") is False:
+            continue
         mandate_iban = re.sub(r"\s+", "", str(payment_value(mandate, "Iban") or "")).upper()
         account_iban = re.sub(r"\s+", "", str(payment_value(account, "Iban") or "")).upper()
         if is_sepa and mandate_iban and account_iban and mandate_iban != account_iban:

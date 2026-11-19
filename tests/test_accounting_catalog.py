@@ -46,10 +46,11 @@ class AccountingCatalogTests(unittest.TestCase):
         extensions.db = cls.db
         auth = types.ModuleType(cls.package_name + ".auth")
         source = ast.parse((cls.root / "app/auth.py").read_text())
-        guard = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "accounting_required")
+        guards = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in {"accounting_required", "invoice_required"}]
         namespace = dict(F=object, Any=object, wraps=wraps, current_user=current_user, abort=abort, redirect=redirect, request=request, url_for=url_for)
-        exec(compile(ast.Module(body=[guard], type_ignores=[]), "auth.py", "exec"), namespace)
+        exec(compile(ast.Module(body=guards, type_ignores=[]), "auth.py", "exec"), namespace)
         auth.accounting_required = namespace["accounting_required"]
+        auth.invoice_required = namespace["invoice_required"]
         blacklist = types.ModuleType(cls.package_name + ".blacklist")
         blacklist.is_blacklisted = lambda *args: False
         modules = {cls.package_name: package, extensions.__name__: extensions, auth.__name__: auth, blacklist.__name__: blacklist}
@@ -126,6 +127,56 @@ class AccountingCatalogTests(unittest.TestCase):
         for path in ("/admin/local-catalog/new", "/admin/local-catalog/import", "/admin/local-catalog/1/edit", "/admin/local-catalog/1/active"):
             self.assertEqual(self.client.post(path, data=self.values()).status_code, 403)
         self.assertEqual(self.models.LocalCatalogItem.query.count(), 0)
+
+    def test_deletion_requires_invoice_permissions_on_the_page_and_endpoint(self):
+        item = self.article()
+        url = f"/admin/local-catalog/{item.id}/delete"
+        self.user.can_manage_offers, self.user.can_manage_invoices = True, False
+        self.db.session.commit()
+        self.assertNotIn(url.encode(), self.client.get("/admin/local-catalog").data)
+        self.assertEqual(self.client.post(url).status_code, 403)
+        self.assertEqual(self.app.test_client().post(url).status_code, 302)
+        self.assertEqual(self.models.LocalCatalogItem.query.count(), 1)
+
+        self.user.can_manage_invoices = True
+        self.db.session.commit()
+        self.assertIn(url.encode(), self.client.get("/admin/local-catalog").data)
+        self.assertEqual(self.client.get(url).status_code, 405)
+        self.assertEqual(self.client.post(url).status_code, 302)
+        self.assertEqual(self.models.LocalCatalogItem.query.count(), 0)
+        log = self.models.AuditLog.query.filter_by(action="local_catalog.delete").one()
+        self.assertEqual(log.actor_user_id, self.user.id)
+
+    def test_deletion_copies_catalog_data_before_detaching_invoice_and_offer_positions(self):
+        item = self.article()
+        invoice = self.models.Invoice(company_code=self.company, created_by=self.user, company_code_erp_id=1, company_code_code="1", status="finalized")
+        offer = self.models.Offer(company_code=self.company, created_by=self.user, company_code_erp_id=1, company_code_code="1", status="draft")
+        for document, model, source_data in (
+            (invoice, self.models.InvoicePosition, {"article_number": "EIGENE-NR"}),
+            (offer, self.models.OfferPosition, {}),
+        ):
+            document.positions.append(model(
+                position_index=0, description="Ursprüngliche Leistungsbeschreibung", local_catalog_item=item,
+                source_type="local_catalog", unit_price_net=Decimal("7.00"), source_data=source_data,
+            ))
+        self.db.session.add_all([invoice, offer])
+        self.db.session.commit()
+        self.assertEqual(self.client.post(f"/admin/local-catalog/{item.id}/delete").status_code, 302)
+        self.db.session.expire_all()
+        self.assertEqual(self.models.LocalCatalogItem.query.count(), 0)
+        for document, number in ((invoice, "EIGENE-NR"), (offer, "A-100")):
+            position = document.positions[0]
+            self.assertIsNone(position.local_catalog_item_id)
+            self.assertEqual(position.article_number, number)
+            self.assertEqual(position.source_data["business_area"], "Installation")
+            self.assertEqual(position.description, "Ursprüngliche Leistungsbeschreibung")
+            self.assertEqual(position.unit_price_net, Decimal("7.00"))
+        rows = [{"source_type": "local_catalog", "source_data": offer.positions[0].source_data}]
+        with self.app.test_request_context(method="POST"):
+            self.articles.attach_article_fields(rows, offer.positions)
+            self.assertIsNone(rows[0]["local_catalog_item_id"])
+            with self.assertRaisesRegex(ValueError, "nicht verfügbar"):
+                self.articles.attach_article_fields(rows, [])
 
     def test_create_edit_and_activation_do_not_change_inventory(self):
         response = self.client.post("/admin/local-catalog/new", data=self.values())

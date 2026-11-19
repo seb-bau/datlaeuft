@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from .document_previews import address_lines
 from .invoice_correspondence import letter_date, prepend_letter_pdf, render_letter_pdf
 from .invoice_document import _format_money
-from .invoice_payments import normalize_payment_information, payment_options_from_wowiport
+from .invoice_payments import masked_payment_iban, payment_options_from_wowiport
 from .tenant_billing import choose_contract_recipient, contract_recipients
 
 
@@ -41,17 +41,19 @@ def tenant_letter_payment(invoice, company, service) -> dict:
         ]
         if len(eligible) != 1:
             raise ValueError("Bitte prüfen Sie das zum Buchwerk passende SEPA-Mandat in Wowiport.")
-        return {"method": "sepa_debit"}
+        mandate = eligible[0]
+        return {
+            "method": "sepa_debit",
+            "source": mandate["source"],
+            "mandate_reference": mandate["mandate_reference"],
+            "creditor_id": mandate["creditor_id"],
+            "iban_display": masked_payment_iban(mandate["iban"]),
+        }
 
     transfer = next((option for option in available["options"] if option["method"] == "bank_transfer"), {})
-    iban = company.seller_iban or transfer.get("iban")
-    if not iban:
-        raise ValueError("Für die Überweisung fehlt eine Bankverbindung des Mietvertragsbuchwerks.")
-    value = normalize_payment_information({
-        "method": "bank_transfer", "iban": iban,
-        "bic": company.seller_bic if company.seller_iban else transfer.get("bic"),
-    }, complete=True)
-    return {"method": "bank_transfer", "iban": value["iban"], "bic": value["bic"]}
+    if not transfer.get("iban"):
+        raise ValueError("Für diesen Mietvertrag ist in Wowiport keine IBAN für Überweisungen hinterlegt.")
+    return {field: transfer[field] for field in ("method", "source", "iban", "bic")}
 
 
 def tenant_letter_purpose(invoice) -> str:
@@ -78,10 +80,15 @@ def tenant_letter_context(invoice, company, letter) -> dict:
     due = date.fromisoformat(letter["due_date"]).strftime("%d.%m.%Y")
     agreement = invoice.tenant_billing_reference["agreement_number"]
     payment = letter["payment"]
+    if payment.get("source") != "wowiport":
+        raise ValueError("Bitte speichern Sie das Mieteranschreiben erneut, um die Zahlungsdaten des Mietvertrags zu übernehmen.")
     if payment["method"] == "sepa_debit":
         terms = (
             f"Den Betrag von {amount} {currency} ziehen wir aufgrund Ihres SEPA-Mandats zum {due} ein. "
-            "Fällt der Termin auf ein Wochenende oder einen Feiertag, verschiebt er sich auf den nächsten Werktag."
+            "Fällt der Termin auf ein Wochenende oder einen Feiertag, verschiebt er sich auf den nächsten Werktag.\n"
+            f"Mandatsreferenz: {payment['mandate_reference']}\n"
+            f"Gläubiger-ID: {payment['creditor_id']}\n"
+            f"Einzugskonto (IBAN): {payment['iban_display']}"
         )
     else:
         terms = (

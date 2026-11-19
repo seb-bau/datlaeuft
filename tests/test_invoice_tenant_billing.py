@@ -4,6 +4,7 @@ from email.parser import BytesParser
 from hashlib import sha256
 from io import BytesIO
 import importlib
+import json
 import sys
 import unittest
 from unittest.mock import patch
@@ -14,7 +15,7 @@ from werkzeug.datastructures import FileStorage
 
 import test_invoice_delivery as fixtures
 import test_invoice_payments as payment_fixtures
-from test_invoice_payments import DEBIT_IBAN
+from test_invoice_payments import DEBIT_IBAN, TRANSFER_IBAN
 
 
 class InvoiceTenantBillingTests(unittest.TestCase):
@@ -154,15 +155,154 @@ class InvoiceTenantBillingTests(unittest.TestCase):
             self.invoice_service.finalize_invoice(invoice, self.creator)
         self.assertIsNone(invoice.invoice_number)
 
-    def test_letter_without_mandate_uses_the_contract_company_bank_account(self):
+    def test_remove_positions_across_invoice_flows_and_sources_including_the_last_one(self):
+        self.start_patch(patch.object(self.admin, "work_report_counts", return_value={}))
+        free = self.invoice_service.create_free_invoice_draft(self.issuer, self.creator)
+        routed = self.invoice_service.create_agreement_invoice_draft(self.agreement, self.party, self.creator)
+        commission = self.post_order()
+        commission.local_status = self.models.CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+        self.db.session.commit()
+        from_commission = self.invoice_service.create_commission_invoice_draft([commission], self.creator)
+        offer = self.draft("offer")
+        offer.commission = commission
+        offer.license_agreement_erp_id = self.agreement.erp_id
+        offer.recipient_name = self.party["name"]
+        from_offer = self.invoice_service.create_offer_invoice_draft(offer)
+        self.company.tenant_billing_issuer = None
+        self.company.document_creation_disabled = False
+        self.db.session.flush()
+        direct = self.invoice_service.create_agreement_invoice_draft(self.agreement, self.party, self.creator)
+
+        material = self.models.InventoryItem(item_number="L-01", name="Lagerartikel", unit="Stk")
+        article = self.models.LocalCatalogItem(item_number="K-01", name="Katalogartikel")
+        self.db.session.add_all([material, article])
+        self.db.session.flush()
+        rows = [
+            {"source_type": source, "description": f"Testposition {source}", "quantity": 1, "unit_price_net": 10, "vat_rate": 19, **reference}
+            for source, reference in (
+                ("time", {"source_data": {"source_key": "zeit-1"}}),
+                ("material", {"inventory_item_id": material.id}),
+                ("catalog", {"task_template_id": self.task.id}),
+                ("local_catalog", {"local_catalog_item_id": article.id}),
+                ("free", {}),
+            )
+        ]
+        fields = (
+            "source_type", "description", "quantity", "unit", "unit_price_net", "vat_rate",
+            "task_template_id", "inventory_item_id", "local_catalog_item_id", "article_number",
+        )
+        for name, invoice in (("free", free), ("direct", direct), ("routed", routed), ("commission", from_commission), ("offer", from_offer)):
+            with self.subTest(flow=name):
+                self.invoice_service.replace_invoice_positions(invoice, rows)
+                self.db.session.commit()
+                if name == "offer":
+                    self.assertEqual(self.client.post(f"/admin/local-catalog/{article.id}/delete").status_code, 302)
+                    self.db.session.expire_all()
+                    self.assertIsNone(invoice.positions[3].local_catalog_item_id)
+                url = f"/admin/invoices/{invoice.id}"
+                page = self.client.get(url)
+                self.assertEqual(page.status_code, 200)
+                self.assertEqual(page.data.count(b'title="Position entfernen"'), len(rows) + 1)
+                commission_ids = [link.commission_id for link in invoice.commission_links]
+                values = self.draft_form()
+                values.update(
+                    recipient_license_agreement_erp_id=str(invoice.recipient_license_agreement_erp_id or ""),
+                    saved_contract_erp_id=str((invoice.tenant_billing_reference or {}).get("agreement_erp_id") or invoice.recipient_license_agreement_erp_id or ""),
+                )
+                while invoice.positions:
+                    remaining = invoice.positions[1:]
+                    sources = [position.source_type for position in remaining]
+                    for field in fields:
+                        values[f"position_{field}"] = [str(getattr(position, field) or "") for position in remaining]
+                    values["position_source_data"] = [json.dumps(position.source_data or {}) for position in remaining]
+                    response = self.client.post(url, data=values)
+                    self.assertEqual(response.status_code, 302, response.data[:1000])
+                    self.db.session.refresh(invoice)
+                    self.assertEqual([position.source_type for position in invoice.positions], sources)
+                self.assertEqual(invoice.total_gross, 0)
+                self.assertEqual([link.commission_id for link in invoice.commission_links], commission_ids)
+
+        self.invoice_service.replace_invoice_positions(routed, rows[:1])
+        routed.status = "finalized"
+        self.db.session.commit()
+        url = f"/admin/invoices/{routed.id}"
+        self.assertNotIn(b"Position entfernen", self.client.get(url).data)
+        self.client.post(url, data={})
+        self.db.session.refresh(routed)
+        self.assertEqual(len(routed.positions), 1)
+
+    def test_positions_can_be_removed_when_an_existing_contract_needs_correction(self):
+        self.start_patch(patch.object(self.admin, "work_report_counts", return_value={}))
+        invoice = self.draft("invoice")
+        invoice.recipient_license_agreement_erp_id = self.agreement.erp_id
+        invoice.recipient_license_agreement_idnum = self.agreement.id_num
+        self.db.session.commit()
+        url = f"/admin/invoices/{invoice.id}"
+        form = {"recipient_license_agreement_erp_id": self.agreement.erp_id, "saved_contract_erp_id": self.agreement.erp_id}
+        self.assertEqual(self.client.post(url, data=form).status_code, 302)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.positions, [])
+        self.assertEqual(invoice.recipient_license_agreement_erp_id, self.agreement.erp_id)
+        self.client.post(url + "/finalize", data={**form, "save_draft": "1", "position_description": "Test"})
+        with self.client.session_transaction() as session:
+            self.assertIn("Rechnung mit Mietvertrag", session.get("_flashes", [])[-1][1])
+        self.assertEqual(invoice.status, "draft")
+
+    def test_letter_without_mandate_uses_the_contract_iban(self):
         invoice = self.create_invoice()
+        self.company.seller_iban = DEBIT_IBAN
         agreement, mode = self.api_rows("transfer")
         self.remote.read_all_rows.side_effect = [[agreement], [mode]]
         letters = importlib.import_module(self.package_name + ".tenant_charge_letter")
         payment = letters.tenant_letter_payment(invoice, self.company, self.remote)
         self.assertEqual(payment["method"], "bank_transfer")
-        self.assertEqual(payment["iban"], self.company.seller_iban)
-        self.assertNotEqual(payment["iban"], self.issuer.seller_iban)
+        self.assertEqual(payment["iban"], TRANSFER_IBAN)
+        self.assertNotEqual(payment["iban"], self.company.seller_iban)
+        agreement["Banking"]["VirtualIBAN"] = None
+        self.remote.read_all_rows.side_effect = [[agreement], [mode]]
+        with self.assertRaisesRegex(ValueError, "keine IBAN für Überweisungen"):
+            letters.tenant_letter_payment(invoice, self.company, self.remote)
+
+    def test_letter_pdf_uses_current_payment_data_and_rejects_an_outdated_snapshot(self):
+        self.start_patch(patch.object(self.admin, "WorkReportDocumentError", RuntimeError))
+        invoice = self.create_invoice()
+        form = self.draft_form()
+        form.update(save_draft="1", service_date_from=form["invoice_date"])
+        self.client.post(f"/admin/invoices/{invoice.id}/finalize", data=form)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.status, "finalized")
+
+        agreement, mode = self.api_rows()
+        mode["SepaMandate"]["CreditorIdentifier"] = self.company.seller_creditor_id
+        self.company.seller_iban = DEBIT_IBAN
+        self.db.session.commit()
+        self.remote.read_all_rows.side_effect = lambda endpoint, *_args, **_kwargs: [agreement] if endpoint.endswith("LicenseAgreements") else [mode]
+
+        url = f"/admin/invoices/{invoice.id}/tenant-charge"
+        due_date = date.today() + timedelta(days=10)
+        data = {"person_id": self.party["person_id"], "purpose": "Reparatur", "due_date": due_date.isoformat()}
+        response = self.client.post(url, data={**data, "revision": 0, "payment_method": "sepa_debit"})
+        self.assertEqual(response.status_code, 302)
+        pdf = self.client.get(url + "/document")
+        self.assertEqual(pdf.status_code, 200)
+        letter = PdfReader(BytesIO(pdf.data)).pages[0].extract_text()
+        for value in ("Mandatsreferenz: MANDAT-1", self.company.seller_creditor_id, due_date.strftime("%d.%m.%Y"), "29,75", "DE12 **** **** **** 9890"):
+            self.assertIn(value, letter)
+        self.assertNotIn(DEBIT_IBAN, letter)
+        self.assertNotIn(TRANSFER_IBAN, letter)
+
+        mode["ActiveTo"] = "2020-12-31"
+        self.assertEqual(self.client.get(url + "/document").location, url)
+        response = self.client.post(url, data={**data, "revision": 1, "payment_method": "bank_transfer"})
+        self.assertEqual(response.status_code, 302)
+        pdf = self.client.get(url + "/document")
+        self.assertEqual(pdf.status_code, 200)
+        letter = PdfReader(BytesIO(pdf.data)).pages[0].extract_text()
+        self.assertIn("Bitte überweisen", letter)
+        self.assertIn(TRANSFER_IBAN, letter)
+        self.assertIn("COBADEFFXXX", letter)
+        self.assertNotIn(DEBIT_IBAN, letter)
+        self.assertNotIn("Mandatsreferenz", letter)
 
     def test_final_pdf_and_xml_keep_the_buyer_separate_and_the_letter_announces_sepa(self):
         invoice = self.create_invoice()

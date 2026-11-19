@@ -12,9 +12,11 @@
 <div class="card shadow-sm">
   <div class="card-body">
     <p class="mb-3"><strong>Absender</strong> {{ company.seller_name or company.name }}</p>
-    {% if item.tenant_charge_letter %}
+    {% if item.tenant_charge_letter and item.tenant_charge_letter.payment == payment %}
     <a class="btn btn-outline-secondary mb-3" target="_blank" rel="noopener"
        href="{{ url_for('admin.invoice_tenant_charge_document', invoice_id=item.id) }}">Mieterunterlagen als PDF öffnen</a>
+    {% elif item.tenant_charge_letter and payment %}
+    <p class="alert alert-warning">Bitte prüfen und speichern Sie das Anschreiben mit den aktuellen Zahlungsdaten erneut.</p>
     {% endif %}
 
     {% if recipients and payment %}
@@ -59,9 +61,9 @@
       <div class="col-12">
         <div class="form-text">
           {% if payment.method == 'sepa_debit' %}
-          Im Anschreiben wird der Einzug per SEPA-Mandat des Mietvertrags angekündigt.
+          SEPA-Lastschrift · Mandatsreferenz {{ payment.mandate_reference }} · Gläubiger-ID {{ payment.creditor_id }} · IBAN {{ payment.iban_display }}
           {% else %}
-          Im Anschreiben wird um Überweisung an {{ company.seller_name or company.name }} gebeten.
+          Überweisung an {{ company.seller_name or company.name }} · Vertrags-IBAN {{ payment.iban }}{% if payment.bic %} · BIC {{ payment.bic }}{% endif %}
           {% endif %}
         </div>
       </div>

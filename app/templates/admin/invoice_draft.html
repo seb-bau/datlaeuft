@@ -722,11 +722,9 @@
       </div>
 
       <div class="card-body">
-        <div class="alert alert-secondary">
-          Zeit- und Materialvorschläge sind normale
-          Entwurfspositionen. Bezeichnung, Menge, Preis
-          und Umsatzsteuer können geändert werden.
-        </div>
+        {% if editable %}
+        <p class="text-muted small">Über × entfernen Sie Entwurfspositionen, auch übernommene Zeit- und Materialvorschläge.</p>
+        {% endif %}
 
         <div class="table-responsive">
           <table class="table table-sm align-middle">
@@ -862,7 +860,8 @@
                     <button
                       class="btn btn-outline-danger remove-position"
                       type="button"
-                      title="Entfernen"
+                      title="Position entfernen"
+                      aria-label="Position entfernen"
                     >
                       ×
                     </button>
@@ -1083,7 +1082,7 @@
         <div class="btn-group btn-group-sm">
           <button class="btn btn-outline-secondary move-position-up" type="button">↑</button>
           <button class="btn btn-outline-secondary move-position-down" type="button">↓</button>
-          <button class="btn btn-outline-danger remove-position" type="button">×</button>
+          <button class="btn btn-outline-danger remove-position" type="button" title="Position entfernen" aria-label="Position entfernen">×</button>
         </div>
       </td>
     `;
