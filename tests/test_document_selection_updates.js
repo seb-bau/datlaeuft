@@ -35,7 +35,7 @@ test("invoice and offer tenant results include contract, apartment address and l
     const row = {object_type: "license_agreement", object_id: 4, tenant_name: "Testperson", license_agreement: {erp_id: 44, id_num: "NV-123"},
       economic_unit: {id_num: "WE-1"}, building: {address: "Gebäudeadresse 1"}, use_unit: {address: "Wohnungsstraße 2", floor: "2. OG", position: "links"}};
     vm.runInNewContext(source, {
-      document: {addEventListener: (type, handler) => handler(), querySelectorAll: () => [search], getElementById: element, createElement: () => new Element()},
+      document: {addEventListener: (type, handler) => handler(), querySelectorAll: () => [search], getElementById: id => id === "pendingInvoiceAgreement" ? null : element(id), createElement: () => new Element()},
       window: {location: {origin: "https://example.invalid"}}, URL, AbortController, Option, Event, CustomEvent: Event,
       setTimeout: () => 1, clearTimeout() {},
       fetch: async url => response({items: new URL(url).pathname === "/search" ? [row] : [{name: "Testperson"}]})

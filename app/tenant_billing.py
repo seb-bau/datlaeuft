@@ -36,9 +36,11 @@ def agreement_uses_tenant_billing(agreement_id: int) -> bool:
     ).first() is not None
 
 
-def tenant_billing_issuer(company: WowiCompanyCode) -> WowiCompanyCode:
+def tenant_billing_issuer(company: WowiCompanyCode, *, existing_issuer_id: int | None = None) -> WowiCompanyCode:
     issuer = company.tenant_billing_issuer if company.tenant_billing_issuer_id is not None else company
-    if issuer is None or not issuer.active or issuer.document_creation_disabled:
+    if issuer is None or not issuer.active or (
+        issuer.document_creation_disabled and (existing_issuer_id is None or issuer.id != existing_issuer_id)
+    ):
         raise ValueError("Für das ausstellende Buchwerk können keine neuen Rechnungen erstellt werden.")
     return issuer
 

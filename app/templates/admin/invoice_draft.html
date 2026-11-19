@@ -307,6 +307,11 @@
     name="recipient_license_agreement_erp_id"
     value="{{ item.recipient_license_agreement_erp_id or '' }}"
   >
+  <input type="hidden" name="saved_contract_erp_id" value="{{ item.billing_contract_erp_id or '' }}">
+  {% if item.can_assign_agreement %}
+  <input type="hidden" id="pendingInvoiceAgreement" name="pending_agreement_erp_id">
+  <input type="hidden" id="pendingInvoiceAgreementPerson" name="pending_agreement_person_id">
+  {% endif %}
 
   <fieldset {% if not editable %}disabled{% endif %}>
     <div class="row g-4">
@@ -327,7 +332,7 @@
             {% endif %}
             {% if editable and not item.tenant_billing_reference %}
             <div class="mb-4">
-              <label class="form-label">
+              <label class="form-label" for="tenantSearch">
                 Mieter oder Vertrag suchen
               </label>
 
@@ -336,7 +341,7 @@
                 class="form-control"
                 id="tenantSearch"
                 type="search"
-                placeholder="Name oder Vertragsnummer"
+                placeholder="Name, Objektanschrift oder Vertragsnummer"
                 data-recipient-search
                 data-document-type="invoice"
                 data-search-url="{{ url_for('admin.invoice_recipient_search', invoice_id=item.id) }}"
@@ -363,11 +368,18 @@
                 {% endif %}
               </div>
 
+              <p class="small mt-2 mb-0" id="invoiceAgreementSaveNotice" role="status" hidden>
+                Speichern Sie den Entwurf, um den ausgewählten Mietvertrag zu übernehmen.
+              </p>
+              {% if item.can_assign_agreement %}
+              <p class="small text-muted mt-2 mb-0" id="invoiceAgreementAssignment" hidden></p>
+              {% endif %}
+
               <div
                 class="mt-3 d-none"
                 id="recipientCandidateContainer"
               >
-                <label class="form-label">
+                <label class="form-label" for="recipientCandidateSelect">
                   Vertragspartner
                 </label>
                 <select
@@ -383,7 +395,7 @@
             </div>
             {% endif %}
 
-            <fieldset class="row g-3" {% if item.tenant_billing_reference %}disabled{% endif %}>
+            <fieldset class="row g-3" id="invoiceRecipientFields" {% if item.tenant_billing_reference %}disabled{% endif %}>
               <div class="col-md-5">
                 <label class="form-label">
                   Empfängerart
@@ -986,6 +998,7 @@
 
         <button
           class="btn btn-danger"
+          id="invoiceFinalize"
           type="submit"
           form="invoice-draft-form"
           formaction="{{ url_for(

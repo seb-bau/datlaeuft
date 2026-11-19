@@ -11,14 +11,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const message = document.getElementById("recipientMessage");
     const candidateContainer = document.getElementById("recipientCandidateContainer");
     const candidateSelect = document.getElementById("recipientCandidateSelect");
-    let agreementId = isOffer
+    const pendingAgreement = document.getElementById("pendingInvoiceAgreement");
+    const pendingPerson = document.getElementById("pendingInvoiceAgreementPerson");
+    const saveNotice = document.getElementById("invoiceAgreementSaveNotice");
+    const assignmentSummary = document.getElementById("invoiceAgreementAssignment");
+    const recipientFields = document.getElementById("invoiceRecipientFields");
+    const paymentSection = document.getElementById("invoicePaymentInformation");
+    const finalize = document.getElementById("invoiceFinalize");
+    const savedAgreementId = isOffer
       ? search.dataset.agreementId || ""
       : agreementInput.value;
+    const savedAgreementLabel = selected.textContent;
+    let agreementId = savedAgreementId;
     let searchTimer;
     let searchController;
     let recipientController;
     let recipientLoading = false;
     let recipientCandidates = [];
+    let assignment = null;
 
     function markChanged() {
       form.dispatchEvent(new Event("change", {bubbles: true}));
@@ -37,6 +47,33 @@ document.addEventListener("DOMContentLoaded", () => {
       results.replaceChildren(entry);
     }
 
+    function resetCandidates() {
+      candidateContainer.classList.add("d-none");
+      candidateSelect.required = false;
+      candidateSelect.replaceChildren();
+      recipientCandidates = [];
+    }
+
+    function setPendingAgreement(value) {
+      const pending = Boolean(value);
+      pendingAgreement.value = value;
+      pendingPerson.value = "";
+      assignment = null;
+      assignmentSummary.hidden = true;
+      recipientFields.hidden = pending;
+      recipientFields.disabled = pending;
+      paymentSection.hidden = pending;
+      finalize.disabled = pending;
+    }
+
+    function showAssignment(candidate) {
+      if (!assignment) return;
+      const recipient = assignment.recipient_name || candidate?.name;
+      assignmentSummary.textContent = `Aussteller ${assignment.issuer_name}` +
+        (recipient ? ` · Rechnungsempfänger ${recipient}` : "");
+      assignmentSummary.hidden = false;
+    }
+
     async function readJSON(url, signal, errorMessage) {
       const response = await fetch(url, {
         signal,
@@ -49,10 +86,16 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!response.ok || response.redirected || !Array.isArray(data.items)) {
         throw new Error(data.message || errorMessage);
       }
-      return data.items;
+      return data;
     }
 
     function applyRecipient(candidate) {
+      if (pendingAgreement) {
+        pendingPerson.value = String(candidate.person_id || "");
+        showAssignment(candidate);
+        markChanged();
+        return;
+      }
       personInput.value = candidate.person_id || "";
       const fields = {
         recipientType: candidate.recipient_type || "private",
@@ -77,15 +120,13 @@ document.addEventListener("DOMContentLoaded", () => {
       recipientController = activeController;
       recipientLoading = true;
       const selectedAgreementId = agreementId;
-      candidateContainer.classList.add("d-none");
-      candidateSelect.replaceChildren();
-      recipientCandidates = [];
+      resetCandidates();
       showMessage("Anschrift wird geladen …");
 
       try {
         const url = new URL(search.dataset.recipientUrl, window.location.origin);
         url.searchParams.set("license_agreement_id", selectedAgreementId);
-        const items = await readJSON(
+        const {items, assignment: selection} = await readJSON(
           url,
           activeController.signal,
           "Die Anschrift konnte nicht aus Wowiport geladen werden."
@@ -93,6 +134,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (activeController.signal.aborted || agreementId !== selectedAgreementId) {
           return;
         }
+        if (pendingAgreement && !selection) {
+          throw new Error("Der Rechnungsentwurf wurde inzwischen geändert. Bitte laden Sie die Rechnung neu.");
+        }
+        assignment = selection;
         showMessage("");
         recipientCandidates = items;
         if (items.length === 1) {
@@ -110,7 +155,9 @@ document.addEventListener("DOMContentLoaded", () => {
             String(index)
           ));
         });
+        candidateSelect.required = Boolean(pendingAgreement);
         candidateContainer.classList.remove("d-none");
+        showAssignment();
       } catch (error) {
         if (!activeController.signal.aborted && agreementId === selectedAgreementId) {
           showMessage(error.message, true);
@@ -127,27 +174,27 @@ document.addEventListener("DOMContentLoaded", () => {
       recipientLoading = false;
       const agreement = result.license_agreement || {};
       agreementId = String(agreement.erp_id || "");
-      personInput.value = "";
+      if (!pendingAgreement) personInput.value = "";
       if (isOffer) {
         document.getElementById("objectType").value = result.object_type || "";
         document.getElementById("objectId").value = result.object_id || "";
         selected.textContent = label;
       } else {
-        agreementInput.value = agreementId;
+        if (pendingAgreement) setPendingAgreement(agreementId);
+        else agreementInput.value = agreementId;
+        saveNotice.hidden = !agreementId || agreementId === savedAgreementId;
         const tenantName = result.tenant_name || result.label || "Mieter";
         selected.textContent = agreement.id_num
           ? "Vertrag " + agreement.id_num + " · " + tenantName
           : tenantName;
       }
       results.replaceChildren();
-      candidateContainer.classList.add("d-none");
-      candidateSelect.replaceChildren();
-      recipientCandidates = [];
+      resetCandidates();
       showMessage("");
       markChanged();
-      if (!isOffer) form.dispatchEvent(new CustomEvent("invoice-agreement-selected", {detail: {agreementId}, bubbles: true}));
+      if (!isOffer && !pendingAgreement) form.dispatchEvent(new CustomEvent("invoice-agreement-selected", {detail: {agreementId}, bubbles: true}));
       if (agreementId) {
-        applyRecipient({});
+        if (!pendingAgreement) applyRecipient({});
         loadRecipient();
       }
     }
@@ -164,7 +211,7 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const url = new URL(search.dataset.searchUrl, window.location.origin);
         url.searchParams.set("q", query);
-        const items = await readJSON(
+        const {items} = await readJSON(
           url,
           activeController.signal,
           "Die Suche ist fehlgeschlagen. Bitte erneut versuchen."
@@ -181,6 +228,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const label = [
             result.tenant_name || result.label || "Mieter",
             agreement.id_num ? "Vertrag " + agreement.id_num : "",
+            pendingAgreement ? result.company_code?.code : "",
             economicUnit.id_num ? "WE " + economicUnit.id_num : "",
             address,
             location
@@ -208,6 +256,17 @@ document.addEventListener("DOMContentLoaded", () => {
       clearTimeout(searchTimer);
       searchController?.abort();
       results.replaceChildren();
+      if (pendingAgreement?.value && !search.value.trim()) {
+        recipientController?.abort();
+        recipientLoading = false;
+        agreementId = savedAgreementId;
+        setPendingAgreement("");
+        saveNotice.hidden = true;
+        selected.textContent = savedAgreementLabel;
+        resetCandidates();
+        showMessage("");
+        markChanged();
+      }
       if (search.value.trim().length >= 2) {
         searchTimer = setTimeout(searchRecipients, 300);
       }
@@ -220,15 +279,21 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
     candidateSelect.addEventListener("change", () => {
-      if (candidateSelect.value === "") return;
+      if (candidateSelect.value === "") {
+        if (pendingAgreement) applyRecipient({});
+        return;
+      }
       const candidate = recipientCandidates[Number(candidateSelect.value)];
       if (candidate) applyRecipient(candidate);
     });
     form.addEventListener("submit", event => {
-      if (!recipientLoading) return;
-      event.preventDefault();
-      showMessage("Die Anschrift wird noch geladen. Bitte kurz warten.");
-      markChanged();
+      if (recipientLoading) {
+        event.preventDefault();
+        showMessage("Die Anschrift wird noch geladen. Bitte kurz warten.");
+      } else if (pendingAgreement?.value && !pendingPerson.value) {
+        event.preventDefault();
+        showMessage("Bitte wählen Sie einen Vertragspartner aus.", true);
+      }
     });
     document.getElementById("clearObjectButton")?.addEventListener("click", () => {
       clearTimeout(searchTimer);
@@ -242,9 +307,7 @@ document.addEventListener("DOMContentLoaded", () => {
       search.value = "";
       selected.textContent = "Kein Objekt ausgewählt";
       results.replaceChildren();
-      candidateContainer.classList.add("d-none");
-      candidateSelect.replaceChildren();
-      recipientCandidates = [];
+      resetCandidates();
       showMessage("");
       markChanged();
     });

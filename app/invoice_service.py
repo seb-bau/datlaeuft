@@ -152,16 +152,55 @@ def create_free_invoice_draft(
 def create_agreement_invoice_draft(
     agreement: WowiLicenseAgreement, recipient: dict, created_by: User,
 ) -> Invoice:
-    company = agreement_company_code(agreement)
-    issuer = tenant_billing_issuer(company)
+    company, issuer = invoice_agreement_companies(agreement)
     invoice = create_free_invoice_draft(issuer, created_by)
+    _apply_agreement_invoice_recipient(invoice, agreement, company, recipient)
+    return invoice
 
+
+def invoice_agreement_companies(
+    agreement: WowiLicenseAgreement, invoice: Invoice | None = None,
+) -> tuple[WowiCompanyCode, WowiCompanyCode]:
+    company = agreement_company_code(agreement)
+    existing_issuer_id = invoice.company_code_id if invoice is not None else None
+    issuer = tenant_billing_issuer(company, existing_issuer_id=existing_issuer_id)
+    if invoice is not None:
+        for link in invoice.commission_links:
+            commission = link.commission
+            if (
+                commission.company_code_erp_id != company.erp_id
+                or commission.license_agreement_id not in (None, agreement.erp_id)
+                or commission.license_agreement_idnum not in (None, "", agreement.id_num)
+            ):
+                raise ValueError("Der Mietvertrag passt nicht zum verknüpften Auftrag.")
+
+        offer = Offer.query.filter_by(invoice_id=invoice.id).one_or_none()
+        if offer is not None and (
+            offer.company_code_id != company.id
+            or offer.license_agreement_erp_id not in (None, agreement.erp_id)
+            or offer.license_agreement_idnum not in (None, "", agreement.id_num)
+        ):
+            raise ValueError("Der Mietvertrag passt nicht zum verknüpften Angebot.")
+    return company, issuer
+
+
+def assign_invoice_agreement(invoice: Invoice, agreement: WowiLicenseAgreement, recipient: dict) -> None:
+    if not invoice.can_assign_agreement:
+        raise ValueError("Ein Mietvertrag kann nur einem Rechnungsentwurf ohne Vertrag zugeordnet werden.")
+    company, issuer = invoice_agreement_companies(agreement, invoice)
+    _apply_agreement_invoice_recipient(invoice, agreement, company, recipient)
+    _set_invoice_issuer(invoice, issuer)
+    invoice.payment_information = None
+    invoice.payment_reference = None
+
+
+def _apply_agreement_invoice_recipient(
+    invoice: Invoice, agreement: WowiLicenseAgreement, company: WowiCompanyCode, recipient: dict,
+) -> None:
     if company.tenant_billing_issuer_id is not None:
         apply_tenant_billing(invoice, agreement, company, recipient)
     else:
         apply_contract_recipient(invoice, agreement, recipient)
-
-    return invoice
 
 
 def create_offer_invoice_draft(
@@ -438,13 +477,6 @@ def create_invoice_draft(
         document_type=(
             InvoiceDocumentType.INVOICE.value
         ),
-        company_code=company_code,
-        company_code_erp_id=(
-            company_code.erp_id
-        ),
-        company_code_code=(
-            company_code.code
-        ),
         recipient_person_erp_id=None,
         recipient_license_agreement_erp_id=(
             first_commission
@@ -464,29 +496,6 @@ def create_invoice_draft(
             else None
         ),
         recipient_country_code="DE",
-        seller_name=company_code.seller_name,
-        seller_street=company_code.seller_street,
-        seller_postal_code=(
-            company_code.seller_postal_code
-        ),
-        seller_town=company_code.seller_town,
-        seller_country_code=(
-            company_code.seller_country_code
-        ),
-        seller_vat_id=(
-            company_code.seller_vat_id
-        ),
-        seller_tax_number=(
-            company_code.seller_tax_number
-        ),
-        seller_email=(
-            company_code.seller_email
-        ),
-        seller_phone=(
-            company_code.seller_phone
-        ),
-        seller_iban=company_code.seller_iban,
-        seller_bic=company_code.seller_bic,
         currency_code="EUR",
         service_date_from=(
             min(service_dates)
@@ -508,6 +517,7 @@ def create_invoice_draft(
         due_date=(invoice_date + timedelta(days=payment_terms_days)),
     )
 
+    _set_invoice_issuer(invoice, company_code)
     db.session.add(invoice)
 
     for commission in commissions:
@@ -522,6 +532,18 @@ def create_invoice_draft(
     )
 
     return invoice
+
+
+def _set_invoice_issuer(invoice: Invoice, company_code: WowiCompanyCode) -> None:
+    invoice.company_code = company_code
+    invoice.company_code_id = company_code.id
+    invoice.company_code_erp_id = company_code.erp_id
+    invoice.company_code_code = company_code.code
+    for field in (
+        "seller_name", "seller_street", "seller_postal_code", "seller_town", "seller_country_code",
+        "seller_vat_id", "seller_tax_number", "seller_email", "seller_phone", "seller_iban", "seller_bic",
+    ):
+        setattr(invoice, field, getattr(company_code, field))
 
 
 def invoice_service_dates(

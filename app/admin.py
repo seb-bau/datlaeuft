@@ -184,10 +184,12 @@ from .wowiport import (
 )
 from .invoice_service import (
     add_invoice_suggestions,
+    assign_invoice_agreement,
     available_invoice_commissions,
     create_agreement_invoice_draft,
     create_commission_invoice_draft,
     create_free_invoice_draft,
+    invoice_agreement_companies,
     replace_invoice_positions,
     InvoiceFinalizationError,
     finalize_invoice,
@@ -270,7 +272,6 @@ from .document_articles import attach_article_fields
 from .document_previews import render_document_preview
 from .invoice_payments import invoice_payment_information, payment_options_from_wowiport, save_invoice_payment_form
 from .tenant_billing import (
-    agreement_company_code,
     choose_contract_recipient,
     contract_recipients,
     tenant_billing_agreement,
@@ -2633,6 +2634,8 @@ def invoice_finalize(
     document_result = None
 
     try:
+        if request.form.get("pending_agreement_erp_id"):
+            raise ValueError("Bitte speichern Sie den Entwurf, um den ausgewählten Mietvertrag zu übernehmen.")
         if request.form.get("save_draft") == "1":
             if invoice.status != InvoiceStatus.DRAFT.value:
                 raise InvoiceFinalizationError("Nur Entwürfe können festgeschrieben werden.")
@@ -7229,8 +7232,8 @@ def invoice_create() -> Any:
                 agreement_id = required_form_int(request.form.get("agreement_id"), "Mietvertrag")
                 person_id = optional_form_int(request.form.get("person_id"), "Vertragspartner")
                 agreement = tenant_billing_agreement(agreement_id)
-                tenant_billing_issuer(agreement_company_code(agreement))
-                recipient = choose_contract_recipient(invoice_creation_recipients(agreement_id), person_id)
+                invoice_agreement_companies(agreement)
+                recipient = choose_contract_recipient(invoice_contract_recipients(agreement_id), person_id)
                 invoice = create_agreement_invoice_draft(agreement, recipient, current_user)
 
             elif mode == "selected":
@@ -7311,41 +7314,44 @@ def invoice_create() -> Any:
     return render_invoice_create(company_codes, commissions)
 
 
-def invoice_creation_recipients(agreement_id: int) -> list[dict]:
+def invoice_contract_recipients(agreement_id: int) -> list[dict]:
     try:
         return contract_recipients(WowiportService(), agreement_id)
     except Exception as exc:
-        current_app.logger.exception("invoice_creation_recipients_failed agreement_id=%s", agreement_id)
+        current_app.logger.exception("invoice_contract_recipients_failed agreement_id=%s", agreement_id)
         raise ValueError("Die Empfängeranschrift konnte nicht aus Wowiport geladen werden.") from exc
+
+
+def invoice_contract_results(search_text: str, *, existing_issuer_id: int | None = None) -> list[dict]:
+    if len(search_text) < 2:
+        return []
+    companies = {
+        company.erp_id: company for company in WowiCompanyCode.query.filter_by(active=True).all()
+    }
+    results = []
+    for match in search_commission_objects(search_text, search_context="all", limit=50):
+        if match["object_type"] != "license_agreement" or match["is_vacancy"]:
+            continue
+        company = companies.get(match["company_code"]["erp_id"])
+        if company is None:
+            continue
+        try:
+            tenant_billing_issuer(company, existing_issuer_id=existing_issuer_id)
+        except ValueError:
+            continue
+        results.append(match)
+    return results
 
 
 def render_invoice_create(company_codes, commissions):
     search_text = request.args.get("q", "").strip()[:160]
-    results = []
-    if len(search_text) >= 2:
-        companies = {
-            company.erp_id: company for company in WowiCompanyCode.query.filter_by(active=True).all()
-        }
-        for match in search_commission_objects(search_text, search_context="all", limit=50):
-            if match["object_type"] != "license_agreement" or match["is_vacancy"]:
-                continue
-            company = companies.get(match["company_code"]["erp_id"])
-            if company is None:
-                continue
-            try:
-                tenant_billing_issuer(company)
-            except ValueError:
-                continue
-            results.append(match)
-
     selection = None
     try:
         agreement_id = optional_form_int(request.args.get("agreement_id"), "Mietvertrag")
         if agreement_id is not None:
             agreement = tenant_billing_agreement(agreement_id)
-            company = agreement_company_code(agreement)
-            issuer = tenant_billing_issuer(company)
-            recipients = invoice_creation_recipients(agreement_id)
+            company, issuer = invoice_agreement_companies(agreement)
+            recipients = invoice_contract_recipients(agreement_id)
             if not recipients:
                 raise ValueError("Für den Mietvertrag wurde keine Empfängeranschrift gefunden.")
             selection = {
@@ -7357,7 +7363,7 @@ def render_invoice_create(company_codes, commissions):
 
     return render_template(
         "admin/invoice_create.html", company_codes=company_codes, commissions=commissions,
-        search_text=search_text, contract_results=results, contract_selection=selection,
+        search_text=search_text, contract_results=invoice_contract_results(search_text), contract_selection=selection,
     )
 
 
@@ -7369,16 +7375,14 @@ def render_invoice_create(company_codes, commissions):
 def invoice_edit(
     invoice_id: int,
 ) -> Any:
-    item = db.get_or_404(
-        Invoice,
-        invoice_id,
-    )
+    saving = request.method == "POST"
+    item = db.get_or_404(Invoice, invoice_id, populate_existing=saving, with_for_update=saving)
     editable = (
         item.status
         == InvoiceStatus.DRAFT.value
     )
 
-    if request.method == "POST":
+    if saving:
         if not editable:
             flash(
                 "Eine festgeschriebene Rechnung "
@@ -7394,6 +7398,7 @@ def invoice_edit(
             )
 
         try:
+            previous_company_id = item.company_code_id
             save_invoice_draft_form(
                 item
             )
@@ -7401,6 +7406,11 @@ def invoice_edit(
                 item
             )
 
+            if request.form.get("pending_agreement_erp_id", "").strip():
+                audit("invoice.agreement.assign", "invoice", item.id, {
+                    "agreement_erp_id": item.billing_contract_erp_id, "previous_company_code_id": previous_company_id,
+                    "company_code_id": item.company_code_id,
+                })
             audit(
                 "invoice.update",
                 "invoice",
@@ -7646,10 +7656,11 @@ def invoice_recipient_search(
         Invoice,
         invoice_id,
     )
-    search_text = request.args.get(
-        "q",
-        "",
-    ).strip()
+    if invoice.status != InvoiceStatus.DRAFT.value:
+        return jsonify(message="Mietverträge können nur für einen Entwurf ausgewählt werden."), 409
+    search_text = request.args.get("q", "").strip()[:160]
+    if invoice.can_assign_agreement:
+        return jsonify(items=invoice_contract_results(search_text, existing_issuer_id=invoice.company_code_id))
 
     items = []
 
@@ -7694,19 +7705,28 @@ def invoice_recipient_candidates(
         Invoice,
         invoice_id,
     )
+    if invoice.status != InvoiceStatus.DRAFT.value:
+        return jsonify(message="Mietverträge können nur für einen Entwurf ausgewählt werden."), 409
+    assignment = None
     try:
         license_agreement_id = required_form_int(request.args.get("license_agreement_id"), "Vertrag")
-        agreement = invoice_agreement(invoice, license_agreement_id)
+        if invoice.can_assign_agreement:
+            agreement = tenant_billing_agreement(license_agreement_id)
+            company, issuer = invoice_agreement_companies(agreement, invoice)
+            assignment = {
+                "issuer_name": issuer.seller_name or issuer.name,
+                "recipient_name": (company.seller_name or company.name) if company.tenant_billing_issuer_id is not None else None,
+            }
+        else:
+            agreement = invoice_agreement(invoice, license_agreement_id)
     except ValueError as exc:
         return jsonify(message=str(exc)), 400
 
     try:
         service = WowiportService()
         items = (
-            service
-            .get_invoice_recipient_candidates(
-                agreement.erp_id
-            )
+            contract_recipients(service, agreement.erp_id) if assignment is not None
+            else service.get_invoice_recipient_candidates(agreement.erp_id)
         )
     except Exception:
         current_app.logger.exception(
@@ -7739,6 +7759,7 @@ def invoice_recipient_candidates(
     return jsonify(
         {
             "items": items,
+            "assignment": assignment,
             "license_agreement": {
                 "erp_id": agreement.erp_id,
                 "id_num": agreement.id_num,
@@ -8198,7 +8219,19 @@ def save_invoice_recipient_form(item: Invoice) -> None:
 
 
 def save_invoice_draft_form(item: Invoice) -> None:
-    if not item.tenant_billing_reference:
+    saved_contract_id = request.form.get("saved_contract_erp_id")
+    if saved_contract_id is not None and saved_contract_id != str(item.billing_contract_erp_id or ""):
+        raise ValueError("Der Mietvertrag des Entwurfs wurde geändert. Bitte laden Sie die Rechnung neu.")
+
+    agreement_id = optional_form_int(request.form.get("pending_agreement_erp_id"), "Mietvertrag")
+    if agreement_id is not None:
+        if not item.can_assign_agreement:
+            raise ValueError("Ein Mietvertrag kann nur einem Rechnungsentwurf ohne Vertrag zugeordnet werden.")
+        agreement = tenant_billing_agreement(agreement_id)
+        person_id = optional_form_int(request.form.get("pending_agreement_person_id"), "Vertragspartner")
+        recipient = choose_contract_recipient(invoice_contract_recipients(agreement_id), person_id)
+        assign_invoice_agreement(item, agreement, recipient)
+    elif not item.tenant_billing_reference:
         save_invoice_recipient_form(item)
 
     item.invoice_date = optional_form_date(
