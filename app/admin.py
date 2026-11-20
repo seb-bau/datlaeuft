@@ -11335,6 +11335,12 @@ def save_user_form(item: User) -> None:
     save_admin_push_preferences(item, request.form)
     item.email = request.form.get("email", "").strip().lower()
     item.display_name = request.form.get("display_name", "").strip()
+    for attribute, label in (("first_name", "Vorname"), ("last_name", "Nachname")):
+        if attribute in request.form:
+            value = request.form.get(attribute, "").strip()
+            if len(value) > 255:
+                raise ValueError(f"Das Feld „{label}“ darf höchstens 255 Zeichen enthalten.")
+            setattr(item, attribute, value or None)
     if "phone" in request.form:
         phone = request.form.get("phone", "").strip()
         if len(phone) > 80:

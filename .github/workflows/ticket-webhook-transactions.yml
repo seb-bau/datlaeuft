@@ -6,6 +6,15 @@ on:
       - app/mail_service.py
       - app/utils.py
       - app/dms_admin.py
+      - app/dms_context.py
+      - app/dms_service.py
+      - app/safety_inspection_archive.py
+      - app/user_sync.py
+      - app/entra.py
+      - app/auth.py
+      - app/templates/admin/dms_profile.html
+      - app/templates/admin/user_form.html
+      - migrations/versions/*user_name_parts.py
       - app/static/js/app.js
       - app/templates/admin/commission_detail.html
       - app/document_articles.py
@@ -111,6 +120,15 @@ on:
       - app/mail_service.py
       - app/utils.py
       - app/dms_admin.py
+      - app/dms_context.py
+      - app/dms_service.py
+      - app/safety_inspection_archive.py
+      - app/user_sync.py
+      - app/entra.py
+      - app/auth.py
+      - app/templates/admin/dms_profile.html
+      - app/templates/admin/user_form.html
+      - migrations/versions/*user_name_parts.py
       - app/static/js/app.js
       - app/templates/admin/commission_detail.html
       - app/document_articles.py
@@ -248,6 +266,7 @@ jobs:
           "SQLAlchemy>=2.0,<3" "Flask>=3.1,<4" "Flask-SQLAlchemy>=3.1,<4"
           "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
           "requests>=2.32,<3"
+          "msal>=1.31,<2" "dvelopdmspy>=1.0.20,<2"
           "phonenumbers>=9,<10"
           "qrcode>=8,<9" "Pillow>=10,<13"
           "wowipy>=1.1.91,<2"

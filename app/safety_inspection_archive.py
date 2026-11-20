@@ -10,6 +10,7 @@ from dvelopdmspy.dvelopdmspy import (
 from flask import current_app
 
 from .audit import audit
+from .dms_context import date_only, inspector_name
 from .extensions import db
 from .models import (
     SafetyInspectionArchiveStatus,
@@ -133,6 +134,9 @@ def protocol_archive_values(
             "inspection_group": (
                 job.group.name
             ),
+            "schedule_name": job.group.schedule.name,
+            "inspector_name": inspector_name(job.completed_by),
+            "completed_date": date_only(job.completed_at),
             "status": job.status,
             "period_start": (
                 job.period_start

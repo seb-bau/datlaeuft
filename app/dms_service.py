@@ -14,7 +14,7 @@ from werkzeug.utils import secure_filename
 
 from .audit import audit
 from .dms_client import CloudDmsClient, DmsError, normalize_hostname
-from .dms_context import DOCUMENT_TYPES, available_fields
+from .dms_context import DOCUMENT_TYPES, available_fields, template_fields
 from .extensions import db
 from .models import (
     AppSetting, DmsDocument, DmsProfile, Invoice, Offer,
@@ -185,7 +185,7 @@ def validate_profile(profile, schema):
             for value in values:
                 text_fields(
                     str(value),
-                    set(allowed) - {"commission_numbers", "craftsmen"},
+                    set(template_fields(profile.document_type)),
                 )
                 if "{" not in str(value) and str(value).strip():
                     normalize_value(value, field)
