@@ -87,7 +87,7 @@
 <details class="mt-3">
   <summary>Verfügbare Platzhalter</summary>
   <ul>
-    {% for key, label in sources.items() %}
+    {% for key, label in template_sources.items() %}
     <li><code>{{ '{' ~ key ~ '}' }}</code> – {{ label }}</li>
     {% endfor %}
   </ul>

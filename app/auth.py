@@ -535,6 +535,9 @@ def resolve_generic_oidc_user(
 
     user.email = email
     user.display_name = display_name or user.display_name
+    for attribute, key in (("first_name", "given_name"), ("last_name", "family_name")):
+        if key in claims:
+            setattr(user, attribute, str(claims[key] or "").strip() or None)
     return user
 
 
@@ -671,6 +674,9 @@ def resolve_microsoft_user(
 
         user.entra_oid = oid
         user.email = primary_email
+        for attribute, key in (("first_name", "givenName"), ("last_name", "surname")):
+            if key in profile:
+                setattr(user, attribute, str(profile[key] or "").strip() or None)
 
     if not user.is_active:
         return None
@@ -679,6 +685,9 @@ def resolve_microsoft_user(
         display_name
         or user.display_name
     )
+    for attribute, key in (("first_name", "given_name"), ("last_name", "family_name")):
+        if key in claims:
+            setattr(user, attribute, str(claims[key] or "").strip() or None)
     return user
 
 

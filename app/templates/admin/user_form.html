@@ -13,6 +13,17 @@
     </div>
 
     <div class="col-md-6">
+      <label class="form-label" for="firstName">Vorname</label>
+      <input class="form-control" id="firstName" name="first_name" maxlength="255" value="{{ item.first_name or '' }}">
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label" for="lastName">Nachname</label>
+      <input class="form-control" id="lastName" name="last_name" maxlength="255" value="{{ item.last_name or '' }}">
+      <div class="form-text">Für die Namensausgabe „Nachname Vorname“ bei Prüfprotokollen.</div>
+    </div>
+
+    <div class="col-md-6">
       <label class="form-label">E-Mail</label>
       <input class="form-control" type="email" name="email" value="{{ item.email or '' }}" required>
     </div>

@@ -16,7 +16,7 @@ from .blacklist import include_blacklisted
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 GRAPH_USER_FIELDS = (
-    "id,displayName,mail,userPrincipalName,accountEnabled"
+    "id,displayName,givenName,surname,mail,userPrincipalName,accountEnabled"
 )
 
 
@@ -137,6 +137,10 @@ def import_entra_users() -> EntraImportResult:
                         True,
                     )
                 )
+
+            for attribute, key in (("first_name", "givenName"), ("last_name", "surname")):
+                if key in entry:
+                    setattr(user, attribute, str(entry[key] or "").strip() or None)
 
             if created:
                 result.created += 1

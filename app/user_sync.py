@@ -182,6 +182,8 @@ def sync_users_from_wowiport(
         previous_values = (
             user.email,
             user.display_name,
+            user.first_name,
+            user.last_name,
             user.craftsman_erp_id,
             user.person_erp_id,
             user.creditor_erp_id,
@@ -209,6 +211,16 @@ def sync_users_from_wowiport(
             )
             user.wowiport_managed = True
             user.is_active_flag = True
+
+        natural_person = _value(person, "NaturalPerson", "natural_person")
+        if natural_person is not None:
+            for attribute, keys in (
+                ("first_name", ("FirstName", "first_name")),
+                ("last_name", ("LastName", "last_name")),
+            ):
+                value = _text_or_none(_value(natural_person, *keys))
+                if value is not None and (not identity_managed_by_entra or not getattr(user, attribute)):
+                    setattr(user, attribute, value)
 
         user.craftsman_erp_id = (
             craftsman_erp_id
@@ -276,6 +288,8 @@ def sync_users_from_wowiport(
         current_values = (
             user.email,
             user.display_name,
+            user.first_name,
+            user.last_name,
             user.craftsman_erp_id,
             user.person_erp_id,
             user.creditor_erp_id,

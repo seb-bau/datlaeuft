@@ -11,7 +11,7 @@ from .utils import commission_detail_url
 from .audit import audit
 from .auth import admin_required, foreman_required
 from .dms_client import DmsError, normalize_hostname
-from .dms_context import DOCUMENT_TYPES, available_fields
+from .dms_context import DOCUMENT_TYPES, available_fields, template_fields
 from .dms_service import (
     STATUS_LABELS, connection, document_path, field_name,
     link_existing_document, profile_snapshot, refresh_metadata,
@@ -299,6 +299,7 @@ def profile_edit(document_type):
         mappings=mappings,
         mapping_text=mapping_text,
         sources=available_fields(document_type),
+        template_sources=template_fields(document_type),
         field_name=field_name,
     )
 

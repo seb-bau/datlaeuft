@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 
 DOCUMENT_TYPES = {
@@ -57,6 +58,9 @@ FIELD_LABELS = {
     "job_public_id": "Öffentliche Prüfauftrag-ID",
     "inspection_name": "Prüfung",
     "inspection_group": "Prüfgruppe",
+    "schedule_name": "Name des Zeitplans",
+    "inspector_name": "Prüfer (Nachname Vorname)",
+    "completed_date": "Abschlussdatum (YYYY-MM-DD)",
     "period_start": "Prüfzeitraum von",
     "period_end": "Prüfzeitraum bis",
     "due_from": "Prüffälligkeit von",
@@ -66,12 +70,12 @@ FIELD_LABELS = {
     "company_code_erp_id": "Buchungskreis-ID",
     "company_code_code": "Buchungskreisnummer",
     "economic_unit_erp_id": "Wirtschaftseinheit-ID",
-    "economic_unit_idnum": "Wirtschaftseinheitnummer",
+    "economic_unit_idnum": "Wowiport-Wirtschaftseinheit-IdNum",
     "economic_unit_name": "Wirtschaftseinheitname",
     "building_erp_id": "Gebäude-ID",
-    "building_idnum": "Gebäudenummer",
+    "building_idnum": "Wowiport-Gebäude-IdNum",
     "use_unit_erp_id": "Nutzungseinheit-ID",
-    "use_unit_idnum": "Nutzungseinheitnummer",
+    "use_unit_idnum": "Wowiport-Nutzungseinheit-IdNum",
     "department": "Abteilung",
     "defect_count": "Anzahl Mängel",
     "correction_reason": "Korrekturgrund",
@@ -81,12 +85,20 @@ COMMON_FIELDS = {
     "archive_key", "generation_id", "filename", "document_type", "generated_at",
 }
 
+OBJECT_IDNUM_FIELDS = {
+    "building_idnum", "economic_unit_idnum", "use_unit_idnum",
+}
+
+INVOICE_DOCUMENT_TYPES = {
+    "invoice", "cancellation_invoice", "invoice_with_work_reports",
+}
+
 INVOICE_FIELDS = {
     "invoice_number", "invoice_date", "due_date", "company_code",
     "company_code_name", "contract_number", "recipient_name",
     "total_net", "total_vat", "total_gross", "invoice_kind",
     "original_invoice_number", "commission_numbers", "scope",
-}
+} | OBJECT_IDNUM_FIELDS
 
 OFFER_FIELDS = {
     "offer_number", "offer_date", "valid_until", "company_code",
@@ -100,7 +112,7 @@ WORK_REPORT_FIELDS = {
     "company_code", "contract_number", "tenant_name", "object_address",
     "object_location", "completed_at", "completed_by", "completion_reason",
     "entry_count", "total_minutes", "craftsmen", "scope",
-}
+} | OBJECT_IDNUM_FIELDS
 
 PROTOCOL_FIELDS = (
     set(FIELD_LABELS)
@@ -111,7 +123,7 @@ PROTOCOL_FIELDS = (
 )
 PROTOCOL_FIELDS |= {
     "status", "completed_at", "completed_by", "object_address", "object_location",
-}
+} | OBJECT_IDNUM_FIELDS
 
 
 def available_fields(document_type):
@@ -121,9 +133,7 @@ def available_fields(document_type):
         fields = OFFER_FIELDS
     elif document_type == "work_report":
         fields = WORK_REPORT_FIELDS
-    elif document_type in (
-        "invoice", "cancellation_invoice", "invoice_with_work_reports",
-    ):
+    elif document_type in INVOICE_DOCUMENT_TYPES:
         fields = INVOICE_FIELDS
     else:
         fields = set()
@@ -133,11 +143,19 @@ def available_fields(document_type):
     }
 
 
+def template_fields(document_type):
+    array_fields = {"commission_numbers", "craftsmen"}
+    if document_type in INVOICE_DOCUMENT_TYPES:
+        array_fields |= OBJECT_IDNUM_FIELDS
+    return {key: label for key, label in available_fields(document_type).items() if key not in array_fields}
+
+
 def invoice_context(invoice, scope="all"):
     from .invoice_archive import _archive_values
 
     return {
         **_archive_values(invoice, ""),
+        **invoice_object_idnums(invoice),
         "scope": scope,
         "commission_numbers": [
             str(
@@ -148,6 +166,40 @@ def invoice_context(invoice, scope="all"):
             for link in invoice.commission_links
         ],
     }
+
+
+def invoice_object_idnums(invoice):
+    commissions = [link.commission for link in invoice.commission_links if link.commission is not None]
+    if not commissions and invoice.original_invoice is not None:
+        commissions = [link.commission for link in invoice.original_invoice.commission_links if link.commission is not None]
+    if commissions:
+        return {
+            field: sorted({
+                str(getattr(commission, field) or "").strip()
+                for commission in commissions
+                if str(getattr(commission, field) or "").strip()
+            })
+            for field in OBJECT_IDNUM_FIELDS
+        }
+
+    values = {field: [] for field in OBJECT_IDNUM_FIELDS}
+    if invoice.billing_contract_erp_id is None:
+        return values
+
+    from .models import WowiLicenseAgreement
+
+    agreement = WowiLicenseAgreement.query.filter_by(erp_id=invoice.billing_contract_erp_id).one_or_none()
+    unit = agreement.use_unit if agreement is not None else None
+    if unit is not None:
+        for field, item in (
+            ("use_unit_idnum", unit),
+            ("building_idnum", unit.building),
+            ("economic_unit_idnum", unit.economic_unit or (unit.building.economic_unit if unit.building else None)),
+        ):
+            value = str(item.id_num or "").strip() if item is not None else ""
+            if value:
+                values[field] = [value]
+    return values
 
 
 def offer_context(offer):
@@ -172,6 +224,23 @@ def iso_timestamp(value):
     return value.isoformat()
 
 
+def date_only(value):
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        value = value.astimezone(ZoneInfo("Europe/Berlin")).date()
+    return value.isoformat()
+
+
+def inspector_name(user):
+    if user is None:
+        return ""
+    parts = [str(getattr(user, field, None) or "").strip() for field in ("last_name", "first_name")]
+    return " ".join(parts) if all(parts) else user.display_name or ""
+
+
 def work_report_context(commission, entries, scope):
     actor = (
         commission.completion_submitted_by
@@ -183,6 +252,7 @@ def work_report_context(commission, entries, scope):
         "commission_numbers": [number],
         "commission_title": commission.display_title,
         "company_code": commission.company_code_code or "",
+        **{field: getattr(commission, field) or "" for field in OBJECT_IDNUM_FIELDS},
         "contract_number": commission.license_agreement_idnum or "",
         "tenant_name": commission.tenant_name or "",
         "object_address": commission.apartment_address or "",

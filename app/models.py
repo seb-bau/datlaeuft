@@ -688,6 +688,8 @@ class User(UserMixin, db.Model):
     external_commission_approver_user_id: Mapped[int | None] = mapped_column(db.ForeignKey("user_account.id", ondelete="RESTRICT"), index=True)
     email: Mapped[str] = mapped_column(db.String(255), unique=True, nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(db.String(255), nullable=False)
+    first_name: Mapped[str | None] = mapped_column(db.String(255))
+    last_name: Mapped[str | None] = mapped_column(db.String(255))
     phone: Mapped[str | None] = mapped_column(db.String(80))
     password_hash: Mapped[str | None] = mapped_column(db.String(255))
     entra_oid: Mapped[str | None] = mapped_column(db.String(80), unique=True)
