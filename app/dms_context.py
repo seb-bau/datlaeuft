@@ -237,8 +237,8 @@ def date_only(value):
 def inspector_name(user):
     if user is None:
         return ""
-    parts = (getattr(user, "last_name", None), getattr(user, "first_name", None))
-    return " ".join(str(part).strip() for part in parts if part and str(part).strip()) or user.display_name
+    parts = [str(getattr(user, field, None) or "").strip() for field in ("last_name", "first_name")]
+    return " ".join(parts) if all(parts) else user.display_name or ""
 
 
 def work_report_context(commission, entries, scope):

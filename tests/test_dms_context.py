@@ -268,8 +268,11 @@ class DmsContextTests(unittest.TestCase):
         self.assertEqual(self.context.inspector_name(self.user), "von der Linden Anna Maria")
 
     def test_name_without_separate_parts_uses_the_existing_display_name(self):
-        self.user.first_name = self.user.last_name = None
-        self.assertEqual(self.context.inspector_name(self.user), "Anna Maria von der Linden")
+        for first_name, last_name in ((None, None), (None, "von der Linden"), ("Anna Maria", None)):
+            with self.subTest(first_name=first_name, last_name=last_name):
+                self.user.first_name = first_name
+                self.user.last_name = last_name
+                self.assertEqual(self.context.inspector_name(self.user), "Anna Maria von der Linden")
 
     def test_entra_import_loads_and_updates_name_parts_without_parsing_display_names(self):
         response = Mock()
