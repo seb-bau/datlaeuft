@@ -3,6 +3,7 @@ import importlib
 import sys
 import types
 import unittest
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -313,6 +314,118 @@ class CommissionDateTests(unittest.TestCase):
             self.assertEqual(commission.status_id, 10)
             self.assertIsNone(commission.deleted_at)
             self.assert_status_date(commission, self.now)
+
+    def test_wowiport_cancellation_ends_active_orders_and_incomplete_work(self):
+        for index, (local_status, sync_state, review_resolved) in enumerate((
+            ("in_progress", "synced", False),
+            ("in_progress", "pending", False),
+            ("in_progress", "failed", False),
+            ("completion_review", "synced", False),
+            ("completion_review", "synced", True),
+        )):
+            with self.subTest(local_status=local_status, sync_state=sync_state, review_resolved=review_resolved):
+                commission = self.commission(
+                    erp_id=200 + index, local_status=local_status, erp_sync_state=sync_state,
+                    completion_successful=False, completion_reason="Ersatzteil fehlt",
+                    completion_submitted_at=self.previous_date,
+                    review_resolved_at=self.previous_date if review_resolved else None,
+                )
+                self.synchronize(Id=commission.erp_id, CommissionStatus={"Id": 10, "Code": "Canceled"})
+                self.assertEqual(commission.display_local_status, "canceled")
+                self.assertEqual(commission.erp_sync_state, "synced")
+                self.assertFalse(commission.is_actionable)
+                self.assertFalse(commission.requires_office_review)
+                self.assertIsNone(commission.deleted_at)
+                self.assertEqual(commission.completion_reason, "Ersatzteil fehlt")
+                self.assert_status_date(commission, self.now)
+        self.assertEqual(self.models.ErpOutboxOperation.query.count(), 0)
+
+    def test_wowiport_cancellation_prevents_a_pending_acceptance_from_reopening_the_order(self):
+        commission = self.commission(local_status="waiting_for_acceptance", status_id=12)
+        operation = self.outbox.enqueue_erp_operation(
+            commission, self.models.ErpOperationType.ACCEPT_COMMISSION, "pending-acceptance",
+        )
+        self.db.session.commit()
+        self.synchronize(CommissionStatus={"Id": 10, "Code": "Canceled"})
+        service = Mock()
+        self.outbox.execute_outbox_operation(operation.id, service)
+        service.mark_commission_accepted.assert_not_called()
+        self.assertEqual(commission.display_local_status, "canceled")
+
+    def test_single_and_regular_sync_recognize_cancellations_outside_the_visible_statuses(self):
+        payload = types.SimpleNamespace(
+            id_=100, id_num="A-100", recording_date=datetime(2026, 10, 1),
+            commission_status=types.SimpleNamespace(id_=10, code="Canceled"),
+            commission_type=types.SimpleNamespace(id_=1), craftsman=types.SimpleNamespace(id_=101),
+        )
+        signature = self.wowiport._commission_sync_signature(payload)
+        commission = self.commission()
+        service = Mock()
+        service.get_commission.return_value = payload
+        for mode in ("single", "regular"):
+            for local_status, status_id, rejected in (
+                ("in_progress", 7, False), ("deleted", 7, False),
+                ("completion_review", 10, False), ("completion_review", 10, True),
+            ):
+                with self.subTest(mode=mode, local_status=local_status, rejected=rejected), ExitStack() as stack:
+                    commission.local_status = local_status
+                    commission.status_id = status_id
+                    commission.status_code = "Canceled" if status_id == 10 else "Accepted"
+                    commission.deleted_at = self.previous_date if local_status == "deleted" else None
+                    commission.rejected_at = self.previous_date if rejected else None
+                    commission.raw_payload = {"sync_signature": signature if status_id == 10 else "previous"}
+                    self.db.session.commit()
+                    stack.enter_context(patch.object(self.wowiport, "WowiportService", return_value=service))
+                    stack.enter_context(patch.object(self.wowiport, "configured_commission_type_ids", return_value={1}))
+                    stack.enter_context(patch.object(self.wowiport, "configured_commission_status_ids", return_value={7}))
+                    for name in ("refresh_commission_context_safely", "sync_commission_documents_safely", "sync_commission_priority", "enqueue_synced_commission_push"):
+                        stack.enter_context(patch.object(self.wowiport, name))
+                    if mode == "single":
+                        self.assertIs(self.wowiport.sync_commission_from_erp(100), commission)
+                    else:
+                        result = self.wowiport.sync_commission_payload_from_erp(
+                            payload, {7}, {1}, datetime(2026, 1, 1), datetime(2027, 1, 1),
+                            "recording_date", {101}, service,
+                        )
+                        self.assertIn(result, {"synced", "unchanged"})
+                    self.assertEqual(commission.display_local_status, "rejected" if rejected else "canceled")
+                    self.assertEqual(commission.requires_office_review, rejected)
+                    self.assertFalse(commission.is_actionable)
+                    self.assertIsNone(commission.deleted_at)
+        self.assertEqual(self.models.ErpOutboxOperation.query.count(), 0)
+
+    def test_regular_sync_fetches_cancellations_and_recovers_orders_previously_marked_deleted(self):
+        self.user.craftsman_erp_id = 101
+        commission = self.commission(
+            local_status="deleted", deleted_at=self.previous_date,
+            craftsman_erp_id=101, recording_date=self.now,
+        )
+        missing = self.commission(erp_id=300, craftsman_erp_id=101, recording_date=self.now)
+        payloads = [types.SimpleNamespace(
+            id_=erp_id, id_num=f"A-{erp_id}", recording_date=datetime(2026, 10, 1),
+            commission_status=types.SimpleNamespace(id_=10, code="Canceled"),
+            commission_type=types.SimpleNamespace(id_=1), craftsman=types.SimpleNamespace(id_=101),
+        ) for erp_id in (100, 200)]
+        service = Mock()
+        service.get_commissions_for_regular_sync.side_effect = lambda **values: payloads if values["status_id"] == 10 else []
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(self.wowiport, "WowiportService", return_value=service))
+            stack.enter_context(patch.object(self.wowiport, "configured_commission_type_ids", return_value={1}))
+            stack.enter_context(patch.object(self.wowiport, "configured_commission_status_ids", return_value={7}))
+            stack.enter_context(patch.object(self.wowiport, "current_business_year_range", return_value=(datetime(2026, 1, 1), datetime(2027, 1, 1))))
+            for name in ("refresh_commission_context_safely", "sync_commission_documents_safely", "sync_commission_priority", "enqueue_synced_commission_push"):
+                stack.enter_context(patch.object(self.wowiport, name))
+            result = self.wowiport.sync_commissions_from_wowiport_regular()
+        self.assertEqual({call.kwargs["status_id"] for call in service.get_commissions_for_regular_sync.call_args_list}, {7, 10})
+        self.assertEqual(result["synced"], 1)
+        self.assertEqual(result["ignored_status"], 1)
+        self.assertEqual(result["deleted_marked"], 1)
+        self.assertEqual(commission.display_local_status, "canceled")
+        self.assertIsNone(commission.deleted_at)
+        self.assertEqual(missing.display_local_status, "deleted")
+        self.assertIsNotNone(missing.deleted_at)
+        self.assertEqual(self.models.Commission.query.count(), 2)
+        self.assertEqual(self.models.ErpOutboxOperation.query.count(), 0)
 
     def test_office_cancellation_waits_for_work_in_flight_and_skips_obsolete_acceptance(self):
         commission = self.commission()

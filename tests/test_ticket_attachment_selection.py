@@ -127,6 +127,38 @@ class TicketAttachmentSelectionTests(unittest.TestCase):
         self.assertIn("multiple", html)
         self.assertIn("ticket_attachment_selection.js", html)
 
+    def test_ticket_order_returns_to_the_ticket_list_with_all_filters(self):
+        target = "/admin/tickets?state=new&owner=erp%3A11&owner=unassigned&department=42&ai_state=ready&q=Rohrbruch&page=2"
+        response = self.client.post("/admin/commissions/new", data=self.form(selected=(), next=target))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, target)
+        self.assertEqual(self.models.Commission.query.count(), 1)
+        self.assertEqual(self.ticket.state, "converted")
+
+    def test_ticket_order_without_a_return_address_uses_the_ticket_list(self):
+        response = self.client.post("/admin/commissions/new", data=self.form(selected=()))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/admin/tickets")
+        self.assertEqual(self.models.Commission.query.count(), 1)
+
+    def test_ticket_order_waiting_for_approval_also_returns_to_the_filtered_ticket_list(self):
+        self.creator.internal_commission_approver_user_id = self.reviewer.id
+        self.db.session.commit()
+        target = "/admin/tickets?owner=all&state=open&q=Schaden"
+        response = self.client.post("/admin/commissions/new", data=self.form(selected=(), next=target))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, target)
+        self.assertEqual(self.models.Commission.query.one().approval_state, "pending")
+
+    def test_order_created_without_a_ticket_returns_to_the_order_list(self):
+        response = self.client.post("/admin/commissions/new", data=self.form(
+            selected=(), source_ticket_id="", next="/admin/tickets?owner=all&q=Rohrbruch",
+        ))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/admin/commissions")
+        self.assertEqual(self.models.Commission.query.count(), 1)
+        self.assertEqual(self.ticket.state, "new")
+
     def test_long_web_position_text_creates_the_order_and_keeps_the_ticket_link(self):
         text = "Bitte die Trocknung prüfen und sämtliche Messwerte dokumentieren.\r\n" * 7
         commission = self.post_order(self.form(selected=(), title="", position_text=text))
