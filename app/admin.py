@@ -1398,6 +1398,8 @@ def company_codes() -> Any:
 def company_code_invoicing(
     item_id: int,
 ) -> Any:
+    from .stationery_layout import form_layout_values, save_layouts
+
     item = db.get_or_404(
         WowiCompanyCode,
         item_id,
@@ -1410,6 +1412,11 @@ def company_code_invoicing(
 
     if request.method == "POST":
         try:
+            cover_upload = request.files.get("cover_letter_stationery")
+            own_cover = bool(cover_upload is not None and cover_upload.filename) or (
+                bool(item.cover_letter_stationery_filename) and "remove_cover_letter_stationery" not in request.form
+            )
+            save_layouts(item, request.form, has_own_cover_stationery=own_cover)
             save_company_code_invoice_form(
                 item
             )
@@ -1462,6 +1469,7 @@ def company_code_invoicing(
                 "admin/company_code_invoicing.html",
                 item=item,
                 issuer_choices=issuer_choices,
+                stationery_layouts=form_layout_values(item, request.form),
             )
 
         flash(
@@ -1481,7 +1489,35 @@ def company_code_invoicing(
         "admin/company_code_invoicing.html",
         item=item,
         issuer_choices=issuer_choices,
+        stationery_layouts=form_layout_values(item),
     )
+
+
+@admin_bp.post("/admin/company-codes/<int:item_id>/invoicing/preview/<kind>")
+@admin_required
+def company_code_stationery_preview(item_id, kind):
+    from .stationery_layout import form_layouts
+    from .stationery_preview import render_stationery_preview
+
+    if kind not in {"invoice", "offer", "cover_letter"}:
+        abort(404)
+    item = db.get_or_404(WowiCompanyCode, item_id)
+    try:
+        layouts = form_layouts(item, request.form)
+        uploads = {}
+        for slot in (("stationery", "cover_letter_stationery") if kind == "cover_letter" else ("stationery",)):
+            upload = request.files.get(slot)
+            if upload is not None and upload.filename:
+                validate_company_code_stationery(upload)
+                uploads[slot] = upload.stream.read()
+        content = render_stationery_preview(item, kind, layouts, request.form, uploads)
+    except (ValueError, InvoiceDocumentError) as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("company_code_stationery_preview_failed company_code_id=%s kind=%s", item.id, kind)
+        return jsonify(error="Die Briefbogen-Vorschau konnte nicht erstellt werden. Bitte Briefbogen und Seitenabstände prüfen."), 502
+    title = {"invoice": "Rechnung", "offer": "Angebot", "cover_letter": "Anschreiben"}[kind]
+    return document_preview_response(content, f"{title}-Briefbogen-Vorschau.pdf")
 
 
 @admin_bp.get(

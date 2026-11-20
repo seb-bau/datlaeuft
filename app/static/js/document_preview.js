@@ -32,8 +32,9 @@ document.addEventListener("DOMContentLoaded", () => {
       let body;
       if (form) {
         body = new FormData(form);
+        const allowedFiles = new Set((button.dataset.previewFiles || "").split(",").map(name => name.trim()).filter(Boolean));
         for (const [name, value] of Array.from(body.entries())) {
-          if (value instanceof File) body.delete(name);
+          if (value instanceof File && !allowedFiles.has(name)) body.delete(name);
         }
       }
       try {

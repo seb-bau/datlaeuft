@@ -22,6 +22,7 @@ from .invoice_payments import invoice_payment_context
 from .invoice_attachments import append_invoice_attachments
 from .invoice_layout import DEFAULT_INVOICE_LAYOUT, render_invoice_html
 from .settings import SettingKeys, settings
+from .stationery_layout import company_page_layout, page_stylesheets
 
 MONEY_QUANTIZER = Decimal("0.01")
 QUANTITY_QUANTIZER = Decimal("0.001")
@@ -1279,10 +1280,10 @@ def _invoice_layout_url_fetcher(url):
     return default_url_fetcher(url)
 
 
-def render_invoice_content_pdf(context, *, layout=None) -> bytes:
+def render_invoice_content_pdf(context, *, layout=None, page_layout=None) -> bytes:
     if layout is None:
         layout = settings.get(SettingKeys.INVOICE_LAYOUT) or DEFAULT_INVOICE_LAYOUT
-    return HTML(string=render_invoice_html(context, layout), url_fetcher=_invoice_layout_url_fetcher).write_pdf()
+    return HTML(string=render_invoice_html(context, layout), url_fetcher=_invoice_layout_url_fetcher).write_pdf(stylesheets=page_stylesheets(page_layout))
 
 
 def create_invoice_document(
@@ -1383,7 +1384,7 @@ def create_invoice_document(
         )
 
         try:
-            content_pdf_path.write_bytes(render_invoice_content_pdf(context))
+            content_pdf_path.write_bytes(render_invoice_content_pdf(context, page_layout=company_page_layout(invoice.company_code)))
         except ValueError as exc:
             raise InvoiceDocumentError(str(exc)) from exc
         _apply_stationery(

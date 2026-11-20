@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from flask import current_app, render_template
+from .stationery_layout import company_page_layout
 
 
 def address_lines(item, prefix="recipient") -> list[str]:
@@ -59,7 +60,7 @@ def render_invoice_preview(invoice, *, layout=None, include_attachments=True) ->
     from .invoice_attachments import append_invoice_attachments
     from .invoice_document import _apply_stationery, _stationery_path, render_invoice_content_pdf
 
-    content = render_invoice_content_pdf({**invoice_preview_context(invoice), "preview": True}, layout=layout)
+    content = render_invoice_content_pdf({**invoice_preview_context(invoice), "preview": True}, layout=layout, page_layout=company_page_layout(invoice.company_code))
     company = invoice.company_code
     if getattr(company, "invoice_stationery_filename", None) or company.stationery_filename:
         with TemporaryDirectory() as directory:
@@ -80,7 +81,7 @@ def render_document_preview(kind: str, document) -> bytes:
     if kind == "invoice":
         return render_invoice_preview(document)
     elif kind == "offer":
-        from .offer_document import apply_stationery, document_context, prepare_positions, prepare_vat_rows, stationery_path
+        from .offer_document import apply_stationery, document_context, prepare_positions, prepare_vat_rows, stationery_path, render_offer_content_pdf
         positions = prepare_positions(document)
         context = document_context(document, positions, prepare_vat_rows(positions), preview=True)
         if document.company_code.stationery_filename:
@@ -92,7 +93,11 @@ def render_document_preview(kind: str, document) -> bytes:
     else:
         raise ValueError("Die Dokumentart ist ungültig.")
     context = {**context, "preview": True}
-    raw_data = HTML(string=render_template(template, **context), base_url=current_app.root_path).write_pdf()
+    raw_data = (
+        render_offer_content_pdf(context, page_layout=company_page_layout(document.company_code))
+        if kind == "offer" else
+        HTML(string=render_template(template, **context), base_url=current_app.root_path).write_pdf()
+    )
     if background is not None:
         with TemporaryDirectory() as directory:
             source = Path(directory) / "content.pdf"

@@ -30,7 +30,7 @@ class DocumentPreviewTests(unittest.TestCase):
         fixtures.TicketAttachmentSelectionTests.setUpClass.__func__(cls)
         cls.app.before_request(lambda: g.pop("_login_user", None) and None)
         sys.modules[cls.package_name + ".auth"].accounting_required = lambda view: view
-        for name in ("tenant_billing", "invoice_payments", "invoice_attachments", "invoice_document", "offer_document", "invoice_service", "offer_service", "document_articles", "document_previews"):
+        for name in ("stationery_layout", "tenant_billing", "invoice_payments", "invoice_attachments", "invoice_document", "offer_document", "invoice_service", "offer_service", "document_articles", "document_previews"):
             sys.modules.pop(cls.package_name + "." + name, None)
             setattr(cls, name, importlib.import_module(cls.package_name + "." + name))
         cls.admin.render_document_preview = cls.document_previews.render_document_preview

@@ -15,6 +15,7 @@ from .invoice_document import InvoiceDocumentError, _apply_stationery, _statione
 from .models import utc_now
 from .invoice_cover_letter_layout import render_cover_letter_html
 from .settings import SettingKeys, settings, validate_cover_letter_text
+from .stationery_layout import company_page_layout, page_stylesheets
 
 
 def letter_date():
@@ -81,12 +82,16 @@ def cover_letter_url_fetcher(url):
     return default_url_fetcher(url)
 
 
-def render_letter_pdf(context, company, *, layout=None):
+def render_cover_letter_content_pdf(context, *, layout=None, page_layout=None):
     layout = settings.get(SettingKeys.INVOICE_COVER_LETTER_LAYOUT) if layout is None else layout
-    content = HTML(
+    return HTML(
         string=render_cover_letter_html(context, layout),
         url_fetcher=cover_letter_url_fetcher,
-    ).write_pdf()
+    ).write_pdf(stylesheets=page_stylesheets(page_layout))
+
+
+def render_letter_pdf(context, company, *, layout=None):
+    content = render_cover_letter_content_pdf(context, layout=layout, page_layout=company_page_layout(company, "cover_letter_stationery"))
     background = cover_letter_stationery(company)
     if background is not None:
         with TemporaryDirectory() as directory:

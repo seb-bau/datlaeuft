@@ -20,6 +20,7 @@
 </div>
 
 <form
+  id="company-code-invoicing-form"
   method="post"
   enctype="multipart/form-data"
   class="row g-4"
@@ -367,7 +368,7 @@
 
     <div class="card shadow-sm">
       <div class="card-header">
-        Briefbogen
+        Briefbogen für Rechnungen und Angebote
       </div>
 
       <div class="card-body">
@@ -406,6 +407,20 @@
           </label>
         </div>
         {% endif %}
+        {% with stationery_slot='stationery', following_default=20, bottom_default=22 %}
+          {% include 'admin/_stationery_layout.html' %}
+        {% endwith %}
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <button class="btn btn-outline-primary" type="button" data-document-preview
+                  data-preview-form="company-code-invoicing-form" data-preview-files="stationery"
+                  data-preview-title="Rechnung · Briefbogen und Seitenumbrüche"
+                  data-preview-url="{{ url_for('admin.company_code_stationery_preview', item_id=item.id, kind='invoice') }}">Rechnungsvorschau</button>
+          <button class="btn btn-outline-primary" type="button" data-document-preview
+                  data-preview-form="company-code-invoicing-form" data-preview-files="stationery"
+                  data-preview-title="Angebot · Briefbogen und Seitenumbrüche"
+                  data-preview-url="{{ url_for('admin.company_code_stationery_preview', item_id=item.id, kind='offer') }}">Angebotsvorschau</button>
+        </div>
+        <div class="form-text">Mehrseitige Beispieldokumente mit den aktuellen Seitenabständen und dem ausgewählten Briefbogen. Die Vorschau speichert keine Änderungen.</div>
       </div>
     </div>
   </div>
@@ -424,6 +439,14 @@
           <label class="form-check-label" for="removeCoverLetterStationery">Eigenen Briefbogen entfernen und vorhandenes Geschäftspapier verwenden</label>
         </div>
         {% endif %}
+        {% with stationery_slot='cover_letter_stationery', following_default=25, bottom_default=25 %}
+          {% include 'admin/_stationery_layout.html' %}
+        {% endwith %}
+        <div class="form-text">Ohne eigenen Briefbogen gelten zusätzlich die Seitenabstände des oben hinterlegten Geschäftspapiers. Eigene Angaben für das Anschreiben haben Vorrang.</div>
+        <button class="btn btn-outline-primary mt-3" type="button" data-document-preview
+                data-preview-form="company-code-invoicing-form" data-preview-files="stationery,cover_letter_stationery"
+                data-preview-title="Anschreiben · Briefbogen und Seitenumbrüche"
+                data-preview-url="{{ url_for('admin.company_code_stationery_preview', item_id=item.id, kind='cover_letter') }}">Anschreibenvorschau</button>
       </div>
     </div>
   </div>
@@ -437,4 +460,5 @@
     </button>
   </div>
 </form>
+{% include 'admin/_document_preview.html' %}
 {% endblock %}
