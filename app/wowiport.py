@@ -10,6 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from flask import current_app
+from sqlalchemy import or_
 from wowipy import wowipy
 from wowipy.models import CommissioningCommission, Communication, Contractor, LicenseAgreement, UseUnit
 from .wowiport_client import WowiportClient
@@ -50,7 +51,7 @@ ERP_LOCAL_STATUS = {
     12: CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value,
     7: CommissionLocalStatus.IN_PROGRESS.value,
     9: CommissionLocalStatus.DONE.value,
-    10: CommissionLocalStatus.COMPLETION_REVIEW.value,
+    10: CommissionLocalStatus.CANCELED.value,
     11: CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
 }
 
@@ -3171,7 +3172,7 @@ def sync_commission_from_erp(
 
     commission_type_id = _commission_type_id(payload)
 
-    if status_id not in visible_status_ids:
+    if status_id not in visible_status_ids and not (status_id == 10 and existing is not None):
         return (
             mark_commission_deleted(erp_id)
             if existing is not None
@@ -3413,7 +3414,7 @@ def sync_commissions_from_wowiport_regular(
     limit = 100
 
     for craftsman_erp_id in sorted(craftsman_erp_ids):
-        for status_id in sorted(visible_status_ids):
+        for status_id in sorted(visible_status_ids | {10}):
             offset = 0
 
             while True:
@@ -3581,7 +3582,7 @@ def sync_commission_payload_from_erp(
 
         return "ignored_unknown_craftsman"
 
-    if status_id not in visible_status_ids:
+    if status_id not in visible_status_ids and not (status_id == 10 and existing is not None):
         if existing is not None:
             mark_commission_deleted(erp_id)
             return "deleted_marked"
@@ -3947,10 +3948,13 @@ def upsert_commission(
     if not commission.source:
         commission.source = CommissionSource.WOWIPORT.value
 
-    if not canceled_locally and commission.erp_sync_state not in {
-        CommissionSyncState.PENDING.value,
-        CommissionSyncState.FAILED.value,
-    }:
+    if not canceled_locally and (
+        (commission.status_id == 10 and commission.rejected_at is None)
+        or commission.erp_sync_state not in {
+            CommissionSyncState.PENDING.value,
+            CommissionSyncState.FAILED.value,
+        }
+    ):
         commission.erp_sync_state = CommissionSyncState.SYNCED.value
         commission.erp_sync_message = None
         preserve_completion_review = (
@@ -3959,9 +3963,9 @@ def upsert_commission(
             and commission.status_id == previous_status[0]
             and commission.craftsman_erp_id == previous_craftsman_erp_id
         )
-        if commission.rejected_at is not None or commission.review_resolved_at is not None:
+        if commission.rejected_at is not None or (commission.review_resolved_at is not None and commission.status_id != 10):
             commission.local_status = CommissionLocalStatus.COMPLETION_REVIEW.value
-        elif not preserve_completion_review:
+        elif commission.status_id == 10 or not preserve_completion_review:
             commission.local_status = ERP_LOCAL_STATUS.get(
                 commission.status_id,
                 CommissionLocalStatus.OPEN.value,
@@ -4458,6 +4462,13 @@ def _commission_is_unchanged(
         sync_signature: str,
 ) -> bool:
     if commission is None:
+        return False
+
+    if (
+        commission.status_id == 10
+        and commission.rejected_at is None
+        and commission.local_status != CommissionLocalStatus.CANCELED.value
+    ):
         return False
 
     if (

@@ -5449,7 +5449,9 @@ def commission_create() -> Any:
             )
 
             return redirect(
-                url_for("admin.commissions")
+                ticket_list_return_url()
+                if source_ticket is not None
+                else url_for("admin.commissions")
             )
 
         except (RuntimeError, ValueError) as exc:
