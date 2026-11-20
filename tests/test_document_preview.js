@@ -12,10 +12,11 @@ class Element {
   removeAttribute(name) { delete this[name]; }
 }
 
-function fixture({withForm = true, valid = true, fetchResponse} = {}) {
+function fixture({withForm = true, valid = true, fetchResponse, previewFiles} = {}) {
   const elements = Object.fromEntries(["documentPreviewModal", "documentPreviewFrame", "documentPreviewLoading", "documentPreviewError", "documentPreviewOpen", "documentPreviewTitle"].map(id => [id, new Element()]));
   const button = new Element();
   button.dataset = {previewUrl: "/preview", previewTitle: "Rechnung · PDF-Vorschau"};
+  if (previewFiles) button.dataset.previewFiles = previewFiles;
   const form = {reportValidity: () => valid};
   if (withForm) button.dataset.previewForm = "draft";
   elements.draft = form;
@@ -25,7 +26,7 @@ function fixture({withForm = true, valid = true, fetchResponse} = {}) {
   let shown = 0;
   class File {}
   class FormData {
-    constructor() { this.values = new Map([["csrf_token", "token"], ["position_article_number", "FREI-1"], ["photo", new File()], ["other_photo", new File()]]); }
+    constructor() { this.values = new Map([["csrf_token", "token"], ["position_article_number", "FREI-1"], ["photo", new File()], ["other_photo", new File()], ["stationery", new File()], ["cover_letter_stationery", new File()]]); }
     entries() { return this.values.entries(); }
     delete(key) { this.values.delete(key); }
     get(key) { return this.values.get(key); }
@@ -58,6 +59,18 @@ test("preview sends current fields and CSRF without submitting or uploading file
   assert.equal(state.elements.documentPreviewFrame.src, "blob:preview");
   assert.equal(state.elements.documentPreviewOpen.href, "blob:preview");
   assert.equal(state.elements.documentPreviewLoading.hidden, true);
+});
+
+test("stationery preview includes only explicitly selected paper uploads", async () => {
+  for (const previewFiles of ["stationery", "stationery, cover_letter_stationery"]) {
+    const state = fixture({previewFiles});
+    await state.click();
+    assert.ok(state.calls[0].body.get("stationery"));
+    assert.equal(Boolean(state.calls[0].body.get("cover_letter_stationery")), previewFiles.includes("cover_letter_stationery"));
+    assert.equal(state.calls[0].body.get("photo"), undefined);
+    assert.equal(state.calls[0].body.get("other_photo"), undefined);
+    assert.equal(state.calls[0].body.get("csrf_token"), "token");
+  }
 });
 
 test("invalid input stays in the form", async () => {

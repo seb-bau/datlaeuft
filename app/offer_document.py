@@ -14,6 +14,7 @@ from pypdf import PdfReader, PdfWriter
 from weasyprint import HTML
 
 from .models import Offer
+from .stationery_layout import company_page_layout, page_stylesheets
 
 
 MONEY_QUANTIZER = Decimal("0.01")
@@ -410,17 +411,21 @@ def apply_stationery(
     ):
         if page_number == 0:
             background_page = (
-                background_reader.pages[0]
+                writer.add_page(background_reader.pages[0])
             )
             background_page.merge_page(
                 content_page
             )
-            writer.add_page(background_page)
         else:
             writer.add_page(content_page)
 
     with target_path.open("wb") as output_file:
         writer.write(output_file)
+
+
+def render_offer_content_pdf(context, *, page_layout=None):
+    html = render_template("admin/offer_pdf.html", **context)
+    return HTML(string=html, base_url=current_app.root_path).write_pdf(stylesheets=page_stylesheets(page_layout))
 
 
 def create_offer_document(
@@ -478,17 +483,7 @@ def create_offer_document(
             / "offer.pdf"
         )
 
-        html = render_template(
-            "admin/offer_pdf.html",
-            **context,
-        )
-
-        HTML(
-            string=html,
-            base_url=current_app.root_path,
-        ).write_pdf(
-            str(content_path)
-        )
+        content_path.write_bytes(render_offer_content_pdf(context, page_layout=company_page_layout(offer.company_code)))
 
         apply_stationery(
             content_path,

@@ -36,6 +36,9 @@ on:
       - migrations/versions/*invoice_payment_information.py
       - app/document_previews.py
       - app/invoice_document.py
+      - app/invoice_correspondence.py
+      - app/stationery_layout.py
+      - app/stationery_preview.py
       - app/offer_document.py
       - app/static/js/document_preview.js
       - app/templates/admin/_document_preview.html
@@ -150,6 +153,9 @@ on:
       - migrations/versions/*invoice_payment_information.py
       - app/document_previews.py
       - app/invoice_document.py
+      - app/invoice_correspondence.py
+      - app/stationery_layout.py
+      - app/stationery_preview.py
       - app/offer_document.py
       - app/static/js/document_preview.js
       - app/templates/admin/_document_preview.html
