@@ -40,8 +40,9 @@ class MailServiceTests(unittest.TestCase):
         context.push()
         self.addCleanup(context.pop)
         self.addCleanup(self.db.session.remove)
-        self.db.metadata.drop_all(self.db.engine, tables=[self.models.AppSetting.__table__])
-        self.db.metadata.create_all(self.db.engine, tables=[self.models.AppSetting.__table__])
+        tables = [self.models.AppSetting.__table__, self.models.ExternalCraftsman.__table__]
+        self.db.metadata.drop_all(self.db.engine, tables=tables)
+        self.db.metadata.create_all(self.db.engine, tables=tables)
         self.smtp = smtplib.SMTP(local_hostname="localhost")
         self.smtp.ehlo_or_helo_if_needed = Mock()
         self.smtp.sendmail = Mock(return_value={})
@@ -58,6 +59,67 @@ class MailServiceTests(unittest.TestCase):
         message["Subject"] = "Information zu Ihrem Auftrag"
         message.set_content("Der Handwerker kümmert sich um Ihren Auftrag.")
         return message
+
+    def set_debug(self, value, *, external=True):
+        definition = self.settings.SettingKeys.SMTP_EXTERNAL_DEBUG_RECIPIENT if external else self.settings.SettingKeys.SMTP_DEBUG_RECIPIENT
+        self.db.session.add(self.models.AppSetting(key=definition.key, value_text=value,
+                                                   value_type="string", label="Debug", group="E-Mail"))
+        self.db.session.commit()
+
+    def external_craftsman(self):
+        self.db.session.add(self.models.ExternalCraftsman(craftsman_erp_id=900, display_name="Externe Firma",
+                                                          email="external@example.invalid"))
+        self.db.session.commit()
+
+    def test_external_debug_redirects_known_external_recipients_including_copies(self):
+        self.external_craftsman()
+        self.set_debug("external-debug@example.invalid")
+        for header in ("To", "Cc", "Bcc", "Resent-To", "Resent-Cc", "Resent-Bcc"):
+            with self.subTest(header=header):
+                message = self.message()
+                if header == "To":
+                    message.replace_header("To", "Externe Firma <EXTERNAL@example.invalid>")
+                else:
+                    message[header] = "EXTERNAL@example.invalid"
+                message["Return-Receipt-To"] = "real-receipt@example.invalid"
+                result, sent = self.send(message)
+                self.assertEqual(result, "external-debug@example.invalid")
+                self.assertEqual(str(sent["To"]), result)
+                self.assertEqual(self.smtp.sendmail.call_args.args[1], [result])
+                self.assertFalse(any(name.lower() in {"cc", "bcc", "return-receipt-to"} or name.lower().startswith("resent-")
+                                     for name in sent.keys()))
+
+    def test_external_debug_can_identify_an_explicit_external_message_without_a_registered_address(self):
+        self.set_debug("external-debug@example.invalid")
+        result = self.mail.send_email(self.message(), smtp_host="smtp.example.invalid", smtp_port=25, external_craftsman=True)
+        self.assertEqual(result, "external-debug@example.invalid")
+        self.assertEqual(self.smtp.sendmail.call_args.args[1], [result])
+
+    def test_external_debug_leaves_internal_and_tenant_messages_unchanged(self):
+        self.external_craftsman()
+        self.set_debug("external-debug@example.invalid")
+        message = self.message()
+        result, sent = self.send(message)
+        self.assertIsNone(result)
+        self.assertEqual(str(sent["To"]), "tenant@example.invalid")
+        self.assertEqual(str(sent["Subject"]), str(message["Subject"]))
+        self.assertEqual(self.smtp.sendmail.call_args.args[1], ["tenant@example.invalid"])
+
+    def test_global_debug_has_priority_even_when_the_external_debug_value_is_invalid(self):
+        self.set_debug("invalid-external-address")
+        self.set_debug("global-debug@example.invalid", external=False)
+        result, sent = self.send(self.message())
+        self.assertEqual(result, "global-debug@example.invalid")
+        self.assertEqual(str(sent["To"]), result)
+        self.assertEqual(self.smtp.sendmail.call_args.args[1], [result])
+
+    def test_invalid_external_debug_stops_smtp_and_cannot_be_saved_through_settings(self):
+        self.set_debug("invalid-external-address")
+        with self.assertRaises(RuntimeError):
+            self.mail.send_email(self.message(), smtp_host="smtp.example.invalid", smtp_port=25, external_craftsman=True)
+        self.smtp_factory.assert_not_called()
+        with self.assertRaises(ValueError):
+            self.settings.settings.set(self.settings.SettingKeys.SMTP_EXTERNAL_DEBUG_RECIPIENT, "invalid-external-address")
 
     def send(self, message):
         result = self.mail.send_email(message, smtp_host="smtp.example.invalid", smtp_port=2525)

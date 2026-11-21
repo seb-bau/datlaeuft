@@ -53,7 +53,7 @@
           <input class="form-check-input" type="checkbox" name="{{ definition.key }}" value="true" {% if value %}checked{% endif %}>
           <label class="form-check-label">Aktiv</label>
         </div>
-        {% elif definition.key == "smtp.debug_recipient" %}
+        {% elif definition.key in ("smtp.debug_recipient", "smtp.external_debug_recipient") %}
           <input
             class="form-control"
             type="email"
@@ -61,12 +61,20 @@
             value="{{ value }}"
           >
           <div class="form-text">
+            {% if definition.key == "smtp.external_debug_recipient" %}
+            Fängt ausschließlich E-Mails an externe Handwerker ab, einschließlich Einladungen, Beauftragungen, Erinnerungen und Stornierungen. Die allgemeine Debug-Adresse hat immer Vorrang.
+            {% else %}
             Wenn gesetzt, werden alle E-Mails ausschließlich an diese Adresse gesendet.
             Leer lassen, um wieder an die regulären Empfänger zu senden.
+            {% endif %}
           </div>
           {% if value %}
           <div class="alert alert-warning mt-2 mb-0">
+            {% if definition.key == 'smtp.external_debug_recipient' %}
+            Testadresse für externe Handwerker: {{ value }}. Wirksam, solange die allgemeine Debug-Adresse leer ist.
+            {% else %}
             E-Mail-Testmodus aktiv: Alle E-Mails werden an {{ value }} umgeleitet.
+            {% endif %}
           </div>
           {% endif %}
         {% elif definition.secret %}

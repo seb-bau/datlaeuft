@@ -93,7 +93,19 @@ EMAIL_TEMPLATES = {
         "label": "Handwerkerportal: Neuer Auftrag",
         "fields": ORDER_FIELDS + " portal_name recipient_name",
         "subject": "{{ portal_name }} – Neuer Auftrag: {{ commission_number }}",
-        "body": GREETING + "Ihnen wurde ein Auftrag zugewiesen.\n\n" + ORDER_DETAILS + "\nAuftrag im Portal öffnen:\n{{ commission_url }}",
+        "body": GREETING + "Ihnen wurde ein Auftrag zugewiesen.\n\n" + ORDER_DETAILS + "{% if commission_url %}\nAuftrag öffnen:\n{{ commission_url }}{% endif %}",
+    },
+    "external_reminder": {
+        "label": "Externe Handwerker: Erinnerung an Auftragsannahme",
+        "fields": ORDER_FIELDS + " portal_name recipient_name reminder_number days",
+        "subject": "{{ portal_name }} – Erinnerung {{ reminder_number }}: Auftrag {{ commission_number }}",
+        "body": GREETING + "zu diesem Auftrag liegt uns noch keine Annahme oder Ablehnung vor. Bitte teilen Sie uns Ihre Entscheidung mit.\n\n" + ORDER_DETAILS + "{% if commission_url %}\nAuftrag öffnen:\n{{ commission_url }}{% endif %}",
+    },
+    "external_cancellation": {
+        "label": "Externe Handwerker: Stornierung ohne Rückmeldung",
+        "fields": ORDER_FIELDS + " portal_name recipient_name days",
+        "subject": "{{ portal_name }} – Auftrag {{ commission_number }} storniert",
+        "body": GREETING + "wir haben den folgenden Auftrag storniert, da innerhalb von {{ days }} Tagen keine Annahme oder Ablehnung eingegangen ist. Bitte führen Sie diesen Auftrag nicht aus.\n\n" + ORDER_DETAILS,
     },
     "appointment_request": {
         "label": "Termin: Vorschläge an Bewohner",
@@ -159,6 +171,8 @@ EMAIL_TEMPLATES = {
 }
 
 FIELD_LABELS = {
+    "reminder_number": "Nummer der Erinnerung",
+    "days": "Frist in Tagen",
     "invoice_number": "Rechnungsnummer",
     "invoice_recipient_name": "Rechnungsempfänger / Mieter",
     "contract_number": "Vertragsnummer",
@@ -207,6 +221,7 @@ FIELD_LABELS = {
 }
 
 EXAMPLE_CONTEXT = {
+    "reminder_number": "1", "days": "7",
     "invoice_number": "RE-2026-0042", "invoice_recipient_name": "Max Mustermann", "contract_number": "NV-12345",
     "total_gross": "119,00", "currency": "EUR", "invoice_date": "17.11.2026", "due_date": "01.12.2026",
     "company_name": "Beispielbetrieb", "sender_name": "Petra Beispiel",

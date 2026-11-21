@@ -36,4 +36,5 @@ def send_external_email(
         outgoing,
         smtp_host=smtp_host,
         smtp_port=smtp_port,
+        external_craftsman=True,
     )

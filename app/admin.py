@@ -150,6 +150,7 @@ from .external_craftsman_service import (
     send_external_invitation_email,
     sync_external_craftsmen_from_wowiport,
 )
+from .external_order_responses import validate_external_communication
 from .ticket_service import (
     ticket_license_agreement_local_id,
     mark_ticket_analyses_stale,
@@ -13721,6 +13722,7 @@ def external_craftsmen() -> Any:
     return render_template(
         "admin/external_craftsmen.html",
         items=items,
+        portal_light_default=settings.get(SettingKeys.EXTERNAL_PORTAL_LIGHT_DEFAULT),
         internal_craftsman_erp_ids=(
             internal_craftsman_erp_ids
         ),
@@ -13838,6 +13840,25 @@ def external_craftsman_craft_activities(craftsman_id: int) -> Any:
         )
         flash("Die Gewerke konnten nicht gespeichert werden.", "danger")
 
+    return redirect(url_for("admin.external_craftsmen"))
+
+
+@admin_bp.post("/admin/external-craftsmen/<int:craftsman_id>/communication")
+@admin_required
+def external_craftsman_communication(craftsman_id: int) -> Any:
+    craftsman = db.get_or_404(ExternalCraftsman, craftsman_id)
+    try:
+        values = validate_external_communication(request.form)
+        previous = {name: getattr(craftsman, name) for name in values}
+        for name, value in values.items():
+            setattr(craftsman, name, value)
+        audit("external_craftsman.communication.update", "external_craftsman", craftsman.id,
+              {"previous": previous, "current": values})
+        db.session.commit()
+        flash("Die Kommunikationseinstellungen wurden gespeichert.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
     return redirect(url_for("admin.external_craftsmen"))
 
 

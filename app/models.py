@@ -575,6 +575,10 @@ class ExternalCraftsman(db.Model):
     password_hash: Mapped[str | None] = mapped_column(
         db.String(255)
     )
+    portal_light_enabled: Mapped[bool | None] = mapped_column(db.Boolean)
+    reminder_first_days: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    reminder_second_days: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
+    cancel_unanswered_days: Mapped[int] = mapped_column(db.Integer, default=0, server_default="0", nullable=False)
     assignment_enabled: Mapped[bool] = mapped_column(
         db.Boolean,
         default=False,
@@ -1777,6 +1781,10 @@ class ExternalCommissionAssignmentMail(db.Model):
         db.Integer,
         nullable=False,
     )
+    response_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    response_decision: Mapped[str | None] = mapped_column(db.String(20))
+    response_text: Mapped[str | None] = mapped_column(db.Text)
+    auto_canceled_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
     state: Mapped[str] = mapped_column(
         db.String(30),
         default="pending",

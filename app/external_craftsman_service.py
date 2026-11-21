@@ -36,6 +36,10 @@ from .user_sync import (
 )
 from .blacklist import include_blacklisted
 from .email_templates import apply_email_template, commission_email_context, set_email_content
+from .external_order_responses import (
+    assignment_is_current, automatic_external_mails_enabled, ensure_external_followups,
+    portal_light_enabled, response_url, set_external_order_content,
+)
 
 
 @dataclass
@@ -462,10 +466,19 @@ def ensure_external_assignment_mails(
             ),
         )
         .filter(
-            ExternalCraftsman.portal_enabled.is_(True),
+            or_(
+                ExternalCraftsman.portal_enabled.is_(True), ExternalCraftsman.portal_light_enabled.is_(True),
+                and_(ExternalCraftsman.portal_light_enabled.is_(None), settings.get(SettingKeys.EXTERNAL_PORTAL_LIGHT_DEFAULT)),
+                ExternalCraftsman.reminder_first_days > 0, ExternalCraftsman.reminder_second_days > 0,
+                ExternalCraftsman.cancel_unanswered_days > 0,
+            ),
             ExternalCraftsman.wowi_active.is_(True),
             ExternalCraftsman.email.is_not(None),
             Commission.deleted_at.is_(None),
+            Commission.user_id.is_(None),
+            ExternalCraftsman.craftsman_erp_id.not_in(
+                db.session.query(User.craftsman_erp_id).filter(User.is_active_flag.is_(True), User.craftsman_erp_id.is_not(None))
+            ),
             Commission.is_retrospective.is_(False),
             Commission.approval_state != "pending",
             Commission.local_status.in_(
@@ -521,6 +534,7 @@ def process_external_assignment_mail_batch(
 
     try:
         ensure_external_assignment_mails()
+        ensure_external_followups()
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -589,25 +603,30 @@ def execute_external_assignment_mail(
 
     commission = item.commission
     craftsman = item.external_craftsman
-    assignment_is_current = (
-        commission.craftsman_erp_id
-        == craftsman.craftsman_erp_id
-        and commission.external_assignment_version
-        == item.assignment_version
-    )
+    current_assignment = assignment_is_current(item)
     access_is_current = (
-        craftsman.portal_enabled
+        automatic_external_mails_enabled(craftsman)
         and craftsman.wowi_active
         and bool(craftsman.email)
     )
 
-    if commission.approval_state == "pending" or commission.is_retrospective or not assignment_is_current or not access_is_current:
+    if (commission.approval_state == "pending" or commission.is_retrospective or not current_assignment or not access_is_current
+            or commission.deleted_at is not None or commission.user_id is not None or commission.local_status not in (
+                CommissionLocalStatus.OPEN.value, CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value, CommissionLocalStatus.IN_PROGRESS.value,
+            )):
         item.state = "discarded"
         item.locked_at = None
         item.last_error = None
         db.session.commit()
         return
 
+    if (not commission.erp_id or not commission.erp_idnum or commission.erp_sync_state != "synced"
+            or commission.local_status == CommissionLocalStatus.OPEN.value):
+        item.state = "pending"
+        item.available_at = utc_now() + timedelta(minutes=1)
+        item.locked_at = None
+        db.session.commit()
+        return
     send_external_assignment_email(item)
     item.state = "sent"
     item.sent_at = utc_now()
@@ -630,7 +649,7 @@ def fail_external_assignment_mail(
         return
 
     delay_seconds = min(
-        60 * (2 ** max(item.attempt_count - 1, 0)),
+        60 * (2 ** min(max(item.attempt_count - 1, 0), 6)),
         3600,
     )
     item.state = "failed"
@@ -663,6 +682,10 @@ def send_external_assignment_email(
         f"{public_base_url}/auftragnehmer/auftraege/"
         f"{commission.public_id}"
     )
+    if portal_light_enabled(craftsman) and commission.local_status == CommissionLocalStatus.WAITING_FOR_ACCEPTANCE.value:
+        commission_url = response_url(item)
+    elif not craftsman.portal_enabled:
+        commission_url = ""
     context = commission_email_context(commission)
     context.update({
         "recipient_name": craftsman.display_name or "",
@@ -672,9 +695,7 @@ def send_external_assignment_email(
     message["From"] = smtp_sender
     message["To"] = craftsman.email
     content = apply_email_template(message, "external_assignment", context)
-    if commission.contact_information_text:
-        message.clear_content()
-        set_email_content(message, content["subject"], commission.with_contact_information(content["body"]) + "\n")
+    set_external_order_content(message, content["subject"], commission.with_contact_information(content["body"]) + "\n", item)
     send_external_email(
         message,
         smtp_host=smtp_host,
