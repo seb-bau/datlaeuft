@@ -5,10 +5,8 @@
   const intro = document.getElementById('responseIntro');
   const update = () => {
     const accepted = form.elements.decision.value === 'accept';
-    label.textContent = `${accepted ? 'Weitere Mitteilungen' : 'Ablehnungsgrund'} (optional)`;
-    intro.textContent = accepted
-      ? 'Vielen Dank, dass Sie den Auftrag übernehmen möchten. Bitte bestätigen Sie Ihre Entscheidung.'
-      : 'Bitte bestätigen Sie Ihre Entscheidung zum Auftrag.';
+    label.textContent = accepted ? form.dataset.acceptLabel : form.dataset.rejectLabel;
+    intro.textContent = accepted ? form.dataset.acceptIntro : form.dataset.rejectIntro;
   };
   form.addEventListener('change', update);
   update();

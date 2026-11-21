@@ -55,6 +55,7 @@ class CommissionContactInformationTests(unittest.TestCase):
     def setUpClass(cls):
         fixtures.CommissionObjectLevelTests.setUpClass.__func__(cls)
         cls.templates = importlib.import_module(cls.package_name + ".email_templates")
+        cls.portal_texts = importlib.reload(importlib.import_module(cls.package_name + ".external_portal_texts"))
         cls.responses = importlib.reload(importlib.import_module(cls.package_name + ".external_order_responses"))
         cls.contact_lookup = Mock()
         cls.app.add_url_rule("/affected/<int:object_id>", view_func=load_function(cls.root / "app/admin.py", "commission_affected_contacts", {

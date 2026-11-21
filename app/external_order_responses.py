@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 from hashlib import sha256
-from html import escape
 from uuid import NAMESPACE_URL, uuid5
 
 from flask import current_app
@@ -157,25 +156,13 @@ def can_create_portal_password(item):
 
 
 def set_external_order_content(message, subject, body, item, *, include_actions=True):
-    from .email_templates import set_email_content
+    from .external_portal_texts import portal_text_context, render_portal_texts, set_response_email_content
 
-    actions = []
+    accept_url = reject_url = texts = None
     if include_actions and portal_light_enabled(item.external_craftsman) and assignment_is_unanswered(item):
-        actions = [("Auftrag annehmen", response_url(item, "accept"), "#198754"),
-                   ("Auftrag ablehnen", response_url(item, "reject"), "#b02a37")]
-        body = body.rstrip() + "\n\nOhne Anmeldung antworten:\n" + "\n".join(f"{label}: {url}" for label, url, _ in actions) + "\n"
-    message.clear_content()
-    set_email_content(message, subject, body)
-    for part in message.walk():
-        if part.get_content_type() != "text/html":
-            continue
-        html = part.get_content()
-        for label, url, color in actions:
-            escaped_url = escape(url, quote=True)
-            html = html.replace(f'<a href="{escaped_url}">{escaped_url}</a>',
-                                f'<a href="{escaped_url}" style="display:inline-block;padding:12px 18px;margin:6px 0;'
-                                f'background:{color};color:#fff;text-decoration:none;border-radius:4px">{label}</a>')
-        part.set_content(html, subtype="html")
+        accept_url, reject_url = response_url(item, "accept"), response_url(item, "reject")
+        texts = render_portal_texts(portal_text_context(item.commission, item.external_craftsman))
+    set_response_email_content(message, subject, body, accept_url=accept_url, reject_url=reject_url, texts=texts)
 
 
 def ensure_external_followups(limit=200):
@@ -265,7 +252,7 @@ def followup_content(notification):
                    days=str(days), commission_url=(response_url(item) if portal_light_enabled(craftsman) and event != "cancel"
                    else f"{settings.get(SettingKeys.PUBLIC_BASE_URL).strip().rstrip('/')}/auftragnehmer/auftraege/{item.commission.public_id}"
                    if craftsman.portal_enabled else ""))
-    key = "external_cancellation" if notification.payload["event"] == "cancel" else "external_reminder"
+    key = {"cancel": "external_cancellation", "first": "external_reminder", "second": "external_reminder_second"}[event]
     content = render_email_template(key, context)
     if item.commission.contact_information_text:
         content["body"] = item.commission.with_contact_information(content["body"]) + "\n"

@@ -96,7 +96,14 @@ EMAIL_TEMPLATES = {
         "body": GREETING + "Ihnen wurde ein Auftrag zugewiesen.\n\n" + ORDER_DETAILS + "{% if commission_url %}\nAuftrag öffnen:\n{{ commission_url }}{% endif %}",
     },
     "external_reminder": {
-        "label": "Externe Handwerker: Erinnerung an Auftragsannahme",
+        "label": "Externe Handwerker: Erinnerungsmail 1",
+        "fields": ORDER_FIELDS + " portal_name recipient_name reminder_number days",
+        "subject": "{{ portal_name }} – Erinnerung {{ reminder_number }}: Auftrag {{ commission_number }}",
+        "body": GREETING + "zu diesem Auftrag liegt uns noch keine Annahme oder Ablehnung vor. Bitte teilen Sie uns Ihre Entscheidung mit.\n\n" + ORDER_DETAILS + "{% if commission_url %}\nAuftrag öffnen:\n{{ commission_url }}{% endif %}",
+    },
+    "external_reminder_second": {
+        "label": "Externe Handwerker: Erinnerungsmail 2",
+        "fallback": "external_reminder",
         "fields": ORDER_FIELDS + " portal_name recipient_name reminder_number days",
         "subject": "{{ portal_name }} – Erinnerung {{ reminder_number }}: Auftrag {{ commission_number }}",
         "body": GREETING + "zu diesem Auftrag liegt uns noch keine Annahme oder Ablehnung vor. Bitte teilen Sie uns Ihre Entscheidung mit.\n\n" + ORDER_DETAILS + "{% if commission_url %}\nAuftrag öffnen:\n{{ commission_url }}{% endif %}",
@@ -304,7 +311,10 @@ def email_template_definition(key):
 def get_email_template(key):
     definition = email_template_definition(key)
     row = AppSetting.query.filter_by(key=definition.key).one_or_none()
-    return json.loads(row.value_text) if row is not None else dict(definition.default)
+    if row is not None:
+        return json.loads(row.value_text)
+    fallback = EMAIL_TEMPLATES[key].get("fallback")
+    return get_email_template(fallback) if fallback else dict(definition.default)
 
 
 def compile_email_template(key, text):
@@ -381,13 +391,13 @@ def email_body_html(body, subject="", *, layout=None):
     )
 
 
-def set_email_content(message, subject, body):
+def set_email_content(message, subject, body, *, layout=None):
     if "Subject" in message:
         message.replace_header("Subject", subject)
     else:
         message["Subject"] = subject
     message.set_content(body)
-    message.add_alternative(email_body_html(body, subject), subtype="html")
+    message.add_alternative(email_body_html(body, subject, layout=layout), subtype="html")
 
 
 def apply_email_template(message, key, context):

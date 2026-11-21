@@ -1,71 +1,69 @@
 {% extends "external_portal/base.html" %}
-{% block title %}Antwort zu Auftrag {{ item.commission.erp_idnum or item.commission.code }}{% endblock %}
+{% block title %}{{ portal_texts.page_title }}{% endblock %}
 {% block content %}
 <div class="card shadow-sm mx-auto" style="max-width:720px">
   <div class="card-body p-4">
-    <h1 class="h4">Auftrag {{ item.commission.erp_idnum or item.commission.code }}</h1>
+    <h1 class="h4">{{ portal_texts.order_heading }}</h1>
     <p>{{ item.commission.display_title }}</p>
     {% if item.response_at %}
-    <div class="alert alert-success">
-      {% if item.response_decision == 'accept' %}
-      Vielen Dank! Sie haben den Auftrag angenommen.
-      {% else %}
-      Vielen Dank für Ihre Rückmeldung. Ihre Ablehnung wurde übermittelt.
-      {% endif %}
-    </div>
+    <div class="alert alert-success" style="white-space:pre-wrap">{{ portal_texts.accepted_message if item.response_decision == 'accept' else portal_texts.rejected_message }}</div>
     {% if item.response_text %}
-    <h2 class="h6">{{ 'Weitere Mitteilungen' if item.response_decision == 'accept' else 'Ablehnungsgrund' }}</h2>
+    <h2 class="h6">{{ portal_texts.additional_label if item.response_decision == 'accept' else portal_texts.rejection_label }}</h2>
     <p style="white-space:pre-wrap">{{ item.response_text }}</p>
     {% endif %}
     <hr>
-    <h2 class="h5">Nutzen Sie unser Auftragnehmerportal</h2>
-    <p>Im Portal können Sie Ihre Aufträge einsehen, Zusatzinformationen austauschen und den Bearbeitungsstand melden.</p>
+    <h2 class="h5">{{ portal_texts.portal_heading }}</h2>
+    <p style="white-space:pre-wrap">{{ portal_texts.portal_description }}</p>
     {% if can_create_password %}
-    <p>Bei Bedarf können Sie jetzt ein Kennwort für Ihren persönlichen Zugang vergeben. Ihre Entscheidung zum Auftrag ist bereits gespeichert.</p>
-    <p>Ihr Benutzername: <strong>{{ username }}</strong></p>
+    <p style="white-space:pre-wrap">{{ portal_texts.upgrade_intro }}</p>
+    <p>{{ portal_texts.username_label }} <strong>{{ username }}</strong></p>
     <form method="post" action="{{ url_for('external_portal.order_response_upgrade', raw_token=raw_token) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="mb-3">
-        <label class="form-label" for="portalPassword">Kennwort</label>
+        <label class="form-label" for="portalPassword">{{ portal_texts.password_label }}</label>
         <input class="form-control" type="password" id="portalPassword" name="password" minlength="12" maxlength="128" autocomplete="new-password" required>
-        <div class="form-text">Mindestens 12, höchstens 128 Zeichen. Die Einrichtung über diesen Link ist 48 Stunden möglich.</div>
+        <div class="form-text" style="white-space:pre-wrap">{{ portal_texts.password_hint }}</div>
       </div>
       <div class="mb-3">
-        <label class="form-label" for="portalPasswordConfirmation">Kennwort wiederholen</label>
+        <label class="form-label" for="portalPasswordConfirmation">{{ portal_texts.password_confirmation_label }}</label>
         <input class="form-control" type="password" id="portalPasswordConfirmation" name="password_confirmation" minlength="12" maxlength="128" autocomplete="new-password" required>
       </div>
-      <button class="btn btn-primary" type="submit">Portalzugang einrichten</button>
+      <button class="btn btn-primary" type="submit">{{ portal_texts.upgrade_label }}</button>
     </form>
     {% elif item.external_craftsman.portal_enabled and item.external_craftsman.password_hash %}
-    <p>Ihr Zugang besteht bereits. Benutzername: <strong>{{ username }}</strong></p>
-    <a class="btn btn-primary" href="{{ url_for('external_portal.login') }}">Im Portal anmelden</a>
+    <p style="white-space:pre-wrap">{{ portal_texts.existing_account_message }}</p>
+    <p>{{ portal_texts.username_label }} <strong>{{ username }}</strong></p>
+    <a class="btn btn-primary" href="{{ url_for('external_portal.login') }}">{{ portal_texts.login_label }}</a>
     {% else %}
-    <p>Für die Einrichtung oder Freischaltung Ihres Zugangs wenden Sie sich bitte an die Sachbearbeitung.</p>
+    <p style="white-space:pre-wrap">{{ portal_texts.contact_office_message }}</p>
     {% endif %}
     {% elif can_respond %}
-    <p id="responseIntro">{{ 'Vielen Dank, dass Sie den Auftrag übernehmen möchten. Bitte bestätigen Sie Ihre Entscheidung.' if decision == 'accept' else 'Bitte bestätigen Sie Ihre Entscheidung zum Auftrag.' }}</p>
-    <form method="post" id="orderResponseForm">
+    <p id="responseIntro" style="white-space:pre-wrap">{{ portal_texts.intro_accept if decision == 'accept' else portal_texts.intro_reject }}</p>
+    <form method="post" id="orderResponseForm"
+          data-accept-intro="{{ portal_texts.intro_accept }}" data-reject-intro="{{ portal_texts.intro_reject }}"
+          data-accept-label="{{ portal_texts.additional_label }} ({{ portal_texts.optional_label }})"
+          data-reject-label="{{ portal_texts.rejection_label }} ({{ portal_texts.optional_label }})">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <fieldset class="mb-3">
-        <legend class="h6">Ihre Entscheidung</legend>
+        <legend class="h6">{{ portal_texts.decision_legend }}</legend>
         <div class="form-check">
           <input class="form-check-input" type="radio" name="decision" id="decisionAccept" value="accept" {% if decision != 'reject' %}checked{% endif %}>
-          <label class="form-check-label" for="decisionAccept">Auftrag annehmen</label>
+          <label class="form-check-label" for="decisionAccept">{{ portal_texts.accept_label }}</label>
         </div>
         <div class="form-check">
           <input class="form-check-input" type="radio" name="decision" id="decisionReject" value="reject" {% if decision == 'reject' %}checked{% endif %}>
-          <label class="form-check-label" for="decisionReject">Auftrag ablehnen</label>
+          <label class="form-check-label" for="decisionReject">{{ portal_texts.reject_label }}</label>
         </div>
       </fieldset>
       <div class="mb-3">
-        <label class="form-label" for="responseText" id="responseTextLabel">{{ 'Ablehnungsgrund' if decision == 'reject' else 'Weitere Mitteilungen' }} (optional)</label>
+        <label class="form-label" for="responseText" id="responseTextLabel">{{ portal_texts.rejection_label if decision == 'reject' else portal_texts.additional_label }} ({{ portal_texts.optional_label }})</label>
         <textarea class="form-control" id="responseText" name="text" rows="5" maxlength="2000">{{ text }}</textarea>
-        <div class="form-text">Ihre Eingabe ist freiwillig. Sie können Ihre Entscheidung bis zum Absenden ändern.</div>
+        <div class="form-text" style="white-space:pre-wrap">{{ portal_texts.input_hint }}</div>
       </div>
-      <button class="btn btn-primary" type="submit">Entscheidung absenden</button>
+      <button class="btn btn-primary" type="submit">{{ portal_texts.submit_label }}</button>
     </form>
     {% else %}
-    <div class="alert alert-info mb-0">Für diesen Auftrag kann keine Entscheidung mehr abgegeben werden. Der Bearbeitungsstand wurde bereits geändert. Bei Rückfragen wenden Sie sich bitte an die Sachbearbeitung.</div>
+    <div class="alert alert-info mb-0" style="white-space:pre-wrap">{{ portal_texts.closed_message }}</div>
     {% endif %}
   </div>
 </div>

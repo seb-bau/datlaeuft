@@ -75,6 +75,9 @@ on:
       - app/process_info_web.py
       - app/external_portal.py
       - app/external_order_responses.py
+      - app/external_portal_texts.py
+      - app/templates/admin/external_portal_texts.html
+      - app/templates/admin/email_templates.html
       - app/external_craftsman_service.py
       - app/external_branding.py
       - app/templates/external_portal/order_response*.html
@@ -199,6 +202,9 @@ on:
       - app/process_info_web.py
       - app/external_portal.py
       - app/external_order_responses.py
+      - app/external_portal_texts.py
+      - app/templates/admin/external_portal_texts.html
+      - app/templates/admin/email_templates.html
       - app/external_craftsman_service.py
       - app/external_branding.py
       - app/templates/external_portal/order_response*.html

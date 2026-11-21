@@ -14,7 +14,7 @@ from threading import Barrier, Event
 from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
-from flask import Blueprint, Flask, flash, g, redirect, render_template, request, url_for
+from flask import Blueprint, Flask, abort, flash, g, redirect, render_template, request, url_for
 from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect
@@ -47,6 +47,7 @@ class ExternalPortalLightTests(unittest.TestCase):
             "email_templates", "email_layout", "mail_service", "external_branding", "external_craftsman_service",
             "external_order_responses", "external_portal", "commission_workflow_service", "process_info_service",
             "workflow_notifications", "audit", "erp_sync",
+            "external_portal_texts",
         }
         for name in real_names - {"extensions"}:
             source = ast.parse((cls.root / "app" / (name + ".py")).read_text())
@@ -71,6 +72,8 @@ class ExternalPortalLightTests(unittest.TestCase):
         cls.workflow = importlib.import_module(cls.package_name + ".commission_workflow_service")
         cls.notifications = importlib.import_module(cls.package_name + ".workflow_notifications")
         cls.portal = importlib.import_module(cls.package_name + ".external_portal")
+        cls.portal_texts = importlib.import_module(cls.package_name + ".external_portal_texts")
+        cls.mail_templates = importlib.import_module(cls.package_name + ".email_templates")
         cls.app.register_blueprint(cls.portal.external_portal_bp)
         cls.app.jinja_loader = ChoiceLoader([DictLoader({"base.html": "{% block content %}{% endblock %}{% block scripts %}{% endblock %}"}),
                                             FileSystemLoader(str(cls.root / "app/templates"))])
@@ -78,18 +81,20 @@ class ExternalPortalLightTests(unittest.TestCase):
         namespace.update(db=cls.db, settings=cls.settings_module.settings, SettingKeys=cls.settings_module.SettingKeys,
                          selectinload=selectinload, render_template=render_template, request=request, flash=flash, redirect=redirect,
                          url_for=url_for, audit=importlib.import_module(cls.package_name + ".audit").audit,
-                         validate_external_communication=cls.responses.validate_external_communication, Any=object)
+                         validate_external_communication=cls.responses.validate_external_communication, Any=object, abort=abort,
+                         __package__=cls.package_name, __name__=cls.package_name + ".admin")
         source = ast.parse((cls.root / "app/admin.py").read_text())
         admin = Blueprint("admin", __name__)
         for name, path, methods in (("external_craftsmen", "/admin/external-craftsmen", ["GET"]),
-                                    ("external_craftsman_communication", "/admin/external-craftsmen/<int:craftsman_id>/communication", ["POST"])):
+                                    ("external_craftsman_communication", "/admin/external-craftsmen/<int:craftsman_id>/communication", ["POST"]),
+                                    ("email_templates_page", "/admin/settings/email-templates", ["GET", "POST"])):
             function = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == name)
             function.decorator_list = []
             exec(compile(ast.Module(body=[function], type_ignores=[]), "admin.py", "exec"), namespace)
             admin.add_url_rule(path, endpoint=name, view_func=namespace[name], methods=methods)
         for name in ("external_craftsmen_sync", "external_craftsman_craft_activities", "external_craftsman_assignment",
-                     "external_craftsman_invite", "external_craftsman_disable", "external_craftsman_enable"):
-            path = "/admin/test/" + name + ("" if name == "external_craftsmen_sync" else "/<int:craftsman_id>")
+                     "external_craftsman_invite", "external_craftsman_disable", "external_craftsman_enable", "settings_page"):
+            path = "/admin/test/" + name + ("" if name in {"external_craftsmen_sync", "settings_page"} else "/<int:craftsman_id>")
             admin.add_url_rule(path, endpoint=name, view_func=lambda **values: "")
         cls.app.register_blueprint(admin)
 

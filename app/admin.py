@@ -1078,16 +1078,19 @@ def email_templates_page() -> Any:
     from .email_templates import (
         EMAIL_LAYOUT_TEMPLATE_KEY,
         EMAIL_TEMPLATES, EXAMPLE_CONTEXT, FIELD_LABELS,
-        email_body_html, email_layout_definition, email_template_definition,
+        email_layout_definition, email_template_definition,
         get_email_layout, get_email_template, render_email_value,
         validate_email_template,
     )
+    from .external_portal_texts import PORTAL_TEXTS_TEMPLATE_KEY, edit_external_portal_texts, external_mail_preview
 
     template_key = (
         request.form.get("template_key")
         if request.method == "POST"
         else request.args.get("template", next(iter(EMAIL_TEMPLATES)))
     )
+    if template_key == PORTAL_TEXTS_TEMPLATE_KEY:
+        return edit_external_portal_texts()
     is_layout = template_key == EMAIL_LAYOUT_TEMPLATE_KEY
     if not is_layout and template_key not in EMAIL_TEMPLATES:
         abort(404)
@@ -1123,14 +1126,15 @@ def email_templates_page() -> Any:
             else:
                 value = validate_email_template(template_key, value)
             if action == "preview":
+                rendered_key = preview_key if is_layout else template_key
                 preview = render_email_value(
-                    preview_key if is_layout else template_key,
+                    rendered_key,
                     get_email_template(preview_key) if is_layout else value,
-                    EXAMPLE_CONTEXT,
+                    {**EXAMPLE_CONTEXT, "reminder_number": "2" if rendered_key == "external_reminder_second" else EXAMPLE_CONTEXT["reminder_number"]},
                 )
                 if is_layout or template_key != "appointment_calendar":
-                    preview_html = email_body_html(
-                        preview["body"], preview["subject"],
+                    preview, preview_html = external_mail_preview(
+                        rendered_key, preview,
                         layout=value["html"] if is_layout else None,
                     )
             else:
@@ -1151,6 +1155,7 @@ def email_templates_page() -> Any:
         "admin/email_templates.html",
         template_options=[
             (EMAIL_LAYOUT_TEMPLATE_KEY, "Gemeinsames HTML-Layout"),
+            (PORTAL_TEXTS_TEMPLATE_KEY, "Portal light: Antwortseite und Mail-Schaltflächen"),
             *[(key, item["label"]) for key, item in EMAIL_TEMPLATES.items()],
         ],
         template_key=template_key,
