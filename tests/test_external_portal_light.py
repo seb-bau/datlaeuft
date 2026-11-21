@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from email.message import EmailMessage
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
@@ -523,6 +523,58 @@ class ExternalPortalLightTests(unittest.TestCase):
                 mail = self.models.ExternalCommissionAssignmentMail.query.one()
                 self.assertNotEqual(mail.response_at is None, mail.auto_canceled_at is None)
                 self.assertEqual(mail.commission.local_status, "in_progress" if mail.response_at else "canceled")
+
+    @unittest.skipUnless(os.environ.get("DATLAEUFT_TEST_DATABASE_URL", "").startswith("mysql"), "Benötigt MariaDB für mehrere Aufträge einer Firma")
+    def test_timeout_releases_company_locks_before_processing_another_order(self):
+        with self.concurrency_database() as (app, token):
+            with app.app_context():
+                craftsman = self.models.ExternalCraftsman.query.one()
+                second = self.models.Commission(erp_id=101, erp_idnum="A-101", craftsman_erp_id=900,
+                                                status_id=12, local_status="waiting_for_acceptance", erp_sync_state="synced")
+                self.db.session.add(second)
+                self.db.session.flush()
+                mail = self.models.ExternalCommissionAssignmentMail(commission=second, external_craftsman=craftsman,
+                                                                     assignment_version=second.external_assignment_version,
+                                                                     state="sent", sent_at=self.models.utc_now() - timedelta(days=2))
+                self.db.session.add(mail)
+                self.db.session.commit()
+                second_id = second.id
+                second_token = self.responses.response_serializer().dumps(self.responses.response_identity(mail))
+            first_queued, second_locked = Event(), Event()
+            enqueue = self.notifications.enqueue_notification
+
+            def enqueue_and_wait(*args, **kwargs):
+                notification = enqueue(*args, **kwargs)
+                if kwargs["commission"].erp_id == 100:
+                    first_queued.set()
+                    self.assertTrue(second_locked.wait(timeout=10))
+                return notification
+
+            def timeout():
+                with app.app_context():
+                    self.responses.ensure_external_followups()
+                    self.db.session.commit()
+
+            def respond():
+                self.assertTrue(first_queued.wait(timeout=10))
+                with app.app_context():
+                    self.models.Commission.query.filter_by(id=second_id).with_for_update().one()
+                    second_locked.set()
+                    item = self.responses.response_assignment(second_token, lock=True)
+                    self.responses.submit_response(item, "accept", "")
+                    self.db.session.commit()
+
+            with patch.object(self.notifications, "enqueue_notification", side_effect=enqueue_and_wait):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    first = executor.submit(timeout)
+                    second = executor.submit(respond)
+                    first.result(timeout=25)
+                    second.result(timeout=25)
+            with app.app_context():
+                states = {order.erp_id: order.local_status for order in self.models.Commission.query.all()}
+                self.assertEqual(states, {100: "canceled", 101: "in_progress"})
+                self.assertEqual(self.models.ErpOutboxOperation.query.count(), 2)
+                self.assertEqual(self.models.WorkflowNotification.query.count(), 1)
 
 
 if __name__ == "__main__":

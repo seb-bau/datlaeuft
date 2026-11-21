@@ -7,6 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from flask import current_app
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+from sqlalchemy.exc import OperationalError
 
 from .extensions import db
 from .models import Commission, CommissionLocalStatus, ExternalCommissionAssignmentMail, ExternalCraftsman, User, WorkflowNotification, utc_now
@@ -88,6 +89,22 @@ def response_url(item, decision=None):
     return f"{url}?decision={decision}" if decision else url
 
 
+def locked_assignment(mail_id):
+    for attempt in range(3):
+        try:
+            item = db.session.get(ExternalCommissionAssignmentMail, mail_id)
+            if item is not None:
+                db.session.refresh(item.commission, with_for_update=True)
+                db.session.refresh(item, with_for_update=True)
+                db.session.refresh(item.external_craftsman, with_for_update=True)
+            return item
+        except OperationalError as exc:
+            db.session.rollback()
+            error_code = exc.orig.args[0] if exc.orig.args else None
+            if error_code not in (1020, 1205, 1213) or attempt == 2:
+                raise
+
+
 def response_assignment(raw_token, *, lock=False):
     try:
         identity = response_serializer().loads(raw_token, max_age=RESPONSE_LINK_MAX_AGE)
@@ -95,11 +112,7 @@ def response_assignment(raw_token, *, lock=False):
         raise ValueError("Dieser Antwort-Link ist ungültig oder abgelaufen.") from exc
     if not isinstance(identity, dict) or type(identity.get("mail")) is not int:
         raise ValueError("Dieser Antwort-Link ist ungültig oder abgelaufen.")
-    item = db.session.get(ExternalCommissionAssignmentMail, identity["mail"])
-    if item is not None and lock:
-        db.session.refresh(item.commission, with_for_update=True)
-        db.session.refresh(item, with_for_update=True)
-        db.session.refresh(item.external_craftsman, with_for_update=True)
+    item = locked_assignment(identity["mail"]) if lock else db.session.get(ExternalCommissionAssignmentMail, identity["mail"])
     if (item is None or not assignment_is_current(item) or item.sent_at is None
             or not portal_light_enabled(item.external_craftsman) or identity != response_identity(item)):
         raise ValueError("Dieser Antwort-Link ist nicht mehr gültig. Bitte wenden Sie sich an die Sachbearbeitung.")
@@ -194,11 +207,12 @@ def ensure_external_followups(limit=200):
         due_keys = [f"external-followup:{item.id}:{event}" for event in due_events]
         if len(WorkflowNotification.query.filter(WorkflowNotification.notification_key.in_(due_keys)).all()) == len(due_keys):
             continue
-        db.session.refresh(item.commission, with_for_update=True)
-        db.session.refresh(item, with_for_update=True)
-        db.session.refresh(craftsman, with_for_update=True)
-        if not assignment_is_unanswered(item):
+        item = locked_assignment(item.id)
+        if item is None or item.sent_at is None or not assignment_is_unanswered(item):
+            db.session.commit()
             continue
+        craftsman = item.external_craftsman
+        age = now - ensure_utc(item.sent_at)
         cancellation = craftsman.cancel_unanswered_days
         if cancellation and age >= timedelta(days=cancellation) and item.commission.can_be_canceled:
             cancel_commission(item.commission, automatic=True)
@@ -215,6 +229,7 @@ def ensure_external_followups(limit=200):
                     )
                     if notification.state == "pending":
                         created += 1
+        db.session.commit()
         if created >= limit:
             break
     return created

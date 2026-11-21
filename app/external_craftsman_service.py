@@ -534,10 +534,11 @@ def process_external_assignment_mail_batch(
 
     try:
         ensure_external_assignment_mails()
-        ensure_external_followups()
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
+
+    ensure_external_followups()
 
     processed = 0
 
