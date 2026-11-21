@@ -1071,9 +1071,7 @@ def offer_commission_draft_data(
             "damage_location": (
                 item.object_location or ""
             ),
-            "contact_person": (
-                item.recipient_name or ""
-            ),
+            "contact_person": "",
         },
         "position_rows": position_rows,
     }

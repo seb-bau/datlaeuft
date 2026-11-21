@@ -5336,6 +5336,9 @@ def commission_create() -> Any:
                             .target_external_craftsman_id
                         )
 
+            if source_offer is not None:
+                form_data["contact_person"] = None
+
             commission = create_pending_commission(
                 data=form_data,
                 created_by_user=current_user,
