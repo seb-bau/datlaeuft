@@ -26,6 +26,7 @@
             <th>Benutzername</th>
             <th>Beauftragung</th>
             <th>Portalzugang</th>
+            <th>E-Mail-Antworten und Fristen</th>
             <th data-filter="false"></th>
           </tr>
         </thead>
@@ -85,6 +86,34 @@
               <span class="badge text-bg-light border">
                 Nicht freigeschaltet
               </span>
+              {% endif %}
+            </td>
+            <td>
+              {% set light_enabled = item.portal_light_enabled if item.portal_light_enabled is not none else portal_light_default %}
+              <span class="badge {{ 'text-bg-success' if light_enabled else 'text-bg-light border' }}">{{ 'Antwort-Schaltflächen aktiv' if light_enabled else 'Ohne Antwort-Schaltflächen' }}</span>
+              <details class="mt-2">
+                <summary>Kommunikation bearbeiten</summary>
+                <form class="mt-3" method="post" action="{{ url_for('admin.external_craftsman_communication', craftsman_id=item.id) }}" style="min-width:260px">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <label class="form-label" for="portalLight-{{ item.id }}">Portal light / Antwort-Schaltflächen</label>
+                  <select class="form-select form-select-sm mb-2" id="portalLight-{{ item.id }}" name="portal_light_enabled">
+                    <option value="default" {% if item.portal_light_enabled is none %}selected{% endif %}>Globale Vorgabe ({{ 'aktiv' if portal_light_default else 'aus' }})</option>
+                    <option value="enabled" {% if item.portal_light_enabled is sameas true %}selected{% endif %}>Aktiv</option>
+                    <option value="disabled" {% if item.portal_light_enabled is sameas false %}selected{% endif %}>Aus</option>
+                  </select>
+                  <p class="small text-muted">Gilt auch bei vorhandenem Portalzugang. Ohne Zugang ist nach einer Antwort die Einrichtung eines Kennworts möglich.</p>
+                  <label class="form-label" for="reminderFirst-{{ item.id }}">Erinnerungsmail 1 nach Tagen</label>
+                  <input class="form-control form-control-sm mb-2" type="number" id="reminderFirst-{{ item.id }}" name="reminder_first_days" min="0" max="3650" step="1" value="{{ item.reminder_first_days }}" required>
+                  <label class="form-label" for="reminderSecond-{{ item.id }}">Erinnerungsmail 2 nach Tagen</label>
+                  <input class="form-control form-control-sm mb-2" type="number" id="reminderSecond-{{ item.id }}" name="reminder_second_days" min="0" max="3650" step="1" value="{{ item.reminder_second_days }}" required>
+                  <label class="form-label" for="cancelUnanswered-{{ item.id }}">Ohne Reaktion stornieren nach Tagen</label>
+                  <input class="form-control form-control-sm mb-2" type="number" id="cancelUnanswered-{{ item.id }}" name="cancel_unanswered_days" min="0" max="3650" step="1" value="{{ item.cancel_unanswered_days }}" required>
+                  <p class="small text-muted">0 = aus. Alle Fristen beginnen mit dem erfolgreichen Versand der Beauftragungsmail. Erinnerung 2 muss später als Erinnerung 1 liegen, die Stornierung später als beide. Portal light oder aktive Fristen lösen den automatischen Versand der Beauftragungsmail aus.</p>
+                  <button class="btn btn-sm btn-primary" type="submit">Kommunikation speichern</button>
+                </form>
+              </details>
+              {% if item.reminder_first_days or item.reminder_second_days or item.cancel_unanswered_days %}
+              <div class="small mt-2">Erinnerungen: {{ item.reminder_first_days }} / {{ item.reminder_second_days }} Tage · Stornierung: {{ item.cancel_unanswered_days }} Tage</div>
               {% endif %}
             </td>
             <td class="text-end">

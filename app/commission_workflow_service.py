@@ -30,7 +30,9 @@ class CommissionWorkflowError(ValueError):
         self.code = code
 
 
-def cancel_commission(commission: Commission, *, user: User) -> None:
+def cancel_commission(commission: Commission, *, user: User | None = None, automatic: bool = False) -> None:
+    if user is None and not automatic:
+        raise CommissionWorkflowError("Für die Stornierung fehlt der Benutzer.", 403)
     if not commission.can_be_canceled:
         raise CommissionWorkflowError("Der Auftrag kann in diesem Status nicht storniert werden.", 409)
 
@@ -40,9 +42,9 @@ def cancel_commission(commission: Commission, *, user: User) -> None:
         commission,
         ErpOperationType.CANCEL_COMMISSION_FROM_OFFICE,
         f"commission:office-canceled:{commission.id}",
-        actor_user_id=user.id,
+        actor_user_id=user.id if user else None,
     )
-    audit("commission.cancel", "commission", commission.id, actor_user_id=user.id)
+    audit("commission.cancel", "commission", commission.id, {"automatic": automatic}, actor_user_id=user.id if user else None)
     sync_offer_from_commission(commission)
 
 
@@ -99,6 +101,7 @@ def reject_commission(
     *,
     user: User | None = None,
     external_craftsman: ExternalCraftsman | None = None,
+    allow_empty_reason: bool = False,
 ) -> str:
     validate_actor(user, external_craftsman)
     validate_actionable(commission)
@@ -114,7 +117,7 @@ def reject_commission(
 
     normalized_reason = reason.strip()
 
-    if not normalized_reason:
+    if not normalized_reason and not allow_empty_reason:
         raise CommissionWorkflowError(
             "Bitte einen Grund für die Ablehnung angeben.",
             400,

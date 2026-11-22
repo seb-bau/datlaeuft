@@ -55,6 +55,8 @@ class CommissionContactInformationTests(unittest.TestCase):
     def setUpClass(cls):
         fixtures.CommissionObjectLevelTests.setUpClass.__func__(cls)
         cls.templates = importlib.import_module(cls.package_name + ".email_templates")
+        cls.portal_texts = importlib.reload(importlib.import_module(cls.package_name + ".external_portal_texts"))
+        cls.responses = importlib.reload(importlib.import_module(cls.package_name + ".external_order_responses"))
         cls.contact_lookup = Mock()
         cls.app.add_url_rule("/affected/<int:object_id>", view_func=load_function(cls.root / "app/admin.py", "commission_affected_contacts", {
             "request": request, "jsonify": jsonify, "current_app": current_app,
@@ -213,9 +215,13 @@ class CommissionContactInformationTests(unittest.TestCase):
             "commission_email_context": self.templates.commission_email_context,
             "apply_email_template": self.templates.apply_email_template,
             "set_email_content": self.templates.set_email_content,
+            "portal_light_enabled": self.responses.portal_light_enabled,
+            "response_url": self.responses.response_url,
+            "set_external_order_content": self.responses.set_external_order_content,
             "send_external_email": sent,
         })
-        sender(types.SimpleNamespace(commission=order, external_craftsman=types.SimpleNamespace(display_name="Firma", email="firma@example.invalid")))
+        sender(types.SimpleNamespace(commission=order, external_craftsman=types.SimpleNamespace(display_name="Firma", email="firma@example.invalid",
+                                                                                             portal_light_enabled=False, portal_enabled=True)))
         return sent.call_args.args[0]
 
     def test_external_assignment_includes_each_section_in_plain_text_and_html(self):

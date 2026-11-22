@@ -42,7 +42,12 @@ from .external_craftsman_service import (
     external_token_is_current,
     hash_external_token,
     validate_external_password,
+    default_external_username,
 )
+from .external_order_responses import (
+    assignment_is_unanswered, can_create_portal_password, response_assignment, submit_response,
+)
+from .external_portal_texts import portal_text_context, render_portal_texts
 from .media_sync import MEDIA_SOURCE
 from .models import (
     Commission,
@@ -196,9 +201,92 @@ def protect_external_response(
         "nosniff"
     )
     response.headers["Referrer-Policy"] = (
-        "same-origin"
+        "no-referrer"
     )
     return response
+
+
+def render_order_response_page(item=None, *, raw_token="", decision="accept", text=""):
+    if item is None:
+        return render_template("external_portal/order_response_unavailable.html",
+                               portal_texts=render_portal_texts(portal_text_context()))
+    username = item.external_craftsman.username or default_external_username(item.external_craftsman)
+    context = portal_text_context(item.commission, item.external_craftsman, username=username)
+    return render_template("external_portal/order_response.html", item=item, raw_token=raw_token,
+                           decision=decision, text=text, can_respond=assignment_is_unanswered(item),
+                           can_create_password=can_create_portal_password(item), username=username,
+                           portal_texts=render_portal_texts(context))
+
+
+@external_portal_bp.route("/antwort/<string:raw_token>", methods=["GET", "POST"])
+def order_response(raw_token: str) -> Any:
+    try:
+        item = response_assignment(raw_token, lock=request.method == "POST")
+    except ValueError:
+        db.session.rollback()
+        return render_order_response_page(), 410
+
+    decision = request.form.get("decision") if request.method == "POST" else request.args.get("decision", "accept")
+    text = request.form.get("text", "") if request.method == "POST" else ""
+    if request.method == "POST":
+        try:
+            changed = submit_response(item, decision, text)
+            db.session.commit()
+        except (CommissionWorkflowError, ValueError) as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return render_order_response_page(item, raw_token=raw_token, decision=decision, text=text), 400
+        if changed and item.response_decision == "reject":
+            send_external_status_notification(item.commission, event_name="rejected", reason=item.response_text or "",
+                                              submitted_by_name=item.external_craftsman.display_name)
+        return redirect(url_for("external_portal.order_response", raw_token=raw_token), code=303)
+
+    return render_order_response_page(item, raw_token=raw_token, decision=decision if decision in {"accept", "reject"} else "accept", text=text)
+
+
+@external_portal_bp.post("/antwort/<string:raw_token>/portalzugang")
+def order_response_upgrade(raw_token: str) -> Any:
+    try:
+        item = response_assignment(raw_token, lock=True)
+    except ValueError:
+        db.session.rollback()
+        return render_order_response_page(), 410
+    target_url = url_for("external_portal.order_response", raw_token=raw_token)
+    if not can_create_portal_password(item):
+        db.session.rollback()
+        flash("Über diesen Link kann kein Kennwort mehr eingerichtet werden. Bitte nutzen Sie die Anmeldung oder wenden Sie sich an die Sachbearbeitung.", "warning")
+        return redirect(target_url, code=303)
+    password = str(request.form.get("password") or "")
+    try:
+        password_error = validate_external_password(password)
+        if password_error:
+            raise ValueError(password_error)
+        if password != request.form.get("password_confirmation"):
+            raise ValueError("Die Kennwörter stimmen nicht überein.")
+        craftsman = item.external_craftsman
+        craftsman.username = craftsman.username or default_external_username(craftsman)
+        craftsman.set_password(password)
+        craftsman.portal_enabled = True
+        craftsman.failed_login_count = 0
+        craftsman.locked_until = None
+        craftsman.last_login_at = utc_now()
+        ExternalCraftsmanAccessToken.query.filter_by(external_craftsman_id=craftsman.id, used_at=None).update(
+            {ExternalCraftsmanAccessToken.used_at: utc_now()}, synchronize_session=False,
+        )
+        audit("external.auth.portal_light_upgrade", "external_craftsman", craftsman.id,
+              {"assignment_mail_id": item.id}, actor_external_craftsman_id=craftsman.id)
+        craftsman_id = craftsman.id
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+        return redirect(target_url, code=303)
+    logout_user()
+    session.clear()
+    session["external_craftsman_id"] = craftsman_id
+    session["external_craftsman_authenticated_at"] = utc_now().isoformat()
+    flash("Ihr Portalzugang wurde eingerichtet. Mit Ihrem Benutzernamen und Kennwort können Sie sich künftig anmelden.", "success")
+    return redirect(url_for("external_portal.commissions"), code=303)
 
 
 @external_portal_bp.route(

@@ -385,6 +385,15 @@ class SettingKeys:
         "SMTP-Server",
         "E-Mail",
     )
+    EXTERNAL_PORTAL_LIGHT_DEFAULT = SettingDefinition[bool](
+        "external_portal.light_default", SettingValueType.BOOL, False,
+        "Portal light und Antwort-Schaltflächen in Handwerker-Mails standardmäßig aktivieren",
+        "Auftragnehmerportal",
+    )
+    SMTP_EXTERNAL_DEBUG_RECIPIENT = SettingDefinition[str](
+        "smtp.external_debug_recipient", SettingValueType.STRING, "",
+        "Debug-E-Mail-Adresse für externe Handwerker", "E-Mail",
+    )
     SMTP_PORT = SettingDefinition[int](
         "smtp.port",
         SettingValueType.INT,
@@ -973,7 +982,7 @@ class SettingsService:
             value = cast(T, sender)
         if definition.key == SettingKeys.HEALTH_RULES.key:
             value = cast(T, normalize_health_rules(value))
-        if definition.key == SettingKeys.SMTP_DEBUG_RECIPIENT.key:
+        if definition.key in {SettingKeys.SMTP_DEBUG_RECIPIENT.key, SettingKeys.SMTP_EXTERNAL_DEBUG_RECIPIENT.key}:
             value = cast(T, validate_debug_email_address(cast(str, value)))
         if definition.key == SettingKeys.TENANT_TICKET_REPLY_TO.key:
             try:
@@ -1008,6 +1017,7 @@ class SettingsService:
     ) -> None:
         if raw_value is None and definition.key in {
             SettingKeys.SMTP_DEBUG_RECIPIENT.key,
+            SettingKeys.SMTP_EXTERNAL_DEBUG_RECIPIENT.key,
             SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key,
             SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE.key,
         }:

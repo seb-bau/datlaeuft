@@ -126,6 +126,9 @@ def craftsman_contact(commission):
 
 
 def notification_content(item):
+    if item.kind == "external_followup":
+        from .external_order_responses import followup_content
+        return followup_content(item)
     if item.kind == "invoice_assignment":
         from .invoice_responsibility import assignment_content
         return assignment_content(item)
@@ -176,6 +179,9 @@ def notification_content(item):
 
 
 def notification_is_current(item):
+    if item.kind == "external_followup":
+        from .external_order_responses import followup_is_current
+        return followup_is_current(item)
     if item.kind == "invoice_assignment":
         from .invoice_responsibility import assignment_is_current
         return assignment_is_current(item)
@@ -267,7 +273,8 @@ def execute_workflow_notification(item_id):
         item.locked_at = None
         db.session.commit()
         return
-    if item.kind != "approval_request" and item.commission is not None and (item.commission.erp_sync_state != CommissionSyncState.SYNCED.value or not item.commission.erp_idnum):
+    requires_erp_sync = item.kind != "approval_request" and not (item.kind == "external_followup" and item.payload.get("event") == "cancel")
+    if requires_erp_sync and item.commission is not None and (item.commission.erp_sync_state != CommissionSyncState.SYNCED.value or not item.commission.erp_idnum):
         item.state = "pending"
         item.locked_at = None
         item.last_error = None
@@ -305,6 +312,10 @@ def execute_workflow_notification(item_id):
             if reply_to:
                 message["Reply-To"] = validate_debug_email_address(reply_to)
         set_email_content(message, item.payload["subject"], item.payload["body"])
+        if item.kind == "external_followup":
+            from .external_order_responses import followup_assignment, set_external_order_content
+            set_external_order_content(message, item.payload["subject"], item.payload["body"], followup_assignment(item),
+                                       include_actions=item.payload.get("event") != "cancel")
         if item.kind == "invoice_delivery":
             from .invoice_delivery import attach_invoice_delivery_pdf
             attach_invoice_delivery_pdf(message, item)
@@ -319,7 +330,10 @@ def execute_workflow_notification(item_id):
             db.session.commit()
             return
         try:
-            debug_recipient = send_email(message, smtp_host=host, smtp_port=settings.get(SettingKeys.SMTP_PORT))
+            if item.kind == "external_followup":
+                debug_recipient = send_email(message, smtp_host=host, smtp_port=settings.get(SettingKeys.SMTP_PORT), external_craftsman=True)
+            else:
+                debug_recipient = send_email(message, smtp_host=host, smtp_port=settings.get(SettingKeys.SMTP_PORT))
         except RuntimeError as exc:
             if isinstance(exc.__cause__, (SQLAlchemyError, ValueError, smtplib.SMTPConnectError, smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError, ConnectionRefusedError)):
                 item.payload = {**item.payload, "submission_started": False}

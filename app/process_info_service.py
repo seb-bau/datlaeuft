@@ -560,6 +560,8 @@ def create_external_outgoing_info(
     external_craftsman: ExternalCraftsman,
     request_id: str,
     body: str,
+    *,
+    commit: bool = True,
 ) -> ProcessInfo:
     if (
         commission.craftsman_erp_id
@@ -582,6 +584,7 @@ def create_external_outgoing_info(
             external_craftsman.display_name
         ),
         origin_name=get_external_portal_name(),
+        commit=commit,
     )
 
 
@@ -595,6 +598,7 @@ def _create_outgoing_info(
     author_name: str,
     origin_name: str,
     direction: str = CRAFTSMAN_DIRECTION,
+    commit: bool = True,
 ) -> ProcessInfo:
     if commission.approval_state == "pending":
         raise ValueError("Vorgangsinformationen können erst nach der Auftragsfreigabe versendet werden.")
@@ -650,7 +654,10 @@ def _create_outgoing_info(
 
     db.session.add(item)
     ensure_process_thread(process_erp_id)
-    commit_mobile_changes()
+    if commit:
+        commit_mobile_changes()
+    else:
+        db.session.flush()
     return item
 
 

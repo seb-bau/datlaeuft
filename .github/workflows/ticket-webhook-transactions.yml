@@ -74,6 +74,16 @@ on:
       - app/process_info_api.py
       - app/process_info_web.py
       - app/external_portal.py
+      - app/external_order_responses.py
+      - app/external_portal_texts.py
+      - app/templates/admin/external_portal_texts.html
+      - app/templates/admin/email_templates.html
+      - app/external_craftsman_service.py
+      - app/external_branding.py
+      - app/templates/external_portal/order_response*.html
+      - app/templates/admin/external_craftsmen.html
+      - app/static/js/external_order_response.js
+      - migrations/versions/*external_portal_light.py
       - migrations/versions/*commission_approval.py
       - migrations/env.py
       - app/static/js/commission_object_history.js
@@ -191,6 +201,16 @@ on:
       - app/process_info_api.py
       - app/process_info_web.py
       - app/external_portal.py
+      - app/external_order_responses.py
+      - app/external_portal_texts.py
+      - app/templates/admin/external_portal_texts.html
+      - app/templates/admin/email_templates.html
+      - app/external_craftsman_service.py
+      - app/external_branding.py
+      - app/templates/external_portal/order_response*.html
+      - app/templates/admin/external_craftsmen.html
+      - app/static/js/external_order_response.js
+      - migrations/versions/*external_portal_light.py
       - migrations/versions/*commission_approval.py
       - migrations/env.py
       - app/static/js/commission_object_history.js
@@ -270,7 +290,7 @@ jobs:
         run: >-
           python -m pip install
           "SQLAlchemy>=2.0,<3" "Flask>=3.1,<4" "Flask-SQLAlchemy>=3.1,<4"
-          "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
+          "Flask-JWT-Extended>=4.7,<5" "Flask-Login>=0.6,<1" "Flask-WTF>=1.2,<2" "PyMySQL>=1.1,<2" "pycountry>=26.2,<27"
           "requests>=2.32,<3"
           "msal>=1.31,<2" "dvelopdmspy>=1.0.20,<2"
           "phonenumbers>=9,<10"
@@ -304,6 +324,8 @@ jobs:
         env:
           DATLAEUFT_TEST_DATABASE_URL: mysql+pymysql://root:test-root-password@127.0.0.1:${{ job.services.mariadb.ports[3306] }}/datlaeuft_test_webhooks
         run: |
+          python -m unittest discover -s tests -p test_external_portal_light_migration.py -v
+          python -m unittest discover -s tests -p test_external_portal_light.py -v
           python -m unittest discover -s tests -p test_invoice_delivery_migration.py -v
           python -m unittest discover -s tests -p test_invoice_workflow_migration.py -v
           python -m unittest discover -s tests -p test_commission_followup_migration.py -v

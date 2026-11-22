@@ -150,6 +150,7 @@ from .external_craftsman_service import (
     send_external_invitation_email,
     sync_external_craftsmen_from_wowiport,
 )
+from .external_order_responses import validate_external_communication
 from .ticket_service import (
     ticket_license_agreement_local_id,
     mark_ticket_analyses_stale,
@@ -1077,16 +1078,19 @@ def email_templates_page() -> Any:
     from .email_templates import (
         EMAIL_LAYOUT_TEMPLATE_KEY,
         EMAIL_TEMPLATES, EXAMPLE_CONTEXT, FIELD_LABELS,
-        email_body_html, email_layout_definition, email_template_definition,
+        email_layout_definition, email_template_definition,
         get_email_layout, get_email_template, render_email_value,
         validate_email_template,
     )
+    from .external_portal_texts import PORTAL_TEXTS_TEMPLATE_KEY, edit_external_portal_texts, external_mail_preview
 
     template_key = (
         request.form.get("template_key")
         if request.method == "POST"
         else request.args.get("template", next(iter(EMAIL_TEMPLATES)))
     )
+    if template_key == PORTAL_TEXTS_TEMPLATE_KEY:
+        return edit_external_portal_texts()
     is_layout = template_key == EMAIL_LAYOUT_TEMPLATE_KEY
     if not is_layout and template_key not in EMAIL_TEMPLATES:
         abort(404)
@@ -1122,14 +1126,15 @@ def email_templates_page() -> Any:
             else:
                 value = validate_email_template(template_key, value)
             if action == "preview":
+                rendered_key = preview_key if is_layout else template_key
                 preview = render_email_value(
-                    preview_key if is_layout else template_key,
+                    rendered_key,
                     get_email_template(preview_key) if is_layout else value,
-                    EXAMPLE_CONTEXT,
+                    {**EXAMPLE_CONTEXT, "reminder_number": "2" if rendered_key == "external_reminder_second" else EXAMPLE_CONTEXT["reminder_number"]},
                 )
                 if is_layout or template_key != "appointment_calendar":
-                    preview_html = email_body_html(
-                        preview["body"], preview["subject"],
+                    preview, preview_html = external_mail_preview(
+                        rendered_key, preview,
                         layout=value["html"] if is_layout else None,
                     )
             else:
@@ -1150,6 +1155,7 @@ def email_templates_page() -> Any:
         "admin/email_templates.html",
         template_options=[
             (EMAIL_LAYOUT_TEMPLATE_KEY, "Gemeinsames HTML-Layout"),
+            (PORTAL_TEXTS_TEMPLATE_KEY, "Portal light: Antwortseite und Mail-Schaltflächen"),
             *[(key, item["label"]) for key, item in EMAIL_TEMPLATES.items()],
         ],
         template_key=template_key,
@@ -13724,6 +13730,7 @@ def external_craftsmen() -> Any:
     return render_template(
         "admin/external_craftsmen.html",
         items=items,
+        portal_light_default=settings.get(SettingKeys.EXTERNAL_PORTAL_LIGHT_DEFAULT),
         internal_craftsman_erp_ids=(
             internal_craftsman_erp_ids
         ),
@@ -13841,6 +13848,25 @@ def external_craftsman_craft_activities(craftsman_id: int) -> Any:
         )
         flash("Die Gewerke konnten nicht gespeichert werden.", "danger")
 
+    return redirect(url_for("admin.external_craftsmen"))
+
+
+@admin_bp.post("/admin/external-craftsmen/<int:craftsman_id>/communication")
+@admin_required
+def external_craftsman_communication(craftsman_id: int) -> Any:
+    craftsman = db.get_or_404(ExternalCraftsman, craftsman_id)
+    try:
+        values = validate_external_communication(request.form)
+        previous = {name: getattr(craftsman, name) for name in values}
+        for name, value in values.items():
+            setattr(craftsman, name, value)
+        audit("external_craftsman.communication.update", "external_craftsman", craftsman.id,
+              {"previous": previous, "current": values})
+        db.session.commit()
+        flash("Die Kommunikationseinstellungen wurden gespeichert.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
     return redirect(url_for("admin.external_craftsmen"))
 
 
