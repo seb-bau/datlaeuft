@@ -87,6 +87,44 @@ class DocumentPreviewTests(unittest.TestCase):
         self.assertIn("no-store", response.headers["Cache-Control"])
         return "\n".join(page.extract_text() for page in PdfReader(BytesIO(response.data)).pages)
 
+    def offer_for_order(self, source_type="catalog"):
+        offer = self.draft("offer")
+        offer.status = "awaiting_response"
+        offer.offer_number = f"AN-TEST-{offer.id}"
+        offer.object_type = "license_agreement"
+        offer.object_id = self.agreement.id
+        offer.craft_activity = self.craft
+        offer.positions[0].source_type = source_type
+        offer.positions[0].task_template = self.task
+        if source_type == "free":
+            self.db.session.add(self.models.OfferCraftFallback(craft_activity_id=self.craft.id, task_template_id=self.task.id))
+        self.settings.settings.set(self.settings.SettingKeys.OFFER_COMMISSION_TYPE_ID, 100)
+        self.db.session.commit()
+        return offer
+
+    def test_offer_order_drafts_leave_the_legacy_contact_empty(self):
+        for source_type in ("catalog", "free"):
+            with self.subTest(source_type=source_type):
+                offer = self.offer_for_order(source_type)
+                draft = self.offer_service.offer_commission_draft_data(offer)
+                self.assertEqual(draft["form_values"]["contact_person"], "")
+                self.assertEqual(draft["form_values"]["craft_activity_id"], self.craft.id)
+                self.assertEqual(len(draft["position_rows"]), 1)
+                self.assertEqual(offer.recipient_name, "Gespeicherter Empfänger")
+
+    def test_order_from_an_offer_ignores_a_legacy_contact_posted_by_an_old_form(self):
+        offer = self.offer_for_order()
+        response = self.client.post("/admin/commissions/new", data=self.form(
+            selected=(), source_ticket_id="", source_offer_id=str(offer.id), contact_person="Gespeicherter Empfänger",
+        ))
+        self.assertEqual(response.status_code, 302, response.get_data(as_text=True)[:1000])
+        self.assertEqual(self.models.Commission.query.count(), 1)
+        commission = self.models.Commission.query.one()
+        self.assertIsNone(commission.contact_person)
+        self.assertEqual(offer.commission_id, commission.id)
+        self.assertEqual(offer.status, "in_progress")
+        self.assertEqual(offer.recipient_name, "Gespeicherter Empfänger")
+
     def test_invoice_and_offer_preview_current_form_without_saving_or_numbering(self):
         for kind in ("invoice", "offer"):
             with self.subTest(kind=kind):
