@@ -64,6 +64,7 @@ class TenantSmsTests(unittest.TestCase):
         ])
         cls.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
         cls.app.add_url_rule("/templates", endpoint="admin.email_templates_page", view_func=lambda: "")
+        cls.app.add_url_rule("/document-templates", endpoint="admin.document_templates", view_func=lambda: "")
 
     def setUp(self):
         context = self.app.app_context()

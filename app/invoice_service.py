@@ -281,11 +281,9 @@ def create_offer_invoice_draft(
 
     invoice.service_date_from = service_date
     invoice.service_date_to = service_date
-    invoice.introductory_text = (
-        "Für die ausgeführten und im Angebot "
-        f"{offer.offer_number} vereinbarten "
-        "Leistungen berechnen wir:"
-    )
+    invoice.introductory_text = settings.get(SettingKeys.INVOICE_OFFER_INTRODUCTORY_TEXT).format(
+        offer_number=offer.offer_number,
+    ) or None
     invoice.commission_links.append(
         InvoiceCommission(
             commission=offer.commission
@@ -524,10 +522,8 @@ def create_invoice_draft(
             if service_dates
             else None
         ),
-        introductory_text=(
-            "Für die ausgeführten Arbeiten "
-            "berechnen wir Ihnen folgende Leistungen:"
-        ),
+        introductory_text=settings.get(SettingKeys.INVOICE_INTRODUCTORY_TEXT) or None,
+        concluding_text=settings.get(SettingKeys.INVOICE_CONCLUDING_TEXT) or None,
         created_by=created_by,
         invoice_date=invoice_date,
         responsible_user=created_by,

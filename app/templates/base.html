@@ -72,6 +72,9 @@
     or is_inventory_locations_section
     or is_inventory_classifications_section
   ) %}
+  {% set is_document_templates_section = request.endpoint in (
+    'admin.document_templates', 'admin.invoice_layout', 'admin.invoice_cover_letter_layout', 'admin.offer_layout'
+  ) %}
   {% set is_administration_section = (
     request.path.startswith('/admin/users')
     or request.path.startswith('/admin/craft-activities')
@@ -81,6 +84,7 @@
     or request.path.startswith('/admin/invoice-billing-rules')
     or request.path.startswith('/admin/offer-settings')
     or request.path.startswith('/admin/settings')
+    or is_document_templates_section
     or request.path.startswith('/admin/sync-health')
     or request.path.startswith('/admin/dms')
     or request.path.startswith('/admin/time-templates')
@@ -587,6 +591,13 @@
                   'Einstellungen',
                   'gear',
                   request.path.startswith('/admin/settings')
+                ) }}
+
+                {{ sidebar_link(
+                  'admin.document_templates',
+                  'Dokumentvorlagen',
+                  'file-earmark-text',
+                  is_document_templates_section
                 ) }}
 
                 {{ sidebar_link(

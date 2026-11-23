@@ -142,15 +142,8 @@ def create_offer_draft(
             company_code.seller_phone
         ),
         currency_code="EUR",
-        introductory_text=(
-            "Vielen Dank für Ihre Anfrage. "
-            "Wir bieten Ihnen folgende "
-            "Leistungen an:"
-        ),
-        concluding_text=(
-            "Wir freuen uns auf Ihre "
-            "Rückmeldung."
-        ),
+        introductory_text=settings.get(SettingKeys.OFFER_INTRODUCTORY_TEXT) or None,
+        concluding_text=settings.get(SettingKeys.OFFER_CONCLUDING_TEXT) or None,
         created_by=created_by,
     )
 

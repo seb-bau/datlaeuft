@@ -1171,15 +1171,53 @@ def email_templates_page() -> Any:
         preview_html=preview_html,
     )
 
+DOCUMENT_TEMPLATE_SECTIONS = {
+    "invoice": (
+        "Rechnung", "admin.invoice_layout",
+        (
+            SettingKeys.INVOICE_INTRODUCTORY_TEXT,
+            SettingKeys.INVOICE_OFFER_INTRODUCTORY_TEXT,
+            SettingKeys.INVOICE_CONCLUDING_TEXT,
+            SettingKeys.INVOICE_TRANSFER_PAYMENT_TEXT,
+            SettingKeys.INVOICE_SEPA_PAYMENT_TEXT,
+        ),
+    ),
+    "cover-letter": (
+        "Anschreiben", "admin.invoice_cover_letter_layout",
+        (
+            SettingKeys.INVOICE_COVER_LETTER_TITLE,
+            SettingKeys.INVOICE_COVER_LETTER_TEXT,
+            SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE,
+            SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE,
+        ),
+    ),
+    "offer": (
+        "Angebot", "admin.offer_layout",
+        (SettingKeys.OFFER_INTRODUCTORY_TEXT, SettingKeys.OFFER_CONCLUDING_TEXT),
+    ),
+}
+DOCUMENT_TEMPLATE_SETTING_KEYS = {
+    definition.key
+    for _, _, definitions in DOCUMENT_TEMPLATE_SECTIONS.values()
+    for definition in definitions
+} | {
+    SettingKeys.INVOICE_LAYOUT.key,
+    SettingKeys.INVOICE_COVER_LETTER_LAYOUT.key,
+    SettingKeys.OFFER_LAYOUT.key,
+}
+
+
 @admin_bp.route("/admin/settings", methods=["GET", "POST"])
 @admin_required
 def settings_page() -> Any:
     if request.method == "POST":
         try:
             for definition in all_definitions():
-                if definition.key.startswith("dms.") or definition.key in {
-                    SettingKeys.HEALTH_RULES.key, SettingKeys.INVOICE_COVER_LETTER_LAYOUT.key, SettingKeys.INVOICE_LAYOUT.key,
-                }:
+                if (
+                    definition.key.startswith("dms.")
+                    or definition.key == SettingKeys.HEALTH_RULES.key
+                    or definition.key in DOCUMENT_TEMPLATE_SETTING_KEYS
+                ):
                     continue
                 if definition.key == SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS.key:
                     try:
@@ -1221,26 +1259,57 @@ def settings_page() -> Any:
     for source_id in settings.get(SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS):
         source_choices.setdefault(source_id, "Nicht mehr lokal vorhanden")
 
+    groups = {
+        group: [
+            item for item in definitions
+            if not item.key.startswith("dms.") and item.key not in DOCUMENT_TEMPLATE_SETTING_KEYS
+        ]
+        for group, definitions in grouped_definitions().items()
+    }
     return render_template(
         "admin/settings.html",
-        groups={
-            group: [
-                item
-                for item in definitions
-                if not item.key.startswith("dms.")
-            ]
-            for group, definitions in grouped_definitions().items()
-            if any(
-                not item.key.startswith("dms.")
-                for item in definitions
-            )
-        },
+        groups={group: definitions for group, definitions in groups.items() if definitions},
         settings=settings,
         tenant_ticket_source_choices=sorted(
             source_choices.items(),
             key=lambda choice: (choice[1].casefold(), choice[0]),
         ),
     )
+
+
+@admin_bp.route("/admin/document-templates", methods=["GET", "POST"])
+@admin_required
+def document_templates():
+    submitted = {}
+    status = 200
+    if request.method == "POST":
+        section = request.form.get("section")
+        if section not in DOCUMENT_TEMPLATE_SECTIONS:
+            flash("Bitte wählen Sie eine gültige Dokumentart.", "danger")
+            return redirect(url_for("admin.document_templates"))
+        _, _, definitions = DOCUMENT_TEMPLATE_SECTIONS[section]
+        submitted = {definition.key: request.form[definition.key] for definition in definitions if definition.key in request.form}
+        try:
+            for definition in definitions:
+                if definition.key in submitted:
+                    settings.set(definition, submitted[definition.key])
+            audit(f"document_templates.{section}.update")
+            db.session.commit()
+            flash("Standardtexte gespeichert.", "success")
+            return redirect(url_for("admin.document_templates", _anchor=section))
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            status = 400
+
+    values = {
+        definition.key: submitted[definition.key] if definition.key in submitted else settings.get(definition)
+        for _, _, definitions in DOCUMENT_TEMPLATE_SECTIONS.values()
+        for definition in definitions
+    }
+    return render_template(
+        "admin/document_templates.html", sections=DOCUMENT_TEMPLATE_SECTIONS, values=values,
+    ), status
 
 
 @admin_bp.route("/admin/invoice-cover-letter-layout", methods=["GET", "POST"])
@@ -1316,37 +1385,47 @@ def invoice_cover_letter_layout_preview():
     return document_preview_response(content, "Anschreiben-Layout-Vorschau.pdf")
 
 
-@admin_bp.route("/admin/invoice-layout", methods=["GET", "POST"])
+@admin_bp.route("/admin/invoice-layout", methods=["GET", "POST"], defaults={"kind": "invoice"}, endpoint="invoice_layout")
+@admin_bp.route("/admin/offer-layout", methods=["GET", "POST"], defaults={"kind": "offer"}, endpoint="offer_layout")
 @admin_required
-def invoice_layout():
-    from .invoice_layout import (
-        DEFAULT_INVOICE_LAYOUT, INVOICE_LAYOUT_FIELDS, INVOICE_LAYOUT_LIMIT, INVOICE_POSITION_FIELDS, INVOICE_VAT_FIELDS,
-    )
+def document_layout(kind):
+    from .document_layout import LAYOUT_LIMIT, POSITION_FIELDS, VAT_FIELDS
+    from .invoice_layout import DEFAULT_INVOICE_LAYOUT, INVOICE_LAYOUT_FIELDS
+    from .offer_layout import DEFAULT_OFFER_LAYOUT, OFFER_LAYOUT_FIELDS
 
-    definition = SettingKeys.INVOICE_LAYOUT
-    value = settings.get(definition) or DEFAULT_INVOICE_LAYOUT
+    if kind == "invoice":
+        model, definition, default_layout, fields = Invoice, SettingKeys.INVOICE_LAYOUT, DEFAULT_INVOICE_LAYOUT, INVOICE_LAYOUT_FIELDS
+        label, heading = "Rechnungs-Layout", "Aufbau der Rechnung"
+        description = "Gemeinsames PDF-Layout für Rechnungen und Stornorechnungen aller Buchwerke."
+    else:
+        model, definition, default_layout, fields = Offer, SettingKeys.OFFER_LAYOUT, DEFAULT_OFFER_LAYOUT, OFFER_LAYOUT_FIELDS
+        label, heading = "Angebots-Layout", "Aufbau des Angebots"
+        description = "Gemeinsames PDF-Layout für Angebote aller Buchwerke."
+
+    value = settings.get(definition) or default_layout
     if request.method == "POST":
         action = request.form.get("action", "save")
         html = request.form.get("html", "").replace("\r\n", "\n").replace("\r", "\n")
-        value = DEFAULT_INVOICE_LAYOUT if action == "reset" else html
+        value = default_layout if action == "reset" else html
         try:
             if action not in {"save", "reset"}:
                 raise ValueError("Die gewählte Aktion ist ungültig.")
             if not value.strip():
-                raise ValueError("Bitte geben Sie ein Rechnungs-Layout ein.")
-            settings.set(definition, "" if value == DEFAULT_INVOICE_LAYOUT else value)
-            audit("invoice.layout.reset" if action == "reset" else "invoice.layout.update")
+                raise ValueError(f"Bitte geben Sie ein {label} ein.")
+            settings.set(definition, "" if value == default_layout else value)
+            audit(f"{kind}.layout.reset" if action == "reset" else f"{kind}.layout.update")
             db.session.commit()
-            flash("Standardlayout wiederhergestellt." if action == "reset" else "Rechnungs-Layout gespeichert.", "success")
-            return redirect(url_for("admin.invoice_layout"))
+            flash("Standardlayout wiederhergestellt." if action == "reset" else f"{label} gespeichert.", "success")
+            return redirect(url_for(f"admin.{kind}_layout"))
         except ValueError as exc:
             db.session.rollback()
             flash(str(exc), "danger")
     return render_template(
-        "admin/invoice_layout.html", layout=value, layout_limit=INVOICE_LAYOUT_LIMIT, fields=INVOICE_LAYOUT_FIELDS,
-        position_fields=INVOICE_POSITION_FIELDS, vat_fields=INVOICE_VAT_FIELDS,
-        selected_invoice_id=request.form.get("invoice_id", ""),
-        invoices=Invoice.query.order_by(Invoice.created_at.desc(), Invoice.id.desc()).limit(100).all(),
+        "admin/document_layout.html", kind=kind, label=label, heading=heading, description=description,
+        layout=value, layout_limit=LAYOUT_LIMIT, fields=fields,
+        position_fields=POSITION_FIELDS, vat_fields=VAT_FIELDS,
+        selected_document_id=request.form.get(f"{kind}_id", ""),
+        documents=model.query.order_by(model.created_at.desc(), model.id.desc()).limit(100).all(),
     )
 
 
@@ -1375,6 +1454,33 @@ def invoice_layout_preview():
         current_app.logger.exception("invoice_layout_preview_failed")
         return jsonify(error="Die Layout-Vorschau konnte nicht erstellt werden. Bitte Layout und Rechnungsdaten prüfen."), 502
     return document_preview_response(content, "Rechnungs-Layout-Vorschau.pdf")
+
+
+@admin_bp.post("/admin/offer-layout/preview")
+@admin_required
+def offer_layout_preview():
+    from .document_previews import render_offer_preview
+    from .offer_document import render_offer_content_pdf
+    from .offer_layout import example_offer_layout_context
+
+    try:
+        layout = request.form.get("html", "")
+        offer_id = request.form.get("offer_id", "").strip()
+        if offer_id:
+            if not offer_id.isdecimal() or len(offer_id) > 18:
+                raise ValueError("Bitte ein gültiges Angebot für die Vorschau auswählen.")
+            offer = db.session.get(Offer, int(offer_id))
+            if offer is None:
+                raise ValueError("Das ausgewählte Angebot ist nicht mehr verfügbar.")
+            content = render_offer_preview(offer, layout=layout)
+        else:
+            content = render_offer_content_pdf({**example_offer_layout_context(), "preview": True}, layout=layout)
+    except (ValueError, OfferDocumentError) as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("offer_layout_preview_failed")
+        return jsonify(error="Die Layout-Vorschau konnte nicht erstellt werden. Bitte Layout und Angebotsdaten prüfen."), 502
+    return document_preview_response(content, "Angebots-Layout-Vorschau.pdf")
 
 
 @admin_bp.get(

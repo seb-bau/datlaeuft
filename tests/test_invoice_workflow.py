@@ -50,7 +50,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
         namespace = dict(F=object, Any=object, wraps=wraps, current_user=current_user, abort=abort, redirect=redirect, request=request, url_for=url_for)
         exec(compile(ast.Module(body=[function], type_ignores=[]), "auth.py", "exec"), namespace)
         for endpoint in ("invoice_cover_letter_layout", "invoice_cover_letter_layout_preview", "invoice_layout",
-                         "invoice_layout_preview", "settings_page"):
+                         "invoice_layout_preview", "offer_layout", "offer_layout_preview", "document_templates", "settings_page"):
             view = cls.app.view_functions["admin." + endpoint]
             cls.app.view_functions["admin." + endpoint] = namespace["admin_required"](view.__wrapped__)
 
@@ -212,43 +212,83 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/admin/invoices/{invoice.id}/correspondence").status_code, 404)
 
     def test_settings_save_and_validate_the_tenant_charge_purpose_template(self):
+        url = "/admin/document-templates"
         definition = self.settings.SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE
         self.login(self.administrator)
-        response = self.client.get("/admin/settings")
+        response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
         for marker in (definition.key, "{invoice_issuer}", "{gross_amount}", "{work_description}"):
             self.assertIn(marker, response.get_data(as_text=True))
 
         template = "Rechnung von {invoice_issuer}\nBruttobetrag {gross_amount}\n{work_description}"
-        with patch.object(self.admin, "all_definitions", return_value=[definition]), patch.object(self.admin, "configure_logging"):
-            self.assertEqual(self.client.post("/admin/settings", data={definition.key: template.replace("\n", "\r\n")}).status_code, 302)
-            self.assertEqual(self.settings.settings.get(definition), template)
-            for invalid in ("", "{unbekannt}", "{invoice_issuer.name}", "{gross_amount!r}", "{work_description", "x" * 4001):
-                with self.subTest(template=invalid[:30]):
-                    self.client.post("/admin/settings", data={definition.key: invalid})
-                    self.assertEqual(self.settings.settings.get(definition), template)
-            self.assertEqual(self.client.post("/admin/settings", data={}).status_code, 302)
-            self.assertEqual(self.settings.settings.get(definition), template)
+        self.assertEqual(self.client.post(url, data={"section": "cover-letter", definition.key: template.replace("\n", "\r\n")}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), template)
+        for invalid in ("", "{unbekannt}", "{invoice_issuer.name}", "{gross_amount!r}", "{work_description", "x" * 4001):
+            with self.subTest(template=invalid[:30]):
+                self.assertEqual(self.client.post(url, data={"section": "cover-letter", definition.key: invalid}).status_code, 400)
+                self.assertEqual(self.settings.settings.get(definition), template)
+        self.assertEqual(self.client.post(url, data={"section": "cover-letter"}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), template)
 
     def test_settings_save_and_validate_the_tenant_charge_closing_template(self):
+        url = "/admin/document-templates"
         definition = self.settings.SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE
         self.login(self.administrator)
-        page = self.client.get("/admin/settings").get_data(as_text=True)
+        page = self.client.get(url).get_data(as_text=True)
         self.assertIn("Standardgrußformel für Mieteranschreiben", page)
         self.assertIn('<code>{seller_name}</code>', page)
 
         template = "Beste Grüße\n{seller_name}"
-        with patch.object(self.admin, "all_definitions", return_value=[definition]), patch.object(self.admin, "configure_logging"):
-            self.assertEqual(self.client.post("/admin/settings", data={definition.key: template.replace("\n", "\r\n")}).status_code, 302)
-            self.assertEqual(self.settings.settings.get(definition), template)
-            for invalid in ("{invoice_issuer}", "{seller_name.name}", "{seller_name!r}", "{seller_name", "x" * 4001):
-                with self.subTest(template=invalid[:30]):
-                    self.client.post("/admin/settings", data={definition.key: invalid})
-                    self.assertEqual(self.settings.settings.get(definition), template)
-            self.client.post("/admin/settings", data={})
-            self.assertEqual(self.settings.settings.get(definition), template)
-            self.client.post("/admin/settings", data={definition.key: ""})
-            self.assertEqual(self.settings.settings.get(definition), "")
+        self.assertEqual(self.client.post(url, data={"section": "cover-letter", definition.key: template.replace("\n", "\r\n")}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), template)
+        for invalid in ("{invoice_issuer}", "{seller_name.name}", "{seller_name!r}", "{seller_name", "x" * 4001):
+            with self.subTest(template=invalid[:30]):
+                self.assertEqual(self.client.post(url, data={"section": "cover-letter", definition.key: invalid}).status_code, 400)
+                self.assertEqual(self.settings.settings.get(definition), template)
+        self.client.post(url, data={"section": "cover-letter"})
+        self.assertEqual(self.settings.settings.get(definition), template)
+        self.client.post(url, data={"section": "cover-letter", definition.key: ""})
+        self.assertEqual(self.settings.settings.get(definition), "")
+
+    def test_document_templates_save_defaults_for_new_invoice_and_offer_drafts(self):
+        url = "/admin/document-templates"
+        offer_layout = "/admin/offer-layout"
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.post(url, data={"section": "offer"}).status_code, 403)
+        self.assertEqual(self.client.get(offer_layout).status_code, 403)
+        self.assertEqual(self.client.post(offer_layout, data={"html": "<p>Angebot</p>"}).status_code, 403)
+        self.assertEqual(self.client.post(offer_layout + "/preview", data={"html": "<p>Angebot</p>"}).status_code, 403)
+
+        previous_offer = self.offer_service.create_offer_draft(self.company, self.creator)
+        self.db.session.commit()
+        previous_text = previous_offer.introductory_text
+        self.login(self.administrator)
+        page = self.client.get(url).get_data(as_text=True)
+        for path in ("/admin/invoice-layout", "/admin/invoice-cover-letter-layout", offer_layout):
+            self.assertIn(f'href="{path}"', page)
+
+        offer_form = {
+            "section": "offer", "offer.introductory_text": "Unser Angebot für Sie",
+            "offer.concluding_text": "", "invoice.introductory_text": "Fremder Abschnitt",
+        }
+        self.assertEqual(self.client.post(url, data=offer_form).status_code, 302)
+        keys = self.settings.SettingKeys
+        self.assertEqual(self.settings.settings.get(keys.INVOICE_INTRODUCTORY_TEXT), keys.INVOICE_INTRODUCTORY_TEXT.default)
+
+        invoice_form = {"section": "invoice", "invoice.introductory_text": "Neue Rechnung", "invoice.concluding_text": "Vielen Dank"}
+        self.assertEqual(self.client.post(url, data=invoice_form).status_code, 302)
+        invoice_form.update({"invoice.introductory_text": "Anderer Text", "invoice.transfer_payment_text": "{unbekannt}"})
+        self.assertEqual(self.client.post(url, data=invoice_form).status_code, 400)
+        with patch.object(self.admin, "all_definitions", return_value=[keys.OFFER_INTRODUCTORY_TEXT]), patch.object(self.admin, "configure_logging"):
+            self.assertEqual(self.client.post("/admin/settings", data={"offer.introductory_text": "Falsches Formular"}).status_code, 302)
+
+        invoice = self.invoice_service.create_free_invoice_draft(self.company, self.creator)
+        offer = self.offer_service.create_offer_draft(self.company, self.creator)
+        self.assertEqual(invoice.introductory_text, "Neue Rechnung")
+        self.assertEqual(invoice.concluding_text, "Vielen Dank")
+        self.assertEqual(offer.introductory_text, "Unser Angebot für Sie")
+        self.assertIsNone(offer.concluding_text)
+        self.assertEqual(previous_offer.introductory_text, previous_text)
 
     def test_settings_and_per_invoice_texts_reject_invalid_placeholders_and_lengths(self):
         invoice = self.draft("invoice")
@@ -416,7 +456,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertEqual(self.client.post(url + "/preview", data={"html": custom}).status_code, 403)
 
         self.login(self.administrator)
-        self.assertIn(b'href="/admin/invoice-layout"', self.client.get("/admin/settings").data)
+        self.assertIn(b'href="/admin/document-templates"', self.client.get("/admin/settings").data)
+        self.assertIn(b'href="/admin/invoice-layout"', self.client.get("/admin/document-templates").data)
         self.assertIn(b"Vollst", self.client.get(url).data)
         self.assertEqual(self.client.post(url, data={"html": custom}).status_code, 302)
         self.assertEqual(self.settings.settings.get(definition), custom)
@@ -511,10 +552,10 @@ class InvoiceWorkflowTests(unittest.TestCase):
         )
         self.assertIn("&lt;img", html)
         self.assertIn("{{ config }}", html)
-        with patch.object(self.invoice_document, "default_url_fetcher") as fetch:
+        with patch("weasyprint.default_url_fetcher") as fetch:
             for url in ("file:///tmp/logo.png", "https://example.invalid/logo.png", "http://127.0.0.1/private"):
                 with self.assertRaises(ValueError):
-                    self.invoice_document._invoice_layout_url_fetcher(url)
+                    self.invoice_document.document_layout_url_fetcher(url)
             fetch.assert_not_called()
-            self.invoice_document._invoice_layout_url_fetcher("data:image/png;base64,AA==")
+            self.invoice_document.document_layout_url_fetcher("data:image/png;base64,AA==")
             fetch.assert_called_once()

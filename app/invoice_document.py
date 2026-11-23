@@ -12,8 +12,9 @@ import re
 from facturx import generate_cii_xml, generate_from_file
 from flask import current_app
 from pypdf import PdfReader, PdfWriter
-from weasyprint import HTML, default_url_fetcher
+from weasyprint import HTML
 
+from .document_layout import document_layout_url_fetcher
 from .models import (
     Invoice,
     InvoiceKind,
@@ -1274,16 +1275,10 @@ def _apply_stationery(
         writer.write(output_file)
 
 
-def _invoice_layout_url_fetcher(url):
-    if not url.casefold().startswith("data:"):
-        raise ValueError("Grafiken und Schriften im Rechnungs-Layout müssen als Daten-URL eingebunden sein.")
-    return default_url_fetcher(url)
-
-
 def render_invoice_content_pdf(context, *, layout=None, page_layout=None) -> bytes:
     if layout is None:
         layout = settings.get(SettingKeys.INVOICE_LAYOUT) or DEFAULT_INVOICE_LAYOUT
-    return HTML(string=render_invoice_html(context, layout), url_fetcher=_invoice_layout_url_fetcher).write_pdf(stylesheets=page_stylesheets(page_layout))
+    return HTML(string=render_invoice_html(context, layout), url_fetcher=document_layout_url_fetcher).write_pdf(stylesheets=page_stylesheets(page_layout))
 
 
 def create_invoice_document(
