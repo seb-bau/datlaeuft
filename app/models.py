@@ -3864,12 +3864,27 @@ class TimeTaskExpectedMaterial(db.Model):
 
 class TimeEntry(db.Model):
     __tablename__ = "time_entry"
+    __table_args__ = (
+        UniqueConstraint("safety_inspection_job_id", name="uq_time_entry_safety_inspection_job"),
+        db.CheckConstraint(
+            "(safety_inspection_job_id IS NULL AND safety_inspection_protocol_id IS NULL) OR "
+            "(safety_inspection_job_id IS NOT NULL AND safety_inspection_protocol_id IS NOT NULL "
+            "AND commission_id IS NULL)",
+            name="ck_time_entry_safety_inspection_source",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     commission_id: Mapped[int | None] = mapped_column(
         db.ForeignKey("commission.id"),
         nullable=True,
         index=True,
+    )
+    safety_inspection_job_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("safety_inspection_job.id", name="fk_time_entry_safety_inspection_job"),
+    )
+    safety_inspection_protocol_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("safety_inspection_protocol.id", name="fk_time_entry_safety_inspection_protocol"),
     )
     user_id: Mapped[int] = mapped_column(db.ForeignKey("user_account.id"), nullable=False, index=True)
     task_template_id: Mapped[int | None] = mapped_column(db.ForeignKey("time_task_template.id"), index=True)
@@ -3903,6 +3918,8 @@ class TimeEntry(db.Model):
     commission: Mapped[Commission | None] = relationship(
         back_populates="time_entries"
     )
+    safety_inspection_job: Mapped[SafetyInspectionJob | None] = relationship(back_populates="time_entry")
+    safety_inspection_protocol: Mapped[SafetyInspectionProtocol | None] = relationship()
     user: Mapped[User] = relationship(foreign_keys=[user_id], back_populates="time_entries")
     task_template: Mapped[TimeTaskTemplate | None] = relationship()
     reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_user_id])
@@ -5241,6 +5258,9 @@ class TicketCraftFallback(db.Model):
 
 class SafetyInspectionTemplate(db.Model):
     __tablename__ = "safety_inspection_template"
+    __table_args__ = (
+        db.CheckConstraint("time_allowance_minutes > 0", name="ck_safety_inspection_time_allowance"),
+    )
 
     id: Mapped[int] = mapped_column(
         primary_key=True
@@ -5256,6 +5276,7 @@ class SafetyInspectionTemplate(db.Model):
     legal_reference: Mapped[str | None] = (
         mapped_column(db.Text)
     )
+    time_allowance_minutes: Mapped[int | None] = mapped_column(db.Integer)
     used_for_jobs: Mapped[bool] = mapped_column(
         db.Boolean,
         default=False,
@@ -6243,6 +6264,10 @@ class SafetyInspectionJob(db.Model):
             "SafetyInspectionProtocol."
             "version_number"
         ),
+    )
+    time_entry: Mapped[TimeEntry | None] = relationship(
+        back_populates="safety_inspection_job",
+        passive_deletes="all",
     )
     push_deliveries: Mapped[
         list["PushDelivery"]

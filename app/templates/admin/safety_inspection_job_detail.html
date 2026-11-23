@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "admin/_inspection_time_links.html" import protocol_link %}
 {% block title %}Prüfauftrag{% endblock %}
 
 {% block content %}
@@ -99,6 +100,14 @@
             {% if item.completed_by %}
             durch {{ item.completed_by.display_name }}
             {% endif %}
+          </dd>
+          {% endif %}
+
+          {% if item.time_entry %}
+          <dt class="col-sm-4">Gebuchte Prüfzeit</dt>
+          <dd class="col-sm-8">
+            {{ item.time_entry.minutes }} Min. am {{ item.time_entry.service_date.strftime('%d.%m.%Y') }}
+            · {{ protocol_link(item.time_entry) }}
           </dd>
           {% endif %}
 
@@ -446,6 +455,7 @@
       </div>
       {% endif %}
 
+      {% if can_review_inspections %}
       <div class="d-flex flex-wrap gap-2 mt-3">
         {% if item.group.corrective_orders_enabled and
               not defect.commission_links and
@@ -581,6 +591,7 @@
         </form>
       </div>
       {% endif %}
+      {% endif %}
     </div>
     {% else %}
     <div class="text-center text-muted py-4">
@@ -605,14 +616,14 @@
             "completed_with_defects"
         ] %}
             <span class="badge text-bg-secondary">
-                {{ job.protocols|length }}
+                {{ protocols|length }}
                 Version(en)
             </span>
         {% endif %}
     </div>
 
     <div class="card-body">
-        {% if job.protocols %}
+        {% if protocols %}
             <div class="table-responsive">
                 <table
                     class="
@@ -633,7 +644,7 @@
 
                     <tbody>
                         {% for protocol in
-                            job.protocols|reverse
+                            protocols|reverse
                         %}
                             <tr>
                                 <td>
@@ -747,9 +758,8 @@
                                     </a>
 
                                     {% if
-                                        protocol
-                                        .dms_archive_status
-                                        != "archived"
+                                        can_review_inspections
+                                        and protocol.dms_archive_status != "archived"
                                     %}
                                         <form
                                             method="post"
@@ -795,7 +805,7 @@
             </p>
         {% endif %}
 
-        {% if job.status in [
+        {% if can_review_inspections and job.status in [
             "completed",
             "completed_with_defects"
         ] %}
@@ -815,7 +825,7 @@
                     value="{{ csrf_token() }}"
                 >
 
-                {% if job.protocols %}
+                {% if protocols %}
                     <div class="col-md-8">
                         <label
                             for="correction_reason"
@@ -842,7 +852,7 @@
                             btn-outline-primary
                         "
                     >
-                        {% if job.protocols %}
+                        {% if protocols %}
                             Neue Protokollversion
                         {% else %}
                             Protokoll erstellen

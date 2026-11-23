@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% from "admin/_inspection_time_links.html" import inspection_link, protocol_link %}
 {% block title %}Zeit- und Materialprüfung{% endblock %}
 {% block content %}
-<h1 class="h3 mb-4">
-  Zeit- und Materialprüfung
-</h1>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
+  <h1 class="h3 mb-0">Zeit- und Materialprüfung</h1>
+  <a class="btn btn-outline-secondary" href="#inspection-times">Prüfzeiten</a>
+</div>
 
 <div class="card shadow-sm mb-3">
   <div class="card-body">
@@ -19,12 +21,12 @@
           class="form-control"
           name="q"
           value="{{ search_text }}"
-          placeholder="Auftrag, Position, Mitarbeiter oder Material"
+          placeholder="Auftrag, Prüfung, Position, Mitarbeiter oder Material"
         >
       </div>
       <div class="col-md-4">
         <label class="form-label">
-          Status
+          Prüfstatus (Aufträge)
         </label>
         <select
           class="form-select"
@@ -261,4 +263,54 @@
     </div>
   </div>
 </div>
+<div class="card shadow-sm mt-3" id="inspection-times">
+  <h2 class="h5 card-header">Prüfzeiten</h2>
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Tag</th>
+            <th>Bearbeiter</th>
+            <th>Prüfung</th>
+            <th>Zeitpauschale</th>
+            <th>Protokoll</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in inspection_times.items %}
+          <tr>
+            <td class="text-nowrap">{{ entry.service_date.strftime('%d.%m.%Y') }}</td>
+            <td>{{ entry.user.display_name }}</td>
+            <td>{{ inspection_link(entry) }}</td>
+            <td class="text-nowrap">{{ entry.minutes }} Min.</td>
+            <td>{{ protocol_link(entry) }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-muted text-center py-3">Keine Prüfzeiten gefunden.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if inspection_times.has_prev or inspection_times.has_next %}
+    <nav class="d-flex align-items-center gap-2 mt-3" aria-label="Seiten der Prüfzeiten">
+      {% if inspection_times.has_prev %}
+      <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{{ url_for('admin.performance_reviews', status=status_filter, q=search_text, inspection_page=inspection_times.prev_num, _anchor='inspection-times') }}"
+      >Zurück</a>
+      {% endif %}
+      {% if inspection_times.has_next %}
+      <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{{ url_for('admin.performance_reviews', status=status_filter, q=search_text, inspection_page=inspection_times.next_num, _anchor='inspection-times') }}"
+      >Weiter</a>
+      {% endif %}
+    </nav>
+    {% endif %}
+  </div>
+</div>
+
 {% endblock %}

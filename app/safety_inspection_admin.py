@@ -285,6 +285,7 @@ def template_new() -> Any:
                         "legal_reference"
                     ),
                     user=current_user,
+                    time_allowance_minutes=_time_allowance_minutes(),
                 )
             )
             db.session.commit()
@@ -296,6 +297,7 @@ def template_new() -> Any:
                 "safety_inspection.template_created",
                 "safety_inspection_template",
                 template.id,
+                {"time_allowance_minutes": template.time_allowance_minutes},
             )
             db.session.commit()
             flash(
@@ -314,6 +316,46 @@ def template_new() -> Any:
     return render_template(
         "admin/safety_inspection_template_new.html"
     )
+
+
+def _time_allowance_minutes() -> int | None:
+    value = request.form.get("time_allowance_minutes", "").strip()
+    if not value:
+        return None
+    if not value.isdecimal() or len(value) > 10 or int(value) > 2**31 - 1:
+        raise ValueError("Bitte eine gültige Zeitpauschale in ganzen Minuten ab 0 eingeben.")
+    return int(value) or None
+
+
+@safety_inspection_admin_bp.post("/admin/safety-inspections/templates/<int:template_id>/time-allowance")
+@login_required
+@safety_inspection_manage_required
+def template_time_allowance(template_id: int) -> Any:
+    template = db.session.get(SafetyInspectionTemplate, template_id, with_for_update=True)
+    if template is None:
+        abort(404)
+
+    try:
+        minutes = _time_allowance_minutes()
+    except ValueError as exc:
+        flash(str(exc), "danger")
+    else:
+        if minutes != template.time_allowance_minutes:
+            audit(
+                "safety_inspection.template_time_allowance_updated",
+                "safety_inspection_template",
+                template.id,
+                {"previous_minutes": template.time_allowance_minutes, "time_allowance_minutes": minutes},
+            )
+            template.time_allowance_minutes = minutes
+            db.session.commit()
+        flash("Die Zeitpauschale wurde gespeichert.", "success")
+
+    return redirect(url_for(
+        "safety_inspection_admin.template_edit",
+        template_id=template.id,
+        version_id=request.form.get("version_id", type=int),
+    ))
 
 
 @safety_inspection_admin_bp.route(
