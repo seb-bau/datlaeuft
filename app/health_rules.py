@@ -11,6 +11,7 @@ HEALTH_CHANNELS = (
     ("erp_failed", "ERP-Aufträge fehlerhaft", (0, None)),
     ("erp_oldest_seconds", "Ältester ERP-Auftrag", (30, 120)),
     ("synchronizations_failed", "Synchronisierungen fehlerhaft", (0, None)),
+    ("mobile_sync_users", "Benutzer mit App-Synchronisierungsproblemen", (0, None)),
     ("commissions_failed", "Auftragsabgleich fehlerhaft", (None, None)),
     ("documents_failed", "Dokumentabgleich fehlerhaft", (None, None)),
     ("media_failed", "Medienabgleich fehlerhaft", (None, None)),

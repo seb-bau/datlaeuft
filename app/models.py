@@ -7630,6 +7630,18 @@ class MobileSyncOperation(db.Model):
     created_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class MobileSyncReport(db.Model):
+    __tablename__ = "mobile_sync_report"
+
+    user_id: Mapped[int] = mapped_column(db.ForeignKey("user_account.id", ondelete="CASCADE"), primary_key=True)
+    device_id: Mapped[str] = mapped_column(db.String(36), primary_key=True)
+    app_version: Mapped[str] = mapped_column(db.String(40), nullable=False)
+    app_build: Mapped[str] = mapped_column(db.String(40), nullable=False)
+    reported_at: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), nullable=False)
+    total_entries: Mapped[int] = mapped_column(db.Integer, nullable=False)
+    entries: Mapped[list[dict]] = mapped_column(db.JSON, nullable=False)
+
+
 class MobileSyncDelivery(db.Model):
     __tablename__ = "mobile_sync_delivery"
 

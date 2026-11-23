@@ -26,6 +26,59 @@
   </div>
 </div>
 
+<section class="card shadow-sm mb-4" id="mobile-sync-reports">
+  <h2 class="card-header h6 mb-0">Benutzer mit Synchronisierungsproblemen</h2>
+  <div class="card-body">
+    {% for user in mobile_sync_users %}
+    <div class="{% if not loop.first %}mt-4 pt-3 border-top{% endif %}">
+      <h3 class="h6">{{ user.name }}</h3>
+      {% for device in user.devices %}
+      <div class="small text-muted mb-2">
+        Gerät {{ device.id }} · App-Version {{ device.app_version or '–' }} · Build {{ device.app_build or '–' }} · Stand {{ device.reported_at }}
+      </div>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm table-striped align-middle mb-1">
+          <thead>
+            <tr>
+              <th>Bereich</th><th>Eintrag</th><th>Erfasst am</th><th>Status</th><th>Fehler</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in device.entries %}
+            <tr>
+              <td>{{ 'Aufträge' if entry.module == 'commissions' else 'Verkehrssicherung' }}</td>
+              <td>
+                {{ entry.title }}
+                {% if entry.entity_id %}
+                <div class="small text-muted">{{ 'Auftrags-ID' if entry.module == 'commissions' else 'Prüfauftrags-ID' }} {{ entry.entity_id }}</div>
+                {% endif %}
+              </td>
+              <td>{{ entry.time_label }}</td>
+              <td>
+                <span class="badge text-bg-{{ 'danger' if entry.error else 'warning' }}">
+                  {{ 'Fehler' if entry.error else 'Ausstehend' }}
+                </span>
+              </td>
+              <td class="text-break">
+                {{ entry.error or '–' }}
+                {% if entry.error_code %}<div class="small text-muted">{{ entry.error_code }}</div>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if device.total_entries > device.entries|length %}
+        <div class="small text-muted">{{ device.entries|length }} von {{ device.total_entries }} Einträgen angezeigt.</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-muted">Keine Synchronisierungsprobleme gemeldet.</div>
+    {% endfor %}
+  </div>
+</section>
+
 <div class="card shadow-sm mb-4" id="ticket-ai">
   <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
     <span class="fw-semibold">KI-Ticketanalysen</span>
