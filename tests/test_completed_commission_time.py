@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import importlib
+import sys
 import unittest
 from uuid import uuid4
 
@@ -17,6 +18,12 @@ class CompletedCommissionTimeTests(unittest.TestCase):
         cls.sync = importlib.import_module(cls.package_name + ".mobile_sync")
         cls.app.register_blueprint(cls.sync.mobile_sync_bp)
         cls.tables.extend([cls.models.MobileSyncOperation.__table__, cls.models.MobileSyncDelivery.__table__])
+        work_time_module = cls.package_name + ".work_time_service"
+        sys.modules.pop(work_time_module, None)
+        cls.api.work_time_day_row = importlib.import_module(work_time_module).work_time_day_row
+        cls.tables.extend(model.__table__ for model in (
+            cls.models.WorkTimeProfile, cls.models.UserWorkTimeProfileAssignment, cls.models.WorkTimeTargetOverride,
+        ))
 
     def setUp(self):
         fixtures.MobileAppointmentFeaturesTests.setUp(self)
@@ -121,3 +128,52 @@ class CompletedCommissionTimeTests(unittest.TestCase):
         self.assertEqual(rejected.json["code"], "completed_commission_time_disabled")
         self.assertEqual(self.models.TimeEntry.query.count(), 1)
         self.assertEqual(self.models.MobileSyncOperation.query.count(), 1)
+
+    def test_offline_time_after_completing_a_colleagues_order_counts_for_the_representative(self):
+        self.user.visible_commission_users = [self.other_user]
+        commission = self.commission(user=self.other_user, craftsman_erp_id=self.other_user.craftsman_erp_id)
+        path = f"/api/commissions/{commission.id}"
+        headers = self.headers()
+        baseline = self.sync.normalized_value(path, self.client.get(path, headers=headers).json)
+        completed = self.client.post(
+            path + "/complete", headers=headers, json={"completed": True, "confirm_missing_material": True},
+        )
+        self.assertEqual(completed.status_code, 202, completed.json)
+        self.assertEqual(commission.completion_submitted_by_user_id, self.user.id)
+
+        day = "2026-11-20"
+        sync_path = "/api/mobile/offline-operations"
+        booking = {
+            "id": str(uuid4()), "path": path + "/time", "method": "POST",
+            "body": {"minutes": 30, "service_date": day},
+            "base": {"path": path, "value": baseline},
+        }
+        self.set_allowed(False)
+        denied = self.client.post(sync_path, headers=headers, json=booking)
+        self.assertEqual((denied.status_code, denied.json["code"]), (409, "completed_commission_time_disabled"))
+
+        self.set_allowed(True)
+        changed_assignment = {
+            **booking,
+            "base": {"path": path, "value": {**baseline, "assigned_user": None}},
+        }
+        conflict = self.client.post(sync_path, headers=headers, json=changed_assignment)
+        self.assertEqual((conflict.status_code, conflict.json["code"]), (409, "conflict"))
+        self.assertEqual(self.models.TimeEntry.query.count(), 0)
+
+        saved = self.client.post(sync_path, headers=headers, json=booking)
+        self.assertEqual(saved.status_code, 200, saved.json)
+        item = saved.json["payload"]["item"]
+        self.assertEqual(item["user"]["id"], self.user.id)
+        day_summary = self.client.get("/api/my-time", headers=headers, query_string={"date": day})
+        self.assertEqual(day_summary.json["recorded_minutes"], 30)
+        self.assertEqual([entry["id"] for entry in day_summary.json["items"]], [item["id"]])
+        receipt_day = saved.json["my_time"][day]
+        self.assertEqual(receipt_day["recorded_minutes"], 30)
+        self.assertEqual([entry["id"] for entry in receipt_day["items"]], [item["id"]])
+        colleague = self.client.get("/api/my-time", headers=self.headers(self.other_user), query_string={"date": day})
+        self.assertEqual(colleague.json["items"], [])
+
+        replay = self.client.post(sync_path, headers=headers, json=booking)
+        self.assertEqual(replay.json, saved.json)
+        self.assertEqual(self.models.TimeEntry.query.count(), 1)
