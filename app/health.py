@@ -15,6 +15,7 @@ from .models import (
     ErpOutboxOperation,
     ExternalCommissionAssignmentMail,
     HealthHeartbeat,
+    MobileSyncReport,
     ProcessInfoDelivery,
     ProcessInfoThread,
     PushDelivery,
@@ -255,6 +256,7 @@ def full_snapshot():
         "synchronizations_failed": int(
             commission_counts[3]
         ),
+        "mobile_sync_users": db.session.scalar(select(func.count(func.distinct(MobileSyncReport.user_id)))),
         "dms_enabled": int(
             settings.get(SettingKeys.DMS_ENABLED)
         ),

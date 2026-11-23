@@ -960,6 +960,34 @@ def ticket_ai_sync_context():
     }
 
 
+def mobile_sync_report_groups():
+    from .models import MobileSyncReport
+
+    rows = db.session.execute(
+        db.select(MobileSyncReport, User.display_name)
+        .join(User, User.id == MobileSyncReport.user_id)
+        .order_by(User.display_name, User.id, MobileSyncReport.reported_at.desc())
+    )
+    groups = {}
+    for report, display_name in rows:
+        group = groups.setdefault(report.user_id, {"name": display_name, "devices": []})
+        group["devices"].append({
+            "id": report.device_id[:8],
+            "app_version": report.app_version,
+            "app_build": report.app_build,
+            "reported_at": format_local_datetime(report.reported_at),
+            "total_entries": report.total_entries,
+            "entries": [
+                {
+                    **entry,
+                    "time_label": format_local_datetime(parse_local_datetime(entry["created_at"])),
+                }
+                for entry in report.entries
+            ],
+        })
+    return groups.values()
+
+
 @admin_bp.get("/admin/sync-health")
 @admin_required
 def sync_health() -> Any:
@@ -1028,6 +1056,7 @@ def sync_health() -> Any:
         outbox_status_labels=outbox_status_labels,
         tenant_sync=tenant_notification_sync_context(),
         ticket_ai_sync=ticket_ai_sync_context(),
+        mobile_sync_users=mobile_sync_report_groups(),
         health=full_snapshot(),
     )
 

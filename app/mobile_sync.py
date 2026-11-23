@@ -312,6 +312,22 @@ def offline_operation():
         current_mobile_transaction.reset(token)
 
 
+@mobile_sync_bp.put("/synchronization-report")
+@jwt_required()
+def synchronization_report():
+    from .api import current_api_user
+    from .mobile_sync_reports import store_mobile_sync_report
+
+    user = current_api_user()
+    limit = 256 * 1024
+    request.max_content_length = min(request.max_content_length or limit, limit)
+    try:
+        store_mobile_sync_report(user.id, request.get_json(silent=True))
+    except (ValueError, OverflowError):
+        return jsonify(message="Ungültiger Synchronisierungsbericht."), 400
+    return jsonify({})
+
+
 @mobile_sync_bp.get("/delivery-issues")
 @jwt_required()
 def delivery_issues():

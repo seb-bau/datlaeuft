@@ -53,7 +53,9 @@ class ExternalPortalLightMigrationTests(unittest.TestCase):
                 self.assertNotIn("portal_light_enabled", {item["name"] for item in sa.inspect(connection).get_columns(craftsman.name)})
         finally:
             metadata.drop_all(engine)
-        self.assertEqual(ScriptDirectory(str(root / "migrations")).get_current_head(), migration.revision)
+        scripts = ScriptDirectory(str(root / "migrations"))
+        revisions = scripts.iterate_revisions(scripts.get_current_head(), "base")
+        self.assertIn(migration.revision, {revision.revision for revision in revisions})
 
 
 if __name__ == "__main__":

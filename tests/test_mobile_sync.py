@@ -145,7 +145,11 @@ class MobileSynchronizationTests(unittest.TestCase):
             viewable(commission_id, current_user())
             return jsonify(items=[{"id": entry.id, "minutes": entry.minutes} for entry in cls.models.TimeEntry.query.filter_by(commission_id=commission_id).all()])
 
-        cls.tables = [model.__table__ for model in (cls.models.User, cls.models.Commission, cls.models.TimeEntry, cls.models.MobileSyncOperation, cls.models.MobileSyncDelivery, cls.models.ErpOutboxOperation, cls.models.ProcessInfo)]
+        cls.tables = [model.__table__ for model in (
+            cls.models.User, cls.models.Commission, cls.models.TimeEntry,
+            cls.models.MobileSyncOperation, cls.models.MobileSyncDelivery, cls.models.MobileSyncReport,
+            cls.models.ErpOutboxOperation, cls.models.ProcessInfo,
+        )]
 
     def setUp(self):
         self.context = self.app.app_context()
@@ -173,6 +177,51 @@ class MobileSynchronizationTests(unittest.TestCase):
 
     def post(self, operation):
         return self.client.post("/api/mobile/offline-operations", json=operation, headers=self.headers)
+
+    def test_synchronization_reports_are_replaced_and_cleared_per_device_and_account(self):
+        url = "/api/mobile/synchronization-report"
+        device = str(uuid4())
+        second_device = str(uuid4())
+        entry = {
+            "module": "commissions", "title": "Zeitbuchung", "entity_id": 10,
+            "created_at": "2026-11-23T09:00:00+01:00", "error": "Der Auftragsstand wurde geändert.",
+            "error_code": "conflict", "details": {"body": "technical details"},
+        }
+        report = {
+            "device_id": device, "app_version": "2.1.0", "app_build": "57",
+            "total_entries": 1, "entries": [entry], "user_id": 2,
+        }
+        self.assertEqual(self.client.put(url, json=report).status_code, 401)
+        self.assertEqual(self.client.put(url, headers=self.headers, json=report).status_code, 200)
+        model = self.models.MobileSyncReport
+        stored = self.db.session.get(model, (1, device))
+        self.assertIsNotNone(stored)
+        self.assertEqual((stored.app_version, stored.app_build), ("2.1.0", "57"))
+        self.assertEqual(stored.entries[0]["created_at"], "2026-11-23T08:00:00+00:00")
+        self.assertNotIn("details", stored.entries[0])
+        self.assertIsNone(self.db.session.get(model, (2, device)))
+
+        other = {"Authorization": "Bearer " + create_access_token(identity="2")}
+        self.assertEqual(self.client.put(url, headers=other, json=report).status_code, 200)
+        self.assertEqual(self.client.put(url, headers=self.headers, json={**report, "device_id": second_device}).status_code, 200)
+        pending = {**entry, "module": "inspections", "title": "Prüfergebnis", "error": None}
+        updated = {**report, "app_build": "58", "entries": [pending]}
+        self.assertEqual(self.client.put(url, headers=self.headers, json=updated).status_code, 200)
+        self.db.session.expire_all()
+        stored = self.db.session.get(model, (1, device))
+        self.assertEqual(stored.app_build, "58")
+        self.assertEqual(stored.entries[0]["error"], "")
+        self.assertEqual(stored.entries[0]["error_code"], "")
+        self.assertEqual(model.query.count(), 3)
+
+        invalid = {**updated, "entries": [{**pending, "module": "entire_queue"}]}
+        self.assertEqual(self.client.put(url, headers=self.headers, json=invalid).status_code, 400)
+        cleared = {**report, "entries": [], "total_entries": 0}
+        for _ in range(2):
+            self.assertEqual(self.client.put(url, headers=self.headers, json=cleared).status_code, 200)
+        self.assertEqual(model.query.count(), 2)
+        self.assertIsNotNone(self.db.session.get(model, (2, device)))
+        self.assertIsNotNone(self.db.session.get(model, (1, second_device)))
 
     def test_retry_returns_receipt_without_duplicate_booking(self):
         operation = self.operation()
