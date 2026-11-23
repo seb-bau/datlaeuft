@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from .models import (
     SafetyInspectionJob,
     TimeEntry,
@@ -110,7 +110,7 @@ def work_time_rows(
                 joinedload(
                     TimeEntry.task_template
                 ),
-                joinedload(TimeEntry.safety_inspection_job).joinedload(SafetyInspectionJob.group),
+                selectinload(TimeEntry.safety_inspection_job).joinedload(SafetyInspectionJob.group),
             )
             .filter(
                 TimeEntry.user_id.in_(user_ids),

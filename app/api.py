@@ -15,7 +15,7 @@ from flask import (
 )
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from sqlalchemy import and_, or_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import selectinload
 from .media_sync import MEDIA_SOURCE
 from uuid import uuid4
 
@@ -3159,7 +3159,7 @@ def my_time() -> Any:
     )
     entries = (
         TimeEntry.query
-        .options(joinedload(TimeEntry.safety_inspection_job).joinedload(SafetyInspectionJob.group))
+        .options(selectinload(TimeEntry.safety_inspection_job).joinedload(SafetyInspectionJob.group))
         .filter_by(
             user_id=user.id,
             service_date=selected_date,
