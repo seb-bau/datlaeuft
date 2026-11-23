@@ -16,9 +16,11 @@ from flask import (
 from flask_login import current_user, login_required
 from sqlalchemy import case
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from .audit import audit
 from .auth import (
+    can_review_safety_inspections,
     safety_inspection_manage_required,
     safety_inspection_review_required,
 )
@@ -86,7 +88,7 @@ def jobs() -> Any:
     ):
         abort(400, description="Der ausgewählte Prüfdetailplan existiert nicht mehr.")
 
-    query = SafetyInspectionJob.query
+    query = SafetyInspectionJob.query.options(selectinload(SafetyInspectionJob.time_entry))
     if selected_template_id is not None:
         query = query.join(SafetyInspectionJob.template_version).filter(
             SafetyInspectionTemplateVersion.template_id == selected_template_id
@@ -158,8 +160,11 @@ def jobs() -> Any:
     "/admin/safety-inspections/jobs/<int:job_id>"
 )
 @login_required
-@safety_inspection_review_required
 def job_detail(job_id: int) -> Any:
+    can_review_inspections = can_review_safety_inspections(current_user)
+    if not can_review_inspections and not current_user.can_review_work:
+        abort(403)
+
     item = db.session.get(
         SafetyInspectionJob,
         job_id,
@@ -168,18 +173,23 @@ def job_detail(job_id: int) -> Any:
     if item is None:
         abort(404)
 
-    craftsmen = (
-        User.query.filter(
-            User.is_active_flag.is_(True),
-            User.craftsman_erp_id.isnot(None),
+    if not can_review_inspections and item.time_entry is None:
+        abort(403)
+
+    craftsmen = []
+    if can_review_inspections and not item.is_terminal:
+        craftsmen = (
+            User.query.filter(
+                User.is_active_flag.is_(True),
+                User.craftsman_erp_id.isnot(None),
+            )
+            .order_by(User.display_name.asc())
+            .all()
         )
-        .order_by(User.display_name.asc())
-        .all()
-    )
 
     buildings = []
 
-    if item.object_level == (
+    if can_review_inspections and item.object_level == (
         SafetyInspectionObjectLevel
         .ECONOMIC_UNIT.value
     ):
@@ -200,6 +210,8 @@ def job_detail(job_id: int) -> Any:
         "admin/safety_inspection_job_detail.html",
         item=item,
         job=item,
+        can_review_inspections=can_review_inspections,
+        protocols=item.protocols if can_review_inspections else [item.time_entry.safety_inspection_protocol],
         craftsmen=craftsmen,
         buildings=buildings,
         status_labels=_job_status_labels(),

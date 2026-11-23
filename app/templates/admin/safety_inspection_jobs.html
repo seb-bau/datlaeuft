@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "admin/_inspection_time_links.html" import protocol_link %}
 {% block title %}Prüfaufträge{% endblock %}
 
 {% block content %}
@@ -77,6 +78,7 @@
           <th>Zeitraum</th>
           <th>Handwerker</th>
           <th>Mängel</th>
+          {% if view_mode in ['completed', 'all'] %}<th>Prüfzeit</th>{% endif %}
           <th data-filter="false">Aktionen</th>
         </tr>
       </thead>
@@ -160,6 +162,18 @@
           </td>
 
           <td>{{ item.defects|length }}</td>
+
+          {% if view_mode in ['completed', 'all'] %}
+          {% set entry = item.time_entry %}
+          <td data-order="{{ entry.minutes if entry else 0 }}">
+            {% if entry %}
+            {{ entry.minutes }} Min.
+            <div class="small">{{ protocol_link(entry) }}</div>
+            {% else %}
+            <span class="text-muted">–</span>
+            {% endif %}
+          </td>
+          {% endif %}
 
           <td class="text-end">
             <a

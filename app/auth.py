@@ -231,6 +231,10 @@ def safety_inspection_manage_required(
     return wrapped
 
 
+def can_review_safety_inspections(user: User) -> bool:
+    return user.is_admin or user.can_manage_safety_inspections or user.can_review_safety_inspections
+
+
 def safety_inspection_review_required(
     view: F,
 ) -> F:
@@ -247,13 +251,7 @@ def safety_inspection_review_required(
                 )
             )
 
-        if not (
-            current_user.is_admin
-            or current_user
-            .can_manage_safety_inspections
-            or current_user
-            .can_review_safety_inspections
-        ):
+        if not can_review_safety_inspections(current_user):
             abort(403)
 
         return view(*args, **kwargs)

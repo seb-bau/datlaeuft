@@ -18,10 +18,12 @@ from flask_login import (
 )
 from sqlalchemy import select
 
+from .auth import can_review_safety_inspections
 from .extensions import db
 from .models import (
     SafetyInspectionJob,
     SafetyInspectionProtocol,
+    TimeEntry,
 )
 from .safety_inspection_archive import (
     SafetyInspectionArchiveError,
@@ -45,17 +47,7 @@ safety_inspection_protocol_admin_bp = (
 
 def require_safety_inspection_access(
 ) -> None:
-    if not (
-        current_user.is_admin
-        or (
-            current_user
-            .can_manage_safety_inspections
-        )
-        or (
-            current_user
-            .can_review_safety_inspections
-        )
-    ):
+    if not can_review_safety_inspections(current_user):
         abort(403)
 
 
@@ -78,7 +70,12 @@ def protocol_document(
     job_id: int,
     protocol_id: int,
 ) -> Any:
-    require_safety_inspection_access()
+    if not can_review_safety_inspections(current_user):
+        if not current_user.can_review_work or not TimeEntry.query.filter_by(
+            safety_inspection_job_id=job_id,
+            safety_inspection_protocol_id=protocol_id,
+        ).first():
+            abort(403)
 
     protocol = db.session.execute(
         select(

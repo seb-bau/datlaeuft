@@ -23,6 +23,7 @@
         <tr>
           <th>Bezeichnung</th>
           <th>Rechtsgrundlage</th>
+          <th>Zeitpauschale</th>
           <th>Versionen</th>
           <th>Aktueller Stand</th>
           <th>Aktiv</th>
@@ -65,6 +66,10 @@
 
           <td>
             {{ item.legal_reference or "–" }}
+          </td>
+
+          <td data-order="{{ item.time_allowance_minutes or 0 }}">
+            {{ (item.time_allowance_minutes ~ " Min.") if item.time_allowance_minutes else "–" }}
           </td>
 
           <td>

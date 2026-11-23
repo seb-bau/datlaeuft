@@ -1680,6 +1680,7 @@ def safety_inspection_offline_operation(job_id: int) -> Any:
                 job,
                 user,
                 overall_note=data.get("overall_note"),
+                occurred_at=occurred_at,
             )
 
         job.updated_at = utc_now()

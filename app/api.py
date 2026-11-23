@@ -15,6 +15,7 @@ from flask import (
 )
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from sqlalchemy import and_, or_
+from sqlalchemy.orm import selectinload
 from .media_sync import MEDIA_SOURCE
 from uuid import uuid4
 
@@ -36,6 +37,8 @@ from .models import (
     MaterialSource,
     MaterialUsageStatus,
     ReviewLevel,
+    SafetyInspectionGroup,
+    SafetyInspectionJob,
     TimeEntry,
     TimeReviewStatus,
     TimeTaskExpectedMaterial,
@@ -3156,6 +3159,7 @@ def my_time() -> Any:
     )
     entries = (
         TimeEntry.query
+        .options(selectinload(TimeEntry.safety_inspection_job).joinedload(SafetyInspectionJob.group))
         .filter_by(
             user_id=user.id,
             service_date=selected_date,
@@ -3506,10 +3510,15 @@ def commission_material_review(commission_id: int) -> Any:
 def review_time_entries() -> Any:
     user = current_api_user()
     require_review_permission(user)
-    query = TimeEntry.query.join(
-        Commission, TimeEntry.commission_id == Commission.id).join(
-        User, TimeEntry.user_id == User.id).outerjoin(
-        TimeTaskTemplate, TimeEntry.task_template_id == TimeTaskTemplate.id)
+    query = (
+        TimeEntry.query
+        .outerjoin(TimeEntry.commission)
+        .join(TimeEntry.user)
+        .outerjoin(TimeEntry.task_template)
+        .outerjoin(TimeEntry.safety_inspection_job)
+        .outerjoin(SafetyInspectionJob.group)
+        .filter(or_(TimeEntry.commission_id.isnot(None), TimeEntry.safety_inspection_job_id.isnot(None)))
+    )
     status = request.args.get("status", TimeReviewStatus.NEEDS_REVIEW.value).strip()
     review_level = request.args.get("review_level", request.args.get("risk", "")).strip()
     user_id = request.args.get("user_id", "").strip()
@@ -3533,6 +3542,8 @@ def review_time_entries() -> Any:
                 TimeTaskTemplate.code.ilike(like_term),
                 TimeTaskTemplate.title.ilike(like_term),
                 User.display_name.ilike(like_term),
+                SafetyInspectionGroup.name.ilike(like_term),
+                SafetyInspectionJob.object_address.ilike(like_term),
             ))
     items = query.order_by(
         TimeEntry.service_date.desc(),
@@ -3680,7 +3691,9 @@ def can_edit_commission(commission: Commission, user: User) -> bool:
 
 
 def can_edit_time_entry(entry: TimeEntry, user: User) -> bool:
-    return user.is_admin or user.is_foreman or entry.user_id == user.id
+    return entry.safety_inspection_job_id is None and (
+        user.is_admin or user.is_foreman or entry.user_id == user.id
+    )
 
 
 def viewable_commission(commission_id: int, user: User) -> Commission:
@@ -4697,6 +4710,7 @@ def serialize_time_entry(
         )
 
     commission = item.commission
+    inspection = item.safety_inspection_job
 
     return {
         "id": item.id,
@@ -4717,7 +4731,17 @@ def serialize_time_entry(
             if commission is not None
             else None
         ),
-        "is_free_time": commission is None,
+        "safety_inspection": (
+            {
+                "id": inspection.id,
+                "title": inspection.group.name,
+                "object_address": inspection.object_address,
+                "protocol_id": item.safety_inspection_protocol_id,
+            }
+            if inspection is not None
+            else None
+        ),
+        "is_free_time": commission is None and inspection is None,
         "user": serialize_user(item.user),
         "task_template": (
             serialize_time_task(

@@ -1,0 +1,21 @@
+{% macro inspection_link(entry) %}
+  {% set inspection = entry.safety_inspection_job %}
+  <a href="{{ url_for('safety_inspection_jobs_admin.job_detail', job_id=inspection.id) }}">
+    {{ inspection.group.name }}
+  </a>
+  {% if inspection.object_address %}
+  <div class="small text-muted">{{ inspection.object_address }}</div>
+  {% endif %}
+{% endmacro %}
+
+{% macro protocol_link(entry) %}
+  <a
+    href="{{ url_for(
+      'safety_inspection_protocol_admin.protocol_document',
+      job_id=entry.safety_inspection_job_id,
+      protocol_id=entry.safety_inspection_protocol_id
+    ) }}"
+    target="_blank"
+    rel="noopener"
+  >Prüfprotokoll</a>
+{% endmacro %}

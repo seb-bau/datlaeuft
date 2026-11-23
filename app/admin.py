@@ -81,6 +81,10 @@ from .models import (
     MaterialSource,
     MaterialUsageStatus,
     ReviewLevel,
+    SafetyInspectionGroup,
+    SafetyInspectionJob,
+    SafetyInspectionTemplate,
+    SafetyInspectionTemplateVersion,
     TimeEntry,
     TimeReviewStatus,
     TimeTaskExpectedMaterial,
@@ -11042,6 +11046,15 @@ def performance_reviews() -> Any:
         "",
     ).strip().lower()
     rows = performance_review_rows()
+    inspection_times = (
+        select(TimeEntry)
+        .where(TimeEntry.safety_inspection_job_id.isnot(None))
+        .options(
+            selectinload(TimeEntry.user),
+            selectinload(TimeEntry.safety_inspection_job).selectinload(SafetyInspectionJob.group),
+        )
+        .order_by(TimeEntry.service_date.desc(), TimeEntry.id.desc())
+    )
 
     if status_filter != "all":
         rows = [
@@ -11052,6 +11065,21 @@ def performance_reviews() -> Any:
 
     if search_text:
         terms = search_text.split()
+        inspection_times = (
+            inspection_times
+            .join(TimeEntry.user)
+            .join(TimeEntry.safety_inspection_job)
+            .join(SafetyInspectionJob.group)
+            .join(SafetyInspectionJob.template_version)
+            .join(SafetyInspectionTemplateVersion.template)
+        )
+        for term in terms:
+            inspection_times = inspection_times.where(or_(
+                User.display_name.icontains(term, autoescape=True),
+                SafetyInspectionGroup.name.icontains(term, autoescape=True),
+                SafetyInspectionJob.object_address.icontains(term, autoescape=True),
+                SafetyInspectionTemplate.name.icontains(term, autoescape=True),
+            ))
 
         rows = [
             row
@@ -11097,6 +11125,12 @@ def performance_reviews() -> Any:
     return render_template(
         "admin/performance_reviews.html",
         rows=rows,
+        inspection_times=db.paginate(
+            inspection_times,
+            page=request.args.get("inspection_page", 1, type=int),
+            per_page=50,
+            error_out=False,
+        ),
         status_filter=status_filter,
         search_text=request.args.get(
             "q",

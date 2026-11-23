@@ -45,6 +45,21 @@
         >
       </div>
 
+      <div class="col-md-6">
+        <label class="form-label" for="timeAllowanceMinutes">Zeitpauschale (Minuten)</label>
+        <input
+          class="form-control"
+          type="number"
+          id="timeAllowanceMinutes"
+          name="time_allowance_minutes"
+          min="0"
+          step="1"
+          max="2147483647"
+          value="{{ request.form.get('time_allowance_minutes', '') }}"
+        >
+        <div class="form-text">Leer oder 0, wenn keine Zeit automatisch gebucht werden soll.</div>
+      </div>
+
       <div class="col-12">
         <label class="form-label">
           Beschreibung

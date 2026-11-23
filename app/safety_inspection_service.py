@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Iterable
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 import re
 
 from .commission_service import (
@@ -36,6 +37,7 @@ from .models import (
     SafetyInspectionTemplateItem,
     SafetyInspectionTemplateVersion,
     SafetyInspectionTemplateVersionStatus,
+    TimeEntry,
     User,
     WowiBuilding,
     WowiEconomicUnit,
@@ -78,6 +80,7 @@ def create_safety_inspection_template(
         description: str | None,
         legal_reference: str | None,
         user: User,
+        time_allowance_minutes: int | None = None,
 ) -> tuple[
     SafetyInspectionTemplate,
     SafetyInspectionTemplateVersion,
@@ -96,6 +99,7 @@ def create_safety_inspection_template(
         legal_reference=clean_text(
             legal_reference
         ),
+        time_allowance_minutes=time_allowance_minutes,
         created_by=user,
     )
     version = (
@@ -1133,6 +1137,7 @@ def complete_safety_inspection_job(
         job: SafetyInspectionJob,
         user: User,
         overall_note: str | None = None,
+        occurred_at: datetime | None = None,
 ) -> list[SafetyInspectionDefect]:
     ensure_job_editable(job, user)
     validate_safety_inspection_results(
@@ -1176,7 +1181,8 @@ def complete_safety_inspection_job(
         overall_note
     )
     job.completed_by = user
-    job.completed_at = utc_now()
+    now = utc_now()
+    job.completed_at = now
     job.status = (
         SafetyInspectionJobStatus
         .COMPLETED_WITH_DEFECTS.value
@@ -1191,10 +1197,22 @@ def complete_safety_inspection_job(
         create_safety_inspection_protocol,
     )
 
-    create_safety_inspection_protocol(
+    protocol = create_safety_inspection_protocol(
         job,
         user,
     )
+
+    minutes = job.template_version.template.time_allowance_minutes
+    if minutes is not None:
+        service_date = min(occurred_at or now, now).astimezone(ZoneInfo("Europe/Berlin")).date()
+        db.session.add(TimeEntry(
+            user=user,
+            safety_inspection_job=job,
+            safety_inspection_protocol=protocol,
+            service_date=service_date,
+            minutes=minutes,
+            work_minutes=minutes,
+        ))
 
     if any(
             result.state

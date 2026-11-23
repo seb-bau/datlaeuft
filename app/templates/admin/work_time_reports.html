@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "admin/_inspection_time_links.html" import inspection_link, protocol_link %}
 {% macro duration(minutes) -%}
   {% if minutes is none %}
     –
@@ -250,7 +251,7 @@
             <th>Tag</th>
             <th>Art</th>
             <th>Leistungsposition</th>
-            <th>Auftrag</th>
+            <th>Auftrag oder Prüfung</th>
             <th>Dauer</th>
             <th>Hinweis</th>
             <th>Aktionen</th>
@@ -268,6 +269,8 @@
               <span class="badge rounded-pill text-bg-primary">
                 Auftrag
               </span>
+              {% elif entry.safety_inspection_job_id %}
+              <span class="badge rounded-pill text-bg-primary">Prüfung</span>
               {% else %}
               <span class="badge rounded-pill text-bg-secondary">
                 Freie Zeit
@@ -283,6 +286,8 @@
               <div class="small text-muted">
                 {{ entry.task_template.code }}
               </div>
+              {% elif entry.safety_inspection_job_id %}
+              <span class="text-muted">Zeitpauschale</span>
               {% else %}
               <span class="text-muted">
                 Ohne Leistungsposition
@@ -311,6 +316,8 @@
                 {{ entry.commission.title }}
               </div>
               {% endif %}
+              {% elif entry.safety_inspection_job_id %}
+              {{ inspection_link(entry) }}
               {% else %}
               <span class="text-muted">
                 Freie Zeitbuchung
@@ -358,6 +365,8 @@
               >
                 Arbeitsnachweis
               </a>
+              {% elif entry.safety_inspection_job_id %}
+              {{ protocol_link(entry) }}
               {% else %}
               <span class="text-muted">Nicht verfügbar</span>
               {% endif %}

@@ -89,6 +89,36 @@
     {% endif %}
   </div>
 </div>
+<form
+  method="post"
+  action="{{ url_for('safety_inspection_admin.template_time_allowance', template_id=item.id) }}"
+  class="card shadow-sm mb-3"
+>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="version_id" value="{{ version.id }}">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-sm-5 col-lg-3">
+        <label class="form-label" for="timeAllowanceMinutes">Zeitpauschale (Minuten)</label>
+        <input
+          class="form-control"
+          type="number"
+          id="timeAllowanceMinutes"
+          name="time_allowance_minutes"
+          min="0"
+          step="1"
+          max="2147483647"
+          value="{{ item.time_allowance_minutes or '' }}"
+        >
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-outline-primary" type="submit">Zeitpauschale speichern</button>
+      </div>
+    </div>
+    <div class="form-text">Gilt für alle Versionen dieses Prüfdetailplans. Leer oder 0 deaktiviert die automatische Zeitbuchung.</div>
+  </div>
+</form>
+
 <div class="card shadow-sm mb-3">
   <div class="card-body">
     <div class="d-flex flex-wrap gap-2">
