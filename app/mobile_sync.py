@@ -20,6 +20,11 @@ read_pattern = re.compile(r"^/api/(?:commissions(?:/(?:simple-create-options|cre
 write_pattern = re.compile(r"^/api/commissions(?:/simple|/[1-9]\d*/(?:start|reject|complete|time(?:/[1-9]\d*)?|materials(?:/[1-9]\d*/cancel)?|photos(?:/[1-9]\d*)?|appointments(?:/accepted)?|infos(?:/read)?))$")
 parent_pattern = re.compile(r"^/api/commissions/([1-9]\d*)(?:/|$)")
 booking_pattern = re.compile(r"^/api/commissions/[1-9]\d*/(?:time|materials)$")
+COMPLETED_STATUSES = {
+    CommissionLocalStatus.DONE.value,
+    CommissionLocalStatus.AWAITING_INVOICE.value,
+    CommissionLocalStatus.TENANT_CHARGE_REVIEW.value,
+}
 
 
 def canonical(value):
@@ -73,13 +78,12 @@ def valid_query(value):
 
 def already_applied_status(commission, action, body):
     status = commission.local_status
-    completed_statuses = {CommissionLocalStatus.DONE.value, CommissionLocalStatus.AWAITING_INVOICE.value, CommissionLocalStatus.TENANT_CHARGE_REVIEW.value}
     if action == "start":
-        return status == CommissionLocalStatus.IN_PROGRESS.value or status in completed_statuses
+        return status == CommissionLocalStatus.IN_PROGRESS.value or status in COMPLETED_STATUSES
     if action != "complete" or type(body.get("completed")) is not bool or commission.completion_submitted_at is None:
         return False
     completed = body["completed"]
-    if (completed and status not in completed_statuses) or (not completed and status != CommissionLocalStatus.COMPLETION_REVIEW.value):
+    if (completed and status not in COMPLETED_STATUSES) or (not completed and status != CommissionLocalStatus.COMPLETION_REVIEW.value):
         return False
     return (
         commission.completion_successful is completed
@@ -88,11 +92,19 @@ def already_applied_status(commission, action, body):
     )
 
 
-def matches_baseline(current, expected, status_change):
-    if not status_change or not isinstance(current, dict) or not isinstance(expected, dict):
+def matches_baseline(current, expected, status_change, *, allow_own_completion=False):
+    if not isinstance(current, dict) or not isinstance(expected, dict):
         return same_value(current, expected)
-    fields = ("local_status", "assigned_user", "can_edit", "is_actionable")
-    return all(same_value(current.get(field), expected.get(field)) for field in fields)
+    if status_change:
+        fields = ("local_status", "assigned_user", "can_edit", "is_actionable")
+        return all(same_value(current.get(field), expected.get(field)) for field in fields)
+    if (
+        allow_own_completion
+        and expected.get("local_status") == CommissionLocalStatus.IN_PROGRESS.value
+        and current.get("local_status") in COMPLETED_STATUSES
+    ):
+        expected = {**expected, "local_status": current["local_status"]}
+    return same_value(current, expected)
 
 
 def matching_booking(user_id, path, fingerprint, device_id, known_ids):
@@ -234,11 +246,24 @@ def offline_operation():
                 return current
             current_value = normalized_value(base["path"], current.get_json(), base.get("target_id"))
             expected_value = base.get("value")
-            if predecessor is not None and not matches_baseline(current_value, expected_value, status_change):
+            allow_own_completion = (
+                method == "POST"
+                and path == parent + "/time"
+                and base["path"] == parent
+                and commission.completion_successful is True
+                and commission.completion_submitted_by_user_id == user_id
+            )
+            baseline_matches = matches_baseline(
+                current_value, expected_value, status_change, allow_own_completion=allow_own_completion,
+            )
+            if not baseline_matches and predecessor is not None:
                 key = base["path"] + (f"#{base['target_id']}" if base.get("target_id") is not None else "")
                 if key in predecessor.response_payload.get("baselines", {}):
                     expected_value = predecessor.response_payload["baselines"][key]
-            if not matches_baseline(current_value, expected_value, status_change):
+                    baseline_matches = matches_baseline(
+                        current_value, expected_value, status_change, allow_own_completion=allow_own_completion,
+                    )
+            if not baseline_matches:
                 return jsonify(message="Der Serverstand wurde zwischenzeitlich geändert.", code="conflict", current=current_value, local=operation.get("body"), base=expected_value), 409
         elif not settled and parent and not path.endswith(("/infos", "/infos/read")) and not (method == "POST" and path.endswith(("/time", "/materials", "/photos"))):
             return jsonify(message="Der Vergleichsstand fehlt.", code="missing_base"), 409
