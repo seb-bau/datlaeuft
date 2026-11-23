@@ -9,11 +9,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import re
 
-from flask import current_app, render_template
+from flask import current_app
 from pypdf import PdfReader, PdfWriter
 from weasyprint import HTML
 
+from .document_layout import document_layout_url_fetcher
 from .models import Offer
+from .offer_layout import DEFAULT_OFFER_LAYOUT, render_offer_html
+from .settings import SettingKeys, settings
 from .stationery_layout import company_page_layout, page_stylesheets
 
 
@@ -334,6 +337,7 @@ def document_context(
 ) -> dict:
     return {
         "document_title": "Angebot",
+        "preview": preview,
         "offer_number": (offer.offer_number or "Entwurf") if preview else required_text(
             offer.offer_number,
             "Angebotsnummer",
@@ -423,9 +427,13 @@ def apply_stationery(
         writer.write(output_file)
 
 
-def render_offer_content_pdf(context, *, page_layout=None):
-    html = render_template("admin/offer_pdf.html", **context)
-    return HTML(string=html, base_url=current_app.root_path).write_pdf(stylesheets=page_stylesheets(page_layout))
+def render_offer_content_pdf(context, *, layout=None, page_layout=None) -> bytes:
+    if layout is None:
+        layout = settings.get(SettingKeys.OFFER_LAYOUT) or DEFAULT_OFFER_LAYOUT
+    html = render_offer_html(context, layout)
+    return HTML(string=html, url_fetcher=document_layout_url_fetcher).write_pdf(
+        stylesheets=page_stylesheets(page_layout),
+    )
 
 
 def create_offer_document(

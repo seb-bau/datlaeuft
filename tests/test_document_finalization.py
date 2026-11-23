@@ -48,6 +48,7 @@ class DocumentFinalizationTests(unittest.TestCase):
     draft_form = fixtures.InvoiceDeliveryTests.draft_form
     complete_draft = fixtures.InvoiceDeliveryTests.complete_draft
     pdf = fixtures.InvoiceDeliveryTests.pdf
+    pdf_text = fixtures.InvoiceDeliveryTests.pdf_text
     upload = fixtures.InvoiceDeliveryTests.upload
     prepare_stationery = fixtures.InvoiceDeliveryTests.prepare_stationery
 
@@ -142,6 +143,41 @@ class DocumentFinalizationTests(unittest.TestCase):
             self.assertIn(value, text)
         self.assertNotIn("Gespeicherte Position", text)
         self.assertEqual(self.models.AuditLog.query.filter_by(action="offer.update").count(), 1)
+
+    def test_offer_layout_applies_to_previews_and_released_pdfs(self):
+        item = self.document("offer")
+        self.offer_document.stationery_path(item).write_bytes(self.pdf("GESCHAEFTSPAPIER"))
+        self.login(self.administrator)
+        url = "/admin/offer-layout"
+        definition = self.settings.SettingKeys.OFFER_LAYOUT
+        custom = (
+            "<h1>GESTALTETES {{ document_title }}</h1><p>{{ offer_number }}</p>"
+            "<p>{{ recipient_address | join(' · ') }}</p>"
+            "{% for position in positions %}<p>{{ position.description }}</p>{% endfor %}"
+        )
+        editor = self.client.get(url)
+        self.assertEqual(editor.status_code, 200)
+        self.assertIn(b'data-preview-url="/admin/offer-layout/preview"', editor.data)
+        sample = self.pdf_text(self.client.post(url + "/preview", data={"html": custom}))
+        self.assertIn("AN-BEISPIEL-001", sample)
+        self.assertNotIn("GESCHAEFTSPAPIER", sample)
+        saved_offer = self.pdf_text(self.client.post(url + "/preview", data={"html": custom, "offer_id": item.id}))
+        self.assertIn("GESCHAEFTSPAPIER", saved_offer)
+        self.assertIn(item.recipient_name, saved_offer)
+        self.assertEqual(self.settings.settings.get(definition), definition.default)
+        self.assertEqual(self.client.post(url + "/preview", data={"html": "{{ invoice_number }}"}).status_code, 400)
+
+        self.assertEqual(self.client.post(url, data={"html": custom}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), custom)
+        draft_url = f"/admin/offers/{item.id}/preview"
+        self.assertIn("GESTALTETES Angebot", self.pdf_text(self.client.post(draft_url, data=self.draft_form())))
+        self.finalize("offer", item, self.current_form())
+        data = self.offer_document.resolve_offer_document_path(item.document_filename).read_bytes()
+        text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(data)).pages)
+        for value in ("GESTALTETES Angebot", "GESCHAEFTSPAPIER", item.offer_number, "Geänderte Reparatur"):
+            self.assertIn(value, text)
+        self.assertEqual(self.client.post(url, data={"action": "reset"}).status_code, 302)
+        self.assertEqual(self.settings.settings.get(definition), definition.default)
 
     def test_invalid_position_rolls_back_changes_and_does_not_finalize_the_saved_version(self):
         for kind in ("invoice", "offer"):

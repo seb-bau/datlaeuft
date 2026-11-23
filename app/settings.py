@@ -14,6 +14,7 @@ from email.headerregistry import Address
 from .health_rules import DEFAULT_HEALTH_RULES, normalize_health_rules
 from .invoice_cover_letter_layout import DEFAULT_COVER_LETTER_LAYOUT, validate_cover_letter_layout
 from .invoice_layout import validate_invoice_layout
+from .offer_layout import validate_offer_layout
 
 T = TypeVar("T")
 
@@ -530,6 +531,19 @@ class SettingKeys:
         "Standard-Zahlungsziel in Tagen",
         "Rechnungen",
     )
+    INVOICE_INTRODUCTORY_TEXT = SettingDefinition[str](
+        "invoice.introductory_text", SettingValueType.STRING,
+        "Für die ausgeführten Arbeiten berechnen wir Ihnen folgende Leistungen:",
+        "Einleitungstext", "Rechnungen",
+    )
+    INVOICE_OFFER_INTRODUCTORY_TEXT = SettingDefinition[str](
+        "invoice.offer_introductory_text", SettingValueType.STRING,
+        "Für die ausgeführten und im Angebot {offer_number} vereinbarten Leistungen berechnen wir:",
+        "Einleitungstext bei Rechnungen aus Angeboten", "Rechnungen",
+    )
+    INVOICE_CONCLUDING_TEXT = SettingDefinition[str](
+        "invoice.concluding_text", SettingValueType.STRING, "", "Schlusstext", "Rechnungen",
+    )
     INVOICE_TRANSFER_PAYMENT_TEXT = SettingDefinition[str](
         "invoice.transfer_payment_text", SettingValueType.STRING,
         "Bitte überweisen Sie den Rechnungsbetrag bis zum {due_date} auf das unten angegebene Konto. Bitte geben Sie als Verwendungszweck {payment_reference} an.",
@@ -569,6 +583,18 @@ class SettingKeys:
     INVOICE_LAYOUT = SettingDefinition[str](
         "invoice.layout", SettingValueType.STRING, "",
         "Rechnung: Aufbau und Gestaltung", "Rechnungen",
+    )
+    OFFER_LAYOUT = SettingDefinition[str](
+        "offer.layout", SettingValueType.STRING, "", "Angebot: Aufbau und Gestaltung", "Angebote",
+    )
+    OFFER_INTRODUCTORY_TEXT = SettingDefinition[str](
+        "offer.introductory_text", SettingValueType.STRING,
+        "Vielen Dank für Ihre Anfrage. Wir bieten Ihnen folgende Leistungen an:",
+        "Einleitungstext", "Angebote",
+    )
+    OFFER_CONCLUDING_TEXT = SettingDefinition[str](
+        "offer.concluding_text", SettingValueType.STRING,
+        "Wir freuen uns auf Ihre Rückmeldung.", "Schlusstext", "Angebote",
     )
     OFFER_VALIDITY_DAYS = SettingDefinition[int](
         "offer.validity_days",
@@ -864,6 +890,21 @@ def _validate_text_placeholders(value: str, allowed_fields: set[str]) -> None:
             raise ValueError("Ungültiger Platzhalter.")
 
 
+def validate_document_default_text(value: str, *, for_offer_invoice=False) -> str:
+    if isinstance(value, str):
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
+    if not isinstance(value, str) or len(value) > 4000 or any(
+        ord(character) < 32 and character not in "\n\t" for character in value
+    ):
+        raise ValueError("Einleitungs- und Schlusstexte dürfen höchstens 4.000 Zeichen und keine ungültigen Steuerzeichen enthalten.")
+    if for_offer_invoice:
+        try:
+            _validate_text_placeholders(value, {"offer_number"})
+        except ValueError as exc:
+            raise ValueError("Im Einleitungstext für Rechnungen aus Angeboten ist {offer_number} als Platzhalter verfügbar.") from exc
+    return value.strip()
+
+
 def validate_cover_letter_text(value, *, title=False):
     limit = 200 if title else 20000
     label = "Die Überschrift" if title else "Der Anschreibentext"
@@ -962,6 +1003,18 @@ class SettingsService:
             value = cast(T, validate_cover_letter_layout(value))
         if definition.key == SettingKeys.INVOICE_LAYOUT.key and value != "":
             value = cast(T, validate_invoice_layout(value))
+        if definition.key == SettingKeys.OFFER_LAYOUT.key and value != "":
+            value = cast(T, validate_offer_layout(value))
+        if definition.key in {
+            SettingKeys.INVOICE_INTRODUCTORY_TEXT.key,
+            SettingKeys.INVOICE_OFFER_INTRODUCTORY_TEXT.key,
+            SettingKeys.INVOICE_CONCLUDING_TEXT.key,
+            SettingKeys.OFFER_INTRODUCTORY_TEXT.key,
+            SettingKeys.OFFER_CONCLUDING_TEXT.key,
+        }:
+            value = cast(T, validate_document_default_text(
+                value, for_offer_invoice=definition.key == SettingKeys.INVOICE_OFFER_INTRODUCTORY_TEXT.key,
+            ))
         if definition.key in {SettingKeys.INVOICE_COVER_LETTER_TITLE.key, SettingKeys.INVOICE_COVER_LETTER_TEXT.key}:
             value = cast(T, validate_cover_letter_text(value, title=definition.key == SettingKeys.INVOICE_COVER_LETTER_TITLE.key))
         if definition.key == SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key:

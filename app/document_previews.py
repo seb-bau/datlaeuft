@@ -73,36 +73,32 @@ def render_invoice_preview(invoice, *, layout=None, include_attachments=True) ->
     return content
 
 
-def render_document_preview(kind: str, document) -> bytes:
-    from weasyprint import HTML
+def render_offer_preview(offer, *, layout=None) -> bytes:
+    from .offer_document import (
+        apply_stationery, document_context, prepare_positions, prepare_vat_rows,
+        render_offer_content_pdf, stationery_path,
+    )
 
-    background = None
-    merge = None
+    positions = prepare_positions(offer)
+    context = document_context(offer, positions, prepare_vat_rows(positions), preview=True)
+    content = render_offer_content_pdf(context, layout=layout, page_layout=company_page_layout(offer.company_code))
+    if offer.company_code.stationery_filename:
+        with TemporaryDirectory() as directory:
+            source, target = Path(directory) / "content.pdf", Path(directory) / "preview.pdf"
+            source.write_bytes(content)
+            apply_stationery(source, target, stationery_path(offer))
+            content = target.read_bytes()
+    return content
+
+
+def render_document_preview(kind: str, document) -> bytes:
     if kind == "invoice":
         return render_invoice_preview(document)
-    elif kind == "offer":
-        from .offer_document import apply_stationery, document_context, prepare_positions, prepare_vat_rows, stationery_path, render_offer_content_pdf
-        positions = prepare_positions(document)
-        context = document_context(document, positions, prepare_vat_rows(positions), preview=True)
-        if document.company_code.stationery_filename:
-            background, merge = stationery_path(document), apply_stationery
-        template = "admin/offer_pdf.html"
-    elif kind == "commission":
-        context = document
-        template = "admin/commission_pdf.html"
-    else:
-        raise ValueError("Die Dokumentart ist ungültig.")
-    context = {**context, "preview": True}
-    raw_data = (
-        render_offer_content_pdf(context, page_layout=company_page_layout(document.company_code))
-        if kind == "offer" else
-        HTML(string=render_template(template, **context), base_url=current_app.root_path).write_pdf()
-    )
-    if background is not None:
-        with TemporaryDirectory() as directory:
-            source = Path(directory) / "content.pdf"
-            target = Path(directory) / "preview.pdf"
-            source.write_bytes(raw_data)
-            merge(source, target, background)
-            raw_data = target.read_bytes()
-    return raw_data
+    if kind == "offer":
+        return render_offer_preview(document)
+    if kind == "commission":
+        from weasyprint import HTML
+
+        html = render_template("admin/commission_pdf.html", **{**document, "preview": True})
+        return HTML(string=html, base_url=current_app.root_path).write_pdf()
+    raise ValueError("Die Dokumentart ist ungültig.")

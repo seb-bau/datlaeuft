@@ -2,7 +2,8 @@
 {% block title %}Einstellungen{% endblock %}
 {% block content %}
 <h1 class="h3 mb-4">Einstellungen</h1>
-<div class="mb-3">
+<div class="d-flex flex-wrap gap-2 mb-3">
+  <a class="btn btn-outline-primary" href="{{ url_for('admin.document_templates') }}">Dokumentvorlagen</a>
   <a class="btn btn-outline-primary" href="{{ url_for('admin.email_templates_page') }}">E-Mail-Vorlagen und Portaltexte bearbeiten</a>
 </div>
 <form method="post" class="card shadow-sm">
@@ -16,9 +17,7 @@
     <div class="row g-3">
       {% for definition in definitions %}
       <div class="col-md-6">
-        <label class="form-label"
-               {% if definition.key == "invoice.tenant_charge_purpose_template" %}for="tenantChargePurposeTemplate"
-               {% elif definition.key == "invoice.tenant_charge_closing_template" %}for="tenantChargeClosingTemplate"{% endif %}>{{ definition.label }}</label>
+        <label class="form-label">{{ definition.label }}</label>
         {% set value = settings.get(definition) %}
         {% if definition.key == "commissions.ticket_writeback_excluded_source_ids" %}
         {% for source_id, source_label in tenant_ticket_source_choices %}
@@ -84,37 +83,6 @@
           name="{{ definition.key }}"
           placeholder="Leer lassen, um den Wert beizubehalten"
         >
-        {% elif definition.key in ("invoice.transfer_payment_text", "invoice.sepa_payment_text") %}
-        <textarea class="form-control" name="{{ definition.key }}" rows="4" maxlength="4000">{{ value }}</textarea>
-        <div class="form-text">Platzhalter: {% raw %}{due_date}, {invoice_number}, {payment_reference}, {amount}, {currency}, {iban}, {bic}, {mandate_reference}, {creditor_id}, {account_holder}{% endraw %}</div>
-        {% elif definition.key == "invoice.cover_letter_layout" %}
-        <div><a class="btn btn-outline-primary" href="{{ url_for('admin.invoice_cover_letter_layout') }}">Aufbau und Gestaltung bearbeiten</a></div>
-        <div class="form-text">Anschrift, Kontaktblock, Überschrift, Text, Seitenränder und Abstände im vollständigen HTML- und CSS-Layout anpassen.</div>
-        {% elif definition.key == "invoice.layout" %}
-        <div><a class="btn btn-outline-primary" href="{{ url_for('admin.invoice_layout') }}">Rechnungs-Layout bearbeiten</a></div>
-        <div class="form-text">Anschrift, Rechnungsdaten, Leistungsbezug, Positionen und Summen im HTML- und CSS-Layout anpassen.</div>
-        {% elif definition.key in ("invoice.cover_letter_title", "invoice.cover_letter_text") %}
-        {% if definition.key == "invoice.cover_letter_title" %}
-        <input class="form-control" name="{{ definition.key }}" maxlength="200" value="{{ value }}" required>
-        {% else %}
-        <textarea class="form-control" name="{{ definition.key }}" rows="8" maxlength="20000" required>{{ value }}</textarea>
-        {% endif %}
-        <div class="form-text">Platzhalter: {% raw %}{invoice_number}, {invoice_date}, {contract_number}, {recipient_name}, {amount}, {currency}, {due_date}, {payment_terms}, {seller_name}, {caseworker_name}, {caseworker_email}, {caseworker_phone}{% endraw %}. Überschrift und Text können pro Rechnung geändert werden.</div>
-        {% elif definition.key == "invoice.tenant_charge_purpose_template" %}
-        <textarea class="form-control" id="tenantChargePurposeTemplate" name="{{ definition.key }}" rows="5"
-                  maxlength="4000" required aria-describedby="tenantChargePurposeTemplateHelp">{{ value }}</textarea>
-        <div class="form-text" id="tenantChargePurposeTemplateHelp">
-          <code>{invoice_issuer}</code> setzt den Namen des ausstellenden Buchwerks ein,
-          <code>{gross_amount}</code> den Bruttobetrag mit Währung und <code>{work_description}</code> die Auftrags- oder Positionsbezeichnungen.
-          Der ausgefüllte Anlass kann im Mieteranschreiben bearbeitet werden.
-        </div>
-        {% elif definition.key == "invoice.tenant_charge_closing_template" %}
-        <textarea class="form-control" id="tenantChargeClosingTemplate" name="{{ definition.key }}" rows="3"
-                  maxlength="4000" aria-describedby="tenantChargeClosingTemplateHelp">{{ value }}</textarea>
-        <div class="form-text" id="tenantChargeClosingTemplateHelp">
-          <code>{seller_name}</code> setzt den Namen des Absenders aus dem Buchwerk des Mietvertrags ein.
-          Die Grußformel kann im einzelnen Mieteranschreiben bearbeitet werden.
-        </div>
         {% elif definition.value_type.value == "json" %}
         <textarea
           class="form-control font-monospace"

@@ -11,7 +11,6 @@ from unittest.mock import Mock
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from flask import render_template
 from pypdf import PdfReader
 import sqlalchemy as sa
 from sqlalchemy.engine import make_url
@@ -256,7 +255,7 @@ class InvoicePaymentTests(unittest.TestCase):
                     else:
                         positions = self.offer_document.prepare_positions(item)
                         context = self.offer_document.document_context(item, positions, self.offer_document.prepare_vat_rows(positions), preview=True)
-                        html = render_template("admin/offer_pdf.html", **context)
+                        html = self.offer_document.render_offer_html(context, self.offer_document.DEFAULT_OFFER_LAYOUT)
                     self.assertEqual("<th class=\"article-number\">Artikel-Nr.</th>" in html, bool(number))
                     document = HTML(string=html, base_url=self.app.root_path).render()
                     for page in document.pages:

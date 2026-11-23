@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Dokumentvorlagen{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <h1 class="h3 mb-0">Dokumentvorlagen</h1>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.settings_page') }}">Einstellungen</a>
+</div>
+<div class="vstack gap-3">
+  {% for section, (label, endpoint, definitions) in sections.items() %}
+  <section class="card shadow-sm" id="{{ section }}" aria-labelledby="{{ section }}-title">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <h2 class="h5 mb-0" id="{{ section }}-title">{{ label }}</h2>
+      <a class="btn btn-outline-primary btn-sm" href="{{ url_for(endpoint) }}" aria-label="HTML-Layout bearbeiten für {{ label }}">
+        HTML-Layout bearbeiten
+      </a>
+    </div>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="section" value="{{ section }}">
+      <div class="card-body">
+        <div class="row g-3">
+          {% for definition in definitions %}
+          {% set key = definition.key %}
+          <div class="col-md-6">
+            <label class="form-label" for="{{ key }}">{{ definition.label }}</label>
+            {% if key == 'invoice.cover_letter_title' %}
+            <input class="form-control" id="{{ key }}" name="{{ key }}" maxlength="200" value="{{ values[key] }}" required>
+            {% else %}
+            <textarea class="form-control" id="{{ key }}" name="{{ key }}"
+                      rows="{{ 8 if key == 'invoice.cover_letter_text' else 4 }}"
+                      maxlength="{{ 20000 if key == 'invoice.cover_letter_text' else 4000 }}"
+                      {% if key in ('invoice.cover_letter_text', 'invoice.tenant_charge_purpose_template') %}required{% endif %}>{{ values[key] }}</textarea>
+            {% endif %}
+            {% if key in ('invoice.transfer_payment_text', 'invoice.sepa_payment_text') %}
+            <div class="form-text">Verfügbare Platzhalter {% raw %}<code>{due_date}</code>, <code>{invoice_number}</code>, <code>{payment_reference}</code>, <code>{amount}</code>, <code>{currency}</code>, <code>{iban}</code>, <code>{bic}</code>, <code>{mandate_reference}</code>, <code>{creditor_id}</code>, <code>{account_holder}</code>{% endraw %}.</div>
+            {% elif key == 'invoice.cover_letter_text' %}
+            <div class="form-text">Platzhalter für Überschrift und Text {% raw %}<code>{invoice_number}</code>, <code>{invoice_date}</code>, <code>{contract_number}</code>, <code>{recipient_name}</code>, <code>{amount}</code>, <code>{currency}</code>, <code>{due_date}</code>, <code>{payment_terms}</code>, <code>{seller_name}</code>, <code>{caseworker_name}</code>, <code>{caseworker_email}</code>, <code>{caseworker_phone}</code>{% endraw %}.</div>
+            {% elif key == 'invoice.tenant_charge_purpose_template' %}
+            <div class="form-text">
+              <code>{invoice_issuer}</code> setzt den Namen des ausstellenden Buchwerks ein,
+              <code>{gross_amount}</code> den Bruttobetrag mit Währung und <code>{work_description}</code> die Auftrags- oder Positionsbezeichnungen.
+            </div>
+            {% elif key == 'invoice.tenant_charge_closing_template' %}
+            <div class="form-text"><code>{seller_name}</code> setzt den Namen des Absenders aus dem Buchwerk des Mietvertrags ein.</div>
+            {% elif key == 'invoice.offer_introductory_text' %}
+            <div class="form-text"><code>{offer_number}</code> setzt die Angebotsnummer ein.</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="card-footer text-end">
+        <button type="submit" class="btn btn-primary">Standardtexte speichern</button>
+      </div>
+    </form>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}
