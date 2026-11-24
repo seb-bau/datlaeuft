@@ -1959,6 +1959,8 @@ def search_commission_objects(
     search_text: str,
     search_context: str = "tenant",
     limit: int = 30,
+    *,
+    include_use_units: bool = True,
 ) -> list[dict[str, Any]]:
     normalized = " ".join(
         search_text.split()
@@ -2083,7 +2085,8 @@ def search_commission_objects(
         )
 
         for use_unit in use_units:
-            _append_choice(choices, seen, ("use_unit", use_unit.id))
+            if include_use_units:
+                _append_choice(choices, seen, ("use_unit", use_unit.id))
             for agreement in sorted(use_unit.license_agreements, key=lambda item: (item.start_date or date.min, item.id)):
                 if _agreement_is_available(agreement, today):
                     _append_choice(choices, seen, ("license_agreement", agreement.id))
@@ -2128,7 +2131,7 @@ def search_commission_objects(
             for agreement in agreements:
                 _append_choice(choices, seen, ("license_agreement", agreement.id))
 
-    if search_context in {"tenant", "address"}:
+    if include_use_units and search_context in {"tenant", "address"}:
         vacancy_unit_match = and_(*(or_(
             _unit_search_pattern(pattern), "leerstand".startswith(term.casefold()),
         ) for term, pattern in zip(terms, patterns)))
@@ -2214,7 +2217,6 @@ def search_mobile_commission_objects(search_text: str, limit: int) -> list[dict[
     )
     unit_house_match = WowiUseUnit.building.has(house_match) if house_number else True
     unit_match = and_(unit_house_match, *unit_patterns)
-    occupied_agreement = and_(_current_agreement_filter(today), WowiLicenseAgreement.is_vacancy.is_(False))
     vacancy_match = and_(
         unit_house_match,
         *(or_(match, "leerstand".startswith(term.casefold())) for term, match in zip(terms, unit_patterns)),
@@ -2272,14 +2274,6 @@ def search_mobile_commission_objects(search_text: str, limit: int) -> list[dict[
                 and_(WowiLicenseAgreement.is_vacancy.is_(True), vacancy_match),
             ),
         ), exact_address=exact_unit_address, exact_name=exact_tenant),
-        candidates("use_unit", WowiUseUnit, WowiUseUnit.query.filter(
-            active_unit,
-            or_(
-                func.lower(WowiUseUnit.id_num) == exact,
-                unit_match,
-                and_(vacancy_match, ~WowiUseUnit.license_agreements.any(occupied_agreement)),
-            ),
-        ), exact_address=exact_unit_address),
     )
     matches = [item for group in zip_longest(*groups) for item in group if item is not None]
     selected = sorted(matches, key=lambda item: item[2])[:limit]
@@ -2291,10 +2285,6 @@ def search_mobile_commission_objects(search_text: str, limit: int) -> list[dict[
             joinedload(WowiLicenseAgreement.use_unit).joinedload(WowiUseUnit.building).joinedload(WowiBuilding.economic_unit),
             selectinload(WowiLicenseAgreement.contractors),
         )),
-        ("use_unit", WowiUseUnit, (
-            joinedload(WowiUseUnit.economic_unit),
-            joinedload(WowiUseUnit.building).joinedload(WowiBuilding.economic_unit),
-        )),
     )
     loaded = {}
     for object_type, model, loaders in queries:
@@ -2305,21 +2295,11 @@ def search_mobile_commission_objects(search_text: str, limit: int) -> list[dict[
                 for row in model.query.options(*loaders).filter(model.id.in_(ids))
             )
 
-    unit_ids = [object_id for object_type, object_id, _ in selected if object_type == "use_unit"]
-    occupied_units = set()
-    if unit_ids:
-        occupied_units.update(
-            object_id for (object_id,) in WowiLicenseAgreement.query.with_entities(WowiLicenseAgreement.use_unit_id)
-            .filter(WowiLicenseAgreement.use_unit_id.in_(unit_ids), occupied_agreement).distinct()
-        )
-
     choices = []
     for object_type, object_id, _ in selected:
         if (object_type, object_id) in loaded:
             try:
-                choices.append(_serialize_choice(
-                    object_type, object_id, mobile_context=True, unit_occupied=object_id in occupied_units,
-                ))
+                choices.append(_serialize_choice(object_type, object_id, mobile_context=True))
             except ValueError:
                 continue
     return choices
@@ -2371,7 +2351,6 @@ def _serialize_choice(
     object_id: int,
     *,
     mobile_context: bool = False,
-    unit_occupied: bool | None = None,
 ) -> dict[str, Any]:
     economic_unit = None
     today = directory_today()
@@ -2440,14 +2419,10 @@ def _serialize_choice(
 
         building = use_unit.building
         tenant_name = None
-        is_vacancy = (
-            not unit_occupied
-            if unit_occupied is not None
-            else not any(
-                _agreement_is_available(item, today) and not item.is_vacancy
-                and (item.start_date is None or item.start_date <= today)
-                for item in use_unit.license_agreements
-            )
+        is_vacancy = not any(
+            _agreement_is_available(item, today) and not item.is_vacancy
+            and (item.start_date is None or item.start_date <= today)
+            for item in use_unit.license_agreements
         )
 
     elif object_type == "building":

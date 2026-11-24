@@ -899,8 +899,9 @@ class CommissionObjectLevelTests(unittest.TestCase):
     def test_mobile_search_accepts_the_selected_context_and_rejects_unknown_contexts(self):
         for context, object_types in (
             ("tenant", {"license_agreement"}), ("agreement", {"license_agreement"}),
-            ("use_unit", {"use_unit", "license_agreement"}), ("address", {"building", "license_agreement"}),
+            ("use_unit", {"license_agreement"}), ("address", {"building", "license_agreement"}),
             ("economic_unit", {"economic_unit", "building", "license_agreement"}),
+            ("all", {"economic_unit", "building", "license_agreement"}),
         ):
             with self.subTest(context=context):
                 response = self.client.get(f"/api/commission-objects/search?q=COMMON&context={context}", headers=self.headers)
@@ -908,6 +909,26 @@ class CommissionObjectLevelTests(unittest.TestCase):
                 self.assertEqual({item["object_type"] for item in response.get_json()["items"]}, object_types)
         response = self.client.get("/api/commission-objects/search?q=COMMON&context=invalid", headers=self.headers)
         self.assertEqual(response.status_code, 400)
+
+    def test_mobile_search_finds_the_agreement_by_apartment_number(self):
+        item, = self.directory.search_mobile_commission_objects("NE-COMMON", limit=1)
+        self.assertEqual((item["object_type"], item["object_id"]), ("license_agreement", self.agreement.id))
+        self.assertEqual(item["use_unit"]["id_num"], "NE-COMMON")
+
+    def test_mobile_search_does_not_offer_a_vacant_apartment_as_a_target(self):
+        self.agreement.active = False
+        self.db.session.commit()
+        for query in (
+            {"q": "NE-COMMON"},
+            {"q": "NE-COMMON", "context": "use_unit"},
+            {"q": "NE-COMMON", "context": "all", "hierarchy": "1"},
+        ):
+            with self.subTest(query=query):
+                response = self.client.get("/api/commission-objects/search", query_string=query, headers=self.headers)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json["items"], [])
+        choices = self.directory.search_commission_objects("NE-COMMON", search_context="use_unit")
+        self.assertEqual([(item["object_type"], item["object_id"]) for item in choices], [("use_unit", self.unit.id)])
 
     def test_mobile_hierarchy_includes_selectable_parents_and_apartment_location(self):
         self.unit.description_of_position = "2. OG links"
@@ -953,7 +974,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
         item, = self.directory.search_mobile_commission_objects("Musterstraße 10", limit=1)
         self.assertEqual(item["object_type"], "building")
 
-    def test_app_creates_and_exports_orders_for_both_parent_levels(self):
+    def prepare_app_create_options(self):
         engine = self.db.engine
         tables = [self.models.TicketCraftFallback.__table__, self.models.WowiCommissionType.__table__]
         self.db.metadata.create_all(engine, tables=tables)
@@ -968,14 +989,21 @@ class CommissionObjectLevelTests(unittest.TestCase):
             self.models.TicketCraftFallback(craft_activity_id=self.craft.id, task_template_id=self.task.id),
         ])
         self.db.session.commit()
+
+    def test_app_creates_and_exports_orders_for_all_allowed_levels(self):
+        self.prepare_app_create_options()
         agreement, = self.directory.search_mobile_commission_objects("Erika", limit=30)
         headers = {"Authorization": "Bearer " + create_access_token(identity=str(self.craftsman.id))}
 
-        for object_type in ("building", "economic_unit"):
+        for object_type, object_id, agreement_id in (
+            ("building", agreement["building"]["object_id"], None),
+            ("economic_unit", agreement["economic_unit"]["object_id"], None),
+            ("license_agreement", agreement["object_id"], self.agreement.erp_id),
+        ):
             with self.subTest(object_type=object_type):
                 body = {
                     "client_request_id": str(uuid4()), "object_type": object_type,
-                    "object_id": agreement[object_type]["object_id"],
+                    "object_id": object_id,
                     "craft_activity_id": self.craft.id, "commission_type_id": 100,
                     "craftsman_user_id": self.craftsman.id, "title": "Reparatur",
                 }
@@ -987,12 +1015,34 @@ class CommissionObjectLevelTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 202, response.json)
                 order = self.db.session.get(self.models.Commission, response.json["item"]["id"])
                 self.assertEqual(order.object_type, object_type)
-                self.assertIsNone(order.license_agreement_id)
+                self.assertEqual(order.license_agreement_id, agreement_id)
                 gateway = self.gateway_with_mocked_client()
                 gateway.create_commission_waiting_for_acceptance(order)
                 exported = gateway.client.create_commissioning_commission_wait_for_craftsman_feedback.call_args.kwargs
                 self.assertEqual((exported["economic_unit_id"], exported["building_id"]), (1001, 2002))
-                self.assertIsNone(exported["license_agreement_id"])
+                self.assertEqual(exported["license_agreement_id"], agreement_id)
+
+    def test_app_rejects_apartment_targets_in_both_creation_routes(self):
+        self.prepare_app_create_options()
+        headers = {"Authorization": "Bearer " + create_access_token(identity=str(self.craftsman.id))}
+        body = {
+            "client_request_id": str(uuid4()), "object_type": "use_unit", "object_id": self.unit.id,
+            "craft_activity_id": self.craft.id, "commission_type_id": 100,
+            "craftsman_user_id": self.craftsman.id, "title": "Reparatur",
+            "positions": [{"service_catalog_id": 600, "commission_text": "Reparatur", "units": 1}],
+        }
+        legacy_body = dict(body, object_type=None, object_id=None, use_unit_idnum=self.unit.id_num)
+        for endpoint, fields in (
+            ("/api/commissions/simple", {"data": {"data": json.dumps(body)}, "content_type": "multipart/form-data"}),
+            ("/api/commissions", {"json": body}),
+            ("/api/commissions", {"json": legacy_body}),
+        ):
+            with self.subTest(endpoint=endpoint, fields=fields):
+                response = self.client.post(endpoint, headers=headers, **fields)
+                self.assertEqual(response.status_code, 400, response.json)
+                self.assertEqual(response.json["message"], "Bitte eine Wirtschaftseinheit, ein Gebäude oder einen Mietvertrag auswählen.")
+        self.assertEqual(self.models.Commission.query.count(), 0)
+        self.service.enqueue_erp_operation.assert_not_called()
 
     def test_mobile_hierarchy_limits_hydration_to_the_returned_hits(self):
         self.db.session.add_all([
