@@ -69,7 +69,6 @@ class CommissionObjectLevelTests(unittest.TestCase):
             cls.models.WowiUseUnit, cls.models.WowiLicenseAgreement, cls.models.WowiContractor,
             cls.models.WowiDepartment, cls.models.CraftActivity,
             cls.models.CraftActivityDepartmentMapping, cls.models.TimeTaskTemplate,
-            cls.models.TicketCraftFallback, cls.models.WowiCommissionType,
             cls.models.Commission, cls.models.CommissionPosition, cls.models.CommissionTenantNotification,
             cls.models.ExternalCraftsman,
         )]
@@ -955,6 +954,15 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.assertEqual(item["object_type"], "building")
 
     def test_app_creates_and_exports_orders_for_both_parent_levels(self):
+        engine = self.db.engine
+        tables = [self.models.TicketCraftFallback.__table__, self.models.WowiCommissionType.__table__]
+        self.db.metadata.create_all(engine, tables=tables)
+
+        def drop_extra_tables():
+            self.db.session.rollback()
+            self.db.metadata.drop_all(engine, tables=tables)
+
+        self.addCleanup(drop_extra_tables)
         self.db.session.add_all([
             self.models.WowiCommissionType(erp_id=100, code="Standard"),
             self.models.TicketCraftFallback(craft_activity_id=self.craft.id, task_template_id=self.task.id),
