@@ -96,6 +96,7 @@ from .commission_service import (
 from .object_directory import (
     commission_creation_tasks,
     search_commission_objects,
+    search_mobile_commission_objects,
 )
 from .attachment_service import (
     commission_attachment_path,
@@ -1156,10 +1157,10 @@ def commission_objects_search() -> Any:
         50,
     )
 
-    items = search_commission_objects(
-        search_text,
-        search_context=search_context,
-        limit=limit,
+    items = (
+        search_mobile_commission_objects(search_text, limit)
+        if search_context == "all" and request.args.get("hierarchy") == "1"
+        else search_commission_objects(search_text, search_context=search_context, limit=limit)
     )
 
     return jsonify(
