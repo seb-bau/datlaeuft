@@ -364,7 +364,8 @@ class WowiportService:
                         if sent_official_id is not None and sent_official_id != stored_official_id:
                             current_app.logger.warning(
                                 "wowiport_commission_official_mismatch endpoint=%s api_version=%r "
-                                "erp_id=%s erp_idnum=%r found=%s sent_official_id=%s stored_official_id=%s",
+                                "erp_id=%s erp_idnum=%r found=%s sent_official_id=%s stored_official_id=%s "
+                                "readback_field_state=%s",
                                 endpoint,
                                 settings.get(SettingKeys.WOWI_API_VERSION),
                                 identity["id"],
@@ -372,6 +373,7 @@ class WowiportService:
                                 commission_row is not None,
                                 sent_official_id,
                                 stored_official_id,
+                                _commission_official_field_state(commission_row, stored_official_id),
                             )
                     except Exception as exc:
                         current_app.logger.warning(
@@ -2205,16 +2207,7 @@ class WowiportService:
         if commission_object is None:
             return {}
 
-        use_unit_id_object = commission_object.use_unit
-        if use_unit_id_object is not None:
-            use_unit_id = use_unit_id_object.get("id")
-        else:
-            use_unit_id = None
-        license_agreement_id_object = commission_object.license_agreement_id
-        if license_agreement_id_object is not None:
-            license_agreement_id = license_agreement_id_object.get("id")
-        else:
-            license_agreement_id = None
+        use_unit_id, license_agreement_id = _commission_contact_reference_ids(commission_object)
 
         use_unit = self.get_use_unit(use_unit_id)
         contact_items = self.get_commission_contact_items(
@@ -2460,12 +2453,9 @@ class WowiportService:
             current_app.logger.error("get_commission_contact_items failed. commission id %s not found", erp_id)
             return []
 
-        use_unit_id = _as_int(_attr(commission_object, "use_unit_id"))
-        license_agreement_object = commission_object.license_agreement
-        if license_agreement_object:
-            license_agreement_id = license_agreement_object.get("id")
-        else:
-            license_agreement_id = None
+        use_unit_id, license_agreement_id = _commission_contact_reference_ids(commission_object)
+        if use_unit_id is None and license_agreement_id is None:
+            return []
 
         license_agreement = self._get_license_agreement(
             license_agreement_id=license_agreement_id,
@@ -2475,18 +2465,20 @@ class WowiportService:
         if license_agreement is not None and _is_vacancy(license_agreement):
             return []
 
+        resolved_agreement_id = license_agreement_id or _as_int(_read_first(license_agreement, "id_", "id", "Id"))
         contractors = self._get_contractors_from_license_agreement(
             license_agreement=license_agreement,
-            license_agreement_id=license_agreement_id,
+            license_agreement_id=resolved_agreement_id,
         )
 
         if not contractors:
-            current_app.logger.warning(
-                "get_commission_contact_items failed. no contractors found for commission id %s, "
-                "license agreement id %s",
-                erp_id,
-                license_agreement_id,
-            )
+            if resolved_agreement_id is not None:
+                current_app.logger.warning(
+                    "get_commission_contact_items failed. no contractors found for commission id %s, "
+                    "license agreement id %s",
+                    erp_id,
+                    resolved_agreement_id,
+                )
             return []
 
         contact_items = []
@@ -2498,7 +2490,7 @@ class WowiportService:
             contact_item = _build_contact_item(contractor)
             if contact_item:
                 contact_item.update({
-                    "license_agreement_id": _as_int(_attr(license_agreement, "id_")) or license_agreement_id,
+                    "license_agreement_id": resolved_agreement_id,
                     "contract_start": start.isoformat() if start else None,
                     "contract_end": end.isoformat() if end else None,
                     "is_future_contract": start is not None and start > today,
@@ -4156,27 +4148,49 @@ def replace_commission_positions(
         )
 
 
+def _commission_contact_reference_ids(payload: Any) -> tuple[int | None, int | None]:
+    def reference_id(*names):
+        for name in names:
+            value = _read_first(payload, name)
+            identifier = _as_int(value) or _as_int(_read_first(value, "id_", "id", "Id"))
+            if identifier is not None:
+                return identifier
+        return None
+
+    return (
+        reference_id("use_unit_id", "UseUnitId", "useUnitId", "use_unit", "UseUnit", "useUnit"),
+        reference_id(
+            "license_agreement_id", "LicenseAgreementId", "licenseAgreementId",
+            "license_agreement", "LicenseAgreement", "licenseAgreement",
+        ),
+    )
+
+
+COMMISSION_OFFICIAL_ID_FIELDS = (
+    "responsible_official_repair_id",
+    "responsibleOfficialRepairId",
+    "ResponsibleOfficialRepairId",
+    "responsible_official_id",
+    "responsibleOfficialId",
+    "ResponsibleOfficialId",
+)
+COMMISSION_OFFICIAL_OBJECT_FIELDS = (
+    "responsible_official_repair",
+    "responsibleOfficialRepair",
+    "ResponsibleOfficialRepair",
+    "responsible_official",
+    "responsibleOfficial",
+    "ResponsibleOfficial",
+)
+
+
 def _commission_responsible_official_id(payload: Any) -> int | None:
-    for field_name in (
-        "responsible_official_repair_id",
-        "responsibleOfficialRepairId",
-        "ResponsibleOfficialRepairId",
-        "responsible_official_id",
-        "responsibleOfficialId",
-        "ResponsibleOfficialId",
-    ):
+    for field_name in COMMISSION_OFFICIAL_ID_FIELDS:
         official_id = _as_int(_read_first(payload, field_name))
         if official_id is not None:
             return official_id
 
-    for field_name in (
-        "responsible_official_repair",
-        "responsibleOfficialRepair",
-        "ResponsibleOfficialRepair",
-        "responsible_official",
-        "responsibleOfficial",
-        "ResponsibleOfficial",
-    ):
+    for field_name in COMMISSION_OFFICIAL_OBJECT_FIELDS:
         official = _read_first(payload, field_name)
         official_id = _as_int(
             _read_first(official, "id_", "id", "Id")
@@ -4185,6 +4199,19 @@ def _commission_responsible_official_id(payload: Any) -> int | None:
             return official_id
 
     return None
+
+
+def _commission_official_field_state(row: dict[str, Any] | None, official_id: int | None) -> str:
+    if row is None:
+        return "order_not_found"
+    if official_id is not None:
+        return "value"
+    values = [row[field] for field in COMMISSION_OFFICIAL_ID_FIELDS + COMMISSION_OFFICIAL_OBJECT_FIELDS if field in row]
+    if not values:
+        return "field_not_returned"
+    if all(value is None for value in values):
+        return "null"
+    return "unrecognized_value"
 
 
 def _commission_status_id(payload: Any) -> int | None:

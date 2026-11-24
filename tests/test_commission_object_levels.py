@@ -720,6 +720,8 @@ class CommissionObjectLevelTests(unittest.TestCase):
                         self.assertIn("api_version='v1.2'", warnings[0])
                         self.assertIn("sent_official_id=900", warnings[0])
                         self.assertIn(f"stored_official_id={stored_official_id}", warnings[0])
+                        field_state = "null" if stored_official_id is None else "value"
+                        self.assertIn(f"readback_field_state={field_state}", warnings[0])
                     adapter.get.assert_called_once_with(
                         endpoint="CommissioningRead/Commissions",
                         ep_params={"id": 9200, "includeResponsibleOfficialRepair": "true", "showNullValues": "true", "limit": 1},
@@ -739,8 +741,21 @@ class CommissionObjectLevelTests(unittest.TestCase):
         with self.assertLogs(self.app.logger, level="WARNING") as logs:
             self.assertIs(adapter.post("CommissioningEdit/Commission", data={"ResponsibleOfficialRepairId": 900}), result)
         self.assertIn("found=False", logs.output[0])
+        self.assertIn("readback_field_state=order_not_found", logs.output[0])
         self.assertIn("erp_id=9200 erp_idnum='A-1'", logs.output[0])
         self.assertNotIn("A-OTHER", logs.output[0])
+
+    def test_commission_readback_marks_an_omitted_official_field(self):
+        client = Mock()
+        adapter = client._rest_adapter
+        adapter.post.return_value = types.SimpleNamespace(data={"Id": 9200, "IdNum": "A-1"})
+        adapter.get.return_value = types.SimpleNamespace(data=[{"Id": 9200, "IdNum": "A-1"}])
+        with patch.object(self.gateway, "WowiportClient", return_value=client):
+            self.gateway.WowiportService()
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            adapter.post("CommissioningEdit/Commission/WaitForCraftsmanFeedback", data={"ResponsibleOfficialRepairId": 900})
+        self.assertIn("found=True", logs.output[0])
+        self.assertIn("readback_field_state=field_not_returned", logs.output[0])
 
     def test_failed_readback_preserves_the_created_order_without_repeating_the_write(self):
         client = Mock()
@@ -769,6 +784,53 @@ class CommissionObjectLevelTests(unittest.TestCase):
             license_agreement={"id": 4005}, use_unit_id=3003,
         ))
         self.assertEqual([item["name"] for item in contacts], ["Künftiger Mieter"])
+        gateway.client.get_license_agreements.assert_called_once_with(
+            add_args={"licenseAgreementId": 4005}, add_contractors=True, limit=1,
+        )
+
+    def test_contact_resolution_uses_scalar_references_in_the_order_context(self):
+        gateway = self.gateway_with_mocked_client()
+        gateway.client.get_license_agreements.return_value = [
+            types.SimpleNamespace(id_=4005, contractors=[self.contact_tenant(50)]),
+        ]
+        commission = self.gateway.CommissioningCommission(
+            id_=9200, use_unit_id=3003, license_agreement_id=4005,
+        )
+        with patch.object(gateway, "get_use_unit", return_value=self.contact_unit()) as get_use_unit:
+            context = gateway.get_commission_context(9200, commission)
+        self.assertEqual(context["license_agreement_id"], 4005)
+        self.assertEqual(context["use_unit_id"], 3003)
+        self.assertEqual(context["tenant_name"], "Mieter")
+        get_use_unit.assert_called_once_with(3003)
+        gateway.client.get_license_agreements.assert_called_once_with(
+            add_args={"licenseAgreementId": 4005}, add_contractors=True, limit=1,
+        )
+
+    def test_contact_resolution_loads_contractors_for_a_contract_found_by_use_unit(self):
+        gateway = self.gateway_with_mocked_client()
+        gateway.client.get_license_agreements.return_value = [types.SimpleNamespace(id_=4004, contractors=[])]
+        gateway.client.get_contractors.return_value = [self.contact_tenant(50)]
+        contacts = gateway.get_commission_contact_items(9200, {"UseUnit": {"Id": 3003}})
+        self.assertEqual([item["license_agreement_id"] for item in contacts], [4004])
+        gateway.client.get_contractors.assert_called_once_with(license_agreement_id=4004)
+
+    def test_order_without_contact_references_does_not_search_or_warn(self):
+        gateway = self.gateway_with_mocked_client()
+        with self.assertNoLogs(self.app.logger, level="WARNING"):
+            self.assertEqual(gateway.get_commission_contact_items(9200, {"Id": 9200, "BuildingId": 2002}), [])
+        gateway.client.get_license_agreements.assert_not_called()
+        gateway.client.get_contractors.assert_not_called()
+
+    def test_order_with_an_explicit_contract_preserves_the_missing_contacts_warning(self):
+        gateway = self.gateway_with_mocked_client()
+        gateway.client.get_license_agreements.return_value = []
+        gateway.client.get_contractors.return_value = []
+        with self.assertLogs(self.app.logger, level="WARNING") as logs:
+            contacts = gateway.get_commission_contact_items(
+                9200, types.SimpleNamespace(license_agreement_id=4005, license_agreement=None, use_unit_id=3003),
+            )
+        self.assertEqual(contacts, [])
+        self.assertIn("no contractors found for commission id 9200, license agreement id 4005", logs.output[0])
         gateway.client.get_license_agreements.assert_called_once_with(
             add_args={"licenseAgreementId": 4005}, add_contractors=True, limit=1,
         )
@@ -1136,6 +1198,15 @@ class CommissionObjectLevelTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         service.get_commission_contact_items.assert_called_once_with(9000)
         service.get_object_contact_items.assert_not_called()
+
+    def test_economic_unit_order_has_no_implicit_tenant_lookup(self):
+        commission = self.create_order("economic_unit", self.economic.id)
+        commission.erp_id = 9000
+        with patch.object(self.api, "viewable_commission", return_value=commission), patch.object(self.api, "WowiportService") as service:
+            response = self.client.get(f"/api/commissions/{commission.id}/contacts", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["contact_items"], [])
+        service.assert_not_called()
 
     def test_explicit_future_contract_contacts_also_include_the_future_label_and_start_date(self):
         gateway = self.gateway.WowiportService.__new__(self.gateway.WowiportService)

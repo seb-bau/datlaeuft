@@ -1176,12 +1176,13 @@ def commission_contacts(commission_id: int) -> Any:
     user = current_api_user()
     commission = viewable_commission(commission_id, user)
 
-    if commission.erp_id is None and commission.object_type not in {"use_unit", "building"}:
+    object_contacts = commission.object_type in {"use_unit", "building"}
+    if commission.object_type == "economic_unit" or (commission.erp_id is None and not object_contacts):
         return jsonify({"contact_items": []}), 200
 
     try:
         service = WowiportService()
-        if commission.object_type in {"use_unit", "building"}:
+        if object_contacts:
             contact_items = service.get_object_contact_items(commission)
         else:
             contact_items = service.get_commission_contact_items(commission.erp_id)
