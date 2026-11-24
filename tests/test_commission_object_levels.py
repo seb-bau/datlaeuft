@@ -1,5 +1,6 @@
 import ast
 import importlib
+import json
 import os
 import sys
 import types
@@ -7,6 +8,7 @@ import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
+from uuid import uuid4
 
 from flask import Flask
 from flask_jwt_extended import JWTManager, create_access_token
@@ -67,6 +69,7 @@ class CommissionObjectLevelTests(unittest.TestCase):
             cls.models.WowiUseUnit, cls.models.WowiLicenseAgreement, cls.models.WowiContractor,
             cls.models.WowiDepartment, cls.models.CraftActivity,
             cls.models.CraftActivityDepartmentMapping, cls.models.TimeTaskTemplate,
+            cls.models.TicketCraftFallback, cls.models.WowiCommissionType,
             cls.models.Commission, cls.models.CommissionPosition, cls.models.CommissionTenantNotification,
             cls.models.ExternalCraftsman,
         )]
@@ -906,6 +909,105 @@ class CommissionObjectLevelTests(unittest.TestCase):
                 self.assertEqual({item["object_type"] for item in response.get_json()["items"]}, object_types)
         response = self.client.get("/api/commission-objects/search?q=COMMON&context=invalid", headers=self.headers)
         self.assertEqual(response.status_code, 400)
+
+    def test_mobile_hierarchy_includes_selectable_parents_and_apartment_location(self):
+        self.unit.description_of_position = "2. OG links"
+        other_agreement = self.models.WowiLicenseAgreement(
+            erp_id=4050, id_num="MV-ANDERE", use_unit=self.unit,
+        )
+        self.db.session.add(self.models.WowiContractor(
+            erp_id=5050, license_agreement_erp_id=4050, license_agreement=other_agreement,
+            display_name="Anderer Mieter",
+        ))
+        self.db.session.commit()
+
+        response = self.client.get(
+            "/api/commission-objects/search",
+            query_string={"q": "Erika", "context": "all", "hierarchy": "1"},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        entry, = response.json["items"]
+        self.assertEqual(entry["tenant_name"], "Erika COMMON")
+        self.assertEqual(entry["object_id"], self.agreement.id)
+        self.assertEqual(entry["building"]["object_id"], self.building.id)
+        self.assertEqual(entry["economic_unit"]["object_id"], self.economic.id)
+        self.assertEqual(entry["use_unit"]["description"], "2. OG links")
+
+        for object_type, building_state in (("building", 2002), ("economic_unit", None)):
+            with self.subTest(object_type=object_type):
+                context = self.directory.resolve_commission_object({
+                    "object_type": object_type, "object_id": entry[object_type]["object_id"],
+                })
+                self.assertEqual(context.building.erp_id if context.building else None, building_state)
+                self.assertIsNone(context.license_agreement)
+
+    def test_mobile_hierarchy_prioritizes_exact_object_numbers(self):
+        for text, expected in (("MV-COMMON", "license_agreement"), ("GE-COMMON", "building"), ("WE-COMMON", "economic_unit")):
+            with self.subTest(text=text):
+                item, = self.directory.search_mobile_commission_objects(text, limit=1)
+                self.assertEqual(item["object_type"], expected)
+
+        self.building.street = "Musterstraße 10"
+        self.building.address = "Musterstraße 10, 44534 Lünen"
+        self.db.session.commit()
+        item, = self.directory.search_mobile_commission_objects("Musterstraße 10", limit=1)
+        self.assertEqual(item["object_type"], "building")
+
+    def test_app_creates_and_exports_orders_for_both_parent_levels(self):
+        self.db.session.add_all([
+            self.models.WowiCommissionType(erp_id=100, code="Standard"),
+            self.models.TicketCraftFallback(craft_activity_id=self.craft.id, task_template_id=self.task.id),
+        ])
+        self.db.session.commit()
+        agreement, = self.directory.search_mobile_commission_objects("Erika", limit=30)
+        headers = {"Authorization": "Bearer " + create_access_token(identity=str(self.craftsman.id))}
+
+        for object_type in ("building", "economic_unit"):
+            with self.subTest(object_type=object_type):
+                body = {
+                    "client_request_id": str(uuid4()), "object_type": object_type,
+                    "object_id": agreement[object_type]["object_id"],
+                    "craft_activity_id": self.craft.id, "commission_type_id": 100,
+                    "craftsman_user_id": self.craftsman.id, "title": "Reparatur",
+                }
+                with patch.object(self.api, "serialize_commission", side_effect=lambda order, **kwargs: {"id": order.id}):
+                    response = self.client.post(
+                        "/api/commissions/simple", data={"data": json.dumps(body)},
+                        content_type="multipart/form-data", headers=headers,
+                    )
+                self.assertEqual(response.status_code, 202, response.json)
+                order = self.db.session.get(self.models.Commission, response.json["item"]["id"])
+                self.assertEqual(order.object_type, object_type)
+                self.assertIsNone(order.license_agreement_id)
+                gateway = self.gateway_with_mocked_client()
+                gateway.create_commission_waiting_for_acceptance(order)
+                exported = gateway.client.create_commissioning_commission_wait_for_craftsman_feedback.call_args.kwargs
+                self.assertEqual((exported["economic_unit_id"], exported["building_id"]), (1001, 2002))
+                self.assertIsNone(exported["license_agreement_id"])
+
+    def test_mobile_hierarchy_limits_hydration_to_the_returned_hits(self):
+        self.db.session.add_all([
+            self.models.WowiLicenseAgreement(
+                erp_id=6000 + index, id_num=f"MV-COMMON-{index:04d}", use_unit=self.unit,
+            )
+            for index in range(100)
+        ])
+        self.db.session.commit()
+        statements = []
+
+        def track_queries(connection, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        engine = self.db.engine
+        sa.event.listen(engine, "before_cursor_execute", track_queries)
+        try:
+            results = self.directory.search_mobile_commission_objects("COMMON", limit=30)
+        finally:
+            sa.event.remove(engine, "before_cursor_execute", track_queries)
+        self.assertEqual(len(results), 30)
+        self.assertLessEqual(len(statements), 10)
 
     def contact_service(self, units, agreements, contractors):
         gateway = self.gateway.WowiportService.__new__(self.gateway.WowiportService)

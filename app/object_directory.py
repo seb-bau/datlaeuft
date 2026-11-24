@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 from flask import current_app
 from sqlalchemy import and_, case, func, or_
+from sqlalchemy.orm import joinedload, selectinload
 
 from .extensions import db
 from .models import (
@@ -2185,6 +2186,145 @@ def search_commission_objects(
     return choices[:limit]
 
 
+def search_mobile_commission_objects(search_text: str, limit: int) -> list[dict[str, Any]]:
+    normalized = " ".join(search_text.split())
+    if len(normalized) < 2:
+        return []
+
+    exact = normalized.lower()
+    today = directory_today()
+    address_text, house_number = _address_search_parts(normalized)
+    house_match = _building_house_number_filter(house_number)
+    original_patterns = _search_patterns(normalized)
+    terms = address_text.split()
+    patterns = _search_patterns(address_text)
+    unit_patterns = [_unit_search_pattern(pattern) for pattern in patterns]
+    active_economic_unit = WowiEconomicUnit.active.is_(True)
+    has_active_building = WowiUseUnit.building.has(WowiBuilding.active.is_(True))
+    active_unit = and_(
+        WowiUseUnit.active.is_(True),
+        has_active_building,
+        or_(
+            WowiUseUnit.economic_unit.has(active_economic_unit),
+            and_(
+                WowiUseUnit.economic_unit_id.is_(None),
+                WowiUseUnit.building.has(WowiBuilding.economic_unit.has(active_economic_unit)),
+            ),
+        ),
+    )
+    unit_house_match = WowiUseUnit.building.has(house_match) if house_number else True
+    unit_match = and_(unit_house_match, *unit_patterns)
+    occupied_agreement = and_(_current_agreement_filter(today), WowiLicenseAgreement.is_vacancy.is_(False))
+    vacancy_match = and_(
+        unit_house_match,
+        *(or_(match, "leerstand".startswith(term.casefold())) for term, match in zip(terms, unit_patterns)),
+    )
+    tenant_match = WowiLicenseAgreement.contractors.any(and_(
+        WowiContractor.active.is_(True),
+        or_(WowiContractor.contractual_use_to.is_(None), WowiContractor.contractual_use_to >= today),
+        *(or_(_search_patterns_filter([pattern], WowiContractor.display_name), address_match)
+          for pattern, address_match in zip(patterns, unit_patterns)),
+    ))
+    exact_tenant = WowiLicenseAgreement.contractors.any(and_(
+        WowiContractor.active.is_(True),
+        or_(WowiContractor.contractual_use_to.is_(None), WowiContractor.contractual_use_to >= today),
+        func.lower(WowiContractor.display_name) == exact,
+    ))
+    exact_building_address = or_(func.lower(WowiBuilding.street) == exact, func.lower(WowiBuilding.address) == exact)
+    exact_unit_address = or_(
+        func.lower(WowiUseUnit.address) == exact,
+        WowiUseUnit.building.has(exact_building_address),
+    )
+
+    def candidates(object_type, model, query, exact_address=False, exact_name=False):
+        rank = case(
+            (func.lower(model.id_num) == exact, 0),
+            (exact_address, 1),
+            (exact_name, 2),
+            else_=3,
+        )
+        return [
+            (object_type, object_id, priority)
+            for object_id, priority in query.with_entities(model.id, rank)
+            .order_by(rank, model.id_num, model.id).limit(limit)
+        ]
+
+    groups = (
+        candidates("economic_unit", WowiEconomicUnit, WowiEconomicUnit.query.filter(
+            active_economic_unit,
+            _search_patterns_filter(original_patterns, WowiEconomicUnit.id_num, WowiEconomicUnit.name, WowiEconomicUnit.location),
+        ), exact_name=func.lower(WowiEconomicUnit.name) == exact),
+        candidates("building", WowiBuilding, WowiBuilding.query.filter(
+            WowiBuilding.active.is_(True),
+            WowiBuilding.economic_unit.has(active_economic_unit),
+            or_(
+                func.lower(WowiBuilding.id_num) == exact,
+                and_(house_match, _search_patterns_filter(patterns, WowiBuilding.id_num, WowiBuilding.address)),
+            ),
+        ), exact_address=exact_building_address),
+        candidates("license_agreement", WowiLicenseAgreement, WowiLicenseAgreement.query.join(WowiLicenseAgreement.use_unit).filter(
+            active_unit,
+            _available_agreement_filter(today),
+            or_(
+                _search_patterns_filter(original_patterns, WowiLicenseAgreement.id_num),
+                unit_match,
+                and_(unit_house_match, tenant_match),
+                and_(WowiLicenseAgreement.is_vacancy.is_(True), vacancy_match),
+            ),
+        ), exact_address=exact_unit_address, exact_name=exact_tenant),
+        candidates("use_unit", WowiUseUnit, WowiUseUnit.query.filter(
+            active_unit,
+            or_(
+                func.lower(WowiUseUnit.id_num) == exact,
+                unit_match,
+                and_(vacancy_match, ~WowiUseUnit.license_agreements.any(occupied_agreement)),
+            ),
+        ), exact_address=exact_unit_address),
+    )
+    matches = [item for group in zip_longest(*groups) for item in group if item is not None]
+    selected = sorted(matches, key=lambda item: item[2])[:limit]
+    queries = (
+        ("economic_unit", WowiEconomicUnit, ()),
+        ("building", WowiBuilding, (joinedload(WowiBuilding.economic_unit),)),
+        ("license_agreement", WowiLicenseAgreement, (
+            joinedload(WowiLicenseAgreement.use_unit).joinedload(WowiUseUnit.economic_unit),
+            joinedload(WowiLicenseAgreement.use_unit).joinedload(WowiUseUnit.building).joinedload(WowiBuilding.economic_unit),
+            selectinload(WowiLicenseAgreement.contractors),
+        )),
+        ("use_unit", WowiUseUnit, (
+            joinedload(WowiUseUnit.economic_unit),
+            joinedload(WowiUseUnit.building).joinedload(WowiBuilding.economic_unit),
+        )),
+    )
+    loaded = {}
+    for object_type, model, loaders in queries:
+        ids = [object_id for kind, object_id, _ in selected if kind == object_type]
+        if ids:
+            loaded.update(
+                ((object_type, row.id), row)
+                for row in model.query.options(*loaders).filter(model.id.in_(ids))
+            )
+
+    unit_ids = [object_id for object_type, object_id, _ in selected if object_type == "use_unit"]
+    occupied_units = set()
+    if unit_ids:
+        occupied_units.update(
+            object_id for (object_id,) in WowiLicenseAgreement.query.with_entities(WowiLicenseAgreement.use_unit_id)
+            .filter(WowiLicenseAgreement.use_unit_id.in_(unit_ids), occupied_agreement).distinct()
+        )
+
+    choices = []
+    for object_type, object_id, _ in selected:
+        if (object_type, object_id) in loaded:
+            try:
+                choices.append(_serialize_choice(
+                    object_type, object_id, mobile_context=True, unit_occupied=object_id in occupied_units,
+                ))
+            except ValueError:
+                continue
+    return choices
+
+
 def resolve_commission_address_building(economic_unit: WowiEconomicUnit | None) -> WowiBuilding:
     if economic_unit is None or not economic_unit.active:
         raise ValueError("Die Wirtschaftseinheit ist nicht mehr verfügbar.")
@@ -2229,6 +2369,9 @@ def _append_choice(
 def _serialize_choice(
     object_type: str,
     object_id: int,
+    *,
+    mobile_context: bool = False,
+    unit_occupied: bool | None = None,
 ) -> dict[str, Any]:
     economic_unit = None
     today = directory_today()
@@ -2297,10 +2440,14 @@ def _serialize_choice(
 
         building = use_unit.building
         tenant_name = None
-        is_vacancy = not any(
-            _agreement_is_available(item, today) and not item.is_vacancy
-            and (item.start_date is None or item.start_date <= today)
-            for item in use_unit.license_agreements
+        is_vacancy = (
+            not unit_occupied
+            if unit_occupied is not None
+            else not any(
+                _agreement_is_available(item, today) and not item.is_vacancy
+                and (item.start_date is None or item.start_date <= today)
+                for item in use_unit.license_agreements
+            )
         )
 
     elif object_type == "building":
@@ -2376,10 +2523,13 @@ def _serialize_choice(
 
     economic_address = None
     if object_type == "economic_unit":
-        try:
-            economic_address = resolve_commission_address_building(economic_unit).address
-        except ValueError:
+        if mobile_context:
             economic_address = economic_unit.location
+        else:
+            try:
+                economic_address = resolve_commission_address_building(economic_unit).address
+            except ValueError:
+                economic_address = economic_unit.location
 
     if agreement is not None:
         label = (
@@ -2399,7 +2549,7 @@ def _serialize_choice(
     else:
         label = economic_unit.name or economic_unit.id_num or "Wirtschaftseinheit"
 
-    return {
+    choice = {
         "object_type": object_type,
         "object_id": object_id,
         "label": label,
@@ -2457,6 +2607,11 @@ def _serialize_choice(
             else None
         ),
     }
+    if mobile_context:
+        choice["economic_unit"]["object_id"] = economic_unit.id
+        if building is not None and building.economic_unit_id == economic_unit.id:
+            choice["building"]["object_id"] = building.id
+    return choice
 
 
 def _single_by_idnum(
