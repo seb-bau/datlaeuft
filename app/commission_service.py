@@ -92,6 +92,13 @@ def create_pending_commission(
         data,
         require_address=True,
     )
+    requested_object_type = str(data.get("object_type") or "").strip()
+    if source == CommissionSource.IOS and (
+        requested_object_type not in {"", "economic_unit", "building", "license_agreement"}
+        or (object_context.use_unit is not None and object_context.license_agreement is None)
+    ):
+        raise ValueError("Bitte eine Wirtschaftseinheit, ein Gebäude oder einen Mietvertrag auswählen.")
+
     notify_tenants = bool(
         notify_tenants
         and object_context.license_agreement is not None
@@ -602,7 +609,7 @@ def create_pending_commission(
     commission.raw_payload = {
         "reporter_selection": reporter_selection,
         "commission_scope": {
-            "object_type": str(data.get("object_type") or "").strip() or commission.object_type,
+            "object_type": requested_object_type or commission.object_type,
             "economic_unit_name": object_context.economic_unit.name,
         },
     }

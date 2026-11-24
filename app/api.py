@@ -1160,7 +1160,9 @@ def commission_objects_search() -> Any:
     items = (
         search_mobile_commission_objects(search_text, limit)
         if search_context == "all" and request.args.get("hierarchy") == "1"
-        else search_commission_objects(search_text, search_context=search_context, limit=limit)
+        else search_commission_objects(
+            search_text, search_context=search_context, limit=limit, include_use_units=False,
+        )
     )
 
     return jsonify(
