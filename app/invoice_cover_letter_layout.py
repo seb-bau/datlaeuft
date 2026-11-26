@@ -2,6 +2,7 @@ from pathlib import Path
 
 from jinja2 import StrictUndefined, TemplateError, meta, nodes
 from jinja2.sandbox import ImmutableSandboxedEnvironment
+from markupsafe import Markup
 
 
 DEFAULT_COVER_LETTER_LAYOUT = (Path(__file__).parent / "templates" / "admin" / "invoice_cover_letter_pdf.html").read_text(encoding="utf-8")
@@ -60,6 +61,9 @@ def validate_cover_letter_layout(value):
 
 def render_cover_letter_html(context, layout):
     values = {name: str(context.get(name) or "") for name in COVER_LETTER_LAYOUT_FIELDS}
+    text = context.get("text")
+    if isinstance(text, Markup):
+        values["text"] = text
     values["preview"] = bool(context.get("preview"))
     html = compile_cover_letter_layout(layout).render(values)
     if len(html) > 2000000:

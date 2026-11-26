@@ -20,6 +20,7 @@
             <label class="form-label" for="coverLetterText">Text</label>
             <textarea class="form-control" id="coverLetterText" name="text" rows="15" maxlength="20000" required></textarea>
             <div class="form-text">Platzhalter werden in der PDF automatisch ersetzt: {% raw %}{invoice_number}, {amount}, {currency}, {due_date}, {payment_terms}, {recipient_name}, {contract_number}, {seller_name}, {caseworker_name}, {caseworker_email}, {caseworker_phone}, {invoice_date}{% endraw %}.</div>
+            <div class="form-text">Im Text setzt <code>{sig}</code> einen weißen, auslesbaren Signaturanker in die PDF.</div>
             <div class="form-text mt-2">Die Vorschau verwendet die gespeicherten Rechnungsdaten. Die Vorlagen lassen sich unter Einstellungen → Rechnungen anpassen. Der Briefbogen wird am Buchwerk hinterlegt.</div>
             {% if current_user.is_admin %}<div class="mt-2"><a href="{{ url_for('admin.invoice_cover_letter_layout') }}" target="_blank" rel="noopener">Aufbau des Anschreibens anpassen</a></div>{% endif %}
           </form>
