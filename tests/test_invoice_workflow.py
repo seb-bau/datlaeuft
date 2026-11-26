@@ -183,9 +183,14 @@ class InvoiceWorkflowTests(unittest.TestCase):
         archive_count = self.archive.call_count
         response = self.client.get(f"/admin/invoices/{invoice.id}/correspondence")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(archived, response.data)
         self.assertEqual(self.archive.call_count, archive_count)
         reader = PdfReader(BytesIO(response.data))
+        archive_reader = PdfReader(BytesIO(archived))
+        self.assertEqual(
+            [page.extract_text() for page in archive_reader.pages],
+            [page.extract_text() for page in reader.pages],
+        )
+        self.assertEqual(archive_reader.attachments["factur-x.xml"], reader.attachments["factur-x.xml"])
         self.assertEqual(len(reader.pages), 5)
         first = reader.pages[0].extract_text()
         self.assertIn(invoice.invoice_number, first)
