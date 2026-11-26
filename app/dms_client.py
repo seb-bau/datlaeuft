@@ -16,6 +16,53 @@ class DmsError(RuntimeError):
         self.uncertain = uncertain
 
 
+def _http_error_message(response, api_key):
+    from urllib.parse import quote_plus
+
+    status_message = f"d.velop hat die Anfrage mit Status {response.status_code} abgelehnt."
+    if len(response.content) > 64 * 1024:
+        return status_message
+
+    try:
+        payload = response.json()
+    except (ValueError, RecursionError):
+        content_type = response.headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if content_type != "text/plain":
+            return status_message
+        payload = response.text
+
+    if isinstance(payload, str):
+        payload = {"reason": payload}
+    if not isinstance(payload, dict):
+        return status_message
+
+    secrets = sorted({api_key, quote(api_key, safe=""), quote_plus(api_key, safe="")} - {""}, key=len, reverse=True)
+
+    def clean(value):
+        if not isinstance(value, str):
+            return ""
+        text = "".join(character for character in value if character.isprintable() or character.isspace())
+        for secret in secrets:
+            text = text.replace(secret, "[API-Key ausgeblendet]")
+        return " ".join(text.split())
+
+    parts = [status_message]
+    error_code = payload.get("errorCode", payload.get("code"))
+    error_code = clean(str(error_code) if type(error_code) is int else error_code)
+    if error_code:
+        parts.append(f"Fehlercode {error_code[:80]}.")
+    request_id = clean(payload.get("requestId"))
+    if request_id:
+        parts.append(f"Anfrage-ID {request_id[:160]}.")
+
+    messages = [payload.get(field) for field in ("reason", "message", "title", "detail", "details", "hint", "error")]
+    if isinstance(payload.get("details"), list):
+        messages.extend(payload["details"][:10])
+    parts.extend(dict.fromkeys(filter(None, map(clean, messages))))
+    message = " ".join(parts)
+    return message if len(message) <= 1000 else message[:999] + "…"
+
+
 def normalize_hostname(value):
     try:
         parsed = urlsplit(value if "://" in value else f"https://{value}")
@@ -119,9 +166,9 @@ class DmsTransport:
                 uncertain=is_create,
             ) from exc
         if not 200 <= response.status_code < 300:
+            api_key = self.session.headers.get("Authorization", "").removeprefix("Bearer ")
             raise DmsError(
-                f"d.velop hat die Anfrage mit Status "
-                f"{response.status_code} abgelehnt.",
+                _http_error_message(response, api_key),
                 retryable=(
                     response.status_code in (408, 429)
                     or response.status_code >= 500
