@@ -82,7 +82,7 @@
             </span>
             {% elif item.status == "finalized" %}
             <span class="badge {{ 'text-bg-success' if item.completed_at else 'text-bg-primary' }}">
-              {{ 'Rechnung verschickt' if item.completed_at else 'Rechnung erstellt' }}
+              {{ 'Versendet' if item.completed_at else 'Rechnung erstellt' }}
             </span>
             {% elif item.status == "canceled" %}
             <span class="badge text-bg-warning">

@@ -1,3 +1,4 @@
+{% set can_mark_sent = item.status == 'finalized' and not item.completed_at and (not pending_delivery or pending_delivery.state == 'uncertain') %}
 <section class="card shadow-sm mb-4" aria-labelledby="invoiceActionsTitle">
   <div class="card-body">
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -7,7 +8,7 @@
       {% elif item.status == 'canceled' %}
       <span class="badge text-bg-warning">Storniert</span>
       {% elif item.completed_at %}
-      <span class="badge text-bg-success">Rechnung verschickt</span>
+      <span class="badge text-bg-success">Versendet</span>
       {% else %}
       <span class="badge text-bg-primary">Rechnung erstellt</span>
       {% endif %}
@@ -40,7 +41,14 @@
       {% if item.status == 'finalized' and not item.completed_at %}
       <a class="btn btn-primary" href="{{ url_for('admin.invoice_complete', invoice_id=item.id) }}">{{ 'Versandstatus prüfen' if pending_delivery else 'Rechnung abschließen und versenden' }}</a>
       {% endif %}
+      {% if item.status == 'finalized' and item.invoice_kind == 'invoice' and item.tenant_billing_reference and not item.tenant_charge_letter %}
+      <form method="post" action="{{ url_for('admin.invoice_document', invoice_id=item.id) }}" target="_blank" rel="noopener">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-primary" type="submit">Rechnungs-PDF aufrufen</button>
+      </form>
+      {% else %}
       <a class="btn btn-outline-primary" href="{{ url_for('admin.invoice_document', invoice_id=item.id) }}" target="_blank" rel="noopener">Rechnungs-PDF aufrufen</a>
+      {% endif %}
       {% if has_any_work_reports %}
       <form method="get" action="{{ url_for('admin.invoice_document_with_work_reports', invoice_id=item.id) }}" class="d-inline-flex align-items-center gap-2">
         <select class="form-select" name="scope" aria-label="Arbeitsnachweise auswählen">
@@ -52,14 +60,7 @@
       {% endif %}
       {% endif %}
 
-      {% if item.tenant_billing_reference %}
-      {% if item.status == 'finalized' and item.invoice_kind == 'invoice' and not pending_delivery %}
-      <a class="btn btn-outline-secondary" href="{{ url_for('admin.invoice_tenant_charge', invoice_id=item.id) }}">{{ 'Mieteranschreiben bearbeiten' if item.tenant_charge_letter else 'Mieteranschreiben erstellen' }}</a>
-      {% endif %}
-      {% if item.status == 'finalized' and item.tenant_charge_letter %}
-      <a class="btn btn-outline-secondary" href="{{ url_for('admin.invoice_tenant_charge_document', invoice_id=item.id) }}" target="_blank" rel="noopener">PDF mit Mieteranschreiben aufrufen</a>
-      {% endif %}
-      {% elif not pending_delivery %}
+      {% if not item.tenant_billing_reference and not pending_delivery %}
       <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#invoiceCoverLetterModal">{{ 'Anschreiben bearbeiten' if item.cover_letter_title else 'Anschreiben erstellen' }}</button>
       <a class="btn btn-outline-secondary" id="invoiceCorrespondenceLink" href="{{ url_for('admin.invoice_correspondence', invoice_id=item.id) }}"
          target="_blank" rel="noopener" {% if not item.cover_letter_title %}hidden{% endif %}>PDF mit Anschreiben aufrufen</a>
@@ -72,7 +73,10 @@
         <button class="btn btn-outline-secondary" type="submit">Entwurf löschen</button>
       </form>
       {% elif item.status == 'finalized' and item.invoice_kind == 'invoice' %}
-      <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#invoiceCancelModal">Storno</button>
+      <button class="btn btn-danger" type="button" data-bs-toggle="modal" data-bs-target="#invoiceCancelModal">Storno</button>
+      {% endif %}
+      {% if can_mark_sent %}
+      <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#invoiceMarkSentModal">Rechnung auf erledigt setzen</button>
       {% endif %}
     </div>
 
@@ -137,6 +141,28 @@
       <div class="modal-footer">
         <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Abbrechen</button>
         <button class="btn btn-danger" type="submit">Stornorechnung erstellen</button>
+      </div>
+    </form>
+  </div></div>
+</div>
+{% endif %}
+
+{% if can_mark_sent %}
+<div class="modal fade" id="invoiceMarkSentModal" tabindex="-1" aria-labelledby="invoiceMarkSentTitle" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h2 class="modal-title fs-5" id="invoiceMarkSentTitle">Rechnung auf erledigt setzen</h2>
+      <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Schließen"></button>
+    </div>
+    <form method="post" action="{{ url_for('admin.invoice_mark_sent', invoice_id=item.id) }}">
+      <div class="modal-body">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <p>Wurde die Rechnung {{ item.invoice_number }} tatsächlich versendet?</p>
+        <p class="mb-0">Bestätigen Sie den Status „Versendet“ erst nach dem Versand. Die Rechnung verschwindet damit aus der offenen Liste.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Abbrechen</button>
+        <button class="btn btn-primary" type="submit" name="confirm_sent" value="1">Als versendet bestätigen</button>
       </div>
     </form>
   </div></div>

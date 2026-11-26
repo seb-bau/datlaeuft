@@ -8,7 +8,7 @@
   <strong>Automatische PDF-Übertragung pausiert.</strong>
   Vorgemerkte PDFs bleiben in der Warteschlange. Einzelne Dokumente können
   freigegeben oder aus der Warteschlange entfernt werden.
-  <form method="post" action="{{ url_for('dms_admin.processing_pause', status=status or none) }}"
+  <form method="post" action="{{ url_for('dms_admin.processing_pause', status=status) }}"
         class="mt-2">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="paused" value="false">
@@ -21,7 +21,7 @@
 {% endif %}
 <form method="get" class="d-flex gap-2 mb-3">
   <select class="form-select" name="status" aria-label="Status">
-    <option value="">Alle Status</option>
+    <option value="" {% if not status %}selected{% endif %}>Alle Status</option>
     {% for key, label in status_labels.items() %}
     <option value="{{ key }}" {% if key == status %}selected{% endif %}>{{ label }}</option>
     {% endfor %}
@@ -59,7 +59,7 @@
           {% set has_key = document.profile_snapshot and document.profile_snapshot.get('key_property_id') %}
           {% if document.upload_started %}
           <form method="post"
-                action="{{ url_for('dms_admin.document_link', document_id=document.id, status=status or none) }}"
+                action="{{ url_for('dms_admin.document_link', document_id=document.id, status=status) }}"
                 class="mb-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label class="form-label small" for="dms-id-{{ document.id }}">
@@ -80,7 +80,7 @@
           {% endif %}
 
           <form method="post"
-                action="{{ url_for('dms_admin.document_retry', document_id=document.id, status=status or none) }}">
+                action="{{ url_for('dms_admin.document_retry', document_id=document.id, status=status) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             {% if document.upload_started %}
             <label class="form-check small">
@@ -97,7 +97,7 @@
           </form>
 
           <form method="post"
-                action="{{ url_for('dms_admin.document_remove', document_id=document.id, status=status or none) }}"
+                action="{{ url_for('dms_admin.document_remove', document_id=document.id, status=status) }}"
                 class="mt-2"
                 onsubmit="return confirm('Aus der Warteschlange entfernen? Die lokale PDF bleibt erhalten.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

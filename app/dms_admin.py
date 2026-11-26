@@ -306,14 +306,14 @@ def profile_edit(document_type):
 def redirect_to_documents():
     status = request.args.get("status")
     return redirect(url_for(
-        "dms_admin.documents", status=status if status in STATUS_LABELS else None,
+        "dms_admin.documents", status=status if status == "" or status in STATUS_LABELS else None,
     ))
 
 
 @dms_admin_bp.get("/documents")
 @admin_required
 def documents():
-    status = request.args.get("status", "")
+    status = request.args.get("status", "blocked")
     if status and status not in STATUS_LABELS:
         abort(400)
     query = db.select(DmsDocument)

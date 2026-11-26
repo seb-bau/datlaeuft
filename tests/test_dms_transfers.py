@@ -65,6 +65,22 @@ class DmsTransferFilterTests(TestCase):
                     self.assertEqual(response.status_code, 302)
                     self.assertEqual(response.location, listing)
 
+    def test_review_is_the_default_and_all_statuses_survives_an_action(self):
+        listing = "/admin/dms/documents"
+        default_page = etree.HTML(self.client.get(listing).data)
+        self.assertEqual(default_page.xpath("string(//select[@name='status']/option[@selected]/@value)"), "blocked")
+        self.assertFalse(default_page.xpath("//a[text()='rechnung.pdf']"))
+
+        all_page = etree.HTML(self.client.get(listing + "?status=").data)
+        self.assertTrue(all_page.xpath("//select[@name='status']/option[@selected and @value='']"))
+        self.assertTrue(all_page.xpath("//a[text()='rechnung.pdf']"))
+        action = listing + "/transfer/retry?status="
+        token = all_page.xpath("string(//form[@action=$action]/input[@name='csrf_token']/@value)", action=action)
+        self.assertTrue(token)
+        with patch.object(dms_admin, "retry_document"):
+            response = self.client.post(action, data={"csrf_token": token})
+        self.assertEqual(response.location, listing + "?status=")
+
     def test_link_error_keeps_the_filter_and_invalid_status_is_ignored(self):
         listing = "/admin/dms/documents?status=uncertain"
         page = etree.HTML(self.client.get(listing).data)

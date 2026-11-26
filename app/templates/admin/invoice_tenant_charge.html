@@ -12,10 +12,7 @@
 <div class="card shadow-sm">
   <div class="card-body">
     <p class="mb-3"><strong>Absender</strong> {{ company.seller_name or company.name }}</p>
-    {% if item.tenant_charge_letter and item.tenant_charge_letter.payment == payment %}
-    <a class="btn btn-outline-secondary mb-3" target="_blank" rel="noopener"
-       href="{{ url_for('admin.invoice_tenant_charge_document', invoice_id=item.id) }}">Mieterunterlagen als PDF öffnen</a>
-    {% elif item.tenant_charge_letter and payment %}
+    {% if item.tenant_charge_letter and payment and item.tenant_charge_letter.payment != payment %}
     <p class="alert alert-warning">Bitte prüfen und speichern Sie das Anschreiben mit den aktuellen Zahlungsdaten erneut.</p>
     {% endif %}
 
