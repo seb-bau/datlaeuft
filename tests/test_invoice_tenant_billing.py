@@ -190,7 +190,59 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.assertEqual(package.attachments["factur-x.xml"], original.attachments["factur-x.xml"])
         self.db.session.refresh(invoice)
         self.assertEqual(invoice.completion_mode, "print")
-        self.assertIn(b"Rechnung verschickt", self.client.get(url).data)
+        self.assertIn(b"Versendet", self.client.get(url).data)
+        self.mail.assert_not_called()
+
+    def test_opening_the_invoice_pdf_creates_and_archives_the_default_tenant_letter_once(self):
+        invoice = self.create_invoice()
+        url = f"/admin/invoices/{invoice.id}"
+        self.assertEqual(self.upload(invoice, [(self.pdf("ZUSÄTZLICHER BELEG"), "beleg.pdf")]).status_code, 201)
+        form = self.draft_form()
+        form.update(save_draft="1", service_date_from=form["invoice_date"])
+        self.assertEqual(self.client.post(url + "/finalize", data=form).status_code, 302)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.status, "finalized")
+        page = etree.HTML(self.client.get(url).data)
+        document_url = url + "/document"
+        actions = page.xpath("//form[@method='post' and @action=$target]/button", target=document_url)
+        self.assertEqual([action.text for action in actions], ["Rechnungs-PDF aufrufen"])
+
+        agreement, mode = self.api_rows()
+        self.remote.read_all_rows.side_effect = lambda endpoint, *_args, **_kwargs: [agreement] if endpoint.endswith("LicenseAgreements") else [mode]
+        self.settings.settings.set(self.settings.SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE, "Standardanschreiben für {invoice_issuer}")
+        self.db.session.commit()
+        archive_count = self.archive.call_count
+        correspondence = importlib.import_module(self.package_name + ".invoice_correspondence")
+        with patch.object(correspondence, "letter_date", return_value=date(2026, 12, 16)):
+            self.assertEqual(self.client.get(document_url).mimetype, "application/pdf")
+            self.db.session.refresh(invoice)
+            self.assertIsNone(invoice.tenant_charge_letter)
+            self.assertEqual(self.archive.call_count, archive_count)
+            response = self.client.post(document_url)
+        self.assertEqual(response.status_code, 200, response.data[:1000])
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertIn("inline", response.headers["Content-Disposition"])
+        self.assertIn("no-store", response.headers["Cache-Control"])
+        package = PdfReader(BytesIO(response.data))
+        self.assertEqual(len(package.pages), 3)
+        self.assertIn("Standardanschreiben für Testbetrieb GmbH", package.pages[0].extract_text())
+        self.assertIn("01.02.2027", package.pages[0].extract_text())
+        self.assertIn("Testgenossenschaft eG", package.pages[1].extract_text())
+        self.assertIn("ZUSÄTZLICHER BELEG", package.pages[2].extract_text())
+        self.assertIn("factur-x.xml", package.attachments)
+        self.assertEqual(self.archive.call_count, archive_count + 1)
+        self.assertEqual(self.archive.call_args.args[4], response.data)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.tenant_charge_letter["revision"], 1)
+        self.assertIsNone(invoice.completed_at)
+
+        self.remote.read_all_rows.reset_mock()
+        for open_document in (self.client.get, self.client.post):
+            saved = open_document(document_url)
+            self.assertEqual(saved.mimetype, "application/pdf")
+            self.assertIn("01.02.2027", PdfReader(BytesIO(saved.data)).pages[0].extract_text())
+        self.remote.read_all_rows.assert_not_called()
+        self.assertEqual(self.archive.call_count, archive_count + 1)
         self.mail.assert_not_called()
 
     def test_tenant_due_date_uses_the_configurable_cutoff_across_the_year_boundary(self):
@@ -535,12 +587,14 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         invoice_url = f"/admin/invoices/{invoice.id}"
         url = invoice_url + "/tenant-charge"
         page = self.client.get(invoice_url)
-        self.assertIn(f'href="{url}"'.encode(), page.data)
-        self.assertIn(b"Mieteranschreiben erstellen", page.data)
+        self.assertIn(b"Rechnung abschlie", page.data)
+        self.assertNotIn(b"Mieteranschreiben erstellen", page.data)
+        self.assertNotIn(b"Mieteranschreiben bearbeiten", page.data)
         self.assertNotIn(b"invoiceCoverLetterModal", page.data)
         self.assertEqual(self.client.get(invoice_url + "/correspondence").status_code, 404)
         charge_page = self.client.get(url)
         self.assertIn(b"Einzugstermin", charge_page.data)
+        self.assertNotIn(b"Mieterunterlagen als PDF", charge_page.data)
         self.assertIn(b"<strong>Absender</strong> Testgenossenschaft eG", charge_page.data)
         self.assertIn(b"Postweg 2", charge_page.data)
         response = self.client.post(url, data={
@@ -549,6 +603,8 @@ class InvoiceTenantBillingTests(unittest.TestCase):
             "caseworker_name": "Sachbearbeitung Test", "due_date": (date.today() + timedelta(days=10)).isoformat(),
         })
         self.assertEqual(response.status_code, 302, response.data[:1000])
+        self.assertNotIn(b"PDF mit Mieteranschreiben aufrufen", self.client.get(invoice_url).data)
+        self.assertNotIn(b"Mieterunterlagen als PDF", self.client.get(url).data)
         package = self.client.get(url + "/document")
         self.assertEqual(package.status_code, 200, package.data[:1000])
         pages = PdfReader(BytesIO(package.data)).pages

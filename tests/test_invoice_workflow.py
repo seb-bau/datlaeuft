@@ -43,7 +43,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
             setattr(cls, name, importlib.import_module(cls.package_name + "." + name))
         guard = sys.modules[cls.package_name + ".auth"].invoice_required
         for endpoint in ("invoices", "invoice_edit", "invoice_responsibility", "invoice_cover_letter",
-                         "invoice_cover_letter_preview", "invoice_correspondence", "invoice_complete"):
+                         "invoice_cover_letter_preview", "invoice_correspondence", "invoice_complete", "invoice_mark_sent"):
             view = cls.app.view_functions["admin." + endpoint]
             cls.app.view_functions["admin." + endpoint] = guard(view.__wrapped__)
         source = ast.parse((cls.root / "app/auth.py").read_text())
@@ -439,6 +439,33 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertEqual(invoice.cover_letter_title, values["title"])
         self.assertIsNone(invoice.completed_at)
 
+    def test_manual_confirmation_sets_the_sent_status_without_sending_mail(self):
+        self.start_patch(patch.object(self.admin, "work_report_counts", return_value={}))
+        invoice = self.rendered_invoice()
+        url = f"/admin/invoices/{invoice.id}"
+        document = self.client.get(url).get_data(as_text=True)
+        self.assertIn("Rechnung auf erledigt setzen", document)
+        self.assertIn("tatsächlich versendet?", document)
+        self.assertIn('class="btn btn-danger" type="button" data-bs-toggle="modal" data-bs-target="#invoiceCancelModal"', document)
+        self.assertEqual(self.client.post(url + "/erledigt").status_code, 400)
+        self.db.session.refresh(invoice)
+        self.assertIsNone(invoice.completed_at)
+
+        response = self.client.post(url + "/erledigt", data={"confirm_sent": "1"})
+        self.assertEqual(response.location, url)
+        self.db.session.refresh(invoice)
+        self.assertIsNotNone(invoice.completed_at)
+        self.assertEqual(invoice.completion_mode, "manual")
+        self.assertIn(b">Versendet</span>", self.client.get(url).data)
+        self.assertNotIn(b"Rechnung auf erledigt setzen", self.client.get(url).data)
+        invoice_number = invoice.invoice_number.encode()
+        self.assertNotIn(invoice_number, self.client.get("/admin/invoices?responsible=all&status=active").data)
+        self.assertIn(invoice_number, self.client.get("/admin/invoices?responsible=all&status=sent").data)
+        self.client.post(url + "/erledigt", data={"confirm_sent": "1"})
+        self.assertEqual(self.models.AuditLog.query.filter_by(action="invoice.complete").count(), 1)
+        self.assertEqual(self.models.WorkflowNotification.query.count(), 0)
+        self.mail.assert_not_called()
+
     def test_invoice_permissions_cover_all_new_routes(self):
         invoice = self.draft("invoice")
         self.creator.can_manage_invoices = False
@@ -450,6 +477,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertEqual(self.assign(invoice).status_code, 403)
         self.assertEqual(self.save_letter(invoice).status_code, 403)
         self.assertEqual(self.client.post(f"/admin/invoices/{invoice.id}/cover-letter/preview").status_code, 403)
+        self.assertEqual(self.client.post(f"/admin/invoices/{invoice.id}/erledigt", data={"confirm_sent": "1"}).status_code, 403)
         self.assertEqual(self.client.delete(f"/admin/invoices/{invoice.id}/cover-letter").status_code, 403)
         self.assertEqual(self.models.WorkflowNotification.query.count(), 0)
 

@@ -91,6 +91,18 @@ def tenant_letter_closing(company, letter) -> str:
     return template.format(seller_name=company.seller_name or company.name, sig="{sig}").strip()
 
 
+def tenant_letter_form_values(invoice, company, today, caseworker_name) -> dict:
+    saved = invoice.tenant_charge_letter or {}
+    return {
+        "purpose": saved["purpose"] if "purpose" in saved else tenant_letter_purpose(invoice),
+        "closing": tenant_letter_closing(company, saved),
+        "due_date": saved.get("due_date") or tenant_letter_due_date(today).isoformat(),
+        "person_id": (saved.get("recipient") or {}).get("person_id"),
+        "caseworker_name": saved.get("caseworker_name", caseworker_name),
+        "include_work_reports": saved.get("include_work_reports", False),
+    }
+
+
 def tenant_letter_context(invoice, company, letter) -> dict:
     name = company.seller_name or company.name
     sender_address = address_lines(company, "seller")

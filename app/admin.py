@@ -2967,17 +2967,16 @@ def invoice_finalize(
     )
 
 
-@admin_bp.get(
-    "/admin/invoices/<int:invoice_id>/document"
+@admin_bp.route(
+    "/admin/invoices/<int:invoice_id>/document", methods=["GET", "POST"],
 )
 @login_required
 @invoice_required
 def invoice_document(
     invoice_id: int,
 ) -> Any:
-    invoice = Invoice.query.get_or_404(
-        invoice_id
-    )
+    saving = request.method == "POST"
+    invoice = db.get_or_404(Invoice, invoice_id, populate_existing=saving, with_for_update=saving)
 
     if (
         invoice.status not in {
@@ -3009,15 +3008,32 @@ def invoice_document(
         else "Rechnung"
     )
 
-    return send_file(
-        document_path,
-        mimetype="application/pdf",
-        as_attachment=False,
-        download_name=(
-            f"{document_label}-"
-            f"{invoice.invoice_number}.pdf"
-        ),
+    filename = f"{document_label}-{invoice.invoice_number}.pdf"
+    includes_tenant_letter = (
+        invoice.tenant_billing_reference and invoice.invoice_kind == InvoiceKind.INVOICE.value
+        and (invoice.status == InvoiceStatus.FINALIZED.value or invoice.tenant_charge_letter)
     )
+    try:
+        if includes_tenant_letter:
+            content = invoice_pdf_with_tenant_letter(invoice, save_default=saving)
+            return document_preview_response(content, filename)
+        if invoice.cover_letter_title is not None:
+            from .invoice_correspondence import invoice_correspondence_pdf
+
+            return document_preview_response(invoice_correspondence_pdf(invoice), filename)
+    except (ValueError, InvoiceDocumentError, WorkReportDocumentError) as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("invoice_document_with_letter_failed invoice_id=%s", invoice_id)
+        flash("Die vollständige Rechnungs-PDF konnte nicht erstellt werden. Bitte prüfen Sie das Anschreiben.", "danger")
+    else:
+        return send_file(document_path, mimetype="application/pdf", as_attachment=False, download_name=filename)
+
+    if includes_tenant_letter and invoice.status == InvoiceStatus.FINALIZED.value:
+        return redirect(url_for("admin.invoice_tenant_charge", invoice_id=invoice_id, complete=None if invoice.completed_at else 1))
+    return redirect(url_for("admin.invoice_edit", invoice_id=invoice_id))
 
 
 @admin_bp.get(
@@ -7244,7 +7260,7 @@ def offer_agreement(
 def invoices() -> Any:
     status_labels = {
         "active": "Offene Rechnungen", "draft": "Entwurf", "finalized": "Rechnung erstellt",
-        "sent": "Rechnung verschickt", "canceled": "Storniert",
+        "sent": "Versendet", "canceled": "Storniert",
     }
     creator_filter = request.args.get("creator", "all").strip()
     responsible_filter = request.args.get("responsible", "mine").strip()
@@ -7396,6 +7412,26 @@ def invoice_complete(invoice_id: int):
     return render_template("admin/invoice_completion_letter.html", item=item, values=values)
 
 
+@admin_bp.post("/admin/invoices/<int:invoice_id>/erledigt")
+@invoice_required
+def invoice_mark_sent(invoice_id: int):
+    from .invoice_delivery import pending_invoice_completion, record_invoice_completion
+
+    invoice = db.get_or_404(Invoice, invoice_id, populate_existing=True, with_for_update=True)
+    if request.form.get("confirm_sent") != "1":
+        abort(400)
+    if invoice.status != InvoiceStatus.FINALIZED.value:
+        abort(409)
+    pending_delivery = pending_invoice_completion(invoice)
+    if pending_delivery is not None and pending_delivery.state != "uncertain":
+        flash("Für die Rechnung läuft bereits ein Direktversand. Bitte prüfen Sie den Versandstatus.", "warning")
+    else:
+        record_invoice_completion(invoice, "manual", utc_now())
+        db.session.commit()
+        flash("Rechnung als versendet bestätigt.", "success")
+    return redirect(url_for("admin.invoice_edit", invoice_id=invoice_id))
+
+
 @admin_bp.post("/admin/invoices/<int:invoice_id>/cover-letter/preview")
 @invoice_required
 def invoice_cover_letter_preview(invoice_id):
@@ -7441,16 +7477,61 @@ def tenant_charge_invoice(invoice_id: int, *, lock: bool = False) -> Invoice:
     return invoice
 
 
+def build_tenant_charge_letter(values, recipients, payment, today, revision):
+    from .settings import validate_tenant_charge_closing
+
+    recipient = choose_contract_recipient(recipients, values["person_id"])
+    due = optional_form_date(values["due_date"], "Zahlungstermin")
+    if due is None or due < today:
+        raise ValueError("Bitte geben Sie einen Zahlungstermin ab dem Datum des Anschreibens an.")
+    if not values["purpose"] or len(values["purpose"]) > 4000 or len(values["caseworker_name"]) > 255:
+        raise ValueError("Bitte geben Sie den Anlass mit höchstens 4.000 Zeichen und einen gültigen Ansprechpartner an.")
+    return {
+        "purpose": values["purpose"], "due_date": due.isoformat(), "letter_date": today.isoformat(),
+        "closing": validate_tenant_charge_closing(values["closing"]),
+        "caseworker_name": values["caseworker_name"], "include_work_reports": values["include_work_reports"],
+        "recipient": {field: recipient.get(field) for field in (
+            "person_id", "name", "name_addition", "street", "postal_code", "town", "country_code",
+        )},
+        "payment": payment, "revision": revision,
+    }
+
+
+def save_tenant_charge_letter(invoice, letter, content):
+    register_invoice_archive_pdf(invoice, content)
+    invoice.tenant_charge_letter = letter
+    audit("invoice.tenant_charge.save", "invoice", invoice.id, {"payment_method": letter["payment"]["method"]})
+
+
+def invoice_pdf_with_tenant_letter(invoice, *, save_default):
+    from .invoice_correspondence import letter_date
+    from .tenant_charge_letter import tenant_charge_package, tenant_letter_form_values, tenant_letter_payment, tenant_letter_recipients
+
+    company = db.session.get(WowiCompanyCode, invoice.tenant_billing_reference["company_code_id"])
+    if company is None:
+        raise ValueError("Das Buchwerk des Mietvertrags ist nicht verfügbar.")
+    if invoice.tenant_charge_letter:
+        return tenant_charge_package(invoice, company, invoice.tenant_charge_letter)
+
+    today = letter_date()
+    values = tenant_letter_form_values(invoice, company, today, current_user.display_name)
+    service = WowiportService()
+    recipients = tenant_letter_recipients(invoice, service)
+    payment = tenant_letter_payment(invoice, company, service)
+    letter = build_tenant_charge_letter(values, recipients, payment, today, revision=1)
+    content = tenant_charge_package(invoice, company, letter)
+    if save_default:
+        save_tenant_charge_letter(invoice, letter, content)
+        db.session.commit()
+    return content
+
+
 @admin_bp.route("/admin/invoices/<int:invoice_id>/tenant-charge", methods=["GET", "POST"])
 @admin_bp.post("/admin/invoices/<int:invoice_id>/tenant-charge/preview", endpoint="invoice_tenant_charge_preview", defaults={"preview": True})
 @invoice_required
 def invoice_tenant_charge(invoice_id: int, preview: bool = False):
     from .invoice_correspondence import letter_date
-    from .settings import validate_tenant_charge_closing
-    from .tenant_charge_letter import (
-        tenant_charge_package, tenant_letter_closing, tenant_letter_due_date, tenant_letter_payment,
-        tenant_letter_purpose, tenant_letter_recipients,
-    )
+    from .tenant_charge_letter import tenant_charge_package, tenant_letter_form_values, tenant_letter_payment, tenant_letter_recipients
 
     item = tenant_charge_invoice(invoice_id, lock=request.method == "POST" and not preview)
     completing = request.args.get("complete") == "1" and not preview
@@ -7464,60 +7545,34 @@ def invoice_tenant_charge(invoice_id: int, preview: bool = False):
     company = db.get_or_404(WowiCompanyCode, item.tenant_billing_reference["company_code_id"])
     today = letter_date()
     saved = item.tenant_charge_letter or {}
-    values = {
-        "purpose": saved.get("purpose", ""),
-        "closing": request.form.get("closing"),
-        "due_date": saved.get("due_date") or tenant_letter_due_date(today).isoformat(),
-        "person_id": (saved.get("recipient") or {}).get("person_id"),
-        "caseworker_name": saved.get("caseworker_name", current_user.display_name),
-        "include_work_reports": saved.get("include_work_reports", False),
-    }
+    values = {}
     has_work_reports = bool(work_report_counts(item))
     recipients = []
     payment = None
     try:
-        if values["closing"] is None:
-            values["closing"] = tenant_letter_closing(company, saved)
-        if request.method == "GET" and "purpose" not in saved:
-            values["purpose"] = tenant_letter_purpose(item)
+        values = tenant_letter_form_values(item, company, today, current_user.display_name)
         service = WowiportService()
         recipients = tenant_letter_recipients(item, service)
         payment = tenant_letter_payment(item, company, service)
 
         if request.method == "POST":
-            values = {
-                "purpose": request.form.get("purpose", "").strip(),
-                "closing": values["closing"],
-                "due_date": request.form.get("due_date", ""),
-                "person_id": optional_form_int(request.form.get("person_id"), "Vertragspartner"),
-                "caseworker_name": request.form.get("caseworker_name", "").strip(),
-                "include_work_reports": "include_work_reports" in request.form and has_work_reports,
-            }
+            values.update(
+                purpose=request.form.get("purpose", "").strip(),
+                closing=request.form.get("closing", values["closing"]),
+                due_date=request.form.get("due_date", ""),
+                person_id=optional_form_int(request.form.get("person_id"), "Vertragspartner"),
+                caseworker_name=request.form.get("caseworker_name", "").strip(),
+                include_work_reports="include_work_reports" in request.form and has_work_reports,
+            )
             if request.form.get("revision", type=int) != saved.get("revision", 0):
                 raise ValueError("Das Anschreiben wurde inzwischen geändert. Bitte laden Sie die Seite neu.")
             if request.form.get("payment_method") != payment["method"]:
                 raise ValueError("Die Zahlungsart hat sich geändert. Bitte prüfen Sie die Angaben erneut.")
-            recipient = choose_contract_recipient(recipients, values["person_id"])
-            due = optional_form_date(values["due_date"], "Zahlungstermin")
-            if due is None or due < today:
-                raise ValueError("Bitte geben Sie einen Zahlungstermin ab dem Datum des Anschreibens an.")
-            if not values["purpose"] or len(values["purpose"]) > 4000 or len(values["caseworker_name"]) > 255:
-                raise ValueError("Bitte geben Sie den Anlass mit höchstens 4.000 Zeichen und einen gültigen Ansprechpartner an.")
-            letter = {
-                "purpose": values["purpose"], "due_date": due.isoformat(), "letter_date": today.isoformat(),
-                "closing": validate_tenant_charge_closing(values["closing"]),
-                "caseworker_name": values["caseworker_name"], "include_work_reports": values["include_work_reports"],
-                "recipient": {field: recipient.get(field) for field in (
-                    "person_id", "name", "name_addition", "street", "postal_code", "town", "country_code",
-                )},
-                "payment": payment, "revision": saved.get("revision", 0) + 1,
-            }
+            letter = build_tenant_charge_letter(values, recipients, payment, today, saved.get("revision", 0) + 1)
             content = tenant_charge_package(item, company, letter)
             if preview:
                 return document_preview_response(content, "Mieterbelastung-Vorschau.pdf")
-            register_invoice_archive_pdf(item, content)
-            item.tenant_charge_letter = letter
-            audit("invoice.tenant_charge.save", "invoice", item.id, {"payment_method": payment["method"]})
+            save_tenant_charge_letter(item, letter, content)
             db.session.commit()
             flash("Anschreiben „Mieterbelastung“ gespeichert.", "success")
             endpoint = "invoice_delivery.delivery_complete" if completing else "admin.invoice_tenant_charge"
@@ -8239,6 +8294,7 @@ def invoice_edit_context(
 
     completion_mode_labels = {
         "direct": "Direktversand", "outlook": "Versand per Outlook", "print": "Kein Versand (nur Druck)",
+        "manual": "Manuell als versendet bestätigt",
     }
     return {
         "item": item,
