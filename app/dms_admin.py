@@ -128,12 +128,9 @@ def processing_pause():
         if paused else "Automatische PDF-Übertragung fortgesetzt.",
         "warning" if paused else "success",
     )
-    endpoint = (
-        "dms_admin.documents"
-        if request.form.get("return_to") == "documents"
-        else "dms_admin.connection_page"
-    )
-    return redirect(url_for(endpoint))
+    if request.form.get("return_to") == "documents":
+        return redirect_to_documents()
+    return redirect(url_for("dms_admin.connection_page"))
 
 
 @dms_admin_bp.post("/metadata/refresh")
@@ -306,6 +303,13 @@ def profile_edit(document_type):
     )
 
 
+def redirect_to_documents():
+    status = request.args.get("status")
+    return redirect(url_for(
+        "dms_admin.documents", status=status if status in STATUS_LABELS else None,
+    ))
+
+
 @dms_admin_bp.get("/documents")
 @admin_required
 def documents():
@@ -347,7 +351,7 @@ def document_retry(document_id):
         db.session.rollback()
         flash(str(exc), "danger")
 
-    return redirect(url_for("dms_admin.documents"))
+    return redirect_to_documents()
 
 
 @dms_admin_bp.post("/documents/<document_id>/remove")
@@ -368,7 +372,7 @@ def document_remove(document_id):
         db.session.rollback()
         flash(str(exc), "danger")
 
-    return redirect(url_for("dms_admin.documents"))
+    return redirect_to_documents()
 
 
 @dms_admin_bp.get("/documents/<document_id>/pdf")
@@ -402,7 +406,7 @@ def document_link(document_id):
         db.session.rollback()
         flash(str(exc), "danger")
 
-    return redirect(url_for("dms_admin.documents"))
+    return redirect_to_documents()
 
 
 @dms_admin_bp.post(
