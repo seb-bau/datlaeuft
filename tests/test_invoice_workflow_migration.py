@@ -45,3 +45,33 @@ class InvoiceWorkflowMigrationTests(unittest.TestCase):
             with engine.begin() as connection:
                 for name in names:
                     connection.execute(sa.text(f"DROP TABLE IF EXISTS {name}"))
+
+    def test_completion_migration_leaves_existing_invoices_open_and_opt_in_disabled(self):
+        url = make_url(os.environ.get("DATLAEUFT_TEST_DATABASE_URL", "sqlite://"))
+        if url.get_backend_name() != "sqlite" and not (url.database or "").startswith("datlaeuft_test_"):
+            self.fail("Migrationstests benötigen eine separate datlaeuft_test-Datenbank.")
+        engine = sa.create_engine(url)
+        self.addCleanup(engine.dispose)
+        names = ("invoice", "wowi_company_code")
+        if any(sa.inspect(engine).has_table(name) for name in names):
+            self.skipTest("Die Migration benötigt eigene leere Testtabellen.")
+        path = Path(__file__).resolve().parents[1] / "migrations/versions/18c65af3e290_invoice_completion.py"
+        spec = importlib.util.spec_from_file_location("invoice_completion_migration", path)
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        try:
+            with engine.begin() as connection:
+                connection.execute(sa.text("CREATE TABLE wowi_company_code (id INTEGER PRIMARY KEY)"))
+                connection.execute(sa.text("CREATE TABLE invoice (id INTEGER PRIMARY KEY, status VARCHAR(40) NOT NULL)"))
+                connection.execute(sa.text("INSERT INTO wowi_company_code VALUES (1)"))
+                connection.execute(sa.text("INSERT INTO invoice VALUES (1, 'finalized')"))
+                with Operations.context(MigrationContext.configure(connection)):
+                    migration.upgrade()
+                    self.assertEqual(connection.execute(sa.text("SELECT tenant_charge_letter_enabled FROM wowi_company_code")).scalar(), 0)
+                    self.assertEqual(connection.execute(sa.text("SELECT status, completed_at, completion_mode FROM invoice")).one(), ("finalized", None, None))
+                    migration.downgrade()
+                self.assertEqual(connection.execute(sa.text("SELECT status FROM invoice")).scalar(), "finalized")
+        finally:
+            with engine.begin() as connection:
+                for name in names:
+                    connection.execute(sa.text(f"DROP TABLE IF EXISTS {name}"))

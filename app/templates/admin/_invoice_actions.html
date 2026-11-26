@@ -1,0 +1,144 @@
+<section class="card shadow-sm mb-4" aria-labelledby="invoiceActionsTitle">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <h2 class="h6 mb-0" id="invoiceActionsTitle">{{ 'Anschreiben zur Mieterbelastung' if item.tenant_billing_reference and item.invoice_kind == 'invoice' else 'Rechnung und Anschreiben' }}</h2>
+      {% if editable %}
+      <span class="badge text-bg-secondary">Entwurf</span>
+      {% elif item.status == 'canceled' %}
+      <span class="badge text-bg-warning">Storniert</span>
+      {% elif item.completed_at %}
+      <span class="badge text-bg-success">Rechnung verschickt</span>
+      {% else %}
+      <span class="badge text-bg-primary">Rechnung erstellt</span>
+      {% endif %}
+    </div>
+
+    {% if pending_delivery %}
+    <p class="small text-muted mb-3">{{ 'Versandbestätigung ausstehend' if pending_delivery.state == 'uncertain' else 'Direktversand läuft' }}.</p>
+    {% elif item.completed_at and item.status != 'canceled' %}
+    <p class="small text-muted mb-3">Abgeschlossen am {{ completion_date_label }} · {{ completion_mode_label }}</p>
+    {% elif editable and item.tenant_billing_reference %}
+    <p class="small text-muted mb-3">Nach dem Erstellen der Rechnung können Sie das Mieteranschreiben vorbereiten.</p>
+    {% endif %}
+
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      {% if editable %}
+      <button class="btn btn-primary" type="submit" form="invoice-draft-form" id="invoiceFinalize"
+              formaction="{{ url_for('admin.invoice_finalize', invoice_id=item.id) }}" data-document-finalize
+              data-confirm-message="Soll die Rechnung mit den aktuellen Eingaben verbindlich erstellt werden?"
+              data-pending-text="Rechnung wird erstellt …">Rechnung erstellen</button>
+      <button class="btn btn-outline-primary" type="submit" form="invoice-draft-form">Entwurf speichern</button>
+      <button class="btn btn-outline-primary" type="button" data-document-preview data-preview-form="invoice-draft-form"
+              data-preview-title="Rechnung · PDF-Vorschau" data-preview-url="{{ url_for('admin.invoice_preview', invoice_id=item.id) }}">PDF-Vorschau</button>
+      {% if item.commission_links %}
+      <form method="post" action="{{ url_for('admin.invoice_add_suggestions', invoice_id=item.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-primary" type="submit">Neue Zeit- und Materialvorschläge ergänzen</button>
+      </form>
+      {% endif %}
+      {% elif item.status in ['finalized', 'canceled'] %}
+      {% if item.status == 'finalized' and not item.completed_at %}
+      <a class="btn btn-primary" href="{{ url_for('admin.invoice_complete', invoice_id=item.id) }}">{{ 'Versandstatus prüfen' if pending_delivery else 'Rechnung abschließen und versenden' }}</a>
+      {% endif %}
+      <a class="btn btn-outline-primary" href="{{ url_for('admin.invoice_document', invoice_id=item.id) }}" target="_blank" rel="noopener">Rechnungs-PDF aufrufen</a>
+      {% if has_any_work_reports %}
+      <form method="get" action="{{ url_for('admin.invoice_document_with_work_reports', invoice_id=item.id) }}" class="d-inline-flex align-items-center gap-2">
+        <select class="form-select" name="scope" aria-label="Arbeitsnachweise auswählen">
+          <option value="billed" {% if not has_billed_work_reports %}disabled{% endif %}>Nur berechnete Zeitnachweise</option>
+          <option value="all" {% if not has_billed_work_reports %}selected{% endif %}>Alle Zeitnachweise der Aufträge</option>
+        </select>
+        <button class="btn btn-outline-primary text-nowrap" type="submit">Rechnung mit Arbeitsnachweisen</button>
+      </form>
+      {% endif %}
+      {% endif %}
+
+      {% if item.tenant_billing_reference %}
+      {% if item.status == 'finalized' and item.invoice_kind == 'invoice' and not pending_delivery %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('admin.invoice_tenant_charge', invoice_id=item.id) }}">{{ 'Mieteranschreiben bearbeiten' if item.tenant_charge_letter else 'Mieteranschreiben erstellen' }}</a>
+      {% endif %}
+      {% if item.status == 'finalized' and item.tenant_charge_letter %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('admin.invoice_tenant_charge_document', invoice_id=item.id) }}" target="_blank" rel="noopener">PDF mit Mieteranschreiben aufrufen</a>
+      {% endif %}
+      {% elif not pending_delivery %}
+      <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#invoiceCoverLetterModal">{{ 'Anschreiben bearbeiten' if item.cover_letter_title else 'Anschreiben erstellen' }}</button>
+      <a class="btn btn-outline-secondary" id="invoiceCorrespondenceLink" href="{{ url_for('admin.invoice_correspondence', invoice_id=item.id) }}"
+         target="_blank" rel="noopener" {% if not item.cover_letter_title %}hidden{% endif %}>PDF mit Anschreiben aufrufen</a>
+      {% endif %}
+
+      {% if editable %}
+      <form method="post" action="{{ url_for('admin.invoice_delete', invoice_id=item.id) }}"
+            onsubmit="return confirm('Rechnungsentwurf wirklich löschen?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-secondary" type="submit">Entwurf löschen</button>
+      </form>
+      {% elif item.status == 'finalized' and item.invoice_kind == 'invoice' %}
+      <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#invoiceCancelModal">Storno</button>
+      {% endif %}
+    </div>
+
+    {% if item.invoice_kind == 'cancellation' and item.original_invoice %}
+    <div class="alert alert-warning mt-3 mb-0">
+      Stornorechnung zu <a href="{{ url_for('admin.invoice_edit', invoice_id=item.original_invoice_id) }}">{{ item.original_invoice.invoice_number }}</a>
+      <div class="small">Grund {{ item.cancellation_reason }}</div>
+    </div>
+    {% elif item.status == 'canceled' %}
+    <div class="alert alert-warning mt-3 mb-0">
+      Diese Rechnung wurde storniert.
+      {% if item.cancellation_invoice %}
+      <a href="{{ url_for('admin.invoice_edit', invoice_id=item.cancellation_invoice.id) }}">Stornorechnung {{ item.cancellation_invoice.invoice_number }}</a>
+      {% endif %}
+      {% if item.cancellation_reason %}<div class="small">Grund {{ item.cancellation_reason }}</div>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if not editable %}
+    <div class="border-top mt-3 pt-3">
+      <div class="small">
+        {% if item.dms_archive_status == 'archived' %}In d.velop archiviert
+        {% elif item.dms_archive_error %}d.velop · {{ item.dms_archive_error }}
+        {% elif item.dms_document_id %}Aktuelle Fassung wartet auf Archivierung in d.velop
+        {% else %}Noch nicht in d.velop archiviert
+        {% endif %}
+      </div>
+      {% if item.dms_document_id %}
+      <div class="small">DMS-Nummer
+        {% if invoice_dms_url %}
+        <a href="{{ invoice_dms_url }}" target="_blank" rel="noopener">{{ item.dms_document_id }}</a>
+        {% else %}
+        {{ item.dms_document_id }}
+        {% endif %}
+        {% if item.dms_archived_at %} · {{ archive_date_label }}{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <details class="mt-3">
+      <summary>PDF-Anhänge</summary>
+      {% include 'admin/_invoice_attachments.html' %}
+    </details>
+  </div>
+</section>
+
+{% if item.status == 'finalized' and item.invoice_kind == 'invoice' %}
+<div class="modal fade" id="invoiceCancelModal" tabindex="-1" aria-labelledby="invoiceCancelTitle" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h2 class="modal-title fs-5" id="invoiceCancelTitle">Rechnung stornieren</h2>
+      <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Schließen"></button>
+    </div>
+    <form method="post" action="{{ url_for('admin.invoice_cancel', invoice_id=item.id) }}" id="invoice-cancel-form">
+      <div class="modal-body">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <p>Für die Rechnung {{ item.invoice_number }} wird eine Stornorechnung erstellt.</p>
+        <label class="form-label" for="cancellation-reason">Stornogrund</label>
+        <textarea class="form-control" id="cancellation-reason" name="reason" rows="3" required></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Abbrechen</button>
+        <button class="btn btn-danger" type="submit">Stornorechnung erstellen</button>
+      </div>
+    </form>
+  </div></div>
+</div>
+{% endif %}

@@ -524,10 +524,8 @@ def _document_context(
         ),
         "Rechnungsdatum",
     )
-    due_date_value = _read_value(
-        invoice,
-        "due_date",
-    )
+    tenant_reference = invoice.tenant_billing_reference
+    due_date_value = None if tenant_reference else _read_value(invoice, "due_date")
     due_date = (
         _date_value(
             due_date_value,
@@ -899,7 +897,7 @@ def _document_context(
         invoice.cancellation_reason or ""
     ).strip()
 
-    if is_cancellation:
+    if is_cancellation or tenant_reference:
         payment_terms_text = ""
 
     return {
@@ -932,9 +930,9 @@ def _document_context(
         "seller_vat_id": seller_vat_id,
         "seller_email": seller_email,
         "seller_phone": seller_phone,
-        "seller_iban": seller_iban,
-        "seller_bic": seller_bic,
-        "seller_bank_name": seller_bank_name,
+        "seller_iban": "" if tenant_reference else seller_iban,
+        "seller_bic": "" if tenant_reference else seller_bic,
+        "seller_bank_name": "" if tenant_reference else seller_bank_name,
         "seller_address": seller_address,
         "recipient_name": recipient_name,
         "recipient_street": recipient_street,
@@ -953,12 +951,12 @@ def _document_context(
             if value
         ],
         "contract_number": contract_number,
-        "tenant_billing_reference": invoice.tenant_billing_reference,
+        "tenant_billing_reference": tenant_reference,
         "insurance_claim_number": invoice.insurance_claim_number,
         "buyer_reference": (
             contract_number or invoice_number
         ),
-        "payment_reference": payment_reference,
+        "payment_reference": "" if tenant_reference else payment_reference,
         "payment_terms_text": payment_terms_text,
         **payment_context,
         "intro_text": str(
@@ -1115,6 +1113,11 @@ def _zugferd_data(context: dict) -> dict:
         for row in context["vat_rows"]
     ]
 
+    reference = context["tenant_billing_reference"]
+    payment_terms = context["payment_terms_text"]
+    if reference and not is_cancellation:
+        payment_terms = "Die Zahlungsabwicklung ist im Mieteranschreiben geregelt."
+
     data = {
         "BT-1": context["invoice_number"],
         "BT-2": context["invoice_date"],
@@ -1130,11 +1133,7 @@ def _zugferd_data(context: dict) -> dict:
             else context["due_date"]
         ),
         "BT-10": context["buyer_reference"],
-        "BT-20": (
-            ""
-            if is_cancellation
-            else context["payment_terms_text"]
-        ),
+        "BT-20": "" if is_cancellation else payment_terms,
         "BT-27": context["seller_name"],
         "BT-31": context["seller_vat_id"],
         "BT-32": context["seller_tax_number"],
@@ -1216,7 +1215,6 @@ def _zugferd_data(context: dict) -> dict:
         ),
     }
 
-    reference = context["tenant_billing_reference"]
     notes = []
     if reference:
         notes.append(

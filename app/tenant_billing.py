@@ -32,7 +32,7 @@ def agreement_uses_tenant_billing(agreement_id: int) -> bool:
         WowiLicenseAgreement, WowiLicenseAgreement.use_unit_id == WowiUseUnit.id,
     ).filter(
         WowiLicenseAgreement.erp_id == agreement_id,
-        WowiCompanyCode.tenant_billing_issuer_id.is_not(None),
+        WowiCompanyCode.tenant_billing_issuer_id.is_not(None) | WowiCompanyCode.tenant_charge_letter_enabled.is_(True),
     ).first() is not None
 
 
@@ -98,11 +98,15 @@ def apply_tenant_billing(
 
     if not all(str(value or "").strip() for value in (tenant_name, property_address, agreement.id_num)):
         raise ValueError("Im Mietvertrag fehlen Name, Objektanschrift oder Vertragsnummer.")
-    if not all(str(value or "").strip() for value in (company.seller_street, company.seller_postal_code, company.seller_town)):
+    self_billing = company.tenant_billing_issuer_id is None
+    if not self_billing and not all(
+        str(value or "").strip() for value in (company.seller_street, company.seller_postal_code, company.seller_town)
+    ):
         raise ValueError(f"Bitte hinterlegen Sie die Rechnungsanschrift für das Buchwerk {company.code}.")
 
     invoice.tenant_billing_reference = {
         "company_code_id": company.id,
+        "self_billing": self_billing,
         "agreement_erp_id": agreement.erp_id,
         "agreement_number": agreement.id_num,
         "tenant_name": tenant_name,
@@ -113,6 +117,13 @@ def apply_tenant_billing(
             for field in ("name", "name_addition", "street", "postal_code", "town", "country_code")
         },
     }
+    invoice.due_date = None
+    invoice.payment_information = None
+    invoice.payment_reference = None
+    if self_billing:
+        apply_contract_recipient(invoice, agreement, candidate)
+        invoice.recipient_name = tenant_name
+        return
     invoice.recipient_license_agreement_erp_id = None
     invoice.recipient_license_agreement_idnum = None
     invoice.recipient_person_erp_id = None
@@ -125,4 +136,3 @@ def apply_tenant_billing(
     invoice.recipient_country_code = company.seller_country_code
     invoice.recipient_email = company.tenant_billing_recipient_email
     invoice.recipient_vat_id = company.seller_vat_id
-    invoice.payment_information = None

@@ -24,7 +24,8 @@ def invoice_preview_context(invoice) -> dict:
     positions = _prepare_positions(invoice)
     net = sum((position["total_net"] for position in positions), Decimal("0"))
     vat = sum((position["vat_amount"] for position in positions), Decimal("0"))
-    due = _format_date(invoice.due_date)
+    tenant_reference = invoice.tenant_billing_reference
+    due = "" if tenant_reference else _format_date(invoice.due_date)
     service_from = _format_date(invoice.service_date_from)
     service_to = _format_date(invoice.service_date_to)
     number = invoice.invoice_number or "Entwurf"
@@ -40,16 +41,17 @@ def invoice_preview_context(invoice) -> dict:
         "original_invoice_number": original.invoice_number if original else "",
         "original_invoice_date_formatted": _format_date(original.invoice_date) if original else "",
         "cancellation_reason": invoice.cancellation_reason or "",
-        "tenant_billing_reference": invoice.tenant_billing_reference,
+        "tenant_billing_reference": tenant_reference,
         "insurance_claim_number": invoice.insurance_claim_number,
         "intro_text": invoice.introductory_text or "", "closing_text": invoice.concluding_text or "",
         "currency": invoice.currency_code or "EUR", "positions": positions, "vat_rows": _prepare_vat_rows(positions),
         "total_net_formatted": _format_money(net), "total_vat_formatted": _format_money(vat),
         "total_gross_formatted": _format_money(net + vat), "total_label": "Stornobetrag" if is_cancellation else "Rechnungsbetrag",
-        "payment_reference": number, "payment_terms_text": f"Bitte überweisen Sie den Rechnungsbetrag bis zum {due}." if due else "",
+        "payment_reference": "" if tenant_reference else number,
+        "payment_terms_text": f"Bitte überweisen Sie den Rechnungsbetrag bis zum {due}." if due else "",
     }
     for field, company_field in (("seller_iban", "invoice_iban"), ("seller_bic", "invoice_bic"), ("seller_bank_name", "invoice_bank_name")):
-        context[field] = str(_company_value(invoice, (field,), (company_field, field), default="") or "")
+        context[field] = "" if tenant_reference else str(_company_value(invoice, (field,), (company_field, field), default="") or "")
     from .invoice_payments import invoice_payment_context
     if not is_cancellation:
         context.update(invoice_payment_context(invoice))

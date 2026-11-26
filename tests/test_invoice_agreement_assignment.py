@@ -69,7 +69,6 @@ class InvoiceAgreementAssignmentTests(unittest.TestCase):
         self.db.session.refresh(invoice)
         self.assertEqual(invoice.recipient_name, "Neue freie Empfängerin")
         self.assertEqual(invoice.payment_information["iban"], self.company.seller_iban)
-        due_date = invoice.due_date
 
         result = self.client.get(invoice_url + "/recipients/search", query_string={"q": "MV-COMMON"})
         self.assertEqual(result.json["items"][0]["license_agreement"]["erp_id"], self.agreement.erp_id)
@@ -107,7 +106,7 @@ class InvoiceAgreementAssignmentTests(unittest.TestCase):
         self.assertEqual(invoice.billing_contract_erp_id, self.agreement.erp_id)
         self.assertEqual([position.description for position in invoice.positions], ["Bearbeitete Leistung"])
         self.assertEqual(invoice.pdf_attachments[0].id, attachment_id)
-        self.assertEqual(invoice.due_date, due_date)
+        self.assertIsNone(invoice.due_date)
         self.assertEqual(invoice.introductory_text, "Gespeicherter Rechnungstext")
         self.assertIsNone(invoice.payment_information)
         self.assertIsNone(invoice.payment_reference)
@@ -119,7 +118,7 @@ class InvoiceAgreementAssignmentTests(unittest.TestCase):
         self.assertEqual(invoice.status, "finalized")
         self.assertNotIn(b'id="pendingInvoiceAgreement"', self.client.get(invoice_url).data)
         self.assertTrue(invoice.invoice_number.startswith("GMBH-"))
-        self.assertEqual(invoice.payment_reference, invoice.invoice_number)
+        self.assertIsNone(invoice.payment_reference)
         pages = PdfReader(BytesIO(self.delivery.final_invoice_pdf(invoice))).pages
         self.assertIn("Testgenossenschaft eG", pages[0].extract_text())
         self.assertIn("MV-COMMON", pages[0].extract_text())

@@ -88,85 +88,112 @@ document.addEventListener("DOMContentLoaded", () => {
     finally { attachmentBusy = false; upload.disabled = false; files.disabled = false; }
   });
 
-  const modal = document.getElementById("invoiceDeliveryModal");
-  if (!modal) return;
+  const cancelForm = document.getElementById("invoice-cancel-form");
+  cancelForm?.addEventListener("submit", event => {
+    const button = event.submitter;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Stornorechnung wird erstellt …";
+    }
+  });
+
+  const delivery = document.getElementById("invoiceDelivery");
+  if (!delivery) return;
+  const form = document.getElementById("invoiceDeliveryForm");
+  const modes = document.getElementById("invoiceDeliveryModes");
   const client = document.getElementById("invoiceDeliveryClient");
   const system = document.getElementById("invoiceDeliverySystem");
+  const print = document.getElementById("invoiceDeliveryPrint");
   const official = document.getElementById("invoiceDeliveryOfficial");
   const preview = document.getElementById("invoiceDeliveryPreview");
   const body = document.getElementById("invoiceDeliveryBody");
   const resetBody = document.getElementById("invoiceDeliveryResetBody");
   const send = document.getElementById("invoiceDeliverySend");
   const message = document.getElementById("invoiceDeliveryMessage");
-  const lastState = document.getElementById("invoiceDeliveryLastState");
   let requestId;
   let recipientsLoaded = false;
   let activePreview;
-  let modalOpen = false;
-  let sending = false;
-  let pollTimer;
+  let busy = false;
+  let waiting = Boolean(delivery.dataset.notificationId);
   let pollCount = 0;
   let templateBody = "";
   let bodyEdited = false;
 
   body.addEventListener("input", () => { bodyEdited = true; });
   resetBody.addEventListener("click", () => {
-    if (sending || resetBody.disabled) return;
+    if (busy || waiting) return;
     body.value = templateBody;
     bodyEdited = false;
   });
 
   function feedback(text, error = false) {
     message.textContent = text;
-    message.className = "small mt-3 " + (error ? "text-danger" : "text-muted");
+    message.className = "small mt-3 mb-0 " + (error ? "text-danger" : "text-muted");
+  }
+
+  function updateControls() {
+    modes.disabled = busy || waiting;
+    official.disabled = busy || waiting;
+    body.readOnly = busy || waiting;
+    resetBody.disabled = body.readOnly;
+    send.disabled = busy || waiting || preview.hidden;
   }
 
   function showState(item) {
     if (!item) return;
-    const text = {
-      pending: "Versand vorgemerkt", sending: "E-Mail wird versendet", sent: "E-Mail versendet",
-      failed: "Versand fehlgeschlagen; das System versucht es erneut", uncertain: "Versand nicht bestätigt; bitte vor einem erneuten Versand prüfen",
-      discarded: "Versand nicht ausgeführt, weil die Rechnung geändert oder storniert wurde"
+    const label = {
+      pending: "Versand vorgemerkt",
+      sending: "E-Mail wird versendet",
+      sent: item.test_delivery ? "E-Mail an Testadresse versendet. Die Rechnung bleibt offen." : "E-Mail versendet",
+      failed: "Versand fehlgeschlagen. Das System versucht es erneut.",
+      uncertain: "Versand nicht bestätigt. Bitte den Versand in den E-Mail-Protokollen prüfen.",
+      discarded: "Versand nicht ausgeführt. Die Rechnung wurde geändert oder storniert."
     }[item.state] || "Versandstatus unbekannt";
-    const detail = text + (item.recipient ? " · " + item.recipient : "") + (item.message ? " · " + item.message : "");
-    lastState.textContent = detail;
-    if (modalOpen) feedback(detail, ["failed", "uncertain", "discarded"].includes(item.state));
+    const detail = [label, item.recipient, item.message].filter(Boolean).join(" · ");
+    feedback(detail, ["failed", "uncertain", "discarded"].includes(item.state));
+    const sent = item.state === "sent" && !item.test_delivery;
+    const wasWaiting = waiting;
+    waiting = sent || ["pending", "sending", "failed", "uncertain"].includes(item.state);
+    if (sent) window.location.assign(delivery.dataset.invoiceUrl);
+    if (item.state === "sent" || item.state === "discarded") requestId = newRequestId();
+    if (wasWaiting && !waiting && delivery.dataset.notificationId) updateMode();
+    updateControls();
   }
 
   async function loadStatus(notificationId) {
-    const url = new URL(modal.dataset.statusUrl, window.location.origin);
-    if (notificationId) url.searchParams.set("notification_id", notificationId);
+    const url = new URL(delivery.dataset.statusUrl, window.location.origin);
+    url.searchParams.set("notification_id", notificationId);
     const data = await jsonResponse(await fetch(url, {cache: "no-store", headers: {Accept: "application/json"}}));
     showState(data.item);
-    if (notificationId && data.item && ["pending", "sending", "failed"].includes(data.item.state) && pollCount++ < 30) {
-      pollTimer = setTimeout(() => loadStatus(notificationId).catch(error => feedback(error.message, true)), 2000);
+    if (data.item && ["pending", "sending", "failed"].includes(data.item.state) && pollCount++ < 60) {
+      setTimeout(() => loadStatus(notificationId).catch(error => feedback(error.message, true)), 2000);
     }
   }
 
   async function updateMode() {
-    document.getElementById("invoiceDeliveryClientPanel").hidden = system.checked;
-    document.getElementById("invoiceDeliverySystemPanel").hidden = !system.checked;
-    if (!system.checked || recipientsLoaded) return;
+    document.getElementById("invoiceDeliveryClientPanel").hidden = !client.checked || waiting;
+    document.getElementById("invoiceDeliverySystemPanel").hidden = !system.checked || waiting;
+    document.getElementById("invoiceDeliveryPrintPanel").hidden = !print.checked || waiting;
+    if (!system.checked || waiting || recipientsLoaded) return;
     official.disabled = true;
-    const companyRecipient = modal.dataset.companyRecipient === "true";
-    feedback(companyRecipient ? "Rechnungsempfänger wird geladen …" : "Sachbearbeiter werden geladen …");
+    feedback("Empfänger werden geladen …");
     try {
-      const data = await jsonResponse(await fetch(modal.dataset.recipientsUrl, {cache: "no-store", headers: {Accept: "application/json"}}));
+      const data = await jsonResponse(await fetch(delivery.dataset.recipientsUrl, {cache: "no-store", headers: {Accept: "application/json"}}));
       official.replaceChildren(new Option("Bitte auswählen", ""));
       data.items.forEach(item => official.add(new Option(item.name, String(item.id))));
       recipientsLoaded = true;
-      const missingRecipient = companyRecipient
+      const missingRecipient = delivery.dataset.companyRecipient === "true"
         ? "Für das empfangende Buchwerk ist keine E-Mail-Adresse für Rechnungseingang hinterlegt."
-        : "Keine verfügbaren Sachbearbeiter gefunden.";
+        : "Keine verfügbaren Empfänger gefunden.";
       feedback(data.items.length ? "" : missingRecipient);
     } catch (error) { feedback(error.message, true); }
-    finally { official.disabled = false; }
+    finally { updateControls(); }
   }
 
   official.addEventListener("change", async () => {
     activePreview?.abort();
     preview.hidden = true;
-    send.disabled = true;
+    updateControls();
     if (!official.value) { feedback(""); return; }
     const selected = official.value;
     const controller = new AbortController();
@@ -174,70 +201,80 @@ document.addEventListener("DOMContentLoaded", () => {
     requestId = newRequestId();
     feedback("E-Mail-Adresse und Vorlage werden geladen …");
     try {
-      const url = new URL(modal.dataset.previewUrl, window.location.origin);
+      const url = new URL(delivery.dataset.previewUrl, window.location.origin);
       url.searchParams.set("official_id", selected);
       const data = await jsonResponse(await fetch(url, {signal: controller.signal, cache: "no-store", headers: {Accept: "application/json"}}));
-      if (controller.signal.aborted || !modalOpen || official.value !== selected) return;
+      if (controller.signal.aborted || official.value !== selected) return;
       document.getElementById("invoiceDeliveryRecipient").textContent = data.recipient;
       document.getElementById("invoiceDeliverySubject").textContent = data.subject;
       templateBody = data.body;
       if (!bodyEdited) body.value = templateBody;
-      body.readOnly = false;
-      resetBody.disabled = false;
       preview.hidden = false;
-      send.disabled = false;
+      updateControls();
       feedback("");
     } catch (error) {
-      if (!controller.signal.aborted && modalOpen && official.value === selected) feedback(error.message, true);
+      if (!controller.signal.aborted && official.value === selected) feedback(error.message, true);
     }
   });
 
   send.addEventListener("click", async () => {
-    if (sending || send.disabled || !official.value) return;
-    if (!body.reportValidity()) return;
-    sending = true;
-    send.disabled = true;
-    official.disabled = true;
-    client.disabled = true;
-    system.disabled = true;
-    body.readOnly = true;
-    resetBody.disabled = true;
+    if (busy || waiting || send.disabled || !official.value || !body.reportValidity()) return;
+    busy = true;
+    updateControls();
     feedback("Rechnung wird zum Versand übergeben …");
     try {
-      const item = await jsonResponse(await fetch(modal.dataset.sendUrl, {
+      const item = await jsonResponse(await fetch(delivery.dataset.sendUrl, {
         method: "POST", headers: {Accept: "application/json", "Content-Type": "application/json", "X-CSRFToken": document.getElementById("invoiceDeliveryCsrf").value},
-        body: JSON.stringify({official_id: official.value, request_id: requestId, body: body.value})
+        body: JSON.stringify({official_id: official.value, request_id: requestId, body: body.value, complete_invoice: true})
       }));
       showState(item);
-      clearTimeout(pollTimer);
       pollCount = 0;
-      await loadStatus(item.id);
-    } catch (error) { feedback(error.message, true); send.disabled = false; }
+      if (waiting && !["sent", "uncertain"].includes(item.state)) await loadStatus(item.id);
+    } catch (error) { feedback(error.message, true); }
     finally {
-      sending = false; official.disabled = false; client.disabled = false; system.disabled = false;
-      body.readOnly = send.disabled;
-      resetBody.disabled = send.disabled;
+      busy = false;
+      updateControls();
     }
   });
 
-  client.addEventListener("change", updateMode);
-  system.addEventListener("change", updateMode);
-  modal.addEventListener("show.bs.modal", () => {
-    modalOpen = true;
-    requestId = newRequestId();
-    recipientsLoaded = false;
-    official.value = "";
-    templateBody = "";
-    bodyEdited = false;
-    body.value = "";
-    body.readOnly = false;
-    resetBody.disabled = false;
-    preview.hidden = true;
-    send.disabled = true;
-    feedback("");
-    updateMode();
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (busy || waiting || system.checked) return;
+    const data = new FormData(form);
+    busy = true;
+    updateControls();
+    if (event.submitter) event.submitter.disabled = true;
+    feedback("Datei wird erstellt …");
+    try {
+      const response = await fetch(form.action, {method: "POST", body: data});
+      const contentType = response.headers.get("Content-Type") || "";
+      if (!response.ok || response.redirected || !["application/pdf", "message/rfc822"].some(type => contentType.includes(type))) {
+        const error = contentType.includes("application/json") ? await response.json() : {};
+        throw new Error(error.message || "Die Datei konnte nicht heruntergeladen werden.");
+      }
+      const filename = response.headers.get("Content-Disposition")?.match(/filename="?([^";]+)/i)?.[1];
+      const fileUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = fileUrl;
+      link.download = filename || (print.checked ? "Rechnung.pdf" : "Rechnung.eml");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      waiting = true;
+      feedback("Datei heruntergeladen. Die Rechnung wurde abgeschlossen.");
+      setTimeout(() => {
+        URL.revokeObjectURL(fileUrl);
+        window.location.assign(delivery.dataset.invoiceUrl);
+      }, 1000);
+    } catch (error) { feedback(error.message, true); }
+    finally {
+      busy = false;
+      if (event.submitter) event.submitter.disabled = waiting;
+      updateControls();
+    }
   });
-  modal.addEventListener("hide.bs.modal", event => { if (sending) event.preventDefault(); });
-  modal.addEventListener("hidden.bs.modal", () => { modalOpen = false; activePreview?.abort(); });
-  loadStatus().catch(() => {});
+
+  [client, system, print].forEach(mode => mode.addEventListener("change", updateMode));
+  updateMode();
+  if (waiting) loadStatus(delivery.dataset.notificationId).catch(error => feedback(error.message, true));
 });

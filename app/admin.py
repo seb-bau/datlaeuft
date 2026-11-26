@@ -424,6 +424,7 @@ def dashboard() -> Any:
         my_invoice_count = Invoice.query.filter(
             Invoice.responsible_user_id == current_user.id,
             Invoice.status.in_((InvoiceStatus.DRAFT.value, InvoiceStatus.FINALIZED.value)),
+            Invoice.completed_at.is_(None),
         ).count()
     my_open_ticket_count = 0
     if current_user.is_admin or current_user.is_foreman:
@@ -2947,15 +2948,12 @@ def invoice_finalize(
             invoice_id,
         )
         flash(
-            "Die Rechnung konnte nicht "
-            "festgeschrieben werden.",
+            "Die Rechnung konnte nicht erstellt werden.",
             "danger",
         )
     else:
         flash(
-            "Die Rechnung wurde als "
-            f"{invoice.invoice_number} "
-            "festgeschrieben. Die verknüpften "
+            f"Rechnung {invoice.invoice_number} wurde erstellt. Die verknüpften "
             "Aufträge wurden zur Erledigung "
             "an Wowiport vorgemerkt.",
             "success",
@@ -7244,16 +7242,19 @@ def offer_agreement(
 @admin_bp.get("/admin/invoices")
 @invoice_required
 def invoices() -> Any:
-    status_labels = {"active": "Entwürfe und festgeschriebene Rechnungen", "draft": "Entwurf", "finalized": "Festgeschrieben", "canceled": "Storniert"}
+    status_labels = {
+        "active": "Offene Rechnungen", "draft": "Entwurf", "finalized": "Rechnung erstellt",
+        "sent": "Rechnung verschickt", "canceled": "Storniert",
+    }
     creator_filter = request.args.get("creator", "all").strip()
     responsible_filter = request.args.get("responsible", "mine").strip()
-    status_filter = request.args.get("status", "all").strip()
+    status_filter = request.args.get("status", "active").strip()
     if creator_filter not in {"all", "mine"} and not (creator_filter.isdecimal() and len(creator_filter) <= 18):
         creator_filter = "all"
     if responsible_filter not in {"all", "mine"} and not (responsible_filter.isdecimal() and len(responsible_filter) <= 18):
         responsible_filter = "mine"
     if status_filter not in {"all", *status_labels}:
-        status_filter = "all"
+        status_filter = "active"
     query = Invoice.query.options(
         selectinload(Invoice.created_by), selectinload(Invoice.responsible_user),
         selectinload(Invoice.commission_links),
@@ -7263,7 +7264,15 @@ def invoices() -> Any:
     if responsible_filter != "all":
         query = query.filter(Invoice.responsible_user_id == (current_user.id if responsible_filter == "mine" else int(responsible_filter)))
     if status_filter == "active":
-        query = query.filter(Invoice.status.in_((InvoiceStatus.DRAFT.value, InvoiceStatus.FINALIZED.value)))
+        query = query.filter(
+            Invoice.status.in_((InvoiceStatus.DRAFT.value, InvoiceStatus.FINALIZED.value)),
+            Invoice.completed_at.is_(None),
+        )
+    elif status_filter in {"finalized", "sent"}:
+        query = query.filter(
+            Invoice.status == InvoiceStatus.FINALIZED.value,
+            Invoice.completed_at.is_not(None) if status_filter == "sent" else Invoice.completed_at.is_(None),
+        )
     elif status_filter != "all":
         query = query.filter(Invoice.status == status_filter)
     creator_choices = User.query.join(Invoice, Invoice.created_by_user_id == User.id).distinct().order_by(User.display_name, User.id).all()
@@ -7298,8 +7307,9 @@ def invoice_responsibility(invoice_id):
 @admin_bp.route("/admin/invoices/<int:invoice_id>/cover-letter", methods=["GET", "POST", "DELETE"])
 @invoice_required
 def invoice_cover_letter(invoice_id):
-    from .invoice_correspondence import cover_letter_values, invoice_correspondence_pdf, letter_date
-    from .settings import validate_cover_letter_text
+    from .invoice_correspondence import cover_letter_values, invoice_correspondence_pdf
+    from .invoice_delivery import pending_invoice_completion
+
     item = Invoice.query.filter_by(id=invoice_id).populate_existing().with_for_update().first_or_404()
     if item.tenant_billing_reference:
         return jsonify(message="Bitte nutzen Sie in der Rechnungsansicht „Anschreiben zur Mieterbelastung“."), 409
@@ -7307,6 +7317,8 @@ def invoice_cover_letter(invoice_id):
         response = jsonify(cover_letter_values(item))
         response.headers["Cache-Control"] = "private, no-store, max-age=0"
         return response
+    if pending_invoice_completion(item):
+        return jsonify(message="Das Anschreiben ist während des Direktversands gesperrt."), 409
     try:
         if request.method == "DELETE":
             had_letter = item.cover_letter_title is not None
@@ -7316,13 +7328,7 @@ def invoice_cover_letter(invoice_id):
             audit("invoice.cover_letter.remove", "invoice", item.id)
             db.session.commit()
             return jsonify(message="Anschreiben entfernt.")
-        item.cover_letter_title = validate_cover_letter_text(request.form.get("title"), title=True)
-        item.cover_letter_text = validate_cover_letter_text(request.form.get("text"))
-        item.cover_letter_date = item.cover_letter_date or letter_date()
-        content = invoice_correspondence_pdf(item)
-        if item.status != InvoiceStatus.DRAFT.value:
-            register_invoice_archive_pdf(item, content)
-        audit("invoice.cover_letter.update", "invoice", item.id)
+        save_invoice_cover_letter(item)
         db.session.commit()
     except ValueError as exc:
         db.session.rollback()
@@ -7335,6 +7341,59 @@ def invoice_cover_letter(invoice_id):
         current_app.logger.exception("invoice_cover_letter_failed invoice_id=%s", invoice_id)
         return jsonify(message="Das Anschreiben konnte nicht erstellt werden. Bitte den Briefbogen und die Rechnungsdaten prüfen."), 502
     return jsonify(message="Anschreiben gespeichert.", url=url_for("admin.invoice_correspondence", invoice_id=item.id))
+
+
+def save_invoice_cover_letter(invoice: Invoice) -> None:
+    from .invoice_correspondence import invoice_correspondence_pdf, letter_date
+    from .settings import validate_cover_letter_text
+
+    invoice.cover_letter_title = validate_cover_letter_text(request.form.get("title"), title=True)
+    invoice.cover_letter_text = validate_cover_letter_text(request.form.get("text"))
+    invoice.cover_letter_date = invoice.cover_letter_date or letter_date()
+    content = invoice_correspondence_pdf(invoice)
+    if invoice.status != InvoiceStatus.DRAFT.value:
+        register_invoice_archive_pdf(invoice, content)
+    audit("invoice.cover_letter.update", "invoice", invoice.id)
+
+
+@admin_bp.route("/admin/invoices/<int:invoice_id>/abschluss", methods=["GET", "POST"])
+@invoice_required
+def invoice_complete(invoice_id: int):
+    from .invoice_correspondence import cover_letter_values
+    from .invoice_delivery import pending_invoice_completion
+
+    saving = request.method == "POST"
+    item = db.get_or_404(Invoice, invoice_id, populate_existing=saving, with_for_update=saving)
+    if item.status != InvoiceStatus.FINALIZED.value or item.completed_at:
+        return redirect(url_for("admin.invoice_edit", invoice_id=item.id))
+    delivery_url = url_for("invoice_delivery.delivery_complete", invoice_id=item.id)
+    if pending_invoice_completion(item):
+        return redirect(delivery_url)
+    if item.tenant_billing_reference and item.invoice_kind == InvoiceKind.INVOICE.value:
+        return redirect(url_for("admin.invoice_tenant_charge", invoice_id=item.id, complete=1))
+
+    values = cover_letter_values(item)
+    if saving:
+        try:
+            if request.form.get("action") == "skip":
+                if item.cover_letter_title is not None:
+                    raise ValueError("Das gespeicherte Anschreiben ist Teil des Versands.")
+            else:
+                values.update(title=request.form.get("title", ""), text=request.form.get("text", ""))
+                if item.tenant_billing_reference:
+                    raise ValueError("Für diese Stornorechnung steht kein Anschreiben zur Verfügung.")
+                save_invoice_cover_letter(item)
+            db.session.commit()
+            return redirect(delivery_url)
+        except (ValueError, InvoiceDocumentError) as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("invoice_completion_letter_failed invoice_id=%s", invoice_id)
+            flash("Das Anschreiben konnte nicht gespeichert werden. Bitte den Briefbogen und die Rechnungsdaten prüfen.", "danger")
+
+    return render_template("admin/invoice_completion_letter.html", item=item, values=values)
 
 
 @admin_bp.post("/admin/invoices/<int:invoice_id>/cover-letter/preview")
@@ -7378,27 +7437,37 @@ def tenant_charge_invoice(invoice_id: int, *, lock: bool = False) -> Invoice:
     if not invoice.tenant_billing_reference or invoice.invoice_kind != InvoiceKind.INVOICE.value:
         abort(404)
     if invoice.status != InvoiceStatus.FINALIZED.value:
-        abort(409, description="Die Mieterbelastung setzt eine festgeschriebene Rechnung voraus.")
+        abort(409, description="Erstellen Sie zuerst die Rechnung für die Mieterbelastung.")
     return invoice
 
 
 @admin_bp.route("/admin/invoices/<int:invoice_id>/tenant-charge", methods=["GET", "POST"])
+@admin_bp.post("/admin/invoices/<int:invoice_id>/tenant-charge/preview", endpoint="invoice_tenant_charge_preview", defaults={"preview": True})
 @invoice_required
-def invoice_tenant_charge(invoice_id: int):
+def invoice_tenant_charge(invoice_id: int, preview: bool = False):
     from .invoice_correspondence import letter_date
     from .settings import validate_tenant_charge_closing
     from .tenant_charge_letter import (
-        tenant_charge_package, tenant_letter_closing, tenant_letter_payment, tenant_letter_purpose, tenant_letter_recipients,
+        tenant_charge_package, tenant_letter_closing, tenant_letter_due_date, tenant_letter_payment,
+        tenant_letter_purpose, tenant_letter_recipients,
     )
 
-    item = tenant_charge_invoice(invoice_id, lock=request.method == "POST")
+    item = tenant_charge_invoice(invoice_id, lock=request.method == "POST" and not preview)
+    completing = request.args.get("complete") == "1" and not preview
+    if completing and item.completed_at:
+        return redirect(url_for("admin.invoice_edit", invoice_id=item.id))
+    if completing or (request.method == "POST" and not preview):
+        from .invoice_delivery import pending_invoice_completion
+
+        if pending_invoice_completion(item):
+            return redirect(url_for("invoice_delivery.delivery_complete", invoice_id=item.id))
     company = db.get_or_404(WowiCompanyCode, item.tenant_billing_reference["company_code_id"])
     today = letter_date()
     saved = item.tenant_charge_letter or {}
     values = {
         "purpose": saved.get("purpose", ""),
         "closing": request.form.get("closing"),
-        "due_date": saved.get("due_date", ""),
+        "due_date": saved.get("due_date") or tenant_letter_due_date(today).isoformat(),
         "person_id": (saved.get("recipient") or {}).get("person_id"),
         "caseworker_name": saved.get("caseworker_name", current_user.display_name),
         "include_work_reports": saved.get("include_work_reports", False),
@@ -7444,23 +7513,31 @@ def invoice_tenant_charge(invoice_id: int):
                 "payment": payment, "revision": saved.get("revision", 0) + 1,
             }
             content = tenant_charge_package(item, company, letter)
+            if preview:
+                return document_preview_response(content, "Mieterbelastung-Vorschau.pdf")
             register_invoice_archive_pdf(item, content)
             item.tenant_charge_letter = letter
             audit("invoice.tenant_charge.save", "invoice", item.id, {"payment_method": payment["method"]})
             db.session.commit()
             flash("Anschreiben „Mieterbelastung“ gespeichert.", "success")
-            return redirect(url_for("admin.invoice_tenant_charge", invoice_id=item.id))
+            endpoint = "invoice_delivery.delivery_complete" if completing else "admin.invoice_tenant_charge"
+            return redirect(url_for(endpoint, invoice_id=item.id))
     except (ValueError, InvoiceDocumentError, WorkReportDocumentError) as exc:
         db.session.rollback()
+        if preview:
+            return jsonify(error=str(exc)), 400
         flash(str(exc), "danger")
     except Exception:
         db.session.rollback()
         current_app.logger.exception("tenant_charge_letter_failed invoice_id=%s", invoice_id)
-        flash("Das Mieteranschreiben konnte nicht vorbereitet werden. Bitte prüfen Sie Wowiport und den Briefbogen.", "danger")
+        message = "Das Mieteranschreiben konnte nicht vorbereitet werden. Bitte prüfen Sie Wowiport und den Briefbogen."
+        if preview:
+            return jsonify(error=message), 502
+        flash(message, "danger")
 
     response = current_app.make_response(render_template(
         "admin/invoice_tenant_charge.html", item=item, company=company, today=today,
-        values=values, has_work_reports=has_work_reports, recipients=recipients, payment=payment,
+        values=values, has_work_reports=has_work_reports, recipients=recipients, payment=payment, completing=completing,
     ))
     response.headers["Cache-Control"] = "private, no-store, max-age=0"
     return response
@@ -7696,8 +7773,7 @@ def invoice_edit(
     if saving:
         if not editable:
             flash(
-                "Eine festgeschriebene Rechnung "
-                "kann nicht geändert werden.",
+                "Die Rechnungsdaten können nach dem Erstellen der Rechnung nicht geändert werden.",
                 "danger",
             )
 
@@ -8149,8 +8225,28 @@ def invoice_edit_context(
     )
     has_any_work_reports = bool(report_counts)
 
+    pending_delivery = None
+    if item.status == InvoiceStatus.FINALIZED.value and item.completed_at is None:
+        from .invoice_delivery import pending_invoice_completion
+
+        pending_delivery = pending_invoice_completion(item)
+
+    archive_url = None
+    if item.dms_document_id:
+        from .dms_service import invoice_dms_url
+
+        archive_url = invoice_dms_url(item)
+
+    completion_mode_labels = {
+        "direct": "Direktversand", "outlook": "Versand per Outlook", "print": "Kein Versand (nur Druck)",
+    }
     return {
         "item": item,
+        "completion_mode_label": completion_mode_labels.get(item.completion_mode),
+        "completion_date_label": format_local_datetime(item.completed_at) if item.completed_at else None,
+        "archive_date_label": format_local_datetime(item.dms_archived_at) if item.dms_archived_at else None,
+        "invoice_dms_url": archive_url,
+        "pending_delivery": pending_delivery,
         "responsibility_users": User.query.filter(
             User.is_active_flag.is_(True), db.or_(User.is_admin.is_(True), User.can_manage_invoices.is_(True)),
         ).order_by(User.display_name, User.id).all(),
@@ -8509,6 +8605,8 @@ def save_invoice_draft_form(item: Invoice) -> None:
             save_invoice_recipient_address_form(item)
     elif not item.tenant_billing_reference:
         save_invoice_recipient_form(item)
+    elif not item.tenant_billing_to_company and "recipient_type" in request.form:
+        save_invoice_recipient_address_form(item)
 
     if "insurance_claim_number" in request.form:
         claim_number = optional_form_text("insurance_claim_number")
@@ -8538,11 +8636,8 @@ def save_invoice_draft_form(item: Invoice) -> None:
             "Leistungsende",
         )
     )
-    item.due_date = optional_form_date(
-        request.form.get(
-            "due_date"
-        ),
-        "Fälligkeitsdatum",
+    item.due_date = None if item.tenant_billing_reference else optional_form_date(
+        request.form.get("due_date"), "Fälligkeitsdatum",
     )
     item.introductory_text = (
         optional_form_text(
@@ -8615,7 +8710,7 @@ def invoice_agreement(
             "nicht zum Buchwerk der Rechnung."
         )
 
-    if invoice.tenant_billing_reference or invoice.company_code.tenant_billing_issuer_id is not None:
+    if invoice.tenant_billing_reference or invoice.company_code.uses_tenant_charge_letter:
         raise ValueError("Bitte verwenden Sie für diesen Mietvertrag den Einstieg „Rechnung mit Mietvertrag“.")
 
     return agreement
@@ -12484,6 +12579,8 @@ def save_company_code_invoice_form(
             "zweistellig sein."
         )
 
+    if "tenant_charge_letter_setting" in request.form:
+        item.tenant_charge_letter_enabled = "tenant_charge_letter_enabled" in request.form
     if "tenant_billing_issuer_id" in request.form:
         issuer_id = optional_form_int(request.form.get("tenant_billing_issuer_id"), "Ausstellendes Buchwerk")
         if issuer_id is not None and (issuer_id == item.id or db.session.get(WowiCompanyCode, issuer_id) is None):

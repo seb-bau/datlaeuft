@@ -17,14 +17,16 @@ class Element {
 }
 
 function fixture({editable = true, mail = true, fetchResult} = {}) {
-  const names = ["invoiceAttachments", "invoiceAttachmentForm", "invoiceAttachmentList", "invoiceAttachmentMessage", "invoiceAttachmentFiles", "invoiceAttachmentUpload", "invoiceDeliveryModal", "invoiceDeliveryClient", "invoiceDeliverySystem", "invoiceDeliveryOfficial", "invoiceDeliveryPreview", "invoiceDeliverySend", "invoiceDeliveryMessage", "invoiceDeliveryLastState", "invoiceDeliveryClientPanel", "invoiceDeliverySystemPanel", "invoiceDeliveryRecipient", "invoiceDeliverySubject", "invoiceDeliveryBody", "invoiceDeliveryResetBody", "invoiceDeliveryCsrf"];
+  const names = ["invoiceAttachments", "invoiceAttachmentForm", "invoiceAttachmentList", "invoiceAttachmentMessage", "invoiceAttachmentFiles", "invoiceAttachmentUpload", "invoiceDelivery", "invoiceDeliveryClient", "invoiceDeliverySystem", "invoiceDeliveryOfficial", "invoiceDeliveryPreview", "invoiceDeliverySend", "invoiceDeliveryMessage", "invoiceDeliveryForm", "invoiceDeliveryModes", "invoiceDeliveryPrint", "invoiceDeliveryClientPanel", "invoiceDeliverySystemPanel", "invoiceDeliveryPrintPanel", "invoiceDeliveryRecipient", "invoiceDeliverySubject", "invoiceDeliveryBody", "invoiceDeliveryResetBody", "invoiceDeliveryCsrf"];
   const elements = Object.fromEntries(names.map(name => [name, new Element()]));
   elements.invoiceAttachments.dataset = {endpoint: "/admin/invoices/1/attachments", documentUrl: "/admin/invoices/1/attachments/0"};
   elements.invoiceAttachmentForm.elements = {csrf_token: {value: "csrf-test"}};
   elements.invoiceDeliveryCsrf.value = "csrf-test";
   elements.invoiceDeliveryClient.checked = true;
   elements.invoiceDeliverySend.disabled = true;
-  elements.invoiceDeliveryModal.dataset = {recipientsUrl: "/recipients", previewUrl: "/preview", sendUrl: "/send", statusUrl: "/status"};
+  elements.invoiceDeliveryPreview.hidden = true;
+  elements.invoiceDelivery.dataset = {recipientsUrl: "/recipients", previewUrl: "/preview", sendUrl: "/send", statusUrl: "/status", invoiceUrl: "/invoice"};
+  const navigation = [];
   const calls = [];
   const timers = new Map();
   let nextTimer = 0;
@@ -32,10 +34,10 @@ function fixture({editable = true, mail = true, fetchResult} = {}) {
   const items = [{id: 7, name: "anlage.pdf", pages: 2}];
   vm.runInNewContext(source, {
     document: {
-      getElementById: name => name === "invoiceAttachmentForm" && !editable || name === "invoiceDeliveryModal" && !mail ? null : elements[name],
+      getElementById: name => name === "invoiceAttachmentForm" && !editable || name === "invoiceDelivery" && !mail ? null : elements[name],
       createElement: () => new Element(), addEventListener: (name, callback) => callback()
     },
-    window: {location: {origin: "https://example.invalid"}}, URL, AbortController,
+    window: {location: {origin: "https://example.invalid", assign: target => navigation.push(target)}}, URL, AbortController,
     FormData: class { constructor(form) { this.form = form; } },
     Option: class { constructor(text, value) { this.textContent = text; this.value = value; } },
     crypto: {randomUUID: () => `request-${++nonce}`},
@@ -56,8 +58,8 @@ function fixture({editable = true, mail = true, fetchResult} = {}) {
     }
   });
   const fire = async (name, event, value = {}) => { for (const handler of elements[name].listeners[event] || []) await handler(value); };
-  return {elements, calls, timers, items, fire,
-    openSystem: async () => { await fire("invoiceDeliveryModal", "show.bs.modal"); elements.invoiceDeliverySystem.checked = true; elements.invoiceDeliveryClient.checked = false; await fire("invoiceDeliverySystem", "change"); },
+  return {elements, calls, timers, items, fire, navigation,
+    openSystem: async () => { elements.invoiceDeliveryPrint.checked = false; elements.invoiceDeliverySystem.checked = true; elements.invoiceDeliveryClient.checked = false; await fire("invoiceDeliverySystem", "change"); },
     choose: async id => { elements.invoiceDeliveryOfficial.value = String(id); await fire("invoiceDeliveryOfficial", "change"); }};
 }
 
@@ -112,11 +114,13 @@ test("system delivery previews the selected official and reports the completed s
   assert.equal(JSON.parse(request.body).official_id, "901");
   assert.equal(JSON.parse(request.body).body, "Bitte bearbeiten.");
   assert.equal(request.headers["X-CSRFToken"], "csrf-test");
-  assert.match(state.elements.invoiceDeliveryLastState.textContent, /E-Mail versendet/);
+  assert.equal(JSON.parse(request.body).complete_invoice, true);
+  assert.match(state.elements.invoiceDeliveryMessage.textContent, /E-Mail versendet/);
+  assert.deepEqual(state.navigation, ["/invoice"]);
   assert.equal(state.elements.invoiceDeliverySend.disabled, true);
 });
 
-test("late address responses cannot replace a different official or populate a closed dialog", async () => {
+test("late address responses cannot replace a different official", async () => {
   let resolve;
   const state = fixture({fetchResult: async url => url.pathname === "/preview" && url.searchParams.get("official_id") === "901" ? new Promise(done => { resolve = done; }) : null});
   await state.openSystem();
@@ -125,12 +129,6 @@ test("late address responses cannot replace a different official or populate a c
   await state.choose(902);
   resolve(response({recipient: "wrong@example.invalid", subject: "Falsch", body: "Falsch"}));
   await first;
-  assert.equal(state.elements.invoiceDeliveryRecipient.textContent, "office@example.invalid");
-  const pending = state.choose(901);
-  await settle();
-  await state.fire("invoiceDeliveryModal", "hidden.bs.modal");
-  resolve(response({recipient: "closed@example.invalid", subject: "Falsch", body: "Falsch"}));
-  await pending;
   assert.equal(state.elements.invoiceDeliveryRecipient.textContent, "office@example.invalid");
 });
 
@@ -177,7 +175,7 @@ test("individual mail text survives recipient and delivery mode changes and can 
   assert.equal(body.value, "");
 });
 
-test("sending freezes the edited text for that mail and a new dialog starts from the template", async () => {
+test("sending freezes the edited text and disables the other dispatch modes", async () => {
   let resolve;
   const state = fixture({fetchResult: async url => url.pathname === "/send" ? new Promise(done => { resolve = done; }) : null});
   await state.openSystem();
@@ -198,11 +196,8 @@ test("sending freezes the edited text for that mail and a new dialog starts from
   resolve(response({id: 12, state: "pending", recipient: "office@example.invalid"}));
   await sending;
   assert.equal(body.readOnly, true);
-  await state.fire("invoiceDeliveryModal", "hidden.bs.modal");
-  await state.openSystem();
-  await state.choose(901);
-  assert.equal(body.value, "Bitte bearbeiten.");
-  assert.equal(body.readOnly, false);
+  assert.equal(state.elements.invoiceDeliveryModes.disabled, true);
+  assert.equal(body.value, "Spezielle Hinweise\nBitte beachten.");
 });
 
 test("invalid text fields are checked before a mail is queued", async () => {
@@ -213,4 +208,15 @@ test("invalid text fields are checked before a mail is queued", async () => {
   await state.fire("invoiceDeliverySend", "click");
   assert.equal(state.calls.some(call => call.url.pathname === "/send"), false);
   assert.equal(state.elements.invoiceDeliverySend.disabled, false);
+});
+
+test("print mode shows only the print panel", async () => {
+  const state = fixture();
+  await state.openSystem();
+  state.elements.invoiceDeliverySystem.checked = false;
+  state.elements.invoiceDeliveryPrint.checked = true;
+  await state.fire("invoiceDeliveryPrint", "change");
+  assert.equal(state.elements.invoiceDeliverySystemPanel.hidden, true);
+  assert.equal(state.elements.invoiceDeliveryClientPanel.hidden, true);
+  assert.equal(state.elements.invoiceDeliveryPrintPanel.hidden, false);
 });
