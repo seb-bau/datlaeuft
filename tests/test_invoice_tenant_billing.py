@@ -311,8 +311,6 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.assertEqual(invoice.status, "finalized")
 
         definition = self.settings.SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE
-        self.settings.settings.set(definition, "Beste Grüße\n{seller_name}")
-        self.db.session.commit()
         agreement, mode = self.api_rows()
         self.remote.read_all_rows.side_effect = lambda endpoint, *_args, **_kwargs: [agreement] if endpoint.endswith("LicenseAgreements") else [mode]
         url = invoice_url + "/tenant-charge"
@@ -322,8 +320,11 @@ class InvoiceTenantBillingTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             return etree.HTML(response.get_data(as_text=True)).xpath("string(//textarea[@name='closing'])")
 
-        self.assertEqual(closing_value(), "Beste Grüße\nTestgenossenschaft eG")
-        closing = "Viele Grüße\nIhr Serviceteam"
+        self.assertEqual(closing_value(), "Mit freundlichen Grüßen\nTestgenossenschaft eG\n{sig}")
+        self.settings.settings.set(definition, "Beste Grüße\n{seller_name}\n{sig}")
+        self.db.session.commit()
+        self.assertEqual(closing_value(), "Beste Grüße\nTestgenossenschaft eG\n{sig}")
+        closing = "Viele Grüße\n<b>Ihr Serviceteam</b>\nTestgenossenschaft eG\n{sig}"
         data = {
             "purpose": "Reparatur", "person_id": self.party["person_id"], "payment_method": "sepa_debit",
             "due_date": (date.today() + timedelta(days=10)).isoformat(),
@@ -334,9 +335,13 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.assertEqual(closing_value(), closing)
         pdf = self.client.get(url + "/document")
         self.assertEqual(pdf.status_code, 200)
-        text = PdfReader(BytesIO(pdf.data)).pages[0].extract_text()
-        self.assertIn("Viele Grüße", text)
-        self.assertIn("Ihr Serviceteam", text)
+        for content in (pdf.data, self.archive.call_args.args[4]):
+            reader = PdfReader(BytesIO(content))
+            text = reader.pages[0].extract_text()
+            self.assertIn("Viele Grüße", text)
+            self.assertIn("<b>Ihr Serviceteam</b>", text)
+            self.assertIn("Testgenossenschaft eG\n{sig}", text)
+            self.assertIn("factur-x.xml", reader.attachments)
 
         self.assertEqual(self.client.post(url, data={**data, "revision": 1}).location, url)
         self.assertEqual(closing_value(), closing)

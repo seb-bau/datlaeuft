@@ -1,11 +1,13 @@
 from datetime import date
 from types import SimpleNamespace
 
+from markupsafe import escape
+
 from .document_previews import address_lines
-from .invoice_correspondence import letter_date, prepend_letter_pdf, render_letter_pdf
+from .invoice_correspondence import SIGNATURE_ANCHOR, letter_date, prepend_letter_pdf, render_letter_pdf
 from .invoice_document import _format_money
 from .invoice_payments import masked_payment_iban, payment_options_from_wowiport
-from .settings import SettingKeys, settings
+from .settings import LEGACY_TENANT_CHARGE_CLOSING_TEMPLATE, SettingKeys, settings
 from .tenant_billing import choose_contract_recipient, contract_recipients
 
 
@@ -77,9 +79,8 @@ def tenant_letter_purpose(invoice) -> str:
 def tenant_letter_closing(company, letter) -> str:
     if "closing" in letter:
         return letter["closing"]
-    definition = SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE
-    template = definition.default if letter else settings.get(definition)
-    return template.format(seller_name=company.seller_name or company.name).strip()
+    template = LEGACY_TENANT_CHARGE_CLOSING_TEMPLATE if letter else settings.get(SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE)
+    return template.format(seller_name=company.seller_name or company.name, sig="{sig}").strip()
 
 
 def tenant_letter_context(invoice, company, letter) -> dict:
@@ -113,13 +114,13 @@ def tenant_letter_context(invoice, company, letter) -> dict:
             terms += f" Die BIC lautet {payment['bic']}."
         terms += f" Bitte geben Sie den Mietvertrag {agreement} als Verwendungszweck an."
 
-    text = (
+    text = escape(
         f"Guten Tag {recipient['name']},\n\n{letter['purpose']}\n\n{terms}\n\n"
         "Eine Kopie der Rechnung ist beigefügt."
     )
     closing = tenant_letter_closing(company, letter)
     if closing:
-        text += f"\n\n{closing}"
+        text += "\n\n" + escape(closing).replace("{sig}", SIGNATURE_ANCHOR)
     return {
         **vars(address),
         "title": "Mieterbelastung", "text": text,
