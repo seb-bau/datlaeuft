@@ -179,8 +179,12 @@ class InvoiceWorkflowTests(unittest.TestCase):
         digest = invoice.document_sha256
         self.assign(invoice)
         self.assertEqual(self.save_letter(invoice).status_code, 200)
+        archived = self.archive.call_args.args[4]
+        archive_count = self.archive.call_count
         response = self.client.get(f"/admin/invoices/{invoice.id}/correspondence")
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(archived, response.data)
+        self.assertEqual(self.archive.call_count, archive_count)
         reader = PdfReader(BytesIO(response.data))
         self.assertEqual(len(reader.pages), 5)
         first = reader.pages[0].extract_text()
@@ -193,6 +197,19 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertEqual(reader.attachments["factur-x.xml"][0], PdfReader(BytesIO(original)).attachments["factur-x.xml"][0])
         self.assertEqual(self.delivery.final_invoice_pdf(invoice), original)
         self.assertEqual(invoice.document_sha256, digest)
+        self.assertEqual(self.client.delete(f"/admin/invoices/{invoice.id}/cover-letter").status_code, 200)
+        self.assertEqual(self.archive.call_args.args[4], original)
+
+    def test_letter_saved_in_the_draft_enters_the_first_archive_version(self):
+        invoice = self.complete_draft()
+        self.prepare_stationery()
+        self.assertEqual(self.save_letter(invoice, text="ANSCHREIBEN FÜR DAS ARCHIV").status_code, 200)
+        self.archive.assert_not_called()
+        self.invoice_document.create_invoice_document(invoice)
+        archived = PdfReader(BytesIO(self.archive.call_args.args[4]))
+        self.assertIn("ANSCHREIBEN FÜR DAS ARCHIV", archived.pages[0].extract_text())
+        self.assertNotIn("ENTWURF", archived.pages[0].extract_text())
+        self.assertIn("factur-x.xml", archived.attachments)
 
     def test_overlay_preview_does_not_save_and_placeholders_follow_finalization(self):
         invoice = self.draft("invoice")

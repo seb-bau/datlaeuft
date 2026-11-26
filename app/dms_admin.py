@@ -70,6 +70,8 @@ def connection_page():
                 connection()
                 seed_profiles()
                 for document_type in DOCUMENT_TYPES:
+                    if document_type == "invoice_with_work_reports":
+                        continue
                     try:
                         profile_snapshot(document_type)
                     except DmsError as exc:

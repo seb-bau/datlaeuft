@@ -207,6 +207,7 @@ from .invoice_service import (
 from .invoice_document import (
     InvoiceDocumentError,
     create_invoice_document,
+    register_invoice_archive_pdf,
     remove_invoice_documents,
     resolve_invoice_document_path,
 )
@@ -3059,8 +3060,6 @@ def invoice_document_with_work_reports(
                 invoice_id=invoice.id,
             )
         )
-
-    db.session.commit()
 
     return send_file(
         document,
@@ -7308,21 +7307,29 @@ def invoice_cover_letter(invoice_id):
         response = jsonify(cover_letter_values(item))
         response.headers["Cache-Control"] = "private, no-store, max-age=0"
         return response
-    if request.method == "DELETE":
-        item.cover_letter_title = item.cover_letter_text = item.cover_letter_date = None
-        audit("invoice.cover_letter.remove", "invoice", item.id)
-        db.session.commit()
-        return jsonify(message="Anschreiben entfernt.")
     try:
+        if request.method == "DELETE":
+            had_letter = item.cover_letter_title is not None
+            item.cover_letter_title = item.cover_letter_text = item.cover_letter_date = None
+            if had_letter and item.status != InvoiceStatus.DRAFT.value:
+                register_invoice_archive_pdf(item, invoice_correspondence_pdf(item))
+            audit("invoice.cover_letter.remove", "invoice", item.id)
+            db.session.commit()
+            return jsonify(message="Anschreiben entfernt.")
         item.cover_letter_title = validate_cover_letter_text(request.form.get("title"), title=True)
         item.cover_letter_text = validate_cover_letter_text(request.form.get("text"))
         item.cover_letter_date = item.cover_letter_date or letter_date()
-        invoice_correspondence_pdf(item)
+        content = invoice_correspondence_pdf(item)
+        if item.status != InvoiceStatus.DRAFT.value:
+            register_invoice_archive_pdf(item, content)
         audit("invoice.cover_letter.update", "invoice", item.id)
         db.session.commit()
     except ValueError as exc:
         db.session.rollback()
         return jsonify(message=str(exc)), 400
+    except InvoiceDocumentError as exc:
+        db.session.rollback()
+        return jsonify(message=str(exc)), 502
     except Exception:
         db.session.rollback()
         current_app.logger.exception("invoice_cover_letter_failed invoice_id=%s", invoice_id)
@@ -7381,7 +7388,7 @@ def invoice_tenant_charge(invoice_id: int):
     from .invoice_correspondence import letter_date
     from .settings import validate_tenant_charge_closing
     from .tenant_charge_letter import (
-        render_tenant_charge_letter, tenant_letter_closing, tenant_letter_payment, tenant_letter_purpose, tenant_letter_recipients,
+        tenant_charge_package, tenant_letter_closing, tenant_letter_payment, tenant_letter_purpose, tenant_letter_recipients,
     )
 
     item = tenant_charge_invoice(invoice_id, lock=request.method == "POST")
@@ -7436,13 +7443,14 @@ def invoice_tenant_charge(invoice_id: int):
                 )},
                 "payment": payment, "revision": saved.get("revision", 0) + 1,
             }
-            render_tenant_charge_letter(item, company, letter)
+            content = tenant_charge_package(item, company, letter)
+            register_invoice_archive_pdf(item, content)
             item.tenant_charge_letter = letter
             audit("invoice.tenant_charge.save", "invoice", item.id, {"payment_method": payment["method"]})
             db.session.commit()
             flash("Anschreiben „Mieterbelastung“ gespeichert.", "success")
             return redirect(url_for("admin.invoice_tenant_charge", invoice_id=item.id))
-    except ValueError as exc:
+    except (ValueError, InvoiceDocumentError, WorkReportDocumentError) as exc:
         db.session.rollback()
         flash(str(exc), "danger")
     except Exception:
@@ -7472,7 +7480,6 @@ def invoice_tenant_charge_document(invoice_id: int):
         if item.tenant_charge_letter.get("payment") != payment:
             raise ValueError("Die Zahlungsdaten des Mietvertrags haben sich geändert. Bitte prüfen und speichern Sie das Anschreiben erneut.")
         content = tenant_charge_package(item, company, item.tenant_charge_letter)
-        db.session.commit()
     except (ValueError, WorkReportDocumentError) as exc:
         db.session.rollback()
         flash(str(exc), "danger")

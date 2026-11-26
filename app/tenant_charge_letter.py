@@ -141,11 +141,11 @@ def render_tenant_charge_letter(invoice, company, letter, *, layout=None) -> byt
     return render_letter_pdf(tenant_letter_context(invoice, company, letter), company, layout=layout)
 
 
-def tenant_charge_package(invoice, company, letter) -> bytes:
+def tenant_charge_package(invoice, company, letter, *, invoice_pdf=None) -> bytes:
     from .invoice_delivery import final_invoice_pdf
     from .work_report_document import WORK_REPORT_SCOPE_ALL, create_invoice_with_work_reports_pdf
 
-    original = final_invoice_pdf(invoice)
-    if letter["include_work_reports"]:
-        original = create_invoice_with_work_reports_pdf(invoice, WORK_REPORT_SCOPE_ALL).getvalue()
+    original = final_invoice_pdf(invoice) if invoice_pdf is None else invoice_pdf
+    if letter.get("include_work_reports"):
+        original = create_invoice_with_work_reports_pdf(invoice, WORK_REPORT_SCOPE_ALL, invoice_pdf=original).getvalue()
     return prepend_letter_pdf(original, render_tenant_charge_letter(invoice, company, letter))

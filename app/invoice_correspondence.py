@@ -30,7 +30,7 @@ def cover_letter_values(invoice):
     }
 
 
-def cover_letter_context(invoice, title, text):
+def cover_letter_context(invoice, title, text, *, preview=None):
     title = validate_cover_letter_text(title, title=True)
     text = validate_cover_letter_text(text)
     values = invoice_preview_context(invoice)
@@ -59,7 +59,7 @@ def cover_letter_context(invoice, title, text):
         )},
         "sender_line": " · ".join(address_lines(invoice, "seller") or address_lines(invoice.company_code, "seller")),
         "letter_date": (invoice.cover_letter_date or letter_date()).strftime("%d.%m.%Y"),
-        "preview": invoice.status == "draft",
+        "preview": invoice.status == "draft" if preview is None else preview,
     }
 
 
@@ -102,15 +102,18 @@ def render_letter_pdf(context, company, *, layout=None):
     return content
 
 
-def render_cover_letter(invoice, title, text, *, layout=None):
-    return render_letter_pdf(cover_letter_context(invoice, title, text), invoice.company_code, layout=layout)
+def render_cover_letter(invoice, title, text, *, layout=None, preview=None):
+    return render_letter_pdf(cover_letter_context(invoice, title, text, preview=preview), invoice.company_code, layout=layout)
 
 
-def prepend_cover_letter(invoice, data, *, title=None, text=None):
+def prepend_cover_letter(invoice, data, *, title=None, text=None, preview=None):
     if invoice.tenant_billing_reference or (title is None and invoice.cover_letter_title is None):
         return data
     values = cover_letter_values(invoice)
-    letter = render_cover_letter(invoice, values["title"] if title is None else title, values["text"] if text is None else text)
+    letter = render_cover_letter(
+        invoice, values["title"] if title is None else title,
+        values["text"] if text is None else text, preview=preview,
+    )
     return prepend_letter_pdf(data, letter)
 
 
