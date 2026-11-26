@@ -83,7 +83,7 @@
 </form>
 
 <form method="post" action="{{ url_for('dms_admin.metadata_refresh') }}"
-      class="card card-body">
+      class="card card-body mb-3">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <p>
     {{ metadata.categories|length if metadata else 0 }} Dokumentkategorien eingelesen
@@ -92,5 +92,51 @@
   <button class="btn btn-outline-primary align-self-start">
     Verbindung prüfen und Repository-Metadaten einlesen
   </button>
+</form>
+
+<form method="post" action="{{ url_for('dms_admin.invoice_dispatch_settings') }}" class="card card-body">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h2 class="h5 mb-3">Rechnungsversand über DMS</h2>
+  <div class="row g-3">
+    {% for field, label, default_label in [('postal', 'Eigenschaft für die Poststelle', 'Poststelle vorauswählen'), ('portal', 'Eigenschaft für die Mieter-App', 'Mieter-App vorauswählen')] %}
+    {% set property_id = dispatch[field ~ '_property'] %}
+    <div class="col-md-6">
+      <label class="form-label" for="dispatch-{{ field }}">{{ label }}</label>
+      <select class="form-select" id="dispatch-{{ field }}" name="{{ field }}_property">
+        <option value="">Keine Eigenschaft ausgewählt</option>
+        {% if property_id and property_id not in dispatch_fields|map(attribute=0)|list %}
+        <option value="{{ property_id }}" selected>{{ property_id }} (Metadaten erneut einlesen)</option>
+        {% endif %}
+        {% for key, name in dispatch_fields %}
+        <option value="{{ key }}" {% if key == property_id %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      <label class="form-check mt-2">
+        <input class="form-check-input" type="checkbox" name="{{ field }}_default" {% if dispatch[field ~ '_default'] %}checked{% endif %}>
+        {{ default_label }}
+      </label>
+    </div>
+    {% endfor %}
+    <div class="col-12 form-text">Die Eigenschaften werden beim Abschluss gesetzt. Wählen Sie dafür Felder ohne feste Werte in der Dokumentzuordnung.</div>
+    <div class="col-md-6">
+      <label class="form-label" for="signer_property">Feld-ID für den Poststellenbenutzer</label>
+      <input class="form-control" id="signer_property" name="signer_property" maxlength="128" value="{{ dispatch.signer_property }}">
+      <div class="form-text">In Paperwork als <code>mapping_spare_field</code> hinterlegt. Üblicher Wert ist <code>property_remark1</code>.</div>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="paperwork_url">Paperwork-Basis-URL</label>
+      <input class="form-control" id="paperwork_url" name="paperwork_url" type="url" maxlength="255" value="{{ dispatch.paperwork_url }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="paperwork_api_key">API-Schlüssel für die Paperwork-Benutzerabfrage</label>
+      <input class="form-control" id="paperwork_api_key" name="paperwork_api_key" type="password" autocomplete="new-password"
+             placeholder="{{ 'Gespeichert – leer lassen zum Beibehalten' if dispatch.has_paperwork_key else 'API-Schlüssel eingeben' }}">
+      <label class="form-check mt-2">
+        <input class="form-check-input" type="checkbox" name="clear_paperwork_api_key">
+        Gespeicherten Schlüssel löschen
+      </label>
+    </div>
+  </div>
+  <button class="btn btn-primary align-self-start mt-3" type="submit">Versandeinstellungen speichern</button>
 </form>
 {% endblock %}

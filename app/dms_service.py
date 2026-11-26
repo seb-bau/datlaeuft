@@ -178,6 +178,14 @@ def validate_profile(profile, schema):
             "und eine Kategorie auswählen."
         )
     fields = {item["id"]: item for item in schema["fields"]}
+    dispatch_flags = set()
+    if profile.document_type in INVOICE_DOCUMENT_TYPES:
+        postal_id = settings.get(SettingKeys.DMS_POSTAL_PROPERTY)
+        postal_signer_id = settings.get(SettingKeys.DMS_POSTAL_SIGNER_PROPERTY) if postal_id else ""
+        dispatch_flags = {postal_id, settings.get(SettingKeys.DMS_PORTAL_PROPERTY)} - {""}
+        dispatch_ids = dispatch_flags | ({postal_signer_id} if postal_signer_id else set())
+        if dispatch_ids.intersection({profile.key_property_id, *profile.mappings}):
+            raise DmsError("Die Versandeigenschaften werden im Rechnungsassistenten gesetzt. Bitte feste Zuordnungen entfernen.")
     key_field = fields.get(profile.key_property_id)
     if profile.key_property_id:
         key_field = fields.get(profile.key_property_id)
@@ -190,7 +198,7 @@ def validate_profile(profile, schema):
             "zur gewählten Kategorie."
         )
     for property_id, field in fields.items():
-        if property_id == profile.key_property_id:
+        if property_id == profile.key_property_id or property_id in dispatch_flags:
             continue
         mapping = profile.mappings.get(property_id)
         if not mapping or mapping.get("value") in (None, "", []):
@@ -268,7 +276,7 @@ def profile_snapshot(document_type):
 
 
 def register_generated_pdf(
-    document_type, entity_type, entity_id, filename, content, context,
+    document_type, entity_type, entity_id, filename, content, context, *, invoice_dispatch=None,
 ):
     from flask import current_app
 
@@ -285,7 +293,7 @@ def register_generated_pdf(
         latest = invoice_archive_documents(entity_id).order_by(
             DmsDocument.invoice_version.desc(),
         ).with_for_update().first()
-        if latest is not None and latest.status != "cancelled" and latest.sha256 == content_hash:
+        if invoice_dispatch is None and latest is not None and latest.status != "cancelled" and latest.sha256 == content_hash:
             return latest
         invoice_version = 1 if latest is None else latest.invoice_version + 1
 
@@ -333,6 +341,7 @@ def register_generated_pdf(
         sha256=content_hash,
         context=values,
         profile_snapshot=snapshot,
+        invoice_dispatch=invoice_dispatch,
         hostname=hostname,
         repository_id=repository,
         status="disabled" if not enabled else "blocked" if error else "pending",
@@ -449,9 +458,18 @@ def normalize_value(value, field):
 def upload_properties(document, client):
     snapshot = document.profile_snapshot
     properties = []
+    dispatch_flags = set()
+    if document.document_type in INVOICE_DOCUMENT_TYPES:
+        postal_id = settings.get(SettingKeys.DMS_POSTAL_PROPERTY)
+        portal_id = settings.get(SettingKeys.DMS_PORTAL_PROPERTY)
+        dispatch_flags = {postal_id, portal_id} - {""}
+        if dispatch_flags.intersection({snapshot.get("key_property_id"), *snapshot["mappings"]}):
+            raise DmsError("Die gespeicherte Archivzuordnung enthält eine Versandeigenschaft. Bitte die Zuordnung aktualisieren.")
     for field in snapshot["schema"]["fields"]:
         property_id = field["id"]
-        if property_id == snapshot["key_property_id"]:
+        if property_id in dispatch_flags:
+            raw_value = "Nein" if field.get("required") else None
+        elif property_id == snapshot["key_property_id"]:
             raw_value = document.context["archive_key"]
         else:
             mapping = snapshot["mappings"].get(property_id)
@@ -536,7 +554,7 @@ def retry_document(document, *, confirmed_absent=False, manual=False):
         "available_at": utc_now(),
         "error": None,
     }
-    if not upload_started:
+    if not upload_started and not (document.invoice_dispatch or {}).get("content_ready"):
         hostname, _, repository = connection()
         values.update(
             hostname=hostname,
@@ -697,6 +715,7 @@ def link_existing_document(document, remote_id):
         document.status not in ("blocked", "uncertain")
         or not document.upload_started or document.lock_token is not None
         or not document.profile_snapshot
+        or (document.invoice_dispatch or {}).get("content_ready")
     ):
         raise DmsError("Für diesen Archivierungsauftrag ist keine manuelle Zuordnung möglich.")
 
@@ -717,6 +736,8 @@ def link_existing_document(document, remote_id):
                 len(matches) == 1 and str(matches[0].id_) == remote_id
                 and document.profile_snapshot["category_id"] in (getattr(matches[0], "source_categories", None) or [])
             )
+        if verified and document.invoice_dispatch and not document.dms_document_id:
+            verified = client.document_sha256(remote_id) == document.sha256
     except DmsError:
         raise
     except Exception as exc:
@@ -743,6 +764,7 @@ def link_existing_document(document, remote_id):
     if assigned_id is not None:
         raise DmsError("Diese d.velop-ID ist bereits einem anderen Archivierungsauftrag zugeordnet.")
 
+    dispatch = document.invoice_dispatch
     changed = db.session.execute(
         update(DmsDocument).where(
             DmsDocument.id == document.id,
@@ -750,7 +772,10 @@ def link_existing_document(document, remote_id):
             DmsDocument.upload_started.is_(True),
             DmsDocument.lock_token.is_(None),
         ).values(
-            status="archived",
+            status="pending" if dispatch else "archived",
+            invoice_dispatch={**dispatch, "content_ready": True} if dispatch else None,
+            upload_started=not dispatch,
+            available_at=utc_now(),
             dms_document_id=remote_id,
             archived_at=utc_now(),
             locked_at=None,
@@ -762,7 +787,8 @@ def link_existing_document(document, remote_id):
         raise DmsError("Der Archivierungsauftrag wird bereits anderweitig bearbeitet.")
 
     db.session.refresh(document)
-    sync_legacy_archive_fields(document)
+    if not dispatch:
+        sync_legacy_archive_fields(document)
     audit(
         "dms.document.link",
         "dms_document",
@@ -877,7 +903,7 @@ def invoice_version_target(document):
     if earlier is not None:
         if (earlier.hostname, earlier.repository_id) != (document.hostname, document.repository_id):
             raise DmsError("Bitte die ursprüngliche DMS-Anbindung für die Rechnung wiederherstellen.")
-        return earlier.dms_document_id, earlier.context["archive_key"], None
+        return earlier.dms_document_id, earlier.context["archive_key"], earlier.sha256 if document.invoice_dispatch else None
 
     invoice = db.session.get(Invoice, document.entity_id)
     if invoice is not None and (invoice.dms_document_id or invoice.dvelop_document_id):
@@ -907,13 +933,26 @@ def process_claimed_document(document_id, token):
     client = None
     created_in_this_attempt = False
     try:
+        if document.invoice_dispatch:
+            invoice = lock_invoice_archive(document.entity_id)
+            db.session.refresh(document, with_for_update=True)
+            if document.lock_token != token:
+                db.session.rollback()
+                return
+            if invoice is None or invoice.status != "finalized":
+                document.status = "cancelled"
+                document.locked_at = document.lock_token = None
+                document.error = "Die Rechnung wurde vor der DMS-Übergabe storniert."
+                db.session.commit()
+                return
+            db.session.commit()
+
         hostname, api_key, repository = connection()
         if (hostname, repository) != (document.hostname, document.repository_id):
             raise DmsError("Die DMS-Anbindung wurde geändert. Bitte den Archivierungsauftrag prüfen.")
         if not document.profile_snapshot:
             raise DmsError("Die Eigenschaftszuordnung ist unvollständig.")
 
-        snapshot = document.profile_snapshot
         if document.upload_started and not can_check_upload(document):
             raise DmsError(
                 "Die Upload-Bestätigung fehlt. Bitte die vorhandene d.velop-ID zuordnen "
@@ -921,8 +960,9 @@ def process_claimed_document(document_id, token):
                 uncertain=True,
             )
 
-        path = document_path(document)
-        version_target = invoice_version_target(document)
+        dispatch = document.invoice_dispatch
+        content_ready = bool(dispatch and dispatch.get("content_ready"))
+        version_target = None if content_ready else invoice_version_target(document)
         version_id = version_target[0] if version_target else None
         archive_context = document.context
         if version_target and version_target[1]:
@@ -949,11 +989,15 @@ def process_claimed_document(document_id, token):
         client = CloudDmsClient(
             hostname, api_key, repository, before_create=before_create
         )
-        if version_id:
-            remote_id = version_id
-            archive_invoice_version(document, client, path, version_id, version_target[2])
+        if content_ready:
+            remote_id = document.dms_document_id
         else:
-            remote_id = archive_new_document(document, client, path)
+            path = document_path(document)
+            if version_target:
+                remote_id = version_id
+                archive_invoice_version(document, client, path, version_id, version_target[2])
+            else:
+                remote_id = archive_new_document(document, client, path)
 
         if not remote_id or remote_id == "unknown":
             raise DmsError(
@@ -962,8 +1006,30 @@ def process_claimed_document(document_id, token):
                 uncertain=True,
             )
 
+        if dispatch:
+            if not content_ready:
+                if client.document_sha256(remote_id) != document.sha256:
+                    raise DmsError("Die vollständige Rechnungs-PDF ist in d.velop noch nicht bestätigt.", retryable=True, uncertain=True)
+                db.session.refresh(document, with_for_update=True)
+                if document.lock_token != token:
+                    db.session.rollback()
+                    return
+                document.invoice_dispatch = {**dispatch, "content_ready": True}
+                document.upload_started = False
+                document.dms_document_id = remote_id
+                document.context = archive_context
+                document.archived_at = utc_now()
+                db.session.commit()
+                created_in_this_attempt = False
+            version_id = remote_id
+            client.apply_invoice_dispatch(
+                remote_id, dispatch["properties"], dispatch["flag_property"],
+                submission_started=document.upload_started,
+            )
+
+        invoice = None
         if document.invoice_version is not None:
-            lock_invoice_archive(document.entity_id)
+            invoice = lock_invoice_archive(document.entity_id)
         db.session.refresh(document, with_for_update=True)
         if document.lock_token == token:
             document.status = "archived"
@@ -974,6 +1040,16 @@ def process_claimed_document(document_id, token):
             document.lock_token = None
             document.error = None
             sync_legacy_archive_fields(document)
+            if dispatch:
+                if dispatch["mode"] == "dms" and invoice is not None and invoice.status == "finalized":
+                    from .invoice_delivery import record_invoice_completion
+
+                    record_invoice_completion(invoice, "dms", document.archived_at, actor_user_id=dispatch["actor_user_id"])
+                audit(
+                    "invoice.dms_dispatch.confirmed", "invoice", document.entity_id,
+                    {"channel": dispatch["channel"], "dms_document_id": remote_id},
+                    actor_user_id=dispatch["actor_user_id"],
+                )
             audit(
                 "dms.document.archive",
                 "dms_document",

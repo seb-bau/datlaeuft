@@ -98,17 +98,76 @@ def connection_page():
         )
         for item in legacy_definitions
     }
+    from .invoice_dms_dispatch import dispatch_settings
+
+    metadata = repository_metadata()
+    category_ids = {
+        profile.category_id for profile in DmsProfile.query.filter(
+            DmsProfile.document_type.in_(("invoice", "cancellation_invoice")),
+        )
+    }
+    dispatch_fields = {
+        field["id"]: field_name(field)
+        for category_id in category_ids
+        for field in metadata.get("categories", {}).get(category_id, {}).get("fields", [])
+        if field["dataType"] == "STRING" and not field.get("isMultiValue")
+    }
     return render_template(
         "admin/dms_connection.html",
         hostname=settings.get(SettingKeys.DMS_HOSTNAME),
         repository=settings.get(SettingKeys.DMS_REPOSITORY),
         enabled=settings.get(SettingKeys.DMS_ENABLED),
         has_api_key=bool(settings.get(SettingKeys.DMS_API_KEY)),
-        metadata=repository_metadata(),
+        metadata=metadata,
         legacy_definitions=legacy_definitions,
         legacy_values=legacy_values,
         paused=settings.get(SettingKeys.DMS_PROCESSING_PAUSED),
+        dispatch=dispatch_settings(),
+        dispatch_fields=sorted(dispatch_fields.items(), key=lambda item: item[1]),
     )
+
+
+@dms_admin_bp.post("/invoice-dispatch")
+@admin_required
+def invoice_dispatch_settings():
+    from .invoice_dms_dispatch import paperwork_base_url
+
+    try:
+        postal = request.form.get("postal_property", "").strip()
+        portal = request.form.get("portal_property", "").strip()
+        signer = request.form.get("signer_property", "").strip()
+        ids = [value for value in (postal, portal, signer) if value]
+        if any(len(value) > 128 or any(not char.isprintable() or char.isspace() for char in value) for value in ids):
+            raise ValueError("Bitte gültige DMS-Eigenschafts-IDs eingeben.")
+        if len(set(ids)) != len(ids):
+            raise ValueError("Poststelle, Mieter-App und Poststellenbenutzer benötigen verschiedene DMS-Eigenschaften.")
+        dispatch_ids = {value for value in (postal, portal, signer if postal else "") if value}
+        for profile in DmsProfile.query.filter(DmsProfile.document_type.in_(("invoice", "cancellation_invoice"))):
+            if dispatch_ids.intersection({profile.key_property_id, *profile.mappings}):
+                raise ValueError("Bitte die Versandeigenschaften aus den festen DMS-Dokumentzuordnungen entfernen.")
+        for definition, value in (
+            (SettingKeys.DMS_POSTAL_PROPERTY, postal),
+            (SettingKeys.DMS_PORTAL_PROPERTY, portal),
+            (SettingKeys.DMS_POSTAL_SIGNER_PROPERTY, signer),
+            (SettingKeys.DMS_POSTAL_DEFAULT, "postal_default" in request.form),
+            (SettingKeys.DMS_PORTAL_DEFAULT, "portal_default" in request.form),
+            (SettingKeys.DMS_PAPERWORK_URL, paperwork_base_url(request.form.get("paperwork_url", ""))),
+        ):
+            settings.set(definition, value)
+        key = request.form.get("paperwork_api_key", "").strip()
+        if request.form.get("clear_paperwork_api_key"):
+            settings.set(SettingKeys.DMS_PAPERWORK_API_KEY, "")
+        elif key:
+            if len(key) < 32 or len(key) > 512 or any(not char.isascii() or not char.isprintable() or char.isspace() for char in key):
+                raise ValueError("Der Paperwork-API-Schlüssel muss 32 bis 512 druckbare ASCII-Zeichen ohne Leerzeichen enthalten.")
+            settings.set(SettingKeys.DMS_PAPERWORK_API_KEY, key)
+        audit("dms.invoice_dispatch.settings")
+        db.session.commit()
+        flash("Rechnungsversand über DMS gespeichert.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("dms_admin.connection_page"))
 
 
 @dms_admin_bp.post("/processing/pause")

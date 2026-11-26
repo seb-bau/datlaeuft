@@ -252,6 +252,29 @@ class SettingKeys:
         "d.velop",
     )
 
+    DMS_POSTAL_PROPERTY = SettingDefinition[str](
+        "dms.postal_property", SettingValueType.STRING, "", "Eigenschaft für die Poststelle", "Archiv/DMS",
+    )
+    DMS_PORTAL_PROPERTY = SettingDefinition[str](
+        "dms.portal_property", SettingValueType.STRING, "", "Eigenschaft für die Mieter-App", "Archiv/DMS",
+    )
+    DMS_POSTAL_DEFAULT = SettingDefinition[bool](
+        "dms.postal_default", SettingValueType.BOOL, True, "Poststelle vorauswählen", "Archiv/DMS",
+    )
+    DMS_PORTAL_DEFAULT = SettingDefinition[bool](
+        "dms.portal_default", SettingValueType.BOOL, True, "Mieter-App vorauswählen", "Archiv/DMS",
+    )
+    DMS_POSTAL_SIGNER_PROPERTY = SettingDefinition[str](
+        "dms.postal_signer_property", SettingValueType.STRING, "property_remark1", "Feld-ID für den Poststellenbenutzer", "Archiv/DMS",
+    )
+    DMS_PAPERWORK_URL = SettingDefinition[str](
+        "dms.paperwork_url", SettingValueType.STRING, "", "Paperwork-Basis-URL", "Archiv/DMS",
+    )
+    DMS_PAPERWORK_API_KEY = SettingDefinition[str](
+        "dms.paperwork_api_key", SettingValueType.SECRET, "", "API-Schlüssel für die Paperwork-Benutzerabfrage", "Archiv/DMS",
+        secret=True,
+    )
+
     DMS_INVOICE_CATEGORY_ID = SettingDefinition[str](
         "dms.invoice_category_id",
         SettingValueType.STRING,

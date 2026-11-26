@@ -104,6 +104,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const client = document.getElementById("invoiceDeliveryClient");
   const system = document.getElementById("invoiceDeliverySystem");
   const print = document.getElementById("invoiceDeliveryPrint");
+  const dms = document.getElementById("invoiceDeliveryDms");
+  const dmsOptions = document.getElementById("invoiceDmsOptions");
+  const postal = document.getElementById("invoiceDmsPostal");
+  const portal = document.getElementById("invoiceDmsPortal");
+  const postalAllowed = Boolean(postal && !postal.disabled);
+  const portalAllowed = Boolean(portal && !portal.disabled);
   const official = document.getElementById("invoiceDeliveryOfficial");
   const preview = document.getElementById("invoiceDeliveryPreview");
   const body = document.getElementById("invoiceDeliveryBody");
@@ -114,7 +120,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let recipientsLoaded = false;
   let activePreview;
   let busy = false;
-  let waiting = Boolean(delivery.dataset.notificationId);
+  let waiting = Boolean(delivery.dataset.notificationId || modes.disabled);
   let pollCount = 0;
   let templateBody = "";
   let bodyEdited = false;
@@ -133,6 +139,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function updateControls() {
     modes.disabled = busy || waiting;
+    if (dmsOptions) dmsOptions.disabled = busy || waiting;
     official.disabled = busy || waiting;
     body.readOnly = busy || waiting;
     resetBody.disabled = body.readOnly;
@@ -174,6 +181,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("invoiceDeliveryClientPanel").hidden = !client.checked || waiting;
     document.getElementById("invoiceDeliverySystemPanel").hidden = !system.checked || waiting;
     document.getElementById("invoiceDeliveryPrintPanel").hidden = !print.checked || waiting;
+    const dmsPanel = document.getElementById("invoiceDeliveryDmsPanel");
+    if (dmsPanel) dmsPanel.hidden = !dms.checked || waiting;
+    updateDmsSelection();
     if (!system.checked || waiting || recipientsLoaded) return;
     official.disabled = true;
     feedback("Empfänger werden geladen …");
@@ -188,6 +198,17 @@ document.addEventListener("DOMContentLoaded", () => {
       feedback(data.items.length ? "" : missingRecipient);
     } catch (error) { feedback(error.message, true); }
     finally { updateControls(); }
+  }
+
+  function updateDmsSelection() {
+    if (!dmsOptions) return;
+    const postalSelected = postalAllowed && postal.checked && !print.checked;
+    document.getElementById("invoiceDmsPostalOption").hidden = print.checked;
+    postal.disabled = !postalAllowed || print.checked;
+    portal.disabled = !portalAllowed || postalSelected;
+    document.getElementById("invoiceDmsPortalViaPostal").hidden = !postalSelected;
+    const dmsSubmit = document.getElementById("invoiceDeliveryDmsSubmit");
+    if (dmsSubmit) dmsSubmit.disabled = !postalSelected && !(portalAllowed && portal.checked);
   }
 
   official.addEventListener("change", async () => {
@@ -225,7 +246,11 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const item = await jsonResponse(await fetch(delivery.dataset.sendUrl, {
         method: "POST", headers: {Accept: "application/json", "Content-Type": "application/json", "X-CSRFToken": document.getElementById("invoiceDeliveryCsrf").value},
-        body: JSON.stringify({official_id: official.value, request_id: requestId, body: body.value, complete_invoice: true})
+        body: JSON.stringify({
+          official_id: official.value, request_id: requestId, body: body.value, complete_invoice: true,
+          postal: Boolean(postal?.checked && !postal.disabled),
+          portal: Boolean(portal?.checked && !portal.disabled),
+        })
       }));
       showState(item);
       pollCount = 0;
@@ -244,9 +269,15 @@ document.addEventListener("DOMContentLoaded", () => {
     busy = true;
     updateControls();
     if (event.submitter) event.submitter.disabled = true;
-    feedback("Datei wird erstellt …");
+    feedback(dms?.checked ? "Rechnung wird zur DMS-Übergabe vorgemerkt …" : "Datei wird erstellt …");
     try {
       const response = await fetch(form.action, {method: "POST", body: data});
+      if (dms?.checked) {
+        await jsonResponse(response);
+        waiting = true;
+        window.location.assign(delivery.dataset.invoiceUrl);
+        return;
+      }
       const contentType = response.headers.get("Content-Type") || "";
       if (!response.ok || response.redirected || !["application/pdf", "message/rfc822"].some(type => contentType.includes(type))) {
         const error = contentType.includes("application/json") ? await response.json() : {};
@@ -274,7 +305,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  [client, system, print].forEach(mode => mode.addEventListener("change", updateMode));
+  [client, system, print, dms].forEach(mode => mode?.addEventListener("change", updateMode));
+  [postal, portal].forEach(option => option?.addEventListener("change", updateDmsSelection));
   updateMode();
-  if (waiting) loadStatus(delivery.dataset.notificationId).catch(error => feedback(error.message, true));
+  if (delivery.dataset.notificationId) loadStatus(delivery.dataset.notificationId).catch(error => feedback(error.message, true));
 });

@@ -7,16 +7,29 @@
          data-status-url="{{ url_for('invoice_delivery.delivery_status', invoice_id=item.id, complete=1) }}"
          data-notification-id="{{ pending_delivery.id if pending_delivery else '' }}">
   <div class="card-body">
+    {% set queued_dms = dms_dispatch and dms_dispatch.invoice_dispatch.mode == 'dms' %}
+    {% set locked_dispatch = queued_dms or pending_delivery %}
+    {% set default_dms = not locked_dispatch and ((dispatch_options.postal_available and dispatch_options.postal_default) or (dispatch_options.portal_available and dispatch_options.portal_default)) %}
+    {% if queued_dms %}
+    <p class="mb-2">Übergabe an {{ 'die Poststelle' if dms_dispatch.invoice_dispatch.channel == 'postal' else 'die Mieter-App' }} vorgemerkt.</p>
+    {% if dms_dispatch.error %}<div class="alert alert-warning mb-2" role="alert">{{ dms_dispatch.error }}</div>{% endif %}
+    {% endif %}
     <form method="post" id="invoiceDeliveryForm" action="{{ url_for('invoice_delivery.delivery_complete', invoice_id=item.id) }}">
       <input type="hidden" name="csrf_token" id="invoiceDeliveryCsrf" value="{{ csrf_token() }}">
-      <fieldset class="mb-3" id="invoiceDeliveryModes" {% if pending_delivery %}disabled{% endif %}>
+      <fieldset class="mb-3" id="invoiceDeliveryModes" {% if locked_dispatch %}disabled{% endif %}>
         <legend class="fs-6">Wie möchten Sie die Rechnung abschließen?</legend>
+        {% if dispatch_options.postal_available or dispatch_options.portal_available or queued_dms %}
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="radio" name="mode" id="invoiceDeliveryDms" value="dms" {% if default_dms or queued_dms %}checked{% endif %}>
+          <label class="form-check-label" for="invoiceDeliveryDms">Über DMS versenden</label>
+        </div>
+        {% endif %}
         <div class="form-check">
           <input class="form-check-input" type="radio" name="mode" id="invoiceDeliverySystem" value="direct" {% if pending_delivery %}checked{% endif %}>
           <label class="form-check-label" for="invoiceDeliverySystem">Direktversand</label>
         </div>
         <div class="form-check mt-2">
-          <input class="form-check-input" type="radio" name="mode" id="invoiceDeliveryClient" value="outlook" {% if not pending_delivery %}checked{% endif %}>
+          <input class="form-check-input" type="radio" name="mode" id="invoiceDeliveryClient" value="outlook" {% if not locked_dispatch and not default_dms %}checked{% endif %}>
           <label class="form-check-label" for="invoiceDeliveryClient">Versand per Outlook</label>
         </div>
         <div class="form-check mt-2">
@@ -24,7 +37,32 @@
           <label class="form-check-label" for="invoiceDeliveryPrint">Kein Versand (nur Druck)</label>
         </div>
       </fieldset>
-      <div id="invoiceDeliveryClientPanel" {% if pending_delivery %}hidden{% endif %}>
+      {% if dispatch_options.postal_property or dispatch_options.portal_property %}
+      <fieldset class="mb-3" id="invoiceDmsOptions" {% if locked_dispatch %}disabled{% endif %}>
+        <legend class="fs-6">Übergabe über d.velop</legend>
+        <div class="form-check" id="invoiceDmsPostalOption">
+          <input class="form-check-input" type="checkbox" id="invoiceDmsPostal" name="postal"
+                 {% if dispatch_options.postal_available and dispatch_options.postal_default %}checked{% endif %}
+                 {% if not dispatch_options.postal_available %}disabled{% endif %}>
+          <label class="form-check-label" for="invoiceDmsPostal">Zur Poststelle übertragen</label>
+          {% if dispatch_options.postal_available %}<div class="form-text">Unterschrift und Freigabe für {{ current_user.display_name }}</div>
+          {% else %}<div class="form-text">Die Poststelle ist für dieses Konto oder diese DMS-Anbindung nicht eingerichtet.</div>{% endif %}
+        </div>
+        <div class="form-check mt-2" id="invoiceDmsPortalOption">
+          <input class="form-check-input" type="checkbox" id="invoiceDmsPortal" name="portal"
+                 {% if dispatch_options.portal_available and dispatch_options.portal_default %}checked{% endif %}
+                 {% if not dispatch_options.portal_available %}disabled{% endif %}>
+          <label class="form-check-label" for="invoiceDmsPortal">In Mieter-App hochladen</label>
+        </div>
+        <p class="small text-muted mb-0 mt-2" id="invoiceDmsPortalViaPostal" hidden>Die Poststelle stellt den Brief nach der Freigabe ins Mieterportal.</p>
+      </fieldset>
+      {% endif %}
+      {% if dispatch_options.postal_available or dispatch_options.portal_available %}
+      <div id="invoiceDeliveryDmsPanel" {% if not default_dms %}hidden{% endif %}>
+        <button type="submit" class="btn btn-primary" id="invoiceDeliveryDmsSubmit">DMS-Übergabe veranlassen</button>
+      </div>
+      {% endif %}
+      <div id="invoiceDeliveryClientPanel" {% if locked_dispatch or default_dms %}hidden{% endif %}>
         <p>Sie erhalten einen E-Mail-Entwurf mit der vollständigen Rechnungs-PDF. Öffnen Sie die EML-Datei in Outlook und senden Sie die E-Mail dort. Beim Download wird die Rechnung in datlaeuft abgeschlossen.</p>
         <button type="submit" class="btn btn-primary">Outlook-Entwurf herunterladen und abschließen</button>
       </div>

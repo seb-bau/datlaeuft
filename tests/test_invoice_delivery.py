@@ -30,10 +30,12 @@ class InvoiceDeliveryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         fixtures.InvoicePaymentTests.setUpClass.__func__(cls)
-        for name in ("invoice_correspondence", "invoice_delivery"):
+        for name in ("invoice_correspondence", "invoice_delivery", "invoice_dms_dispatch"):
             sys.modules.pop(cls.package_name + "." + name, None)
         cls.delivery = importlib.import_module(cls.package_name + ".invoice_delivery")
+        cls.dispatch = importlib.import_module(cls.package_name + ".invoice_dms_dispatch")
         cls.templates = importlib.import_module(cls.package_name + ".email_templates")
+        cls.tables.append(cls.models.DmsDocument.__table__)
         cls.app.register_blueprint(cls.delivery.invoice_delivery_bp)
         cls.app.register_blueprint(cls.document_articles.document_articles_bp)
 
@@ -387,6 +389,54 @@ class InvoiceDeliveryTests(unittest.TestCase):
         self.db.session.refresh(invoice)
         self.assertIsNone(invoice.completed_at)
         self.assertTrue(self.client.get(f"/admin/invoices/{invoice.id}/delivery/status?complete=1").json["item"]["test_delivery"])
+
+    def test_dms_only_dispatch_uses_the_actor_and_postal_takes_priority_over_portal(self):
+        invoice = self.rendered_invoice()
+        invoice.responsible_user = self.reviewer
+        self.db.session.commit()
+        url = f"/admin/invoices/{invoice.id}/delivery/complete"
+        authors = []
+        with patch.object(self.dispatch, "queue_invoice_dispatch", side_effect=lambda item, content, mode, channel, actor: authors.append(actor.id)) as queue:
+            response = self.client.post(url, data={"mode": "dms", "postal": "on", "portal": "on"})
+        self.assertEqual(response.status_code, 202, response.data)
+        _, content, mode, channel, _ = queue.call_args.args
+        self.assertEqual(content, self.delivery.final_invoice_pdf(invoice))
+        self.assertEqual((mode, channel), ("dms", "postal"))
+        self.assertEqual(authors, [self.creator.id])
+        self.assertIsNone(invoice.completed_at)
+        self.assertEqual(self.models.WorkflowNotification.query.count(), 0)
+        self.mail.assert_not_called()
+
+    def test_print_accepts_portal_and_rejects_postal_even_if_sent_by_the_client(self):
+        invoice = self.rendered_invoice()
+        url = f"/admin/invoices/{invoice.id}/delivery/complete"
+        with patch.object(self.dispatch, "queue_invoice_dispatch") as queue:
+            response = self.client.post(url, data={"mode": "print", "postal": "on", "portal": "on"})
+            self.assertEqual(response.status_code, 400)
+            queue.assert_not_called()
+            response = self.client.post(url, data={"mode": "print", "portal": "on"})
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertEqual(queue.call_args.args[2:4], ("print", "portal"))
+        self.assertEqual(invoice.completion_mode, "print")
+
+    def test_signer_lookup_uses_an_exact_entra_match_and_admin_mapping_only_when_missing(self):
+        tenant = "93043da0-7182-49f5-93a9-bcbb96170b94"
+        self.creator.entra_oid = "951fba60-3ea9-4c25-99c2-accfb3e1d39b"
+        self.settings.settings.set(self.settings.SettingKeys.ENTRA_TENANT_ID, tenant)
+        signer = {
+            "entra_oid": self.creator.entra_oid, "entra_tenant": tenant,
+            "develop_id": "08b374ad-887a-4f21-b1b6-3dd2f9cb73db", "d3id": "anna_muste",
+        }
+        with patch.object(self.dispatch, "paperwork_lookup", return_value=signer) as lookup:
+            self.assertEqual(self.dispatch.resolve_paperwork_signer(self.creator), signer)
+            lookup.assert_called_once_with({"entra_oid": self.creator.entra_oid, "entra_tenant": tenant})
+        self.creator.paperwork_user_id = signer["develop_id"]
+        with patch.object(self.dispatch, "paperwork_lookup", side_effect=[None, signer]) as lookup:
+            self.assertEqual(self.dispatch.resolve_paperwork_signer(self.creator), signer)
+            self.assertEqual(lookup.call_args.args[0], {"develop_id": signer["develop_id"]})
+        with patch.object(self.dispatch, "paperwork_lookup", return_value={**signer, "entra_oid": tenant}):
+            with self.assertRaisesRegex(ValueError, "anderes Entra-Konto"):
+                self.dispatch.resolve_paperwork_signer(self.creator)
 
     def test_wizard_outlook_download_finishes_with_the_letter_and_original_attachments(self):
         invoice = self.rendered_invoice(with_attachments=True)

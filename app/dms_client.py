@@ -108,7 +108,7 @@ class DmsTransport:
             "Origin": self.root.rstrip("/"),
         })
 
-    def request(self, method, url, *, params=None, data=None, upload_file_path=None, version_document_id=None):
+    def request(self, method, url, *, params=None, data=None, upload_file_path=None, version_document_id=None, track_write=True):
         method = method.upper()
         parsed = urlsplit(url)
 
@@ -140,7 +140,7 @@ class DmsTransport:
             )
 
         writes_document = bool(is_create or is_version)
-        if writes_document and self.before_create:
+        if writes_document and track_write and self.before_create:
             self.before_create()
         if upload_file_path:
             headers = {"Content-Type": "application/octet-stream"}
@@ -358,6 +358,64 @@ class CloudDmsClient(DvelopDmsPy):
         }, version_document_id=document_id)
         if response.status_code not in (200, 204):
             raise DmsError("d.velop hat die neue PDF-Version noch nicht bestätigt.", retryable=True, uncertain=True)
+
+    def apply_invoice_dispatch(self, document_id, properties, flag_property, *, submission_started=False):
+        transport = self._rest_adapter
+        details = self._document_details(document_id)
+        current = self._dispatch_property_values(details)
+        if all(current.get(key) == value for key, value in properties.items()):
+            return
+        if submission_started:
+            raise DmsError("d.velop hat die Versandeigenschaften noch nicht bestätigt.", retryable=True, uncertain=True)
+        if current.get(flag_property) == "Ja":
+            raise DmsError("Für dieses DMS-Dokument ist die Versand-Eigenschaft bereits gesetzt. Bitte die frühere Übergabe prüfen.")
+        source_id = urlsplit(transport.url + "source").path
+        links = details.get("_links", {})
+        update_link = (links.get("update") or links.get("updateWithContent") or {}).get("href")
+        if not update_link:
+            results = transport.get("srm", ep_params={
+                "sourceid": source_id,
+                "sourceproperties": json.dumps({"property_document_id": [document_id]}),
+            }, limit=2).data
+            for item in results:
+                if item.get("id") == document_id:
+                    links = item.get("_links", {})
+                    update_link = (links.get("update") or links.get("updateWithContent") or {}).get("href")
+                    break
+        if not update_link:
+            raise DmsError("Der DMS-Zugang darf die Versandeigenschaften dieser Rechnung nicht aktualisieren.")
+
+        def update_properties(values, *, track_write, alteration_text):
+            transport.request("PUT", urljoin(transport.root, update_link), data={
+                "sourceId": source_id, "alterationText": alteration_text,
+                "sourceProperties": {"properties": [{"key": key, "values": [value]} for key, value in values.items()]},
+            }, version_document_id=document_id, track_write=track_write)
+            return self._dispatch_property_values(self._document_details(document_id))
+
+        identity = {key: value for key, value in properties.items() if key != flag_property}
+        if any(current.get(key) != value for key, value in identity.items()):
+            current = update_properties(identity, track_write=False, alteration_text="Poststellenbenutzer hinterlegt")
+            if any(current.get(key) != value for key, value in identity.items()):
+                raise DmsError("d.velop hat das Feld für den Poststellenbenutzer nicht übernommen.")
+            if current.get(flag_property) == "Ja":
+                raise DmsError("Die Versand-Eigenschaft wurde zwischenzeitlich gesetzt. Bitte die Übergabe prüfen.")
+
+        confirmed = update_properties(
+            {flag_property: properties[flag_property]}, track_write=True, alteration_text="Rechnung zum Versand freigegeben",
+        )
+        if any(confirmed.get(key) != value for key, value in properties.items()):
+            raise DmsError("d.velop hat die Versandeigenschaften noch nicht bestätigt.", retryable=True, uncertain=True)
+
+    @staticmethod
+    def _dispatch_property_values(details):
+        values = {}
+        for item in details.get("sourceProperties", []):
+            if item.get("key") and isinstance(item.get("value"), str):
+                values[item["key"]] = item["value"]
+            elif item.get("key") and len(item.get("values") or []) == 1:
+                value = item["values"][0]
+                values[item["key"]] = value.get("value") if isinstance(value, dict) else value
+        return values
 
     def update_properties(self, *args, **kwargs):
         raise DmsError(

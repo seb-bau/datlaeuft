@@ -35,6 +35,12 @@
     </div>
 
     <div class="col-md-6">
+      <label class="form-label" for="paperworkUserId">Paperwork-Benutzer-ID</label>
+      <input class="form-control" id="paperworkUserId" name="paperwork_user_id" maxlength="40" value="{{ item.paperwork_user_id or '' }}">
+      <div class="form-text">Für Konten ohne automatische Entra-Zuordnung. Tragen Sie nach Prüfung die d.velop-Benutzer-ID derselben Person aus Paperwork ein.</div>
+    </div>
+
+    <div class="col-md-6">
       <label class="form-label">ERP-Handwerker-ID</label>
       <input class="form-control" type="number" name="craftsman_erp_id" value="{{ item.craftsman_erp_id or '' }}">
     </div>

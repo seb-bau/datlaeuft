@@ -358,6 +358,99 @@ class DmsContextTests(unittest.TestCase):
         })
         self.assertEqual(callback.call_args_list, [call()])
 
+    def test_dispatch_on_an_existing_pdf_reconciles_without_uploading_or_retriggering(self):
+        content = b"%PDF-1.4\nRechnung"
+        invoice = self.models.Invoice(
+            company_code=self.company, company_code_erp_id=self.company.erp_id, company_code_code=self.company.code,
+            created_by=self.user, status="finalized", document_sha256=sha256(content).hexdigest(),
+        )
+        self.db.session.add(invoice)
+        keys = self.settings.SettingKeys
+        self.settings.settings.set(keys.DMS_ENABLED, True)
+        self.db.session.commit()
+        profile = {"category_id": "invoice", "schema": {"fields": []}, "mappings": {}, "key_property_id": ""}
+        remote_id = "D000000123"
+        properties = {"postal": "Ja", "property_remark1": "manual_anna_muste_user_datlaeuft"}
+        dispatch = {
+            "mode": "outlook", "actor_user_id": self.user.id, "channel": "postal",
+            "flag_property": "postal", "properties": properties,
+        }
+        client = Mock()
+        client.document_sha256.return_value = invoice.document_sha256
+        property_calls = []
+
+        def new_client(*args, before_create):
+            def apply_properties(document_id, values, flag, *, submission_started):
+                property_calls.append((document_id, values, flag, submission_started))
+                if not submission_started:
+                    before_create()
+                    raise self.service.DmsError("Timeout", retryable=True, uncertain=True)
+            client.apply_invoice_dispatch.side_effect = apply_properties
+            return client
+
+        with (
+            TemporaryDirectory() as directory,
+            patch.object(self.app, "instance_path", directory),
+            patch.object(self.service, "connection", return_value=("dms.example.invalid", "key", "repository")),
+            patch.object(self.service, "profile_snapshot", return_value=profile),
+            patch.object(self.service, "CloudDmsClient", side_effect=new_client),
+        ):
+            original = self.service.register_generated_pdf("invoice", "invoice", invoice.id, "Rechnung.pdf", content, {})
+            original.status = "archived"
+            original.dms_document_id = remote_id
+            self.db.session.commit()
+            job = self.service.register_generated_pdf(
+                "invoice", "invoice", invoice.id, "Rechnung.pdf", content, {}, invoice_dispatch=dispatch,
+            )
+            self.assertNotEqual(original.id, job.id)
+            self.db.session.commit()
+            self.assertEqual(self.service.process_dms_batch(), 1)
+            self.assertEqual(job.status, "uncertain")
+            self.assertTrue(job.invoice_dispatch["content_ready"])
+            self.assertTrue(job.upload_started)
+            self.assertEqual(job.dms_document_id, remote_id)
+            job.available_at = self.models.utc_now()
+            self.db.session.commit()
+            self.assertEqual(self.service.process_dms_batch(), 1)
+            self.assertEqual(job.status, "archived")
+            self.assertEqual(invoice.dms_document_id, remote_id)
+        client.archive_file.assert_not_called()
+        client.archive_invoice_version.assert_not_called()
+        self.assertEqual(property_calls, [(remote_id, properties, "postal", False), (remote_id, properties, "postal", True)])
+
+    def test_dms_confirms_the_signer_before_switching_the_postal_flag_without_uploading_a_file(self):
+        client_type = self.service.CloudDmsClient
+        callback = Mock()
+        with patch.object(client_type, "get_mappings"):
+            client = client_type("dms.example.invalid", "key", "repository", before_create=callback)
+        self.addCleanup(client.close)
+        document_id = "D000000123"
+        target = f"/dms/r/repository/o2m/{document_id}"
+        signer_marker = "manual_anna_muste_user_datlaeuft"
+
+        def details(properties):
+            result = Mock(status_code=200)
+            result.json.return_value = {
+                "id": document_id, "_links": {"update": {"href": target}},
+                "sourceProperties": [{"key": key, "value": value} for key, value in properties.items()],
+            }
+            return result
+
+        with patch.object(client._rest_adapter.session, "request", side_effect=[
+            details({"postal": "Nein"}), Mock(status_code=200),
+            details({"postal": "Nein", "property_remark1": signer_marker}), Mock(status_code=204),
+            details({"postal": "Ja", "property_remark1": signer_marker}),
+        ]) as requests:
+            client.apply_invoice_dispatch(document_id, {"postal": "Ja", "property_remark1": signer_marker}, "postal")
+
+        updates = [request for request in requests.call_args_list if request.args[0] == "PUT"]
+        self.assertEqual([request.args[1] for request in updates], ["https://dms.example.invalid" + target] * 2)
+        self.assertEqual([request.kwargs["json"]["sourceProperties"]["properties"] for request in updates], [
+            [{"key": "property_remark1", "values": [signer_marker]}], [{"key": "postal", "values": ["Ja"]}],
+        ])
+        self.assertTrue(all("contentLocationUri" not in request.kwargs["json"] for request in updates))
+        callback.assert_called_once()
+
     def test_wowiport_import_stores_name_parts_and_detects_changes(self):
         self.user.wowiport_managed = True
         craft = self.models.CraftActivity(erp_id=50, name="Prüfung")

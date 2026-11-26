@@ -16,9 +16,16 @@ class Element {
   reportValidity() { return true; }
 }
 
-function fixture({editable = true, mail = true, fetchResult} = {}) {
+function fixture({editable = true, mail = true, dms = false, fetchResult} = {}) {
   const names = ["invoiceAttachments", "invoiceAttachmentForm", "invoiceAttachmentList", "invoiceAttachmentMessage", "invoiceAttachmentFiles", "invoiceAttachmentUpload", "invoiceDelivery", "invoiceDeliveryClient", "invoiceDeliverySystem", "invoiceDeliveryOfficial", "invoiceDeliveryPreview", "invoiceDeliverySend", "invoiceDeliveryMessage", "invoiceDeliveryForm", "invoiceDeliveryModes", "invoiceDeliveryPrint", "invoiceDeliveryClientPanel", "invoiceDeliverySystemPanel", "invoiceDeliveryPrintPanel", "invoiceDeliveryRecipient", "invoiceDeliverySubject", "invoiceDeliveryBody", "invoiceDeliveryResetBody", "invoiceDeliveryCsrf"];
   const elements = Object.fromEntries(names.map(name => [name, new Element()]));
+  if (dms) {
+    for (const name of [
+      "invoiceDeliveryDms", "invoiceDeliveryDmsPanel", "invoiceDmsOptions", "invoiceDmsPostalOption", "invoiceDmsPostal",
+      "invoiceDmsPortalOption", "invoiceDmsPortal", "invoiceDmsPortalViaPostal", "invoiceDeliveryDmsSubmit",
+    ]) elements[name] = new Element();
+    elements.invoiceDmsPostal.checked = elements.invoiceDmsPortal.checked = true;
+  }
   elements.invoiceAttachments.dataset = {endpoint: "/admin/invoices/1/attachments", documentUrl: "/admin/invoices/1/attachments/0"};
   elements.invoiceAttachmentForm.elements = {csrf_token: {value: "csrf-test"}};
   elements.invoiceDeliveryCsrf.value = "csrf-test";
@@ -219,4 +226,30 @@ test("print mode shows only the print panel", async () => {
   assert.equal(state.elements.invoiceDeliverySystemPanel.hidden, true);
   assert.equal(state.elements.invoiceDeliveryClientPanel.hidden, true);
   assert.equal(state.elements.invoiceDeliveryPrintPanel.hidden, false);
+});
+
+test("post carrier takes over portal sharing and print mode allows only the portal", async () => {
+  const {elements, fire} = fixture({dms: true});
+  assert.equal(elements.invoiceDmsPostal.checked, true);
+  assert.equal(elements.invoiceDmsPortal.checked, true);
+  assert.equal(elements.invoiceDmsPortal.disabled, true);
+  assert.equal(elements.invoiceDmsPortalViaPostal.hidden, false);
+  elements.invoiceDeliveryClient.checked = false;
+  elements.invoiceDeliveryPrint.checked = true;
+  await fire("invoiceDeliveryPrint", "change");
+  assert.equal(elements.invoiceDmsPostalOption.hidden, true);
+  assert.equal(elements.invoiceDmsPostal.disabled, true);
+  assert.equal(elements.invoiceDmsPortal.disabled, false);
+  assert.equal(elements.invoiceDmsPortal.checked, true);
+  assert.equal(elements.invoiceDmsPortalViaPostal.hidden, true);
+});
+
+test("direct mail submits the selected postal route as an additional action", async () => {
+  const state = fixture({dms: true});
+  await state.openSystem();
+  await state.choose(901);
+  await state.fire("invoiceDeliverySend", "click");
+  const data = JSON.parse(state.calls.find(call => call.url.pathname === "/send").body);
+  assert.equal(data.postal, true);
+  assert.equal(data.portal, false);
 });
