@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Rechnung abschließen und versenden{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Rechnung abschließen und versenden</h1>
+    <div class="text-muted">Rechnung {{ item.invoice_number }} · Schritt 2 von 2 · Versand</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.invoice_edit', invoice_id=item.id) }}">Zur Rechnung</a>
+</div>
+{% include 'admin/_invoice_delivery.html' %}
+{% if not pending_delivery %}
+<a class="btn btn-outline-secondary mt-3" href="{{ letter_url }}">Zurück zum Anschreiben</a>
+{% endif %}
+{% endblock %}

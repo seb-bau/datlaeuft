@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from pathlib import Path
 from string import Formatter
+from urllib.parse import quote
 from uuid import uuid4
 
 from sqlalchemy import case, event, select, update
@@ -43,6 +44,25 @@ def invoice_archive_documents(invoice_id):
     return DmsDocument.query.filter_by(entity_type="invoice", entity_id=invoice_id).filter(
         DmsDocument.invoice_version.is_not(None),
     )
+
+
+def invoice_dms_url(invoice):
+    if not invoice.dms_document_id:
+        return None
+    document = DmsDocument.query.filter_by(
+        entity_type="invoice", entity_id=invoice.id, dms_document_id=invoice.dms_document_id,
+    ).filter(DmsDocument.document_type.in_(INVOICE_DOCUMENT_TYPES)).order_by(
+        DmsDocument.archived_at.desc(), DmsDocument.id.desc(),
+    ).first()
+    hostname = document.hostname if document and document.hostname else settings.get(SettingKeys.DMS_HOSTNAME)
+    repository = document.repository_id if document and document.repository_id else settings.get(SettingKeys.DMS_REPOSITORY)
+    if not hostname or not repository:
+        return None
+    try:
+        host = normalize_hostname(hostname.strip())
+    except DmsError:
+        return None
+    return f"https://{host}/dms/r/{quote(repository.strip(), safe='')}/o2m/{quote(invoice.dms_document_id, safe='')}"
 
 
 def lock_invoice_archive(invoice_id):

@@ -3250,6 +3250,13 @@ class WowiCompanyCode(db.Model):
         remote_side=[id],
     )
     tenant_billing_recipient_email: Mapped[str | None] = mapped_column(db.String(255))
+    tenant_charge_letter_enabled: Mapped[bool] = mapped_column(
+        default=False, server_default=db.false(), nullable=False,
+    )
+
+    @property
+    def uses_tenant_charge_letter(self) -> bool:
+        return bool(self.tenant_charge_letter_enabled or self.tenant_billing_issuer_id is not None)
 
     invoice_billing_rules: Mapped[
         list["InvoiceBillingRule"]
@@ -4245,6 +4252,8 @@ class Invoice(db.Model):
     payment_information: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     tenant_billing_reference: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
     tenant_charge_letter: Mapped[dict[str, Any] | None] = mapped_column(db.JSON)
+    completed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True))
+    completion_mode: Mapped[str | None] = mapped_column(db.String(20))
     insurance_claim_number: Mapped[str | None] = mapped_column(db.String(120))
     introductory_text: Mapped[str | None] = mapped_column(
         db.Text
@@ -4387,6 +4396,10 @@ class Invoice(db.Model):
         uselist=False,
     )
 
+
+    @property
+    def tenant_billing_to_company(self) -> bool:
+        return bool(self.tenant_billing_reference and not self.tenant_billing_reference.get("self_billing"))
 
     @property
     def billing_contract_number(self) -> str | None:

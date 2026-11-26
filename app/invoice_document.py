@@ -524,10 +524,7 @@ def _document_context(
         ),
         "Rechnungsdatum",
     )
-    due_date_value = _read_value(
-        invoice,
-        "due_date",
-    )
+    due_date_value = None if invoice.tenant_billing_reference else _read_value(invoice, "due_date")
     due_date = (
         _date_value(
             due_date_value,
@@ -1133,7 +1130,8 @@ def _zugferd_data(context: dict) -> dict:
         "BT-20": (
             ""
             if is_cancellation
-            else context["payment_terms_text"]
+            else "Die Zahlungsabwicklung ist im Mieteranschreiben geregelt."
+            if context["tenant_billing_reference"] else context["payment_terms_text"]
         ),
         "BT-27": context["seller_name"],
         "BT-31": context["seller_vat_id"],

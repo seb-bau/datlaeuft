@@ -42,7 +42,8 @@ class InvoiceWorkflowTests(unittest.TestCase):
             sys.modules.pop(cls.package_name + "." + name, None)
             setattr(cls, name, importlib.import_module(cls.package_name + "." + name))
         guard = sys.modules[cls.package_name + ".auth"].invoice_required
-        for endpoint in ("invoices", "invoice_edit", "invoice_responsibility", "invoice_cover_letter", "invoice_cover_letter_preview", "invoice_correspondence"):
+        for endpoint in ("invoices", "invoice_edit", "invoice_responsibility", "invoice_cover_letter",
+                         "invoice_cover_letter_preview", "invoice_correspondence", "invoice_complete"):
             view = cls.app.view_functions["admin." + endpoint]
             cls.app.view_functions["admin." + endpoint] = guard(view.__wrapped__)
         source = ast.parse((cls.root / "app/auth.py").read_text())
@@ -397,6 +398,11 @@ class InvoiceWorkflowTests(unittest.TestCase):
 
     def test_dashboard_count_matches_the_linked_invoice_filter(self):
         self.draft("invoice")
+        sent = self.draft("invoice")
+        sent.status = "finalized"
+        sent.completed_at = self.models.utc_now()
+        sent.completion_mode = "print"
+        sent.recipient_name = "Abgeschlossene Beispielrechnung"
         canceled = self.draft("invoice")
         canceled.status = "canceled"
         foreign = self.draft("invoice")
@@ -405,18 +411,42 @@ class InvoiceWorkflowTests(unittest.TestCase):
         with patch.object(self.admin, "render_template", side_effect=lambda template, **values: str(values["my_invoice_count"])):
             response = self.client.get("/admin")
         self.assertEqual(response.data, b"1")
+        name = b"Abgeschlossene Beispielrechnung"
+        self.assertNotIn(name, self.client.get("/admin/invoices?status=active").data)
+        self.assertNotIn(name, self.client.get("/admin/invoices").data)
+        sent_list = self.client.get("/admin/invoices?status=sent").data
+        self.assertIn(name, sent_list)
+        self.assertNotIn(b"<th>d.velop</th>", sent_list)
         with self.app.test_request_context():
             html = render_template("admin/dashboard.html", my_invoice_count=1)
         self.assertIn("responsible=mine", html)
         self.assertIn("status=active", html)
+
+    def test_standard_letter_step_saves_the_edited_cover_letter_and_continues_to_dispatch(self):
+        invoice = self.rendered_invoice()
+        url = f"/admin/invoices/{invoice.id}"
+        document = self.client.get(url + "/abschluss").get_data(as_text=True)
+        self.assertIn("Schritt 1 von 2", document)
+        self.assertIn("PDF-Vorschau", document)
+        values = {"title": "Ihre Ausfertigung", "text": "Begleittext zum Versand"}
+        preview = self.client.post(url + "/cover-letter/preview", data=values)
+        self.assertIn("Begleittext zum Versand", self.pdf_text(preview))
+        self.db.session.refresh(invoice)
+        self.assertIsNone(invoice.cover_letter_title)
+        saved = self.client.post(url + "/abschluss", data=values)
+        self.assertEqual(saved.location, url + "/delivery/complete")
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.cover_letter_title, values["title"])
+        self.assertIsNone(invoice.completed_at)
 
     def test_invoice_permissions_cover_all_new_routes(self):
         invoice = self.draft("invoice")
         self.creator.can_manage_invoices = False
         self.db.session.commit()
         self.login(self.creator)
-        for path in ("/admin/invoices", f"/admin/invoices/{invoice.id}/cover-letter", f"/admin/invoices/{invoice.id}/correspondence"):
-            self.assertEqual(self.client.get(path).status_code, 403)
+        for suffix in ("cover-letter", "correspondence", "abschluss", "delivery/complete"):
+            self.assertEqual(self.client.get(f"/admin/invoices/{invoice.id}/{suffix}").status_code, 403)
+        self.assertEqual(self.client.get("/admin/invoices").status_code, 403)
         self.assertEqual(self.assign(invoice).status_code, 403)
         self.assertEqual(self.save_letter(invoice).status_code, 403)
         self.assertEqual(self.client.post(f"/admin/invoices/{invoice.id}/cover-letter/preview").status_code, 403)

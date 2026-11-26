@@ -362,16 +362,68 @@ class InvoiceDeliveryTests(unittest.TestCase):
         self.workflow.process_workflow_notification_batch(limit=1)
         self.mail.assert_called_once()
 
+    def test_wizard_direct_delivery_closes_the_invoice_after_smtp_and_blocks_duplicate_dispatch(self):
+        invoice = self.rendered_invoice()
+        self.assertEqual(self.queue(invoice, complete_invoice=True).status_code, 202)
+        self.db.session.refresh(invoice)
+        self.assertIsNone(invoice.completed_at)
+        self.assertEqual(self.queue(invoice, complete_invoice=True).status_code, 409)
+        url = f"/admin/invoices/{invoice.id}/delivery/complete"
+        self.assertEqual(self.client.post(url, data={"mode": "print"}).status_code, 409)
+        self.workflow.process_workflow_notification_batch(limit=1)
+        self.db.session.refresh(invoice)
+        self.assertIsNotNone(invoice.completed_at)
+        self.assertEqual(invoice.completion_mode, "direct")
+        self.assertEqual(self.models.AuditLog.query.filter_by(action="invoice.complete").count(), 1)
+        self.assertEqual(self.queue(invoice, complete_invoice=True).status_code, 409)
+        self.mail.assert_called_once()
+
+    def test_wizard_debug_delivery_keeps_the_invoice_open(self):
+        invoice = self.rendered_invoice()
+        self.mail.return_value = "debug@example.invalid"
+        self.assertEqual(self.queue(invoice, complete_invoice=True).status_code, 202)
+        self.workflow.process_workflow_notification_batch(limit=1)
+        self.db.session.refresh(invoice)
+        self.assertIsNone(invoice.completed_at)
+        self.assertTrue(self.client.get(f"/admin/invoices/{invoice.id}/delivery/status?complete=1").json["item"]["test_delivery"])
+
+    def test_wizard_outlook_download_finishes_with_the_letter_and_original_attachments(self):
+        invoice = self.rendered_invoice(with_attachments=True)
+        invoice.cover_letter_title = "Ausfertigung für Outlook"
+        invoice.cover_letter_text = "Der Versand erfolgt über Outlook."
+        self.db.session.commit()
+        url = f"/admin/invoices/{invoice.id}/delivery/complete"
+        response = self.client.post(url, data={"mode": "outlook"})
+        self.assertEqual(response.status_code, 200, response.data[:500])
+        message = BytesParser(policy=policy.default).parsebytes(response.data)
+        self.assertEqual(message["X-Unsent"], "1")
+        reader = PdfReader(BytesIO(next(message.iter_attachments()).get_content()))
+        self.assertEqual(len(reader.pages), 5)
+        self.assertIn("Ausfertigung für Outlook", reader.pages[0].extract_text())
+        self.assertIn("ANHANG B", reader.pages[-1].extract_text())
+        self.assertIn("factur-x.xml", reader.attachments)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.completion_mode, "outlook")
+        self.assertEqual(self.client.post(url, data={"mode": "outlook"}).status_code, 200)
+        self.assertEqual(self.models.AuditLog.query.filter_by(action="invoice.complete").count(), 1)
+        self.mail.assert_not_called()
+
     def test_invoice_editor_renders_attachment_and_mail_controls_without_nested_forms(self):
         invoice = self.rendered_invoice()
         with self.app.test_request_context():
             html = render_template("admin/invoice_draft.html", item=invoice, editable=False, task_templates=[], craft_activities=[], catalogue_items=[], position_source_labels={}, work_report_counts={}, has_billed_work_reports=False, has_any_work_reports=False)
-        self.assertIn("Rechnung versenden", html)
-        self.assertIn("E-Mail-Entwurf öffnen / herunterladen", html)
-        self.assertIn("invoice_delivery.js", html)
-        self.assertIn('<textarea class="form-control mb-2" id="invoiceDeliveryBody"', html)
-        self.assertIn("Die gespeicherte Vorlage bleibt unverändert.", html)
+        self.assertIn("Rechnung abschließen und versenden", html)
+        self.assertIn("Rechnungs-PDF aufrufen", html)
+        self.assertIn('data-bs-target="#invoiceCancelModal"', html)
+        self.assertNotIn("PDF neu erzeugen", html)
+        self.assertNotIn("In d.velop archivieren", html)
         self.assertNotIn('id="invoiceAttachmentForm"', html)
+        delivery = self.client.get(f"/admin/invoices/{invoice.id}/delivery/complete").get_data(as_text=True)
+        self.assertIn("Direktversand", delivery)
+        self.assertIn("Versand per Outlook", delivery)
+        self.assertIn("Kein Versand (nur Druck)", delivery)
+        self.assertIn('<textarea class="form-control mb-2" id="invoiceDeliveryBody"', delivery)
+        self.assertIn("Die gespeicherte Vorlage bleibt unverändert.", delivery)
         invoice.status = "draft"
         with self.app.test_request_context():
             html = render_template("admin/invoice_draft.html", item=invoice, editable=True, task_templates=[], craft_activities=[], catalogue_items=[], position_source_labels={}, work_report_counts={}, has_billed_work_reports=False, has_any_work_reports=False)

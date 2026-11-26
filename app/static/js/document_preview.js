@@ -44,7 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const contentType = response.headers.get("Content-Type") || "";
         if (!response.ok || response.redirected || !contentType.includes("application/pdf")) {
           const data = contentType.includes("application/json") ? await response.json() : {};
-          throw new Error(data.error || "Die PDF-Vorschau konnte nicht erstellt werden. Bitte Eingaben und Anmeldung prüfen.");
+          throw new Error(data.error || data.message || "Die PDF-Vorschau konnte nicht erstellt werden. Bitte Eingaben und Anmeldung prüfen.");
         }
         const blob = await response.blob();
         if (activeController.signal.aborted) return;

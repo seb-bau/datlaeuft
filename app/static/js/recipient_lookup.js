@@ -20,6 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const serviceReference = document.getElementById("invoiceServiceReference");
     const recipientFields = document.getElementById("invoiceRecipientFields");
     const paymentSection = document.getElementById("invoicePaymentInformation");
+    const dueDateField = document.getElementById("invoiceDueDateField");
     const finalize = document.getElementById("invoiceFinalize");
     const savedAgreementId = isOffer
       ? search.dataset.agreementId || ""
@@ -71,6 +72,7 @@ document.addEventListener("DOMContentLoaded", () => {
       recipientFields.disabled = pendingAssignment || (recipientFieldsInitiallyDisabled && !removing);
       if (serviceReference) serviceReference.hidden = changing;
       if (paymentSection) paymentSection.hidden = changing;
+      if (dueDateField) dueDateField.hidden = changing;
       finalize.disabled = changing;
       if (removeButton) removeButton.textContent = removing ? "Entfernen rückgängig machen" : "Mietvertrag entfernen";
     }

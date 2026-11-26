@@ -214,7 +214,7 @@ def _clear_invoice_agreement(invoice: Invoice) -> None:
 def _apply_agreement_invoice_recipient(
     invoice: Invoice, agreement: WowiLicenseAgreement, company: WowiCompanyCode, recipient: dict,
 ) -> None:
-    if company.tenant_billing_issuer_id is not None:
+    if company.uses_tenant_charge_letter:
         apply_tenant_billing(invoice, agreement, company, recipient)
     else:
         apply_contract_recipient(invoice, agreement, recipient)
@@ -244,19 +244,22 @@ def create_offer_invoice_draft(
         )
 
     agreement_id = offer.license_agreement_erp_id or offer.commission.license_agreement_id
-    if offer.company_code.tenant_billing_issuer_id is not None and agreement_id is not None:
+    if offer.company_code.uses_tenant_charge_letter and agreement_id is not None:
         agreement = tenant_billing_agreement(agreement_id)
         company = agreement_company_code(agreement)
         if company.id != offer.company_code_id:
             raise ValueError("Mietvertrag und Buchwerk des Angebots stimmen nicht überein.")
         invoice = create_free_invoice_draft(tenant_billing_issuer(company), created_by)
         recipient = {"name": offer.tenant_name or offer.commission.tenant_name}
-        if offer.license_agreement_erp_id == agreement_id and offer.recipient_person_erp_id is not None:
+        if (offer.license_agreement_erp_id == agreement_id and offer.recipient_person_erp_id is not None) or (
+            company.tenant_billing_issuer_id is None and offer.recipient_name
+        ):
             recipient = {
                 field: getattr(offer, "recipient_" + field)
-                for field in ("name", "name_addition", "street", "postal_code", "town", "country_code")
+                for field in ("name", "name_addition", "street", "postal_code", "town", "country_code", "email", "vat_id", "type")
             }
             recipient["person_id"] = offer.recipient_person_erp_id
+            recipient["recipient_type"] = recipient.pop("type")
         apply_tenant_billing(invoice, agreement, company, recipient)
     else:
         invoice = create_free_invoice_draft(offer.company_code, created_by)
@@ -381,8 +384,10 @@ def create_commission_invoice_draft(
         commissions=commissions,
     )
 
-    if company_code.tenant_billing_issuer_id is not None:
-        commission = commissions[0]
+    commission = commissions[0]
+    if company_code.tenant_billing_issuer_id is not None or (
+        company_code.tenant_charge_letter_enabled and commission.license_agreement_id is not None
+    ):
         agreement = tenant_billing_agreement(commission.license_agreement_id)
         if agreement_company_code(agreement).id != company_code.id:
             raise ValueError("Mietvertrag und Buchwerk des Auftrags stimmen nicht überein.")
@@ -1426,7 +1431,7 @@ def _validate_invoice_for_finalization(
             and agreement_uses_tenant_billing(invoice.recipient_license_agreement_erp_id)
         ):
             raise InvoiceFinalizationError(
-                "Für den Mietvertrag ist eine Firmenrechnung vorgesehen. "
+                "Für den Mietvertrag ist eine Firmenrechnung oder ein Mieteranschreiben vorgesehen. "
                 "Bitte wählen Sie den Mietvertrag im Entwurf erneut aus und speichern Sie den Entwurf."
             )
         try:
@@ -1811,10 +1816,7 @@ def finalize_invoice(
     )
     invoice.invoice_date = invoice_date
 
-    if (
-        invoice.invoice_kind
-        == InvoiceKind.CANCELLATION.value
-    ):
+    if invoice.invoice_kind == InvoiceKind.CANCELLATION.value or invoice.tenant_billing_reference:
         invoice.due_date = None
     elif invoice.due_date is None:
         payment_terms_days = (
@@ -1845,10 +1847,11 @@ def finalize_invoice(
             invoice_date.year,
         )
     )
-    invoice.payment_reference = (
-        invoice.payment_reference
-        or invoice.invoice_number
-    )
+    if not invoice.tenant_billing_reference or invoice.invoice_kind == InvoiceKind.CANCELLATION.value:
+        invoice.payment_reference = invoice.payment_reference or invoice.invoice_number
+    else:
+        invoice.payment_reference = None
+        invoice.payment_information = None
 
     if invoice.invoice_kind != InvoiceKind.CANCELLATION.value:
         freeze_invoice_payment_information(invoice)
@@ -1970,6 +1973,8 @@ INVOICE_CANCELLATION_EXCLUDED_COLUMNS = {
     "cover_letter_text",
     "cover_letter_date",
     "tenant_charge_letter",
+    "completed_at",
+    "completion_mode",
     "id",
     "public_id",
     "invoice_number",

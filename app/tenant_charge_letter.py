@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 from markupsafe import escape
@@ -9,6 +9,14 @@ from .invoice_document import _format_money
 from .invoice_payments import masked_payment_iban, payment_options_from_wowiport
 from .settings import LEGACY_TENANT_CHARGE_CLOSING_TEMPLATE, SettingKeys, settings
 from .tenant_billing import choose_contract_recipient, contract_recipients
+
+
+def tenant_letter_due_date(today):
+    cutoff_day = settings.get(SettingKeys.INVOICE_TENANT_CHARGE_CUTOFF_DAY)
+    next_month = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+    if today.day >= cutoff_day:
+        return (next_month + timedelta(days=32)).replace(day=1)
+    return next_month
 
 
 def tenant_letter_recipients(invoice, service) -> list[dict]:

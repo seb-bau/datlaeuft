@@ -343,6 +343,9 @@ def execute_workflow_notification(item_id):
         item.sent_at = utc_now()
         if item.kind == "invoice_delivery":
             from .audit import audit
+            from .invoice_delivery import complete_invoice_after_email
+
+            complete_invoice_after_email(item)
             audit("invoice.mail_sent", "invoice", item.payload["invoice_id"], {"notification_id": item.id, "recipient": item.payload["delivery_recipient"]})
             current_app.logger.info("invoice_mail_sent invoice_id=%s notification_id=%s recipient=%s", item.payload["invoice_id"], item.id, item.payload["delivery_recipient"])
         db.session.commit()

@@ -64,7 +64,6 @@
           <th>Vertrag</th>
           <th>Aufträge</th>
           <th class="text-end">Brutto</th>
-          <th>d.velop</th>
           <th></th>
         </tr>
       </thead>
@@ -82,8 +81,8 @@
               Entwurf
             </span>
             {% elif item.status == "finalized" %}
-            <span class="badge text-bg-success">
-              Festgeschrieben
+            <span class="badge {{ 'text-bg-success' if item.completed_at else 'text-bg-primary' }}">
+              {{ 'Rechnung verschickt' if item.completed_at else 'Rechnung erstellt' }}
             </span>
             {% elif item.status == "canceled" %}
             <span class="badge text-bg-warning">
@@ -135,25 +134,6 @@
           <td class="text-end">
             {{ "%.2f"|format(item.total_gross) }}
             {{ item.currency_code }}
-          </td>
-
-          <td>
-            {% if item.dms_archive_status == "archived" %}
-            <span class="badge text-bg-success">
-              Archiviert
-            </span>
-            {% elif item.dms_archive_status == "failed" %}
-            <span
-              class="badge text-bg-danger"
-              title="{{ item.dms_archive_error or '' }}"
-            >
-              Fehler
-            </span>
-            {% else %}
-            <span class="badge text-bg-secondary">
-              Nicht archiviert
-            </span>
-            {% endif %}
           </td>
 
           <td class="text-end">

@@ -233,6 +233,26 @@ class DmsContextTests(unittest.TestCase):
             profile.mappings = {"object": {"kind": "field", "value": source}}
             self.service.validate_profile(profile, self.schema())
 
+    def test_invoice_link_uses_the_archived_repository_even_after_the_connection_changes(self):
+        invoice = self.models.Invoice(
+            company_code=self.company, company_code_erp_id=self.company.erp_id, company_code_code=self.company.code,
+            created_by=self.user, dms_document_id="D000000123",
+        )
+        self.db.session.add(invoice)
+        self.db.session.flush()
+        now = self.models.utc_now()
+        self.db.session.add(self.models.DmsDocument(
+            id="archived", document_type="invoice", entity_type="invoice", entity_id=invoice.id,
+            filename="rechnung.pdf", storage_name="rechnung.pdf", sha256="a" * 64, context={},
+            hostname="archiv.example.invalid", repository_id="repo-alt", status="archived",
+            available_at=now, created_at=now, archived_at=now, dms_document_id=invoice.dms_document_id,
+        ))
+        keys = self.settings.SettingKeys
+        self.settings.settings.set(keys.DMS_HOSTNAME, "anderes-archiv.example.invalid")
+        self.settings.settings.set(keys.DMS_REPOSITORY, "repo-neu")
+        self.db.session.commit()
+        self.assertEqual(self.service.invoice_dms_url(invoice), "https://archiv.example.invalid/dms/r/repo-alt/o2m/D000000123")
+
     def test_invoice_versions_reuse_the_document_and_reconcile_a_lost_confirmation(self):
         invoice = self.models.Invoice(
             company_code=self.company, company_code_erp_id=self.company.erp_id, company_code_code=self.company.code,

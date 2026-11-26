@@ -568,6 +568,10 @@ class SettingKeys:
         "Mit freundlichen Grüßen\n{seller_name}\n{sig}",
         "Anschreiben: Standardtext", "Rechnungen",
     )
+    INVOICE_TENANT_CHARGE_CUTOFF_DAY = SettingDefinition[int](
+        "invoice.tenant_charge_cutoff_day", SettingValueType.INT, 16,
+        "Mieteranschreiben: Stichtag für die Fälligkeit im übernächsten Monat", "Rechnungen",
+    )
     INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE = SettingDefinition[str](
         "invoice.tenant_charge_purpose_template", SettingValueType.STRING,
         "Für die ausgeführten Arbeiten berechnen wir Ihnen die Kosten gemäß der beigefügten Rechnung.\n{work_description}",
@@ -1020,6 +1024,8 @@ class SettingsService:
             ))
         if definition.key in {SettingKeys.INVOICE_COVER_LETTER_TITLE.key, SettingKeys.INVOICE_COVER_LETTER_TEXT.key}:
             value = cast(T, validate_cover_letter_text(value, title=definition.key == SettingKeys.INVOICE_COVER_LETTER_TITLE.key))
+        if definition.key == SettingKeys.INVOICE_TENANT_CHARGE_CUTOFF_DAY.key and not 1 <= cast(int, value) <= 31:
+            raise ValueError("Bitte geben Sie für den Stichtag im Mieteranschreiben einen Tag von 1 bis 31 ein.")
         if definition.key == SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key:
             value = cast(T, validate_tenant_charge_purpose_template(value))
         if definition.key == SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE.key:

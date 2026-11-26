@@ -52,6 +52,9 @@
           <input class="form-check-input" type="checkbox" name="{{ definition.key }}" value="true" {% if value %}checked{% endif %}>
           <label class="form-check-label">Aktiv</label>
         </div>
+        {% elif definition.key == "invoice.tenant_charge_cutoff_day" %}
+        <input class="form-control" type="number" name="{{ definition.key }}" value="{{ value }}" min="1" max="31" step="1" required>
+        <div class="form-text">Vor dem Stichtag wird der 1. des Folgemonats vorgeschlagen. Ab dem Stichtag wird der 1. des übernächsten Monats vorgeschlagen.</div>
         {% elif definition.key in ("smtp.debug_recipient", "smtp.external_debug_recipient") %}
           <input
             class="form-control"

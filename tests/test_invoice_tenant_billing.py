@@ -41,7 +41,8 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         guard = sys.modules[cls.package_name + ".auth"].invoice_required
         for endpoint in (
             "invoice_create", "invoice_edit", "invoice_cover_letter", "invoice_cover_letter_preview",
-            "invoice_correspondence", "invoice_tenant_charge", "invoice_tenant_charge_document",
+            "invoice_correspondence", "invoice_complete", "invoice_tenant_charge",
+            "invoice_tenant_charge_preview", "invoice_tenant_charge_document",
         ):
             view = cls.app.view_functions["admin." + endpoint]
             cls.app.view_functions["admin." + endpoint] = guard(view.__wrapped__)
@@ -127,6 +128,83 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.assertEqual(invoice.recipient_license_agreement_erp_id, self.agreement.erp_id)
         self.assertIsNone(invoice.tenant_billing_reference)
         self.assertIn(b"invoiceCoverLetterModal", self.client.get(f"/admin/invoices/{invoice.id}").data)
+
+    def test_self_billing_uses_the_tenant_recipient_and_completes_with_the_whole_print_pdf(self):
+        self.company.tenant_billing_issuer = None
+        self.company.document_creation_disabled = False
+        self.company.tenant_charge_letter_enabled = True
+        self.db.session.commit()
+        invoice = self.create_invoice()
+        url = f"/admin/invoices/{invoice.id}"
+        self.assertEqual(invoice.company_code, self.company)
+        self.assertEqual(invoice.recipient_name, self.party["name"])
+        self.assertEqual(invoice.recipient_license_agreement_erp_id, self.agreement.erp_id)
+        self.assertIsNone(invoice.due_date)
+        draft = self.client.get(url).get_data(as_text=True)
+        self.assertIn("Anschreiben zur Mieterbelastung", draft)
+        self.assertNotIn('name="due_date"', draft)
+        self.assertNotIn('name="payment_information_data"', draft)
+        self.assertEqual(self.upload(invoice, [(self.pdf("BELEG ZUM MIETERANSCHREIBEN"), "beleg.pdf")]).status_code, 201)
+        form = self.draft_form()
+        form.update(save_draft="1", service_date_from=form["invoice_date"], due_date="ungültig")
+        self.assertEqual(self.client.post(url + "/finalize", data=form).status_code, 302)
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.status, "finalized")
+        self.assertIsNone(invoice.due_date)
+        self.assertIsNone(invoice.payment_information)
+        original = PdfReader(BytesIO(self.delivery.final_invoice_pdf(invoice)))
+        xml = etree.fromstring(original.attachments["factur-x.xml"][0])
+        self.assertEqual(xml.xpath("string(//*[local-name()='BuyerTradeParty']/*[local-name()='Name'])"), self.party["name"])
+        self.assertFalse(xml.xpath("//*[local-name()='DueDateDateTime' or local-name()='SpecifiedTradeSettlementPaymentMeans']"))
+        self.assertNotIn(TRANSFER_IBAN, original.pages[0].extract_text())
+
+        agreement, mode = self.api_rows()
+        self.remote.read_all_rows.side_effect = lambda endpoint, *_args, **_kwargs: [agreement] if endpoint.endswith("LicenseAgreements") else [mode]
+        self.assertEqual(self.client.get(url + "/abschluss").location, url + "/tenant-charge?complete=1")
+        self.assertEqual(self.client.get(url + "/delivery/complete").location, url + "/tenant-charge?complete=1")
+        letter_page = self.client.get(url + "/tenant-charge?complete=1").get_data(as_text=True)
+        self.assertIn("Schritt 1 von 2", letter_page)
+        self.assertIn("Weiter zum Versand", letter_page)
+        form = {
+            "purpose": "Ungespeicherter Anlass für den Mieter", "revision": 0, "payment_method": "sepa_debit",
+            "person_id": self.party["person_id"], "due_date": (date.today() + timedelta(days=10)).isoformat(),
+        }
+        archive_count = self.archive.call_count
+        preview = self.client.post(url + "/tenant-charge/preview", data=form)
+        self.assertEqual(preview.status_code, 200, preview.data[:500])
+        self.assertIn(form["purpose"], PdfReader(BytesIO(preview.data)).pages[0].extract_text())
+        self.db.session.refresh(invoice)
+        self.assertIsNone(invoice.tenant_charge_letter)
+        self.assertEqual(self.archive.call_count, archive_count)
+
+        saved = self.client.post(url + "/tenant-charge?complete=1", data=form)
+        self.assertEqual(saved.location, url + "/delivery/complete")
+        self.assertIn(b"Schritt 2 von 2", self.client.get(saved.location).data)
+        download = self.client.post(saved.location, data={"mode": "print"})
+        self.assertEqual(download.status_code, 200, download.data[:500])
+        self.assertIn("attachment", download.headers["Content-Disposition"])
+        package = PdfReader(BytesIO(download.data))
+        self.assertEqual(len(package.pages), 3)
+        self.assertIn(form["purpose"], package.pages[0].extract_text())
+        self.assertIn("BELEG ZUM MIETERANSCHREIBEN", package.pages[-1].extract_text())
+        self.assertEqual(package.attachments["factur-x.xml"], original.attachments["factur-x.xml"])
+        self.db.session.refresh(invoice)
+        self.assertEqual(invoice.completion_mode, "print")
+        self.assertIn(b"Rechnung verschickt", self.client.get(url).data)
+        self.mail.assert_not_called()
+
+    def test_tenant_due_date_uses_the_configurable_cutoff_across_the_year_boundary(self):
+        module = importlib.import_module(self.package_name + ".tenant_charge_letter")
+        self.assertEqual(module.tenant_letter_due_date(date(2026, 12, 15)), date(2027, 1, 1))
+        self.assertEqual(module.tenant_letter_due_date(date(2026, 12, 16)), date(2027, 2, 1))
+        self.assertEqual(module.tenant_letter_due_date(date(2026, 12, 31)), date(2027, 2, 1))
+        key = self.settings.SettingKeys.INVOICE_TENANT_CHARGE_CUTOFF_DAY
+        self.settings.settings.set(key, 20)
+        self.assertEqual(module.tenant_letter_due_date(date(2026, 12, 16)), date(2027, 1, 1))
+        self.assertEqual(module.tenant_letter_due_date(date(2026, 12, 20)), date(2027, 2, 1))
+        for invalid_day in (0, 32):
+            with self.assertRaises(ValueError):
+                self.settings.settings.set(key, invalid_day)
 
     def test_commission_and_offer_drafts_use_the_rule_with_a_disabled_contract_book(self):
         commission = self.post_order()
