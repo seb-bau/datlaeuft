@@ -26,13 +26,6 @@ from .wowiport import WowiportService
 
 invoice_delivery_bp = Blueprint("invoice_delivery", __name__)
 
-COMPLETION_MODE_LABELS = {
-    "direct": "Direktversand",
-    "outlook": "Versand per Outlook",
-    "print": "Kein Versand (nur Druck)",
-}
-
-
 def invoice_response(data, status=200):
     response = jsonify(data)
     response.status_code = status

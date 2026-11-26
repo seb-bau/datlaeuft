@@ -30,7 +30,8 @@ class InvoiceDeliveryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         fixtures.InvoicePaymentTests.setUpClass.__func__(cls)
-        sys.modules.pop(cls.package_name + ".invoice_delivery", None)
+        for name in ("invoice_correspondence", "invoice_delivery"):
+            sys.modules.pop(cls.package_name + "." + name, None)
         cls.delivery = importlib.import_module(cls.package_name + ".invoice_delivery")
         cls.templates = importlib.import_module(cls.package_name + ".email_templates")
         cls.app.register_blueprint(cls.delivery.invoice_delivery_bp)

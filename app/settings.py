@@ -1080,6 +1080,7 @@ class SettingsService:
         if raw_value is None and definition.key in {
             SettingKeys.SMTP_DEBUG_RECIPIENT.key,
             SettingKeys.SMTP_EXTERNAL_DEBUG_RECIPIENT.key,
+            SettingKeys.INVOICE_TENANT_CHARGE_CUTOFF_DAY.key,
             SettingKeys.INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE.key,
             SettingKeys.INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE.key,
         }:

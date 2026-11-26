@@ -96,6 +96,7 @@
       <div class="small">
         {% if item.dms_archive_status == 'archived' %}In d.velop archiviert
         {% elif item.dms_archive_error %}d.velop · {{ item.dms_archive_error }}
+        {% elif item.dms_document_id %}Aktuelle Fassung wartet auf Archivierung in d.velop
         {% else %}Noch nicht in d.velop archiviert
         {% endif %}
       </div>

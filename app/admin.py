@@ -8225,16 +8225,28 @@ def invoice_edit_context(
     )
     has_any_work_reports = bool(report_counts)
 
-    from .dms_service import invoice_dms_url
-    from .invoice_delivery import COMPLETION_MODE_LABELS, pending_invoice_completion
+    pending_delivery = None
+    if item.status == InvoiceStatus.FINALIZED.value and item.completed_at is None:
+        from .invoice_delivery import pending_invoice_completion
 
+        pending_delivery = pending_invoice_completion(item)
+
+    archive_url = None
+    if item.dms_document_id:
+        from .dms_service import invoice_dms_url
+
+        archive_url = invoice_dms_url(item)
+
+    completion_mode_labels = {
+        "direct": "Direktversand", "outlook": "Versand per Outlook", "print": "Kein Versand (nur Druck)",
+    }
     return {
         "item": item,
-        "completion_mode_label": COMPLETION_MODE_LABELS.get(item.completion_mode),
-        "completion_date_label": format_local_datetime(item.completed_at),
-        "archive_date_label": format_local_datetime(item.dms_archived_at),
-        "invoice_dms_url": invoice_dms_url(item),
-        "pending_delivery": pending_invoice_completion(item),
+        "completion_mode_label": completion_mode_labels.get(item.completion_mode),
+        "completion_date_label": format_local_datetime(item.completed_at) if item.completed_at else None,
+        "archive_date_label": format_local_datetime(item.dms_archived_at) if item.dms_archived_at else None,
+        "invoice_dms_url": archive_url,
+        "pending_delivery": pending_delivery,
         "responsibility_users": User.query.filter(
             User.is_active_flag.is_(True), db.or_(User.is_admin.is_(True), User.can_manage_invoices.is_(True)),
         ).order_by(User.display_name, User.id).all(),
