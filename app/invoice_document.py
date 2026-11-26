@@ -15,9 +15,11 @@ from pypdf import PdfReader, PdfWriter
 from weasyprint import HTML
 
 from .document_layout import document_layout_url_fetcher
+from .extensions import db
 from .models import (
     Invoice,
     InvoiceKind,
+    WowiCompanyCode,
 )
 from .invoice_payments import invoice_payment_context
 from .invoice_attachments import append_invoice_attachments
@@ -1424,32 +1426,25 @@ def create_invoice_document(
             ),
         )
 
+        pdf_bytes = zugferd_pdf_path.read_bytes()
+        archive_pdf = pdf_bytes
+        if invoice.tenant_billing_reference and invoice.tenant_charge_letter:
+            from .tenant_charge_letter import tenant_charge_package
+
+            company = db.session.get(WowiCompanyCode, invoice.tenant_billing_reference["company_code_id"])
+            archive_pdf = tenant_charge_package(invoice, company, invoice.tenant_charge_letter, invoice_pdf=pdf_bytes)
+        elif invoice.cover_letter_title is not None:
+            from .invoice_correspondence import prepend_cover_letter
+
+            archive_pdf = prepend_cover_letter(invoice, pdf_bytes, preview=False)
+        register_invoice_archive_pdf(invoice, archive_pdf, filename=pdf_path.name)
+
         zugferd_pdf_path.replace(
             pdf_path
         )
         temporary_xml_path.replace(
             xml_path
         )
-
-    pdf_bytes = pdf_path.read_bytes()
-    stored_xml_bytes = xml_path.read_bytes()
-
-    from .dms_context import invoice_context
-    from .dms_service import register_generated_pdf
-
-    try:
-        register_generated_pdf(
-            "cancellation_invoice" if context["is_cancellation"] else "invoice",
-            "invoice",
-            invoice.id,
-            pdf_path.name,
-            pdf_bytes,
-            invoice_context(invoice),
-        )
-    except (RuntimeError, OSError) as exc:
-        raise InvoiceDocumentError(
-            "Der Archivierungsauftrag konnte nicht gespeichert werden."
-        ) from exc
 
     return InvoiceDocumentResult(
         pdf_storage_name=str(
@@ -1466,9 +1461,26 @@ def create_invoice_document(
             pdf_bytes
         ).hexdigest(),
         xml_sha256=sha256(
-            stored_xml_bytes
+            xml_bytes
         ).hexdigest(),
     )
+
+
+def register_invoice_archive_pdf(invoice, content, *, filename=None):
+    from .dms_context import invoice_context
+    from .dms_service import register_generated_pdf
+
+    try:
+        return register_generated_pdf(
+            "cancellation_invoice" if invoice.invoice_kind == InvoiceKind.CANCELLATION.value else "invoice",
+            "invoice",
+            invoice.id,
+            filename or Path(invoice.document_filename).name,
+            content,
+            invoice_context(invoice),
+        )
+    except (RuntimeError, OSError) as exc:
+        raise InvoiceDocumentError("Der Archivierungsauftrag konnte nicht gespeichert werden.") from exc
 
 
 def resolve_invoice_document_path(

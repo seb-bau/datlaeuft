@@ -485,6 +485,8 @@ def create_work_report_pdf(
     commission: Commission,
     entries: list[TimeEntry],
     scope: str = WORK_REPORT_SCOPE_ALL,
+    *,
+    register_archive: bool = True,
 ) -> BytesIO:
     scope = normalize_work_report_scope(scope)
     context = work_report_context(
@@ -503,22 +505,23 @@ def create_work_report_pdf(
             base_url=current_app.root_path,
         ).write_pdf()
 
-        from .dms_context import work_report_context as archive_context
-        from .dms_service import register_generated_pdf
+        if register_archive:
+            from .dms_context import work_report_context as archive_context
+            from .dms_service import register_generated_pdf
 
-        archive_values = archive_context(commission, entries, scope)
-        archive_values["content_fingerprint"] = work_report_fingerprint(
-            commission, entries, scope,
-        )
+            archive_values = archive_context(commission, entries, scope)
+            archive_values["content_fingerprint"] = work_report_fingerprint(
+                commission, entries, scope,
+            )
 
-        register_generated_pdf(
-            "work_report",
-            "commission",
-            commission.id,
-            work_report_filename(commission),
-            pdf_bytes,
-            archive_values,
-        )
+            register_generated_pdf(
+                "work_report",
+                "commission",
+                commission.id,
+                work_report_filename(commission),
+                pdf_bytes,
+                archive_values,
+            )
     except Exception as exc:
         raise WorkReportDocumentError(
             "Der Arbeitsnachweis konnte nicht erzeugt werden."
@@ -532,8 +535,10 @@ def create_work_report_pdf(
 def create_invoice_with_work_reports_pdf(
     invoice: Invoice,
     scope: str,
+    *,
+    invoice_pdf: bytes | None = None,
 ) -> BytesIO:
-    if (
+    if invoice_pdf is None and (
         invoice.status not in {
             InvoiceStatus.FINALIZED.value,
             InvoiceStatus.CANCELED.value,
@@ -556,28 +561,15 @@ def create_invoice_with_work_reports_pdf(
             "Zeitnachweise vorhanden."
         )
 
-    try:
-        invoice_path = (
-            resolve_invoice_document_path(
-                invoice.document_filename
-            )
-        )
-    except InvoiceDocumentError as exc:
-        raise WorkReportDocumentError(
-            "Die Rechnungsdatei wurde "
-            "nicht gefunden."
-        ) from exc
-
-    if not invoice_path.is_file():
-        raise WorkReportDocumentError(
-            "Die Rechnungsdatei wurde "
-            "nicht gefunden."
-        )
+    if invoice_pdf is None:
+        try:
+            invoice_path = resolve_invoice_document_path(invoice.document_filename)
+            invoice_pdf = invoice_path.read_bytes()
+        except (InvoiceDocumentError, OSError) as exc:
+            raise WorkReportDocumentError("Die Rechnungsdatei wurde nicht gefunden.") from exc
 
     try:
-        invoice_reader = PdfReader(
-            str(invoice_path)
-        )
+        invoice_reader = PdfReader(BytesIO(invoice_pdf))
         writer = PdfWriter()
         writer.clone_document_from_reader(
             invoice_reader
@@ -590,6 +582,7 @@ def create_invoice_with_work_reports_pdf(
                     commission,
                     entries,
                     scope,
+                    register_archive=False,
                 )
             )
             report_buffers.append(
@@ -602,20 +595,6 @@ def create_invoice_with_work_reports_pdf(
         result = BytesIO()
         writer.write(result)
         result.seek(0)
-
-        from .dms_context import invoice_context
-        from .dms_service import register_generated_pdf
-
-        register_generated_pdf(
-            "invoice_with_work_reports",
-            "invoice",
-            invoice.id,
-            invoice_work_reports_filename(invoice),
-            result.getvalue(),
-            invoice_context(
-                invoice, normalize_work_report_scope(scope),
-            ),
-        )
 
         return result
     except WorkReportDocumentError:

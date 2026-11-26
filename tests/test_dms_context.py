@@ -5,9 +5,10 @@ import sys
 import types
 import unittest
 from datetime import date, datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
@@ -54,7 +55,7 @@ class DmsContextTests(unittest.TestCase):
             cls.models.WowiCompanyCode, cls.models.WowiEconomicUnit,
             cls.models.WowiEconomicUnitJurisdiction, cls.models.WowiBuilding,
             cls.models.WowiUseUnit, cls.models.WowiLicenseAgreement,
-            cls.models.DmsProfile, cls.models.DmsDocument,
+            cls.models.DmsProfile, cls.models.DmsDocument, cls.models.Invoice,
         )] + [cls.models.user_craft_activity]
 
     def setUp(self):
@@ -232,6 +233,111 @@ class DmsContextTests(unittest.TestCase):
             profile.mappings = {"object": {"kind": "field", "value": source}}
             self.service.validate_profile(profile, self.schema())
 
+    def test_invoice_versions_reuse_the_document_and_reconcile_a_lost_confirmation(self):
+        invoice = self.models.Invoice(
+            company_code=self.company, company_code_erp_id=self.company.erp_id, company_code_code=self.company.code,
+            created_by=self.user, document_sha256=sha256(b"%PDF-1.4\nOriginal").hexdigest(),
+        )
+        self.db.session.add(invoice)
+        self.settings.settings.set(self.settings.SettingKeys.DMS_ENABLED, True)
+        self.db.session.commit()
+        connection = ("dms.example.invalid", "key", "repository")
+        profile = {"category_id": "invoices", "key_property_id": "", "schema": {"fields": []}, "mappings": {}}
+        remote_id = "D000000001"
+        remote_content = {}
+        archive_calls = []
+
+        def new_client(*_args, before_create):
+            client = Mock()
+
+            def create(path, **_kwargs):
+                before_create()
+                remote_content[remote_id] = Path(path).read_bytes()
+                archive_calls.append(("create", remote_id, remote_content[remote_id]))
+                return remote_id
+
+            def version(path, document_id):
+                before_create()
+                remote_content[document_id] = path.read_bytes()
+                archive_calls.append(("version", document_id, remote_content[document_id]))
+                if len(archive_calls) == 2:
+                    raise self.service.DmsError("Timeout", retryable=True, uncertain=True)
+
+            client.archive_file.side_effect = create
+            client.archive_invoice_version.side_effect = version
+            client.document_sha256.side_effect = lambda document_id: sha256(remote_content[document_id]).hexdigest()
+            return client
+
+        original, letter, amended = (b"%PDF-1.4\n" + content for content in (b"Original", b"Anschreiben", b"Anhang"))
+        with (
+            TemporaryDirectory() as directory,
+            patch.object(self.app, "instance_path", directory),
+            patch.object(self.service, "connection", return_value=connection),
+            patch.object(self.service, "profile_snapshot", return_value=profile),
+            patch.object(self.service, "CloudDmsClient", side_effect=new_client),
+        ):
+            def register(content):
+                return self.service.register_generated_pdf("invoice", "invoice", invoice.id, "Rechnung.pdf", content, {})
+
+            first, second, third = map(register, (original, letter, amended))
+            self.assertIs(register(amended), third)
+            self.db.session.commit()
+
+            self.assertEqual(self.service.process_dms_batch(), 2)
+            self.assertEqual([item.status for item in (first, second, third)], ["archived", "uncertain", "pending"])
+            self.assertEqual(second.dms_document_id, remote_id)
+            second.available_at = self.models.utc_now()
+            self.db.session.commit()
+
+            self.assertEqual(self.service.process_dms_batch(), 2)
+            self.assertEqual([item.invoice_version for item in (first, second, third)], [1, 2, 3])
+            self.assertEqual([item.dms_document_id for item in (first, second, third)], [remote_id] * 3)
+            self.assertEqual([item.status for item in (first, second, third)], ["archived"] * 3)
+            self.assertEqual(archive_calls, [("create", remote_id, original), ("version", remote_id, letter), ("version", remote_id, amended)])
+            self.assertEqual(invoice.dms_document_id, remote_id)
+            self.assertEqual(invoice.dms_archive_status, "archived")
+            self.assertEqual(invoice.dms_archive_pdf_sha256, sha256(amended).hexdigest())
+            self.assertEqual(invoice.document_sha256, sha256(original).hexdigest())
+            self.assertEqual(invoice.dms_archive_key, first.context["archive_key"])
+
+    def test_invoice_version_upload_follows_the_dms_link_and_preserves_properties(self):
+        client_type = self.service.CloudDmsClient
+        with patch.object(client_type, "get_mappings"):
+            callback = Mock()
+            client = client_type("dms.example.invalid", "key", "repository", before_create=callback)
+        self.addCleanup(client.close)
+        document_id = "D000000001"
+        prefix = "/dms/r/repository"
+        target = f"{prefix}/o2m/{document_id}"
+        blob = f"{prefix}/blob/chunk/uploaded"
+        details = Mock(status_code=200)
+        details.json.return_value = {
+            "id": document_id, "sourceProperties": [{"key": "property_state", "value": "Release"}],
+        }
+        search = Mock(status_code=200)
+        search.json.return_value = {"items": [{"id": document_id, "_links": {"updateWithContent": {"href": target}}}]}
+        with (
+            TemporaryDirectory() as directory,
+            patch.object(client._rest_adapter.session, "request", side_effect=[
+                details, search, Mock(status_code=201, headers={"Location": blob}), Mock(status_code=200),
+            ]) as requests,
+        ):
+            pdf = Path(directory) / "Rechnung.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            client.archive_invoice_version(pdf, document_id)
+
+        origin = "https://dms.example.invalid"
+        self.assertEqual([request.args for request in requests.call_args_list], [
+            ("GET", origin + target), ("GET", origin + prefix + "/srm"),
+            ("POST", origin + prefix + "/blob/chunk/"), ("PUT", origin + target),
+        ])
+        self.assertEqual(requests.call_args.kwargs["json"], {
+            "sourceId": prefix + "/source", "contentLocationUri": blob,
+            "filename": "Rechnung.pdf", "alterationText": "Rechnungsunterlagen aktualisiert",
+            "sourceProperties": {"properties": []},
+        })
+        self.assertEqual(callback.call_args_list, [call()])
+
     def test_wowiport_import_stores_name_parts_and_detects_changes(self):
         self.user.wowiport_managed = True
         craft = self.models.CraftActivity(erp_id=50, name="Prüfung")
@@ -332,6 +438,41 @@ class UserNameMigrationTests(unittest.TestCase):
                 module.downgrade()
             self.assertEqual([column["name"] for column in sa.inspect(connection).get_columns("user_account")], ["id", "display_name"])
             self.assertEqual(connection.exec_driver_sql("SELECT display_name FROM user_account").scalar(), "Anna Maria von der Linden")
+
+
+class DmsInvoiceVersionMigrationTests(unittest.TestCase):
+    def test_existing_invoice_archive_jobs_keep_their_ids_and_order(self):
+        path = Path(__file__).resolve().parents[1] / "migrations/versions/3e8a1c7d5b2f_dms_invoice_versions.py"
+        specification = importlib.util.spec_from_file_location("_dms_invoice_version_migration", path)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        engine = sa.create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE TABLE dms_document (id VARCHAR(36) PRIMARY KEY, entity_type VARCHAR(40), entity_id INTEGER, "
+                "document_type VARCHAR(80), created_at DATETIME, status VARCHAR(30), dms_document_id VARCHAR(80), error TEXT)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO dms_document (id, entity_type, entity_id, document_type, created_at, status, dms_document_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    ("first", "invoice", 1, "invoice", "2026-11-20", "pending", None),
+                    ("original", "invoice", 1, "invoice", "2026-11-21", "archived", "D000000001"),
+                    ("next", "invoice", 1, "invoice", "2026-11-22", "pending", None),
+                    ("reports", "invoice", 1, "invoice_with_work_reports", "2026-11-22", "archived", "D000000002"),
+                ],
+            )
+            with Operations.context(MigrationContext.configure(connection)):
+                module.upgrade()
+                self.assertEqual(connection.exec_driver_sql(
+                    "SELECT id, invoice_version, status, dms_document_id FROM dms_document ORDER BY id"
+                ).all(), [
+                    ("first", 1, "cancelled", None), ("next", 3, "pending", None),
+                    ("original", 2, "archived", "D000000001"), ("reports", None, "archived", "D000000002"),
+                ])
+                module.downgrade()
+            self.assertNotIn("invoice_version", {column["name"] for column in sa.inspect(connection).get_columns("dms_document")})
 
 
 if __name__ == "__main__":

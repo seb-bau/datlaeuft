@@ -286,9 +286,18 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.db.session.commit()
         self.assertEqual(purpose_value(), purpose)
 
+        archive_count = self.archive.call_count
         pdf = self.client.get(url + "/document")
         self.assertEqual(pdf.status_code, 200)
-        text = PdfReader(BytesIO(pdf.data)).pages[0].extract_text()
+        self.assertEqual(self.archive.call_count, archive_count)
+        downloaded = PdfReader(BytesIO(pdf.data))
+        archived = PdfReader(BytesIO(self.archive.call_args.args[4]))
+        self.assertEqual(
+            [page.extract_text() for page in archived.pages],
+            [page.extract_text() for page in downloaded.pages],
+        )
+        self.assertEqual(archived.attachments["factur-x.xml"], downloaded.attachments["factur-x.xml"])
+        text = downloaded.pages[0].extract_text()
         for marker in ("Rechnung von Testbetrieb GmbH", "Bruttobetrag 29,75 EUR", "Individuell ergänzter Anlass."):
             self.assertIn(marker, text)
 

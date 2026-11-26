@@ -38,11 +38,15 @@ class DmsProfile(db.Model):
 
 class DmsDocument(db.Model):
     __tablename__ = "dms_document"
+    __table_args__ = (
+        db.Index("ix_dms_document_invoice_version", "entity_type", "entity_id", "invoice_version", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(db.String(36), primary_key=True)
     document_type: Mapped[str] = mapped_column(db.String(80), nullable=False, index=True)
     entity_type: Mapped[str] = mapped_column(db.String(40), nullable=False, index=True)
     entity_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    invoice_version: Mapped[int | None] = mapped_column()
     filename: Mapped[str] = mapped_column(db.String(255), nullable=False)
     storage_name: Mapped[str] = mapped_column(db.String(255), nullable=False)
     sha256: Mapped[str] = mapped_column(db.String(64), nullable=False)

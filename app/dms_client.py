@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from urllib.parse import quote, urljoin, urlsplit
+from hashlib import sha256
+import json
+from pathlib import Path
+from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 
 from dvelopdmspy.dvelopdmspy import DvelopDmsPy
 from dvelopdmspy.models import Result
@@ -58,7 +61,7 @@ class DmsTransport:
             "Origin": self.root.rstrip("/"),
         })
 
-    def request(self, method, url, *, params=None, data=None, upload_file_path=None):
+    def request(self, method, url, *, params=None, data=None, upload_file_path=None, version_document_id=None):
         method = method.upper()
         parsed = urlsplit(url)
 
@@ -67,34 +70,36 @@ class DmsTransport:
                 "d.velop hat einen ungültigen Verweis geliefert."
             )
 
-        allowed_uploads = {
-            urlsplit(self.url + "blob/chunk/").path,
-            urlsplit(self.url + "o2m").path,
-        }
+        create_path = urlsplit(self.url + "o2m").path
+        blob_path = urlsplit(self.url + "blob/chunk/").path
+        is_create = method == "POST" and parsed.path == create_path
+        is_version = (
+            method == "PUT"
+            and version_document_id
+            and parsed.path == f"{create_path}/{quote(version_document_id, safe='')}"
+        )
+        version_source_query = is_version and [
+            (key.casefold(), value) for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        ] == [("sourceid", urlsplit(self.url + "source").path)]
 
         if method != "GET" and (
-            method != "POST"
-            or parsed.path not in allowed_uploads
-            or parsed.query
+            not (is_create or is_version or (method == "POST" and parsed.path == blob_path))
+            or (parsed.query and not version_source_query)
             or parsed.fragment
             or params
         ):
             raise DmsError(
-                "Die DMS-Anbindung erlaubt nur Lesen "
-                "und das Anlegen neuer Dokumente."
+                "Dieser Schreibzugriff auf d.velop ist nicht zulässig."
             )
 
-        is_create = (
-            method == "POST"
-            and parsed.path == urlsplit(self.url + "o2m").path
-        )
-        if is_create and self.before_create:
+        writes_document = bool(is_create or is_version)
+        if writes_document and self.before_create:
             self.before_create()
         if upload_file_path:
             headers = {"Content-Type": "application/octet-stream"}
             body = None
         else:
-            headers = {"Content-Type": "application/json"}
+            headers = {"Content-Type": "application/hal+json" if is_version else "application/json"}
             body = data
         try:
             with (
@@ -116,7 +121,7 @@ class DmsTransport:
             raise DmsError(
                 "d.velop ist derzeit nicht erreichbar.",
                 retryable=True,
-                uncertain=is_create,
+                uncertain=writes_document,
             ) from exc
         if not 200 <= response.status_code < 300:
             raise DmsError(
@@ -127,7 +132,7 @@ class DmsTransport:
                     or response.status_code >= 500
                 ),
                 uncertain=(
-                    is_create
+                    writes_document
                     and (
                         response.status_code == 408
                         or response.status_code >= 500
@@ -239,6 +244,73 @@ class CloudDmsClient(DvelopDmsPy):
             category_id,
             properties,
         )
+
+    def _document_details(self, document_id):
+        transport = self._rest_adapter
+        details = transport.get(
+            f"o2m/{quote(document_id, safe='')}",
+            ep_params={"sourceid": urlsplit(transport.url + "source").path},
+        ).data
+        if not isinstance(details, dict) or details.get("id") != document_id:
+            raise DmsError("Das Rechnungsdokument wurde in d.velop nicht gefunden.")
+        return details
+
+    def document_sha256(self, document_id):
+        transport = self._rest_adapter
+        details = self._document_details(document_id)
+        link = details.get("_links", {}).get("mainblobcontent", {}).get("href")
+        if not link:
+            raise DmsError("Die aktuelle PDF-Version in d.velop ist nicht verfügbar.")
+        url = urljoin(transport.root, link)
+        document_path = urlsplit(transport.url + f"o2/{quote(document_id, safe='')}/").path
+        if not urlsplit(url).path.startswith(document_path):
+            raise DmsError("d.velop hat einen ungültigen Verweis auf die Rechnungsdatei geliefert.")
+        return sha256(transport.request("GET", url).content).hexdigest()
+
+    def archive_invoice_version(self, filepath, document_id):
+        transport = self._rest_adapter
+        details = self._document_details(document_id)
+        state = next((
+            item.get("value") for item in details.get("sourceProperties", [])
+            if item.get("key") == "property_state"
+        ), None)
+        if str(state).casefold() not in {"release", "released", "archive", "archived", "fr", "ar"}:
+            raise DmsError("Die Rechnung muss in d.velop freigegeben oder archiviert sein, um sie zu versionieren.")
+
+        source_id = urlsplit(transport.url + "source").path
+        update_link = details.get("_links", {}).get("updateWithContent", {}).get("href")
+        if not update_link:
+            results = transport.get("srm", ep_params={
+                "sourceid": source_id,
+                "sourceproperties": json.dumps({"property_document_id": [document_id]}),
+            }, limit=2).data
+            for item in results:
+                if item.get("id") == document_id:
+                    update_link = item.get("_links", {}).get("updateWithContent", {}).get("href")
+                    break
+        if not update_link:
+            raise DmsError("Der DMS-Zugang darf keine neue Dateiversion für diese Rechnung speichern.")
+
+        upload_url = transport.url + "blob/chunk/"
+        upload = transport.request("POST", upload_url, upload_file_path=filepath)
+        location = upload.headers.get("Location", "")
+        blob = urlsplit(urljoin(transport.root, location))
+        if (
+            upload.status_code != 201 or blob.scheme != "https" or blob.netloc != transport.hostname
+            or not blob.path.startswith(urlsplit(upload_url).path)
+            or blob.path == urlsplit(upload_url).path or blob.fragment
+        ):
+            raise DmsError("d.velop hat keinen gültigen Verweis auf die hochgeladene PDF geliefert.", retryable=True)
+
+        response = transport.request("PUT", urljoin(transport.root, update_link), data={
+            "filename": Path(filepath).name,
+            "alterationText": "Rechnungsunterlagen aktualisiert",
+            "sourceId": source_id,
+            "contentLocationUri": blob._replace(scheme="", netloc="").geturl(),
+            "sourceProperties": {"properties": []},
+        }, version_document_id=document_id)
+        if response.status_code not in (200, 204):
+            raise DmsError("d.velop hat die neue PDF-Version noch nicht bestätigt.", retryable=True, uncertain=True)
 
     def update_properties(self, *args, **kwargs):
         raise DmsError(
