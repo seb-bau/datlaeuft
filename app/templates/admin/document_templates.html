@@ -42,7 +42,7 @@
               <code>{gross_amount}</code> den Bruttobetrag mit Währung und <code>{work_description}</code> die Auftrags- oder Positionsbezeichnungen.
             </div>
             {% elif key == 'invoice.tenant_charge_closing_template' %}
-            <div class="form-text"><code>{seller_name}</code> setzt den Namen des Absenders aus dem Buchwerk des Mietvertrags ein.</div>
+            <div class="form-text"><code>{seller_name}</code> setzt den Namen des Absenders aus dem Buchwerk des Mietvertrags ein. <code>{sig}</code> setzt einen weißen, auslesbaren Signaturanker in die PDF.</div>
             {% elif key == 'invoice.offer_introductory_text' %}
             <div class="form-text"><code>{offer_number}</code> setzt die Angebotsnummer ein.</div>
             {% endif %}

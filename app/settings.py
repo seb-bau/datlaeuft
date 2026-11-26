@@ -18,6 +18,8 @@ from .offer_layout import validate_offer_layout
 
 T = TypeVar("T")
 
+LEGACY_TENANT_CHARGE_CLOSING_TEMPLATE = "Mit freundlichen Grüßen\n{seller_name}"
+
 
 @dataclass(frozen=True)
 class SettingDefinition(Generic[T]):
@@ -573,7 +575,7 @@ class SettingKeys:
     )
     INVOICE_TENANT_CHARGE_CLOSING_TEMPLATE = SettingDefinition[str](
         "invoice.tenant_charge_closing_template", SettingValueType.STRING,
-        "Mit freundlichen Grüßen\n{seller_name}",
+        LEGACY_TENANT_CHARGE_CLOSING_TEMPLATE + "\n{sig}",
         "Standardgrußformel für Mieteranschreiben", "Rechnungen",
     )
     INVOICE_COVER_LETTER_LAYOUT = SettingDefinition[str](
@@ -947,9 +949,9 @@ def validate_tenant_charge_closing(value: str) -> str:
 def validate_tenant_charge_closing_template(value: str) -> str:
     value = validate_tenant_charge_closing(value)
     try:
-        _validate_text_placeholders(value, {"seller_name"})
+        _validate_text_placeholders(value, {"seller_name", "sig"})
     except ValueError as exc:
-        raise ValueError("Die Grußformel enthält einen unbekannten oder ungültigen Platzhalter. Verfügbar ist {seller_name}.") from exc
+        raise ValueError("Die Grußformel enthält einen unbekannten oder ungültigen Platzhalter. Verfügbar sind {seller_name} und {sig}.") from exc
     return value
 
 

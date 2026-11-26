@@ -289,7 +289,7 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertIn("Standardgrußformel für Mieteranschreiben", page)
         self.assertIn('<code>{seller_name}</code>', page)
 
-        template = "Beste Grüße\n{seller_name}"
+        template = "Beste Grüße\n{seller_name}\n{sig}"
         self.assertEqual(self.client.post(url, data={"section": "cover-letter", definition.key: template.replace("\n", "\r\n")}).status_code, 302)
         self.assertEqual(self.settings.settings.get(definition), template)
         for invalid in ("{invoice_issuer}", "{seller_name.name}", "{seller_name!r}", "{seller_name", "x" * 4001):
