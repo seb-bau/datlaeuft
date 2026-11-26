@@ -35,6 +35,7 @@
             <div class="form-text">Verfügbare Platzhalter {% raw %}<code>{due_date}</code>, <code>{invoice_number}</code>, <code>{payment_reference}</code>, <code>{amount}</code>, <code>{currency}</code>, <code>{iban}</code>, <code>{bic}</code>, <code>{mandate_reference}</code>, <code>{creditor_id}</code>, <code>{account_holder}</code>{% endraw %}.</div>
             {% elif key == 'invoice.cover_letter_text' %}
             <div class="form-text">Platzhalter für Überschrift und Text {% raw %}<code>{invoice_number}</code>, <code>{invoice_date}</code>, <code>{contract_number}</code>, <code>{recipient_name}</code>, <code>{amount}</code>, <code>{currency}</code>, <code>{due_date}</code>, <code>{payment_terms}</code>, <code>{seller_name}</code>, <code>{caseworker_name}</code>, <code>{caseworker_email}</code>, <code>{caseworker_phone}</code>{% endraw %}.</div>
+            <div class="form-text">Im Standardtext setzt <code>{sig}</code> einen weißen, auslesbaren Signaturanker in die PDF.</div>
             {% elif key == 'invoice.tenant_charge_purpose_template' %}
             <div class="form-text">
               <code>{invoice_issuer}</code> setzt den Namen des ausstellenden Buchwerks ein,

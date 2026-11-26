@@ -563,7 +563,7 @@ class SettingKeys:
         "Sehr geehrte Damen und Herren,\n\n"
         "beigefügt erhalten Sie unsere Rechnung {invoice_number} über {amount} {currency}.\n\n"
         "{payment_terms}\n\nFür Rückfragen stehen wir Ihnen gerne zur Verfügung.\n\n"
-        "Mit freundlichen Grüßen\n{seller_name}",
+        "Mit freundlichen Grüßen\n{seller_name}\n{sig}",
         "Anschreiben: Standardtext", "Rechnungen",
     )
     INVOICE_TENANT_CHARGE_PURPOSE_TEMPLATE = SettingDefinition[str](
@@ -913,7 +913,8 @@ def validate_cover_letter_text(value, *, title=False):
     ) or (title and any(character in value for character in "\r\n")):
         raise ValueError(f"{label} muss ausgefüllt sein und darf höchstens {limit} Zeichen enthalten.")
     try:
-        _validate_text_placeholders(value, COVER_LETTER_FIELDS)
+        allowed_fields = COVER_LETTER_FIELDS if title else COVER_LETTER_FIELDS | {"sig"}
+        _validate_text_placeholders(value, allowed_fields)
     except ValueError as exc:
         raise ValueError("Das Anschreiben enthält einen unbekannten oder ungültigen Platzhalter.") from exc
     return value.replace("\r\n", "\n").replace("\r", "\n").strip()

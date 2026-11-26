@@ -216,6 +216,35 @@ class InvoiceWorkflowTests(unittest.TestCase):
         self.assertNotIn("ENTWURF", archived.pages[0].extract_text())
         self.assertIn("factur-x.xml", archived.attachments)
 
+    def test_signature_anchor_from_the_standard_text_is_extractable_below_the_seller_name(self):
+        invoice = self.rendered_invoice(with_attachments=True)
+        self.creator.is_admin = True
+        self.db.session.commit()
+        letter_url = f"/admin/invoices/{invoice.id}/cover-letter"
+        self.assertTrue(self.client.get(letter_url).json["text"].endswith("{seller_name}\n{sig}"))
+
+        standard_text = "Vielen Dank <b>für Ihren Auftrag</b>.\n{seller_name}\n{sig}"
+        response = self.client.post("/admin/document-templates", data={
+            "section": "cover-letter", "invoice.cover_letter_text": standard_text,
+        })
+        self.assertEqual(response.status_code, 302)
+        letter = self.client.get(letter_url).json
+        self.assertEqual(letter["text"], standard_text)
+        self.assertEqual(self.save_letter(invoice, title="{sig}", text=standard_text).status_code, 400)
+
+        context = self.invoice_correspondence.cover_letter_context(invoice, letter["title"], letter["text"])
+        layout = self.settings.settings.get(self.settings.SettingKeys.INVOICE_COVER_LETTER_LAYOUT)
+        html = etree.HTML(self.invoice_correspondence.render_cover_letter_html(context, layout))
+        anchor, = html.xpath("//div[@class='text']/span[text()='{sig}']")
+        self.assertIn("color: #fff", anchor.get("style"))
+        self.assertIn("<b>für Ihren Auftrag</b>", anchor.getparent().text)
+
+        response = self.client.post(letter_url, data={"title": letter["title"], "text": letter["text"]})
+        self.assertEqual(response.status_code, 200)
+        archived = PdfReader(BytesIO(self.archive.call_args.args[4]))
+        self.assertIn(f"{context['seller_name']}\n{{sig}}", archived.pages[0].extract_text())
+        self.assertIn("factur-x.xml", archived.attachments)
+
     def test_overlay_preview_does_not_save_and_placeholders_follow_finalization(self):
         invoice = self.draft("invoice")
         self.assertEqual(self.models.WorkflowNotification.query.count(), 0)

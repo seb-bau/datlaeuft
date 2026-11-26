@@ -7,6 +7,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from flask import current_app
+from markupsafe import Markup, escape
 from pypdf import PdfReader, PdfWriter
 from weasyprint import HTML, default_url_fetcher
 
@@ -16,6 +17,9 @@ from .models import utc_now
 from .invoice_cover_letter_layout import render_cover_letter_html
 from .settings import SettingKeys, settings, validate_cover_letter_text
 from .stationery_layout import company_page_layout, page_stylesheets
+
+
+SIGNATURE_ANCHOR = Markup('<span style="color: #fff !important; white-space: nowrap">{sig}</span>')
 
 
 def letter_date():
@@ -52,7 +56,8 @@ def cover_letter_context(invoice, title, text, *, preview=None):
     }
     return {
         **fields,
-        "title": title.format_map(fields), "text": text.format_map(fields),
+        "title": title.format_map(fields),
+        "text": escape(str(text)).format_map({**fields, "sig": SIGNATURE_ANCHOR}),
         "recipient_address": "\n".join(address_lines(invoice)),
         **{field: getattr(invoice, field, None) or "" for field in (
             "recipient_name_addition", "recipient_street", "recipient_postal_code", "recipient_town", "recipient_country_code",
