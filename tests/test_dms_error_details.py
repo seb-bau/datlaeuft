@@ -12,7 +12,7 @@ from requests_cache import CachedSession
 from app.dms_client import CloudDmsClient, DmsError, DmsTransport
 from app.dms_service import process_claimed_document
 from app.extensions import db
-from app.models import DmsDocument, utc_now
+from app.models import AppSetting, DmsDocument, utc_now
 
 
 HOSTNAME = "dms.example.invalid"
@@ -73,7 +73,7 @@ class DmsErrorDetailsTests(TestCase):
             app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite://"
             db.init_app(app)
             with app.app_context():
-                db.metadata.create_all(db.engine, tables=[DmsDocument.__table__])
+                db.metadata.create_all(db.engine, tables=[AppSetting.__table__, DmsDocument.__table__])
                 path = Path(directory) / "dms_documents" / "transfer" / "rechnung.pdf"
                 path.parent.mkdir(parents=True)
                 pdf = b"%PDF-1.4\n"

@@ -43,6 +43,9 @@
           <a href="{{ url_for('dms_admin.document_pdf', document_id=document.id) }}"
              target="_blank" rel="noopener">{{ document.filename }}</a><br>
           <small>{{ document.id }}</small>
+          {% if document.invoice_dispatch %}
+          <div class="small">{{ 'Poststelle' if document.invoice_dispatch.channel == 'postal' else 'Mieter-App' }}</div>
+          {% endif %}
         </td>
         <td>
           {{ status_labels.get(document.status, document.status) }}
@@ -56,8 +59,9 @@
         <td>{{ document.attempts }}</td>
         <td>
         {% if document.status not in ('archived', 'processing', 'cancelled') %}
-          {% set has_key = document.profile_snapshot and document.profile_snapshot.get('key_property_id') %}
-          {% if document.upload_started %}
+          {% set content_ready = document.invoice_dispatch and document.invoice_dispatch.content_ready %}
+          {% set can_check = content_ready or (document.profile_snapshot and document.profile_snapshot.get('key_property_id')) %}
+          {% if document.upload_started and not content_ready %}
           <form method="post"
                 action="{{ url_for('dms_admin.document_link', document_id=document.id, status=status) }}"
                 class="mb-3">
@@ -85,14 +89,17 @@
             {% if document.upload_started %}
             <label class="form-check small">
               <input class="form-check-input" type="checkbox" name="confirmed_absent"
-                     {% if not has_key %}required{% endif %}>
-              Im ursprünglichen Repository geprüft: Dieses PDF wurde nicht archiviert.
-              Erneuten Upload freigeben.
+                     {% if not can_check %}required{% endif %}>
+              {% if content_ready %}
+              Im DMS und beim Versanddienst geprüft: Die Übergabe wurde nicht ausgelöst. Erneute Übergabe freigeben.
+              {% else %}
+              Im ursprünglichen Repository geprüft: Dieses PDF wurde nicht archiviert. Erneuten Upload freigeben.
+              {% endif %}
             </label>
             {% endif %}
             <button type="submit" class="btn btn-sm btn-outline-primary mt-1"
                     {% if not enabled %}disabled{% endif %}>
-              {{ ('DMS erneut prüfen / Upload freigeben' if has_key else 'Erneuten Upload freigeben') if document.upload_started else 'Einzeln übertragen' }}
+              {{ ('DMS erneut prüfen / Übergabe freigeben' if content_ready else 'DMS erneut prüfen / Upload freigeben' if can_check else 'Erneuten Upload freigeben') if document.upload_started else 'Einzeln übertragen' }}
             </button>
           </form>
 
@@ -105,7 +112,11 @@
             <label class="form-check small">
               <input class="form-check-input" type="checkbox"
                      name="confirmed_absent" required>
+              {% if content_ready %}
+              Im DMS und beim Versanddienst geprüft: Die Übergabe wurde nicht ausgelöst.
+              {% else %}
               Im ursprünglichen Repository geprüft: Dieses PDF wurde nicht archiviert.
+              {% endif %}
             </label>
             {% endif %}
             <button type="submit" class="btn btn-sm btn-outline-danger">

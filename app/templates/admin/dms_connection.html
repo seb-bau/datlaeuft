@@ -83,7 +83,7 @@
 </form>
 
 <form method="post" action="{{ url_for('dms_admin.metadata_refresh') }}"
-      class="card card-body">
+      class="card card-body mb-3">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <p>
     {{ metadata.categories|length if metadata else 0 }} Dokumentkategorien eingelesen
@@ -92,5 +92,57 @@
   <button class="btn btn-outline-primary align-self-start">
     Verbindung prüfen und Repository-Metadaten einlesen
   </button>
+</form>
+
+<form method="post" action="{{ url_for('dms_admin.invoice_dispatch_settings') }}" class="card card-body mb-3">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h2 class="h5 mb-3">Rechnungsversand über DMS</h2>
+  <div class="row g-3">
+    {% for field, label, default_label in [('postal', 'Eigenschaft für die Poststelle', 'Poststelle vorauswählen'), ('portal', 'Eigenschaft für die Mieter-App', 'Mieter-App vorauswählen')] %}
+    {% set property_id = dispatch[field ~ '_property'] %}
+    <div class="col-md-6">
+      <label class="form-label" for="dispatch-{{ field }}">{{ label }}</label>
+      <select class="form-select" id="dispatch-{{ field }}" name="{{ field }}_property">
+        <option value="">Keine Eigenschaft ausgewählt</option>
+        {% if property_id and property_id not in dispatch_fields|map(attribute=0)|list %}
+        <option value="{{ property_id }}" selected>{{ property_id }} (Metadaten erneut einlesen)</option>
+        {% endif %}
+        {% for key, name in dispatch_fields %}
+        <option value="{{ key }}" {% if key == property_id %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      <label class="form-check mt-2">
+        <input class="form-check-input" type="checkbox" name="{{ field }}_default" {% if dispatch[field ~ '_default'] %}checked{% endif %}>
+        {{ default_label }}
+      </label>
+    </div>
+    {% endfor %}
+    <div class="col-12 form-text">Die Eigenschaften werden beim Abschluss gesetzt. Wählen Sie dafür Felder ohne feste Werte in der Dokumentzuordnung.</div>
+    <div class="col-md-6">
+      <label class="form-label" for="signer_property">Feld-ID für den Poststellenbenutzer</label>
+      <input class="form-control" id="signer_property" name="signer_property" maxlength="128" value="{{ dispatch.signer_property }}">
+      <div class="form-text">In Paperwork als <code>mapping_spare_field</code> hinterlegt. Üblicher Wert ist <code>property_remark1</code>.</div>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="system_user_id">d.velop-ID des Paperwork-Systembenutzers</label>
+      <input class="form-control" id="system_user_id" name="system_user_id" maxlength="40" value="{{ dispatch.system_user_id }}">
+      <div class="form-text">Der DMS-API-Key muss zum Konto gehören, dessen d3Id in Paperwork als <code>user_id</code> hinterlegt ist.</div>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="alternate_signer_property">Feld-ID für abweichende Unterschriften</label>
+      <input class="form-control" id="alternate_signer_property" name="alternate_signer_property" maxlength="128" value="{{ dispatch.alternate_signer_property }}">
+      <div class="form-text">Falls in Paperwork <code>mapping_signer</code> belegt ist, übernehmen Sie dessen Feld-ID. Dieses DMS-Feld muss für Rechnungen an die Poststelle leer sein.</div>
+    </div>
+  </div>
+  <button class="btn btn-primary align-self-start mt-3" type="submit">Versandeinstellungen speichern</button>
+</form>
+
+<form method="post" action="{{ url_for('dms_admin.invoice_dispatch_users') }}" enctype="multipart/form-data" class="card card-body">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h2 class="h5">Benutzer für die Poststelle zuordnen</h2>
+  <label class="form-label" for="paperwork_users">JSON-Benutzerliste aus Paperwork</label>
+  <input class="form-control" id="paperwork_users" name="paperwork_users" type="file" accept=".json,application/json" required>
+  <div class="form-text">Öffnen Sie als Administrator in Paperwork <code>/data/all_users</code> und speichern Sie die JSON-Antwort. Der Import ordnet aktive Benutzer anhand ihrer Entra-Objekt-ID zu. Einzelne Konten können Sie in der Benutzerverwaltung zuordnen.</div>
+  <button class="btn btn-outline-primary align-self-start mt-3" type="submit">Benutzerliste importieren</button>
 </form>
 {% endblock %}

@@ -252,6 +252,28 @@ class SettingKeys:
         "d.velop",
     )
 
+    DMS_POSTAL_PROPERTY = SettingDefinition[str](
+        "dms.postal_property", SettingValueType.STRING, "", "Eigenschaft für die Poststelle", "Archiv/DMS",
+    )
+    DMS_PORTAL_PROPERTY = SettingDefinition[str](
+        "dms.portal_property", SettingValueType.STRING, "", "Eigenschaft für die Mieter-App", "Archiv/DMS",
+    )
+    DMS_POSTAL_DEFAULT = SettingDefinition[bool](
+        "dms.postal_default", SettingValueType.BOOL, True, "Poststelle vorauswählen", "Archiv/DMS",
+    )
+    DMS_PORTAL_DEFAULT = SettingDefinition[bool](
+        "dms.portal_default", SettingValueType.BOOL, True, "Mieter-App vorauswählen", "Archiv/DMS",
+    )
+    DMS_POSTAL_SIGNER_PROPERTY = SettingDefinition[str](
+        "dms.postal_signer_property", SettingValueType.STRING, "property_remark1", "Feld-ID für den Poststellenbenutzer", "Archiv/DMS",
+    )
+    DMS_POSTAL_SYSTEM_USER_ID = SettingDefinition[str](
+        "dms.postal_system_user_id", SettingValueType.STRING, "", "d.velop-ID des Paperwork-Systembenutzers", "Archiv/DMS",
+    )
+    DMS_POSTAL_ALTERNATE_SIGNER_PROPERTY = SettingDefinition[str](
+        "dms.postal_alternate_signer_property", SettingValueType.STRING, "", "Feld-ID für abweichende Unterschriften", "Archiv/DMS",
+    )
+
     DMS_INVOICE_CATEGORY_ID = SettingDefinition[str](
         "dms.invoice_category_id",
         SettingValueType.STRING,

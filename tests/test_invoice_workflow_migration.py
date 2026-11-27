@@ -75,3 +75,40 @@ class InvoiceWorkflowMigrationTests(unittest.TestCase):
             with engine.begin() as connection:
                 for name in names:
                     connection.execute(sa.text(f"DROP TABLE IF EXISTS {name}"))
+
+    def test_dms_dispatch_migration_keeps_existing_users_and_archive_entries(self):
+        url = make_url(os.environ.get("DATLAEUFT_TEST_DATABASE_URL", "sqlite://"))
+        if url.get_backend_name() != "sqlite" and not (url.database or "").startswith("datlaeuft_test_"):
+            self.fail("Migrationstests benötigen eine separate datlaeuft_test-Datenbank.")
+        engine = sa.create_engine(url)
+        self.addCleanup(engine.dispose)
+        names = ("user_account", "dms_document")
+        if any(sa.inspect(engine).has_table(name) for name in names):
+            self.skipTest("Die Migration benötigt eigene leere Testtabellen.")
+        path = Path(__file__).resolve().parents[1] / "migrations/versions/5c3a5ee04f62_invoice_dms_dispatch.py"
+        spec = importlib.util.spec_from_file_location("invoice_dms_dispatch_migration", path)
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        try:
+            with engine.begin() as connection:
+                connection.execute(sa.text("CREATE TABLE user_account (id INTEGER PRIMARY KEY)"))
+                connection.execute(sa.text("CREATE TABLE dms_document (id VARCHAR(36) PRIMARY KEY, status VARCHAR(30))"))
+                connection.execute(sa.text("INSERT INTO user_account VALUES (1), (2)"))
+                connection.execute(sa.text("INSERT INTO dms_document VALUES ('transfer', 'archived')"))
+                with Operations.context(MigrationContext.configure(connection)):
+                    migration.upgrade()
+                    self.assertEqual(
+                        connection.execute(sa.text("SELECT paperwork_user_id, paperwork_d3id, paperwork_entra_oid FROM user_account")).all(),
+                        [(None, None, None), (None, None, None)],
+                    )
+                    self.assertEqual(connection.execute(sa.text("SELECT status, invoice_dispatch FROM dms_document")).one(), ("archived", None))
+                    self.assertTrue(any(
+                        constraint["column_names"] == ["paperwork_user_id"]
+                        for constraint in sa.inspect(connection).get_unique_constraints("user_account")
+                    ))
+                    migration.downgrade()
+                self.assertEqual(connection.execute(sa.text("SELECT status FROM dms_document")).scalar_one(), "archived")
+        finally:
+            with engine.begin() as connection:
+                for name in names:
+                    connection.execute(sa.text(f"DROP TABLE IF EXISTS {name}"))

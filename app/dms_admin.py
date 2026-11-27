@@ -6,6 +6,7 @@ from flask import (
     Blueprint, abort, flash, redirect, render_template,
     request, send_file, url_for,
 )
+from sqlalchemy.exc import IntegrityError
 
 from .utils import commission_detail_url
 from .audit import audit
@@ -98,17 +99,105 @@ def connection_page():
         )
         for item in legacy_definitions
     }
+    from .invoice_dms_dispatch import dispatch_settings
+
+    metadata = repository_metadata()
+    category_ids = {
+        profile.category_id for profile in DmsProfile.query.filter(
+            DmsProfile.document_type.in_(("invoice", "cancellation_invoice")),
+        )
+    }
+    dispatch_fields = {
+        field["id"]: field_name(field)
+        for category_id in category_ids
+        for field in metadata.get("categories", {}).get(category_id, {}).get("fields", [])
+        if field["dataType"] == "STRING" and not field.get("isMultiValue")
+    }
     return render_template(
         "admin/dms_connection.html",
         hostname=settings.get(SettingKeys.DMS_HOSTNAME),
         repository=settings.get(SettingKeys.DMS_REPOSITORY),
         enabled=settings.get(SettingKeys.DMS_ENABLED),
         has_api_key=bool(settings.get(SettingKeys.DMS_API_KEY)),
-        metadata=repository_metadata(),
+        metadata=metadata,
         legacy_definitions=legacy_definitions,
         legacy_values=legacy_values,
         paused=settings.get(SettingKeys.DMS_PROCESSING_PAUSED),
+        dispatch=dispatch_settings(),
+        dispatch_fields=sorted(dispatch_fields.items(), key=lambda item: item[1]),
     )
+
+
+@dms_admin_bp.post("/invoice-dispatch")
+@admin_required
+def invoice_dispatch_settings():
+    from .invoice_dms_dispatch import PAPERWORK_ID
+
+    try:
+        postal = request.form.get("postal_property", "").strip()
+        portal = request.form.get("portal_property", "").strip()
+        signer = request.form.get("signer_property", "").strip()
+        alternate_signer = request.form.get("alternate_signer_property", "").strip()
+        system_user = request.form.get("system_user_id", "").strip()
+        ids = [value for value in (postal, portal, signer, alternate_signer) if value]
+        if any(len(value) > 128 or any(not char.isprintable() or char.isspace() for char in value) for value in ids):
+            raise ValueError("Bitte gültige DMS-Eigenschafts-IDs eingeben.")
+        if len(set(ids)) != len(ids):
+            raise ValueError("Bitte für den Rechnungsversand unterschiedliche DMS-Eigenschaften auswählen.")
+        if system_user and not PAPERWORK_ID.fullmatch(system_user):
+            raise ValueError("Bitte die d.velop-ID des Paperwork-Systembenutzers prüfen.")
+        dispatch_ids = {postal, portal} - {""}
+        if postal:
+            dispatch_ids.update({signer, alternate_signer} - {""})
+        for profile in DmsProfile.query.filter(DmsProfile.document_type.in_(("invoice", "cancellation_invoice"))):
+            if dispatch_ids.intersection({profile.key_property_id, *profile.mappings}):
+                raise ValueError("Bitte die Versandeigenschaften aus den festen DMS-Dokumentzuordnungen entfernen.")
+        for definition, value in (
+            (SettingKeys.DMS_POSTAL_PROPERTY, postal),
+            (SettingKeys.DMS_PORTAL_PROPERTY, portal),
+            (SettingKeys.DMS_POSTAL_SIGNER_PROPERTY, signer),
+            (SettingKeys.DMS_POSTAL_DEFAULT, "postal_default" in request.form),
+            (SettingKeys.DMS_PORTAL_DEFAULT, "portal_default" in request.form),
+            (SettingKeys.DMS_POSTAL_SYSTEM_USER_ID, system_user),
+            (SettingKeys.DMS_POSTAL_ALTERNATE_SIGNER_PROPERTY, alternate_signer),
+        ):
+            settings.set(definition, value)
+        audit("dms.invoice_dispatch.settings")
+        db.session.commit()
+        flash("Rechnungsversand über DMS gespeichert.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("dms_admin.connection_page"))
+
+
+@dms_admin_bp.post("/invoice-dispatch/users")
+@admin_required
+def invoice_dispatch_users():
+    from .invoice_dms_dispatch import import_paperwork_signers
+
+    upload = request.files.get("paperwork_users")
+    try:
+        if not upload or not upload.filename:
+            raise ValueError("Bitte die JSON-Benutzerliste aus Paperwork auswählen.")
+        content = upload.read(1_048_577)
+        if len(content) > 1_048_576:
+            raise ValueError("Die Paperwork-Benutzerliste darf höchstens 1 MB groß sein.")
+        try:
+            payload = json.loads(content)
+        except (ValueError, RecursionError) as exc:
+            raise ValueError("Die Paperwork-Benutzerliste konnte nicht als JSON gelesen werden.") from exc
+        matched, skipped = import_paperwork_signers(payload)
+        audit("dms.invoice_dispatch.import_users", metadata={"matched": matched, "skipped": skipped})
+        db.session.commit()
+        flash(f"Paperwork-Zuordnungen übernommen: {matched}. Nicht zugeordnet: {skipped} aktive Konten mit Entra-ID.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except IntegrityError:
+        db.session.rollback()
+        flash("Benutzerzuordnungen wurden gleichzeitig geändert. Bitte den Import wiederholen.", "danger")
+    return redirect(url_for("dms_admin.connection_page"))
 
 
 @dms_admin_bp.post("/processing/pause")

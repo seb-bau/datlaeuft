@@ -9,7 +9,7 @@
   <a class="btn btn-outline-secondary" href="{{ url_for('admin.invoice_edit', invoice_id=item.id) }}">Zur Rechnung</a>
 </div>
 {% include 'admin/_invoice_delivery.html' %}
-{% if not pending_delivery %}
+{% if not pending_delivery and not dms_dispatch %}
 <a class="btn btn-outline-secondary mt-3" href="{{ letter_url }}">Zurück zum Anschreiben</a>
 {% endif %}
 {% endblock %}

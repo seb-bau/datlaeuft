@@ -231,6 +231,9 @@ def delivery_send(invoice_id):
     completing = data.get("complete_invoice") is True
     correspondence = {}
     try:
+        from .invoice_dms_dispatch import dispatch_channel, existing_dispatch, queue_invoice_dispatch
+
+        channel = dispatch_channel("direct", data.get("postal", False), data.get("portal", False)) if completing else None
         body = None
         if "body" in data:
             body = data["body"]
@@ -246,11 +249,15 @@ def delivery_send(invoice_id):
         existing = WorkflowNotification.query.filter_by(notification_key=key).one_or_none()
         if existing is not None:
             validate_delivery_retry(existing, data.get("official_id"), body)
+            if existing.payload.get("dms_channel") != channel:
+                raise ValueError("Für diese Versandkennung ist bereits eine andere DMS-Auswahl gespeichert.")
             return invoice_response(delivery_data(existing), 200)
         if completing and invoice.completed_at:
             return invoice_response({"message": "Die Rechnung wurde bereits abgeschlossen."}, 409)
         if pending_invoice_completion(invoice):
             return invoice_response({"message": "Für die Rechnung läuft bereits ein Direktversand. Bitte den Versandstatus prüfen."}, 409)
+        if completing and (dispatch := existing_dispatch(invoice.id, lock=True)) and dispatch.invoice_dispatch["mode"] == "dms":
+            return invoice_response({"message": "Für die Rechnung wurde bereits ein Versand über das DMS vorgemerkt."}, 409)
         if not settings.get(SettingKeys.SMTP_HOST).strip() or not settings.get(SettingKeys.SMTP_SENDER).strip():
             raise ValueError("SMTP-Server oder Absenderadresse fehlen. Bitte die E-Mail-Einstellungen ergänzen.")
         original = final_invoice_pdf(invoice)
@@ -262,13 +269,15 @@ def delivery_send(invoice_id):
             from .invoice_correspondence import store_delivery_correspondence
 
             package = completion_package(invoice, original) if completing else None
+            if channel:
+                queue_invoice_dispatch(invoice, package, "direct", channel, current_user)
             if package != original:
                 correspondence = store_delivery_correspondence(invoice, content=package)
         item = enqueue_notification(key, "invoice_delivery", payload={
             "invoice_id": invoice.id, "invoice_number": invoice.invoice_number,
             "document_filename": invoice.document_filename, "document_sha256": invoice.document_sha256,
             "official_id": destination_id, "recipient": recipient, "requested_by_user_id": current_user.id,
-            "complete_invoice": completing, **content, **correspondence,
+            "complete_invoice": completing, "dms_channel": channel, **content, **correspondence,
         })
         validate_delivery_retry(item, data.get("official_id"), body)
         if correspondence and item.payload.get("correspondence_filename") != correspondence["correspondence_filename"]:
@@ -419,6 +428,8 @@ def complete_invoice_after_email(item):
 @invoice_delivery_bp.route("/admin/invoices/<int:invoice_id>/delivery/complete", methods=["GET", "POST"])
 @invoice_required
 def delivery_complete(invoice_id):
+    from .invoice_dms_dispatch import dispatch_channel, dispatch_options, existing_dispatch, queue_invoice_dispatch
+
     downloading = request.method == "POST"
     invoice = final_invoice(invoice_id, lock=downloading)
     invoice_url = url_for("admin.invoice_edit", invoice_id=invoice.id)
@@ -427,6 +438,7 @@ def delivery_complete(invoice_id):
         url_for("admin.invoice_tenant_charge", invoice_id=invoice.id, complete=1)
         if completing_tenant_charge else url_for("admin.invoice_complete", invoice_id=invoice.id)
     )
+    dms_dispatch = existing_dispatch(invoice.id, lock=downloading)
     if not downloading:
         if invoice.completed_at:
             return redirect(invoice_url)
@@ -436,17 +448,30 @@ def delivery_complete(invoice_id):
             "admin/invoice_completion_delivery.html", item=invoice, letter_url=letter_url,
             pending_delivery=pending_invoice_completion(invoice),
             smtp_debug_recipient=settings.get(SettingKeys.SMTP_DEBUG_RECIPIENT).strip(),
+            dispatch_options=dispatch_options(current_user), dms_dispatch=dms_dispatch,
         )
 
     mode = request.form.get("mode")
-    if mode not in {"outlook", "print"}:
-        return invoice_response({"message": "Bitte Outlook oder „Kein Versand (nur Druck)“ auswählen."}, 400)
+    if mode not in {"outlook", "print", "dms"}:
+        return invoice_response({"message": "Bitte einen Versandweg auswählen."}, 400)
     if invoice.completed_at and invoice.completion_mode != mode:
         return invoice_response({"message": "Die Rechnung wurde bereits abgeschlossen."}, 409)
     if pending_invoice_completion(invoice):
         return invoice_response({"message": "Für die Rechnung läuft bereits ein Direktversand. Bitte den Versandstatus prüfen."}, 409)
     try:
+        channel = dispatch_channel(mode, "postal" in request.form, "portal" in request.form)
+        if mode == "dms" and not channel:
+            raise ValueError("Bitte Poststelle oder Mieter-App für diese Rechnung auswählen.")
+        if dms_dispatch and dms_dispatch.invoice_dispatch["mode"] == "dms":
+            if mode == "dms" and channel == dms_dispatch.invoice_dispatch["channel"]:
+                return invoice_response({"state": dms_dispatch.status}, 202)
+            return invoice_response({"message": "Für die Rechnung wurde bereits ein Versand über das DMS vorgemerkt."}, 409)
         content = completion_package(invoice, final_invoice_pdf(invoice))
+        if channel and not invoice.completed_at:
+            queue_invoice_dispatch(invoice, content, mode, channel, current_user)
+        if mode == "dms":
+            db.session.commit()
+            return invoice_response({"state": "pending"}, 202)
         response = (
             outlook_draft_response(invoice, content) if mode == "outlook"
             else delivery_download_response(content, "application/pdf", invoice_pdf_filename(invoice))

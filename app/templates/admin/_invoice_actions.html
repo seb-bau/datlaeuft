@@ -1,4 +1,5 @@
-{% set can_mark_sent = item.status == 'finalized' and not item.completed_at and (not pending_delivery or pending_delivery.state == 'uncertain') %}
+{% set pending_dms = dms_dispatch and dms_dispatch.invoice_dispatch.mode == 'dms' and dms_dispatch.status != 'archived' %}
+{% set can_mark_sent = item.status == 'finalized' and not item.completed_at and not pending_dms and (not pending_delivery or pending_delivery.state == 'uncertain') %}
 <section class="card shadow-sm mb-4" aria-labelledby="invoiceActionsTitle">
   <div class="card-body">
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -22,6 +23,14 @@
     <p class="small text-muted mb-3">Nach dem Erstellen der Rechnung können Sie das Mieteranschreiben vorbereiten.</p>
     {% endif %}
 
+    {% if dms_dispatch %}
+    <p class="small text-muted mb-3">
+      {{ 'Poststelle' if dms_dispatch.invoice_dispatch.channel == 'postal' else 'Mieter-App' }}
+      · {{ 'An d.velop übergeben' if dms_dispatch.status == 'archived' else 'DMS-Übergabe vorgemerkt' }}
+      {% if dms_dispatch.error %}<span class="text-danger">· {{ dms_dispatch.error }}</span>{% endif %}
+    </p>
+    {% endif %}
+
     <div class="d-flex flex-wrap align-items-center gap-2">
       {% if editable %}
       <button class="btn btn-primary" type="submit" form="invoice-draft-form" id="invoiceFinalize"
@@ -39,7 +48,7 @@
       {% endif %}
       {% elif item.status in ['finalized', 'canceled'] %}
       {% if item.status == 'finalized' and not item.completed_at %}
-      <a class="btn btn-primary" href="{{ url_for('admin.invoice_complete', invoice_id=item.id) }}">{{ 'Versandstatus prüfen' if pending_delivery else 'Rechnung abschließen und versenden' }}</a>
+      <a class="btn btn-primary" href="{{ url_for('admin.invoice_complete', invoice_id=item.id) }}">{{ 'Versandstatus prüfen' if pending_delivery or pending_dms else 'Rechnung abschließen und versenden' }}</a>
       {% endif %}
       {% if item.status == 'finalized' and item.invoice_kind == 'invoice' and item.tenant_billing_reference and not item.tenant_charge_letter %}
       <form method="post" action="{{ url_for('admin.invoice_document', invoice_id=item.id) }}" target="_blank" rel="noopener">
@@ -60,7 +69,7 @@
       {% endif %}
       {% endif %}
 
-      {% if not item.tenant_billing_reference and not pending_delivery %}
+      {% if not item.tenant_billing_reference and not pending_delivery and not dms_dispatch %}
       <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#invoiceCoverLetterModal">{{ 'Anschreiben bearbeiten' if item.cover_letter_title else 'Anschreiben erstellen' }}</button>
       <a class="btn btn-outline-secondary" id="invoiceCorrespondenceLink" href="{{ url_for('admin.invoice_correspondence', invoice_id=item.id) }}"
          target="_blank" rel="noopener" {% if not item.cover_letter_title %}hidden{% endif %}>PDF mit Anschreiben aufrufen</a>
