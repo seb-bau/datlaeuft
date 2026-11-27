@@ -19,7 +19,7 @@ class DmsError(RuntimeError):
         self.uncertain = uncertain
 
 
-def _http_error_message(response, api_key):
+def _http_error_message(response, *credentials):
     from urllib.parse import quote_plus
 
     status_message = f"d.velop hat die Anfrage mit Status {response.status_code} abgelehnt."
@@ -39,7 +39,10 @@ def _http_error_message(response, api_key):
     if not isinstance(payload, dict):
         return status_message
 
-    secrets = sorted({api_key, quote(api_key, safe=""), quote_plus(api_key, safe="")} - {""}, key=len, reverse=True)
+    secrets = sorted(
+        {encoded for credential in credentials if credential for encoded in (credential, quote(credential, safe=""), quote_plus(credential, safe=""))},
+        key=len, reverse=True,
+    )
 
     def clean(value):
         if not isinstance(value, str):
@@ -108,7 +111,7 @@ class DmsTransport:
             "Origin": self.root.rstrip("/"),
         })
 
-    def request(self, method, url, *, params=None, data=None, upload_file_path=None, version_document_id=None, track_write=True):
+    def request(self, method, url, *, params=None, data=None, upload_file_path=None, version_document_id=None, track_write=True, auth_session_id=None):
         method = method.upper()
         parsed = urlsplit(url)
 
@@ -139,6 +142,9 @@ class DmsTransport:
                 "Dieser Schreibzugriff auf d.velop ist nicht zulässig."
             )
 
+        if auth_session_id is not None and (method != "GET" or url != self.root + "identityprovider/validate"):
+            raise DmsError("Die d.velop-Sitzung darf nur zur Benutzerprüfung verwendet werden.")
+
         writes_document = bool(is_create or is_version)
         if writes_document and track_write and self.before_create:
             self.before_create()
@@ -148,6 +154,9 @@ class DmsTransport:
         else:
             headers = {"Content-Type": "application/hal+json" if is_version else "application/json"}
             body = data
+        if auth_session_id is not None:
+            headers["Authorization"] = f"Bearer {auth_session_id}"
+            headers["Accept"] = "application/json"
         try:
             with (
                 open(upload_file_path, "rb")
@@ -173,7 +182,7 @@ class DmsTransport:
         if not 200 <= response.status_code < 300:
             api_key = self.session.headers.get("Authorization", "").removeprefix("Bearer ")
             raise DmsError(
-                _http_error_message(response, api_key),
+                _http_error_message(response, api_key, auth_session_id),
                 retryable=(
                     response.status_code in (408, 429)
                     or response.status_code >= 500
@@ -187,6 +196,22 @@ class DmsTransport:
                 ),
             )
         return response
+
+    def authenticated_user_id(self):
+        try:
+            login = self.request("GET", self.root + "identityprovider/login").json()
+            session_id = login.get("authSessionId") or login.get("AuthSessionId")
+            if not isinstance(session_id, str) or not session_id:
+                raise ValueError()
+            user = self.request(
+                "GET", self.root + "identityprovider/validate", auth_session_id=session_id,
+            ).json()
+            user_id = user.get("id")
+            if not isinstance(user_id, str) or not user_id or user.get("active") is False:
+                raise ValueError()
+        except (AttributeError, ValueError) as exc:
+            raise DmsError("Das Konto des d.velop-API-Keys konnte nicht ermittelt werden.") from exc
+        return user_id
 
     def get(
         self, endpoint, ep_params=None, base_url=None, binary=False, limit=None,
@@ -359,7 +384,10 @@ class CloudDmsClient(DvelopDmsPy):
         if response.status_code not in (200, 204):
             raise DmsError("d.velop hat die neue PDF-Version noch nicht bestätigt.", retryable=True, uncertain=True)
 
-    def apply_invoice_dispatch(self, document_id, properties, flag_property, *, submission_started=False):
+    def apply_invoice_dispatch(
+        self, document_id, properties, flag_property, *,
+        submission_started=False, system_user_id=None, alternate_signer_property=None,
+    ):
         transport = self._rest_adapter
         details = self._document_details(document_id)
         current = self._dispatch_property_values(details)
@@ -369,6 +397,11 @@ class CloudDmsClient(DvelopDmsPy):
             raise DmsError("d.velop hat die Versandeigenschaften noch nicht bestätigt.", retryable=True, uncertain=True)
         if current.get(flag_property) == "Ja":
             raise DmsError("Für dieses DMS-Dokument ist die Versand-Eigenschaft bereits gesetzt. Bitte die frühere Übergabe prüfen.")
+        identity = {key: value for key, value in properties.items() if key != flag_property}
+        if identity and (not system_user_id or transport.authenticated_user_id() != system_user_id):
+            raise DmsError("Der DMS-API-Key gehört nicht zum eingetragenen Paperwork-Systembenutzer.")
+        if alternate_signer_property and current.get(alternate_signer_property):
+            raise DmsError("Im DMS-Dokument ist eine abweichende Unterschrift hinterlegt. Bitte die Angabe im DMS prüfen.")
         source_id = urlsplit(transport.url + "source").path
         links = details.get("_links", {})
         update_link = (links.get("update") or links.get("updateWithContent") or {}).get("href")
@@ -392,13 +425,14 @@ class CloudDmsClient(DvelopDmsPy):
             }, version_document_id=document_id, track_write=track_write)
             return self._dispatch_property_values(self._document_details(document_id))
 
-        identity = {key: value for key, value in properties.items() if key != flag_property}
         if any(current.get(key) != value for key, value in identity.items()):
             current = update_properties(identity, track_write=False, alteration_text="Poststellenbenutzer hinterlegt")
             if any(current.get(key) != value for key, value in identity.items()):
                 raise DmsError("d.velop hat das Feld für den Poststellenbenutzer nicht übernommen.")
             if current.get(flag_property) == "Ja":
                 raise DmsError("Die Versand-Eigenschaft wurde zwischenzeitlich gesetzt. Bitte die Übergabe prüfen.")
+            if alternate_signer_property and current.get(alternate_signer_property):
+                raise DmsError("Im DMS-Dokument ist eine abweichende Unterschrift hinterlegt. Bitte die Angabe im DMS prüfen.")
 
         confirmed = update_properties(
             {flag_property: properties[flag_property]}, track_write=True, alteration_text="Rechnung zum Versand freigegeben",
@@ -415,6 +449,8 @@ class CloudDmsClient(DvelopDmsPy):
             elif item.get("key") and len(item.get("values") or []) == 1:
                 value = item["values"][0]
                 values[item["key"]] = value.get("value") if isinstance(value, dict) else value
+            elif item.get("key") and item.get("values"):
+                values[item["key"]] = item["values"]
         return values
 
     def update_properties(self, *args, **kwargs):

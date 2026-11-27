@@ -45,8 +45,13 @@
                  {% if dispatch_options.postal_available and dispatch_options.postal_default %}checked{% endif %}
                  {% if not dispatch_options.postal_available %}disabled{% endif %}>
           <label class="form-check-label" for="invoiceDmsPostal">Zur Poststelle übertragen</label>
-          {% if dispatch_options.postal_available %}<div class="form-text">Unterschrift und Freigabe für {{ current_user.display_name }}</div>
-          {% else %}<div class="form-text">Die Poststelle ist für dieses Konto oder diese DMS-Anbindung nicht eingerichtet.</div>{% endif %}
+          {% if not dispatch_options.postal_available %}
+          <div class="form-text">Die Poststelle ist in der DMS-Anbindung noch nicht eingerichtet.</div>
+          {% elif dispatch_options.postal_signer_linked %}
+          <div class="form-text">Unterschrift und Freigabe für {{ current_user.display_name }}</div>
+          {% else %}
+          <div class="form-text">Für dieses Konto fehlt eine gültige Paperwork-Zuordnung. Bitte die Benutzerverwaltung prüfen.</div>
+          {% endif %}
         </div>
         <div class="form-check mt-2" id="invoiceDmsPortalOption">
           <input class="form-check-input" type="checkbox" id="invoiceDmsPortal" name="portal"

@@ -12,11 +12,15 @@ def upgrade():
     op.add_column("dms_document", sa.Column("invoice_dispatch", sa.JSON(none_as_null=True)))
     with op.batch_alter_table("user_account") as batch:
         batch.add_column(sa.Column("paperwork_user_id", sa.String(40)))
+        batch.add_column(sa.Column("paperwork_d3id", sa.String(10)))
+        batch.add_column(sa.Column("paperwork_entra_oid", sa.String(80)))
         batch.create_unique_constraint("uq_user_account_paperwork_user_id", ["paperwork_user_id"])
 
 
 def downgrade():
     with op.batch_alter_table("user_account") as batch:
         batch.drop_constraint("uq_user_account_paperwork_user_id", type_="unique")
+        batch.drop_column("paperwork_entra_oid")
+        batch.drop_column("paperwork_d3id")
         batch.drop_column("paperwork_user_id")
     op.drop_column("dms_document", "invoice_dispatch")

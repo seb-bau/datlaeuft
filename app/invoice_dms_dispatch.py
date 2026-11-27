@@ -1,11 +1,10 @@
+from collections import Counter
 from io import BytesIO
 from pathlib import Path
 import re
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from pypdf import PdfReader
-from requests import RequestException, post
 
 from .audit import audit
 from .dms_client import DmsError
@@ -17,81 +16,98 @@ from .settings import SettingKeys, settings
 PAPERWORK_ID = re.compile(r"[A-Za-z0-9-]{1,40}")
 
 
-def paperwork_base_url(value):
-    value = value.strip().rstrip("/")
+def entra_object_id(value):
+    if not isinstance(value, str):
+        return None
     try:
-        parsed = urlsplit(value)
-        parsed.port
-    except ValueError as exc:
-        raise ValueError("Bitte eine gültige HTTPS-Basis-URL für Paperwork eingeben.") from exc
-    if value and (
-        parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-        or parsed.query or parsed.fragment or len(value) > 255 or "\\" in value
-        or any(not character.isprintable() or character.isspace() for character in value)
+        return str(UUID(value))
+    except ValueError:
+        return None
+
+
+def paperwork_signer_marker(develop_id, d3id):
+    if not isinstance(develop_id, str) or not PAPERWORK_ID.fullmatch(develop_id):
+        raise ValueError("Bitte die d.velop-Benutzer-ID aus Paperwork verwenden.")
+    if (
+        not isinstance(d3id, str) or not 1 <= len(d3id) <= 10 or "_" in d3id
+        or any(not character.isprintable() or character.isspace() for character in d3id)
     ):
-        raise ValueError("Bitte eine gültige HTTPS-Basis-URL für Paperwork eingeben.")
-    return value
-
-
-def paperwork_lookup(payload):
-    url = paperwork_base_url(settings.get(SettingKeys.DMS_PAPERWORK_URL))
-    api_key = settings.get(SettingKeys.DMS_PAPERWORK_API_KEY).strip()
-    if not url or not api_key:
-        raise ValueError("Bitte die Paperwork-Anbindung unter Archiv/DMS einrichten.")
-    try:
-        response = post(
-            url + "/integration/datlaeuft/signer",
-            json=payload, headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-            timeout=(3, 8), allow_redirects=False,
-        )
-        data = response.json()
-        if isinstance(data, dict) and response.status_code == 404 and data.get("code") == "no_match":
-            return None
-        if isinstance(data, dict) and response.status_code == 409:
-            if data.get("code") == "no_signature":
-                raise ValueError("Für das angemeldete Konto fehlt in Paperwork eine Unterschrift.")
-            raise ValueError("Das Konto ist in Paperwork nicht eindeutig zugeordnet oder für die Poststelle gesperrt.")
-        if response.status_code != 200:
-            raise DmsError("Die Paperwork-Benutzerabfrage wurde abgelehnt.")
-    except (DmsError, RequestException) as exc:
-        raise ValueError("Die Paperwork-Benutzerabfrage ist fehlgeschlagen. Bitte die Anbindung unter Archiv/DMS prüfen.") from exc
-    if not isinstance(data, dict):
-        raise ValueError("Paperwork hat ungültige Benutzerdaten geliefert.")
-    return data
+        raise ValueError("Für die Poststelle muss die d3Id aus Paperwork höchstens zehn Zeichen lang sein und darf keine Unterstriche oder Leerzeichen enthalten.")
+    return f"manual_{d3id}_{develop_id}_"
 
 
 def resolve_paperwork_signer(user):
-    oid = user.entra_oid
-    tenant = settings.get(SettingKeys.ENTRA_TENANT_ID)
-    signer = None
-    if oid and tenant:
-        try:
-            oid, tenant = str(UUID(oid)), str(UUID(tenant))
-        except ValueError as exc:
-            raise ValueError("Die Entra-Zuordnung des angemeldeten Kontos ist ungültig.") from exc
-        signer = paperwork_lookup({"entra_oid": oid, "entra_tenant": tenant})
-        if signer and (signer.get("entra_oid") != oid or signer.get("entra_tenant") != tenant):
-            raise ValueError("Paperwork hat ein anderes Entra-Konto zurückgegeben.")
-    if signer is None and user.paperwork_user_id:
-        signer = paperwork_lookup({"develop_id": user.paperwork_user_id})
-        if signer and (
-            signer.get("develop_id") != user.paperwork_user_id
-            or (oid and signer.get("entra_tenant") == tenant and signer.get("entra_oid") not in (None, oid))
+    if not user.paperwork_user_id or not user.paperwork_d3id:
+        raise ValueError("Für das angemeldete Konto fehlt die Paperwork-Zuordnung.")
+    if user.paperwork_entra_oid != user.entra_oid:
+        raise ValueError("Das Entra-Konto hat sich geändert. Bitte die Paperwork-Zuordnung prüfen.")
+    return paperwork_signer_marker(user.paperwork_user_id, user.paperwork_d3id)
+
+
+def save_paperwork_signer(user, develop_id, d3id):
+    if develop_id or d3id:
+        paperwork_signer_marker(develop_id, d3id)
+        if (
+            (develop_id, d3id) == (user.paperwork_user_id, user.paperwork_d3id)
+            and user.paperwork_entra_oid != user.entra_oid
         ):
-            raise ValueError("Die manuelle Paperwork-Zuordnung passt nicht zum angemeldeten Konto.")
-    if signer is None:
-        raise ValueError("Für das angemeldete Konto fehlt eine Zuordnung in Paperwork.")
-    develop_id, d3id = signer.get("develop_id"), signer.get("d3id")
+            raise ValueError("Das Entra-Konto hat sich geändert. Bitte die Paperwork-Zuordnung neu importieren oder erneut eintragen.")
+        other = User.query.filter_by(paperwork_user_id=develop_id).first()
+        if other is not None and other.id != user.id:
+            raise ValueError("Das Paperwork-Konto ist bereits einem anderen Benutzer zugeordnet.")
+    user.paperwork_user_id = develop_id
+    user.paperwork_d3id = d3id
+    user.paperwork_entra_oid = user.entra_oid if develop_id else None
+
+
+def import_paperwork_signers(payload):
     if (
-        not isinstance(develop_id, str) or not PAPERWORK_ID.fullmatch(develop_id)
-        or not isinstance(d3id, str) or not 1 <= len(d3id) <= 10
-        or any(not character.isprintable() or character.isspace() for character in d3id)
+        not isinstance(payload, dict) or not isinstance(payload.get("data"), list)
+        or payload.get("total") != len(payload["data"])
+        or any(not isinstance(row, dict) for row in payload["data"])
     ):
-        raise ValueError("Paperwork hat ungültige Benutzerkennungen geliefert.")
-    other = User.query.filter(User.paperwork_user_id == develop_id, User.id != user.id).first()
-    if other is not None:
-        raise ValueError("Das Paperwork-Konto ist bereits einem anderen datlaeuft-Benutzer zugeordnet.")
-    return signer
+        raise ValueError("Bitte die vollständige JSON-Benutzerliste aus Paperwork auswählen.")
+    accounts = payload["data"]
+    object_counts = Counter(entra_object_id(row.get("oid")) for row in accounts)
+    id_counts = Counter(row["internal_id"] for row in accounts if isinstance(row.get("internal_id"), str))
+    valid_accounts = {}
+    for account in accounts:
+        oid = entra_object_id(account.get("oid"))
+        if oid is None or object_counts[oid] != 1 or account.get("is_enabled") is not True:
+            continue
+        develop_id, d3id = account.get("internal_id"), account.get("d3id")
+        try:
+            paperwork_signer_marker(develop_id, d3id)
+        except ValueError:
+            continue
+        if id_counts[develop_id] == 1:
+            valid_accounts[oid] = (develop_id, d3id)
+
+    users = User.query.order_by(User.id).with_for_update().all()
+    local_object_counts = Counter(entra_object_id(user.entra_oid) for user in users)
+    owners = {user.paperwork_user_id: user.id for user in users if user.paperwork_user_id}
+    matched = skipped = 0
+    for user in users:
+        if not user.is_active_flag or not user.entra_oid:
+            continue
+        oid = entra_object_id(user.entra_oid)
+        account = valid_accounts.get(oid)
+        if not account or local_object_counts[oid] != 1:
+            skipped += 1
+            continue
+        develop_id, d3id = account
+        if (
+            user.paperwork_user_id not in (None, develop_id)
+            or owners.get(develop_id, user.id) != user.id
+        ):
+            skipped += 1
+            continue
+        user.paperwork_user_id = develop_id
+        user.paperwork_d3id = d3id
+        user.paperwork_entra_oid = user.entra_oid
+        owners[develop_id] = user.id
+        matched += 1
+    return matched, skipped
 
 
 def dispatch_settings():
@@ -101,20 +117,28 @@ def dispatch_settings():
         "postal_default": settings.get(SettingKeys.DMS_POSTAL_DEFAULT),
         "portal_default": settings.get(SettingKeys.DMS_PORTAL_DEFAULT),
         "signer_property": settings.get(SettingKeys.DMS_POSTAL_SIGNER_PROPERTY),
-        "paperwork_url": settings.get(SettingKeys.DMS_PAPERWORK_URL),
-        "has_paperwork_key": bool(settings.get(SettingKeys.DMS_PAPERWORK_API_KEY)),
+        "system_user_id": settings.get(SettingKeys.DMS_POSTAL_SYSTEM_USER_ID),
+        "alternate_signer_property": settings.get(SettingKeys.DMS_POSTAL_ALTERNATE_SIGNER_PROPERTY),
     }
 
 
 def dispatch_options(user):
     config = dispatch_settings()
     enabled = settings.get(SettingKeys.DMS_ENABLED)
+    try:
+        resolve_paperwork_signer(user)
+        signer_linked = user.paperwork_user_id != config["system_user_id"]
+    except ValueError:
+        signer_linked = False
     return {
-        **config,
+        "postal_property": config["postal_property"],
+        "portal_property": config["portal_property"],
+        "postal_default": config["postal_default"],
+        "portal_default": config["portal_default"],
+        "postal_signer_linked": signer_linked,
         "postal_available": bool(
             enabled and config["postal_property"] and config["signer_property"]
-            and config["paperwork_url"] and config["has_paperwork_key"]
-            and (user.entra_oid or user.paperwork_user_id)
+            and config["system_user_id"]
         ),
         "portal_available": bool(enabled and config["portal_property"]),
     }
@@ -151,7 +175,7 @@ def queue_invoice_dispatch(invoice, content, mode, channel, user):
     if not settings.get(SettingKeys.DMS_ENABLED):
         raise ValueError("Die DMS-Übertragung ist deaktiviert.")
     try:
-        hostname, _, repository = connection()
+        connection()
         document_type = "cancellation_invoice" if invoice.invoice_kind == "cancellation" else "invoice"
         snapshot = profile_snapshot(document_type)
     except DmsError as exc:
@@ -167,30 +191,31 @@ def queue_invoice_dispatch(invoice, content, mode, channel, user):
         raise ValueError("Die Versand-Eigenschaft ist für die Dokumentkategorie nicht verfügbar. Bitte die DMS-Zuordnung prüfen.")
 
     properties = {property_id: "Ja"}
+    identity = {}
     if channel == "postal":
         signer_property = config["signer_property"]
         if not signer_property or signer_property in reserved_ids or signer_property in {property_id, config["portal_property"]}:
             raise ValueError("Bitte die Feld-ID für den Poststellenbenutzer unter Archiv/DMS prüfen.")
-        signer = resolve_paperwork_signer(user)
-        if (
-            signer.get("hostname") != hostname or signer.get("repository_id") != repository
-            or signer.get("postal_property") != property_id or signer.get("signer_property") != signer_property
-            or signer.get("postal_value") != properties[property_id]
-        ):
-            raise ValueError("Anbindung und Eigenschaften für die Poststelle stimmen in datlaeuft und Paperwork nicht überein.")
-        anchor = signer.get("signature_anchor")
-        if not isinstance(anchor, str) or not anchor or not any(
-            anchor in (page.extract_text() or "") for page in PdfReader(BytesIO(content)).pages
-        ):
+        system_user_id = config["system_user_id"]
+        if not PAPERWORK_ID.fullmatch(system_user_id):
+            raise ValueError("Bitte die d.velop-ID des Paperwork-Systembenutzers unter Archiv/DMS eintragen.")
+        marker = resolve_paperwork_signer(user)
+        if user.paperwork_user_id == system_user_id:
+            raise ValueError("Für den Versand über die Poststelle ist ein persönliches Paperwork-Konto erforderlich.")
+        alternate_signer = config["alternate_signer_property"]
+        if alternate_signer and alternate_signer in reserved_ids | {property_id, signer_property, config["portal_property"]}:
+            raise ValueError("Bitte die Feld-ID für die abweichende Unterschrift unter Archiv/DMS prüfen.")
+        if not any("{sig}" in (page.extract_text() or "") for page in PdfReader(BytesIO(content)).pages):
             raise ValueError("Für die Poststelle fehlt der Signaturanker im Rechnungsanschreiben.")
-        properties[signer_property] = f"manual_{signer['d3id']}_{signer['develop_id']}_datlaeuft"
+        properties[signer_property] = marker
+        identity = {"system_user_id": system_user_id, "alternate_signer_property": alternate_signer}
 
     try:
         document = register_generated_pdf(
             document_type, "invoice", invoice.id, Path(invoice.document_filename).name, content,
             invoice_context(invoice), invoice_dispatch={
                 "actor_user_id": user.id, "mode": mode, "channel": channel,
-                "flag_property": property_id, "properties": properties,
+                "flag_property": property_id, "properties": properties, **identity,
             },
         )
         if document.status in {"disabled", "blocked"}:

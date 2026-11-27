@@ -419,24 +419,82 @@ class InvoiceDeliveryTests(unittest.TestCase):
         self.assertEqual(queue.call_args.args[2:4], ("print", "portal"))
         self.assertEqual(invoice.completion_mode, "print")
 
-    def test_signer_lookup_uses_an_exact_entra_match_and_admin_mapping_only_when_missing(self):
-        tenant = "93043da0-7182-49f5-93a9-bcbb96170b94"
-        self.creator.entra_oid = "951fba60-3ea9-4c25-99c2-accfb3e1d39b"
-        self.settings.settings.set(self.settings.SettingKeys.ENTRA_TENANT_ID, tenant)
-        signer = {
-            "entra_oid": self.creator.entra_oid, "entra_tenant": tenant,
-            "develop_id": "08b374ad-887a-4f21-b1b6-3dd2f9cb73db", "d3id": "anna_muste",
+    def test_paperwork_import_uses_exact_entra_ids_and_rejects_ambiguous_or_disabled_accounts(self):
+        self.creator.entra_oid = str(uuid4())
+        self.reviewer.entra_oid = str(uuid4())
+        develop_id = str(uuid4())
+        signer = {"oid": self.creator.entra_oid.upper(), "internal_id": develop_id, "d3id": "annamuster", "is_enabled": True}
+        entries = [
+            signer,
+            {"oid": self.reviewer.entra_oid, "internal_id": str(uuid4()), "d3id": "anderer", "is_enabled": True},
+            {"oid": self.reviewer.entra_oid, "internal_id": str(uuid4()), "d3id": "anderer", "is_enabled": False},
+            {"email": self.reviewer.email, "oid": str(uuid4()), "internal_id": str(uuid4()), "d3id": "anderer", "is_enabled": True},
+        ]
+        with self.assertRaisesRegex(ValueError, "vollständige"):
+            self.dispatch.import_paperwork_signers({"data": entries, "total": 5})
+        self.assertEqual(self.dispatch.import_paperwork_signers({"data": entries, "total": 4}), (1, 1))
+        self.assertEqual(self.dispatch.resolve_paperwork_signer(self.creator), f"manual_annamuster_{develop_id}_")
+        self.assertIsNone(self.reviewer.paperwork_user_id)
+        self.creator.entra_oid = str(uuid4())
+        with self.assertRaisesRegex(ValueError, "Entra-Konto hat sich geändert"):
+            self.dispatch.resolve_paperwork_signer(self.creator)
+
+    def test_manual_paperwork_mapping_requires_both_ids_and_preserves_the_legacy_separator(self):
+        develop_id = str(uuid4())
+        for d3id in (None, "anna_muste", "laengeralszehn"):
+            with self.subTest(d3id=d3id), self.assertRaisesRegex(ValueError, "d3Id"):
+                self.dispatch.save_paperwork_signer(self.creator, develop_id, d3id)
+        self.dispatch.save_paperwork_signer(self.creator, develop_id, "annamuster")
+        self.db.session.flush()
+        with self.assertRaisesRegex(ValueError, "bereits einem anderen"):
+            self.dispatch.save_paperwork_signer(self.reviewer, develop_id, "anderer")
+        self.assertEqual(self.dispatch.resolve_paperwork_signer(self.creator), f"manual_annamuster_{develop_id}_")
+
+    def test_postal_queue_writes_only_the_legacy_marker_of_the_user_completing_the_wizard(self):
+        invoice = self.rendered_invoice()
+        self.archive.reset_mock()
+        invoice.responsible_user = self.creator
+        invoice.cover_letter_title = "Brieftext"
+        invoice.cover_letter_text = "Guten Tag."
+        actor_id = str(uuid4())
+        system_user_id = str(uuid4())
+        self.reviewer.can_manage_invoices = True
+        self.dispatch.save_paperwork_signer(self.creator, str(uuid4()), "auftrag")
+        self.dispatch.save_paperwork_signer(self.reviewer, actor_id, "versand")
+        keys = self.settings.SettingKeys
+        for key, value in (
+            (keys.DMS_ENABLED, True), (keys.DMS_POSTAL_PROPERTY, "postal"), (keys.DMS_PORTAL_PROPERTY, "portal"),
+            (keys.DMS_POSTAL_SYSTEM_USER_ID, system_user_id),
+            (keys.DMS_POSTAL_ALTERNATE_SIGNER_PROPERTY, "alternate"),
+        ):
+            self.settings.settings.set(key, value)
+        self.db.session.commit()
+        self.login(self.reviewer)
+        service = sys.modules[self.package_name + ".dms_service"]
+        self.archive.return_value = Mock(status="pending")
+        profile = {
+            "schema": {"fields": [{"id": "postal", "dataType": "STRING"}]}, "mappings": {}, "key_property_id": "",
         }
-        with patch.object(self.dispatch, "paperwork_lookup", return_value=signer) as lookup:
-            self.assertEqual(self.dispatch.resolve_paperwork_signer(self.creator), signer)
-            lookup.assert_called_once_with({"entra_oid": self.creator.entra_oid, "entra_tenant": tenant})
-        self.creator.paperwork_user_id = signer["develop_id"]
-        with patch.object(self.dispatch, "paperwork_lookup", side_effect=[None, signer]) as lookup:
-            self.assertEqual(self.dispatch.resolve_paperwork_signer(self.creator), signer)
-            self.assertEqual(lookup.call_args.args[0], {"develop_id": signer["develop_id"]})
-        with patch.object(self.dispatch, "paperwork_lookup", return_value={**signer, "entra_oid": tenant}):
-            with self.assertRaisesRegex(ValueError, "anderes Entra-Konto"):
-                self.dispatch.resolve_paperwork_signer(self.creator)
+        with (
+            patch.object(service, "connection", return_value=("dms.example.invalid", "key", "repository"), create=True),
+            patch.object(service, "profile_snapshot", return_value=profile, create=True),
+        ):
+            url = f"/admin/invoices/{invoice.id}/delivery/complete"
+            selection = {"mode": "dms", "postal": "on", "portal": "on"}
+            response = self.client.post(url, data=selection)
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertIn("Signaturanker", response.json["message"])
+            self.archive.assert_not_called()
+            invoice.cover_letter_text += "\n{sig}"
+            self.db.session.commit()
+            response = self.client.post(url, data=selection)
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(self.archive.call_args.kwargs["invoice_dispatch"], {
+            "actor_user_id": self.reviewer.id, "mode": "dms", "channel": "postal", "flag_property": "postal",
+            "properties": {"postal": "Ja", "property_remark1": f"manual_versand_{actor_id}_"},
+            "system_user_id": system_user_id, "alternate_signer_property": "alternate",
+        })
+        self.mail.assert_not_called()
 
     def test_wizard_outlook_download_finishes_with_the_letter_and_original_attachments(self):
         invoice = self.rendered_invoice(with_attachments=True)

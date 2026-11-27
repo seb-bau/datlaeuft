@@ -703,6 +703,8 @@ class User(UserMixin, db.Model):
     password_hash: Mapped[str | None] = mapped_column(db.String(255))
     entra_oid: Mapped[str | None] = mapped_column(db.String(80), unique=True)
     paperwork_user_id: Mapped[str | None] = mapped_column(db.String(40), unique=True)
+    paperwork_d3id: Mapped[str | None] = mapped_column(db.String(10))
+    paperwork_entra_oid: Mapped[str | None] = mapped_column(db.String(80))
     craftsman_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
     person_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)
     creditor_erp_id: Mapped[int | None] = mapped_column(db.Integer, index=True)

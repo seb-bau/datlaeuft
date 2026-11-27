@@ -11741,24 +11741,14 @@ def save_user_form(item: User) -> None:
         item.phone = phone or None
     if "entra_oid" in request.form:
         item.entra_oid = request.form.get("entra_oid") or None
-    if "paperwork_user_id" in request.form:
-        from .invoice_dms_dispatch import PAPERWORK_ID, paperwork_lookup
+    if "paperwork_user_id" in request.form or "paperwork_d3id" in request.form:
+        from .invoice_dms_dispatch import save_paperwork_signer
 
-        paperwork_id = request.form["paperwork_user_id"].strip() or None
-        if paperwork_id and paperwork_id != item.paperwork_user_id:
-            if not PAPERWORK_ID.fullmatch(paperwork_id):
-                raise ValueError("Bitte eine gültige d.velop-Benutzer-ID aus Paperwork eingeben.")
-            other = User.query.filter_by(paperwork_user_id=paperwork_id).first()
-            if other is not None and other.id != item.id:
-                raise ValueError("Dieses Paperwork-Konto ist bereits einem anderen Benutzer zugeordnet.")
-            account = paperwork_lookup({"develop_id": paperwork_id})
-            if account is None or account.get("develop_id") != paperwork_id:
-                raise ValueError("Das angegebene Paperwork-Konto konnte nicht gefunden werden.")
-            if item.entra_oid and account.get("entra_tenant") == settings.get(SettingKeys.ENTRA_TENANT_ID) and (
-                account.get("entra_oid") not in (None, item.entra_oid)
-            ):
-                raise ValueError("Das Paperwork-Konto gehört zu einem anderen Entra-Benutzer.")
-        item.paperwork_user_id = paperwork_id
+        save_paperwork_signer(
+            item,
+            request.form.get("paperwork_user_id", "").strip() or None,
+            request.form.get("paperwork_d3id", "").strip() or None,
+        )
     raw_craftsman_id = request.form.get("craftsman_erp_id", "").strip()
     item.craftsman_erp_id = int(raw_craftsman_id) if raw_craftsman_id else None
     item.is_admin = "is_admin" in request.form

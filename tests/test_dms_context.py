@@ -370,7 +370,7 @@ class DmsContextTests(unittest.TestCase):
         self.db.session.commit()
         profile = {"category_id": "invoice", "schema": {"fields": []}, "mappings": {}, "key_property_id": ""}
         remote_id = "D000000123"
-        properties = {"postal": "Ja", "property_remark1": "manual_anna_muste_user_datlaeuft"}
+        properties = {"postal": "Ja", "property_remark1": "manual_annamuster_user_"}
         dispatch = {
             "mode": "outlook", "actor_user_id": self.user.id, "channel": "postal",
             "flag_property": "postal", "properties": properties,
@@ -380,7 +380,7 @@ class DmsContextTests(unittest.TestCase):
         property_calls = []
 
         def new_client(*args, before_create):
-            def apply_properties(document_id, values, flag, *, submission_started):
+            def apply_properties(document_id, values, flag, *, submission_started, **identity):
                 property_calls.append((document_id, values, flag, submission_started))
                 if not submission_started:
                     before_create()
@@ -426,7 +426,7 @@ class DmsContextTests(unittest.TestCase):
         self.addCleanup(client.close)
         document_id = "D000000123"
         target = f"/dms/r/repository/o2m/{document_id}"
-        signer_marker = "manual_anna_muste_user_datlaeuft"
+        signer_marker = "manual_annamuster_user_"
 
         def details(properties):
             result = Mock(status_code=200)
@@ -436,20 +436,58 @@ class DmsContextTests(unittest.TestCase):
             }
             return result
 
+        login = Mock(status_code=200)
+        login.json.return_value = {"authSessionId": "identity-session"}
+        user = Mock(status_code=200)
+        user.json.return_value = {"id": "system-user", "active": True}
         with patch.object(client._rest_adapter.session, "request", side_effect=[
-            details({"postal": "Nein"}), Mock(status_code=200),
+            details({"postal": "Nein"}), login, user, Mock(status_code=200),
             details({"postal": "Nein", "property_remark1": signer_marker}), Mock(status_code=204),
             details({"postal": "Ja", "property_remark1": signer_marker}),
         ]) as requests:
-            client.apply_invoice_dispatch(document_id, {"postal": "Ja", "property_remark1": signer_marker}, "postal")
+            client.apply_invoice_dispatch(
+                document_id, {"postal": "Ja", "property_remark1": signer_marker}, "postal",
+                system_user_id="system-user", alternate_signer_property="alternate",
+            )
 
+        self.assertEqual(requests.call_args_list[1].args, ("GET", "https://dms.example.invalid/identityprovider/login"))
+        validation = requests.call_args_list[2]
+        self.assertEqual(validation.args, ("GET", "https://dms.example.invalid/identityprovider/validate"))
+        self.assertEqual(validation.kwargs["headers"]["Authorization"], "Bearer identity-session")
         updates = [request for request in requests.call_args_list if request.args[0] == "PUT"]
         self.assertEqual([request.args[1] for request in updates], ["https://dms.example.invalid" + target] * 2)
         self.assertEqual([request.kwargs["json"]["sourceProperties"]["properties"] for request in updates], [
             [{"key": "property_remark1", "values": [signer_marker]}], [{"key": "postal", "values": ["Ja"]}],
         ])
         self.assertTrue(all("contentLocationUri" not in request.kwargs["json"] for request in updates))
+        self.assertTrue(all("Authorization" not in request.kwargs["headers"] for request in updates))
         callback.assert_called_once()
+
+    def test_postal_flag_is_not_written_when_the_dms_actor_or_signature_conflicts(self):
+        client_type = self.service.CloudDmsClient
+        callback = Mock()
+        with patch.object(client_type, "get_mappings"):
+            client = client_type("dms.example.invalid", "key", "repository", before_create=callback)
+        self.addCleanup(client.close)
+        properties = {"postal": "Ja", "property_remark1": "manual_annamuster_user_"}
+        for actor_id, alternate, error in (
+            ("other-user", [], "Paperwork-Systembenutzer"),
+            ("system-user", ["Abweichende Person"], "abweichende Unterschrift"),
+        ):
+            with (
+                self.subTest(actor_id=actor_id),
+                patch.object(client, "_document_details", return_value={
+                    "sourceProperties": [{"key": "alternate", "values": alternate}],
+                }),
+                patch.object(client._rest_adapter, "authenticated_user_id", return_value=actor_id),
+                patch.object(client._rest_adapter, "request") as request,
+            ):
+                with self.assertRaisesRegex(self.service.DmsError, error):
+                    client.apply_invoice_dispatch(
+                        "D000000123", properties, "postal", system_user_id="system-user", alternate_signer_property="alternate",
+                    )
+                request.assert_not_called()
+        callback.assert_not_called()
 
     def test_wowiport_import_stores_name_parts_and_detects_changes(self):
         self.user.wowiport_managed = True

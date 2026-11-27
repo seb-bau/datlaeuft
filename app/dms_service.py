@@ -181,9 +181,13 @@ def validate_profile(profile, schema):
     dispatch_flags = set()
     if profile.document_type in INVOICE_DOCUMENT_TYPES:
         postal_id = settings.get(SettingKeys.DMS_POSTAL_PROPERTY)
-        postal_signer_id = settings.get(SettingKeys.DMS_POSTAL_SIGNER_PROPERTY) if postal_id else ""
         dispatch_flags = {postal_id, settings.get(SettingKeys.DMS_PORTAL_PROPERTY)} - {""}
-        dispatch_ids = dispatch_flags | ({postal_signer_id} if postal_signer_id else set())
+        dispatch_ids = dispatch_flags.copy()
+        if postal_id:
+            dispatch_ids.update({
+                settings.get(SettingKeys.DMS_POSTAL_SIGNER_PROPERTY),
+                settings.get(SettingKeys.DMS_POSTAL_ALTERNATE_SIGNER_PROPERTY),
+            } - {""})
         if dispatch_ids.intersection({profile.key_property_id, *profile.mappings}):
             raise DmsError("Die Versandeigenschaften werden im Rechnungsassistenten gesetzt. Bitte feste Zuordnungen entfernen.")
     key_field = fields.get(profile.key_property_id)
@@ -1025,6 +1029,8 @@ def process_claimed_document(document_id, token):
             client.apply_invoice_dispatch(
                 remote_id, dispatch["properties"], dispatch["flag_property"],
                 submission_started=document.upload_started,
+                system_user_id=dispatch.get("system_user_id"),
+                alternate_signer_property=dispatch.get("alternate_signer_property"),
             )
 
         invoice = None

@@ -267,12 +267,11 @@ class SettingKeys:
     DMS_POSTAL_SIGNER_PROPERTY = SettingDefinition[str](
         "dms.postal_signer_property", SettingValueType.STRING, "property_remark1", "Feld-ID für den Poststellenbenutzer", "Archiv/DMS",
     )
-    DMS_PAPERWORK_URL = SettingDefinition[str](
-        "dms.paperwork_url", SettingValueType.STRING, "", "Paperwork-Basis-URL", "Archiv/DMS",
+    DMS_POSTAL_SYSTEM_USER_ID = SettingDefinition[str](
+        "dms.postal_system_user_id", SettingValueType.STRING, "", "d.velop-ID des Paperwork-Systembenutzers", "Archiv/DMS",
     )
-    DMS_PAPERWORK_API_KEY = SettingDefinition[str](
-        "dms.paperwork_api_key", SettingValueType.SECRET, "", "API-Schlüssel für die Paperwork-Benutzerabfrage", "Archiv/DMS",
-        secret=True,
+    DMS_POSTAL_ALTERNATE_SIGNER_PROPERTY = SettingDefinition[str](
+        "dms.postal_alternate_signer_property", SettingValueType.STRING, "", "Feld-ID für abweichende Unterschriften", "Archiv/DMS",
     )
 
     DMS_INVOICE_CATEGORY_ID = SettingDefinition[str](

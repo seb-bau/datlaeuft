@@ -35,9 +35,14 @@
     </div>
 
     <div class="col-md-6">
-      <label class="form-label" for="paperworkUserId">Paperwork-Benutzer-ID</label>
+      <label class="form-label" for="paperworkUserId">d.velop-Benutzer-ID aus Paperwork</label>
       <input class="form-control" id="paperworkUserId" name="paperwork_user_id" maxlength="40" value="{{ item.paperwork_user_id or '' }}">
-      <div class="form-text">Für Konten ohne automatische Entra-Zuordnung. Tragen Sie nach Prüfung die d.velop-Benutzer-ID derselben Person aus Paperwork ein.</div>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label" for="paperworkD3Id">d3Id aus Paperwork</label>
+      <input class="form-control" id="paperworkD3Id" name="paperwork_d3id" maxlength="10" value="{{ item.paperwork_d3id or '' }}">
+      <div class="form-text">Übernehmen Sie beide Kennungen aus dem Paperwork-Konto derselben Person.</div>
     </div>
 
     <div class="col-md-6">

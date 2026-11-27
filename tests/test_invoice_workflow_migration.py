@@ -97,7 +97,10 @@ class InvoiceWorkflowMigrationTests(unittest.TestCase):
                 connection.execute(sa.text("INSERT INTO dms_document VALUES ('transfer', 'archived')"))
                 with Operations.context(MigrationContext.configure(connection)):
                     migration.upgrade()
-                    self.assertEqual(connection.execute(sa.text("SELECT paperwork_user_id FROM user_account")).scalars().all(), [None, None])
+                    self.assertEqual(
+                        connection.execute(sa.text("SELECT paperwork_user_id, paperwork_d3id, paperwork_entra_oid FROM user_account")).all(),
+                        [(None, None, None), (None, None, None)],
+                    )
                     self.assertEqual(connection.execute(sa.text("SELECT status, invoice_dispatch FROM dms_document")).one(), ("archived", None))
                     self.assertTrue(any(
                         constraint["column_names"] == ["paperwork_user_id"]
