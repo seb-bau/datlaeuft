@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Callable
+
+from sqlalchemy.orm import joinedload, selectinload
+
 from .external_craftsman_service import (
     available_external_craftsmen,
 )
@@ -14,7 +17,9 @@ from .models import (
     TicketAiState,
     TicketMirror,
     TicketMirrorState,
+    WowiBuilding,
     WowiLicenseAgreement,
+    WowiUseUnit,
     utc_now, TimeTaskTemplate,
 )
 from .object_directory import (
@@ -909,15 +914,19 @@ def ticket_assignments(
     return assignments
 
 
-def ticket_license_agreement_local_id(
-    ticket: TicketMirror,
-) -> int | None:
+LICENSE_AGREEMENT_CODES = (
+    "licenseagreement", "leaseagreement", "rentalagreement", "tenancyagreement",
+    "mietvertrag", "nutzungsvertrag", "vertrag",
+)
+
+
+def _ticket_assignment_refs(ticket: TicketMirror) -> list[tuple[str, int]]:
     assignments = (
         ticket.assignments
         if isinstance(ticket.assignments, list)
         else []
     )
-    agreement_erp_ids: set[int] = set()
+    references = []
 
     for assignment in assignments:
         if not isinstance(assignment, dict):
@@ -928,7 +937,8 @@ def ticket_license_agreement_local_id(
             "AssignmentEntity",
         )
 
-        if not isinstance(assignment_entity, dict):
+        entity_id = as_int(value(assignment, "EntityId"))
+        if not isinstance(assignment_entity, dict) or entity_id is None:
             continue
 
         entity_code = "".join(
@@ -943,29 +953,18 @@ def ticket_license_agreement_local_id(
             if character.isalnum()
         )
 
-        if not any(
-            code_part in entity_code
-            for code_part in (
-                "licenseagreement",
-                "leaseagreement",
-                "rentalagreement",
-                "tenancyagreement",
-                "mietvertrag",
-                "vertrag"
-            )
-        ):
-            continue
+        references.append((entity_code, entity_id))
 
-        entity_id = as_int(
-            value(
-                assignment,
-                "EntityId",
-            )
-        )
+    return references
 
-        if entity_id is not None:
-            agreement_erp_ids.add(entity_id)
 
+def ticket_license_agreement_local_id(
+    ticket: TicketMirror,
+) -> int | None:
+    agreement_erp_ids = {
+        entity_id for code, entity_id in _ticket_assignment_refs(ticket)
+        if any(code_part in code for code_part in LICENSE_AGREEMENT_CODES)
+    }
     if len(agreement_erp_ids) != 1:
         return None
 
@@ -984,6 +983,67 @@ def ticket_license_agreement_local_id(
         if agreement is not None
         else None
     )
+
+
+def _single_ticket_assignment(references, codes):
+    erp_ids = {entity_id for code, entity_id in references if code in codes}
+    return next(iter(erp_ids)) if len(erp_ids) == 1 else None
+
+
+def _ticket_directory_records(model, erp_ids, *loaders):
+    if not erp_ids:
+        return {}
+    records = model.query.filter(model.erp_id.in_(erp_ids), model.active.is_(True)).options(*loaders)
+    return {record.erp_id: record for record in records}
+
+
+def ticket_list_object_details(tickets: list[TicketMirror]) -> dict[int, tuple[str, ...]]:
+    from .object_directory import directory_today
+
+    links = {}
+    for ticket in tickets:
+        references = _ticket_assignment_refs(ticket)
+        links[ticket.id] = (
+            _single_ticket_assignment(references, LICENSE_AGREEMENT_CODES),
+            _single_ticket_assignment(references, ("useunit", "nutzungseinheit", "wohnung")),
+            _single_ticket_assignment(references, ("building", "gebäude", "gebaeude")),
+        )
+
+    agreements = _ticket_directory_records(
+        WowiLicenseAgreement, {agreement_id for agreement_id, _, _ in links.values()} - {None},
+        selectinload(WowiLicenseAgreement.contractors),
+        joinedload(WowiLicenseAgreement.use_unit).joinedload(WowiUseUnit.building),
+    )
+    units = _ticket_directory_records(
+        WowiUseUnit, {unit_id for _, unit_id, _ in links.values()} - {None},
+        joinedload(WowiUseUnit.building),
+    )
+    buildings = _ticket_directory_records(
+        WowiBuilding, {building_id for _, _, building_id in links.values()} - {None},
+    )
+
+    today = directory_today()
+    details = {}
+    for ticket_id, (agreement_id, unit_id, building_id) in links.items():
+        agreement = agreements.get(agreement_id)
+        unit = (agreement.use_unit if agreement else None) or units.get(unit_id)
+        building = (unit.building if unit else None) or buildings.get(building_id)
+        tenant_names = set()
+        if agreement and not agreement.is_vacancy and (agreement.end_date is None or agreement.end_date >= today):
+            tenant_names = {
+                contractor.display_name.strip()
+                for contractor in agreement.contractors
+                if contractor.active and (contractor.contractual_use_to is None or contractor.contractual_use_to >= today)
+            }
+        address = (unit.address if unit else None) or (building.address if building else None)
+        position = ""
+        if unit:
+            position = ", ".join(dict.fromkeys(
+                part.strip() for part in (unit.floor_name, unit.position_name, unit.description_of_position)
+                if part and part.strip()
+            ))
+        details[ticket_id] = tuple(filter(None, (", ".join(sorted(tenant_names - {""})), address, position)))
+    return details
 
 
 def ticket_excerpt(

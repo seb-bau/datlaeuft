@@ -157,6 +157,7 @@ from .external_craftsman_service import (
 from .external_order_responses import validate_external_communication
 from .ticket_service import (
     ticket_license_agreement_local_id,
+    ticket_list_object_details,
     mark_ticket_analyses_stale,
     ticket_analysis_input_hash,
 )
@@ -4452,7 +4453,7 @@ def ticket_filter_options(query: Any) -> dict[str, dict[str, str]]:
             "not_requested": "Nicht analysiert",
             "queued": "Vorbereitung vorgemerkt",
             "processing": "Vorschlag wird erstellt",
-            "ready": "Vorschlag vorhanden",
+            "ready": "Vorschlag erstellt",
             "stale": "Vorschlag veraltet",
             "failed": "Analyse fehlgeschlagen",
         },
@@ -4617,6 +4618,7 @@ def tickets() -> Any:
     return render_template(
         "admin/tickets.html",
         ticket_reply_notifications={item.ticket_id: item for item in reply_notifications},
+        ticket_object_details=ticket_list_object_details(pagination.items),
         pagination=pagination,
         selected_state=selected_state,
         search_text=search_text,

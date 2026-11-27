@@ -184,7 +184,13 @@ Einstellungen findest du unter Einstellungen.
             {{ ticket.subject or "Ohne Betreff" }}
           </h2>
 
-           <div class="small text-muted mb-2">{{ ticket.ai_state_label }}</div>
+          {% set object_details = ticket_object_details.get(ticket.id) %}
+          {% if object_details %}
+          <div class="small text-muted mb-2">{{ object_details|join(" · ") }}</div>
+          {% endif %}
+          {% if ticket.ai_state != "ready" %}
+          <div class="small text-muted mb-2">{{ ticket.ai_state_label }}</div>
+          {% endif %}
 
           {% if ticket.content_excerpt %}
           <p class="mb-2 text-body-secondary">
