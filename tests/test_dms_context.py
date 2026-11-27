@@ -233,6 +233,68 @@ class DmsContextTests(unittest.TestCase):
             profile.mappings = {"object": {"kind": "field", "value": source}}
             self.service.validate_profile(profile, self.schema())
 
+    def test_postal_fields_are_reserved_for_all_document_types_and_removed_from_old_uploads(self):
+        keys = self.settings.SettingKeys
+        self.settings.settings.set(keys.DMS_POSTAL_PROPERTY, "postal")
+        self.settings.settings.set(keys.DMS_POSTAL_SIGNER_PROPERTY, "signer")
+        schema = {"fields": [
+            *self.schema(multiple=False)["fields"],
+            {"id": "postal", "dataType": "STRING", "required": False},
+            {"id": "signer", "dataType": "STRING", "required": False},
+        ]}
+        mappings = {
+            "postal": {"kind": "text", "value": "Ja"},
+            "signer": {"kind": "text", "value": "manual_someone_else_"},
+            "object": {"kind": "text", "value": "0001"},
+        }
+        client = Mock()
+        client.add_upload_property.side_effect = lambda name, value, prop_guid, plist: plist + [(prop_guid, value)]
+        for document_type in ("invoice", "cancellation_invoice", "offer", "work_report", "safety_protocol_building"):
+            with self.subTest(document_type=document_type):
+                profile = self.models.DmsProfile(document_type=document_type, category_id="category", key_property_id="key", mappings=mappings)
+                with self.assertRaisesRegex(self.service.DmsError, "Rechnungsassistenten"):
+                    self.service.validate_profile(profile, schema)
+                document = types.SimpleNamespace(
+                    document_type=document_type, context={"archive_key": "archive-id"},
+                    profile_snapshot={"key_property_id": "key", "schema": schema, "mappings": mappings},
+                )
+                self.assertEqual(self.service.upload_properties(document, client), [
+                    ("key", ["archive-id"]), ("object", ["0001"]),
+                ])
+                schema["fields"][-2]["required"] = True
+                self.assertEqual(self.service.upload_properties(document, client)[-1], ("postal", ["Nein"]))
+                schema["fields"][-2]["required"] = False
+
+    def test_direct_file_archiving_filters_postal_fields_from_legacy_uploads(self):
+        keys = self.settings.SettingKeys
+        self.settings.settings.set(keys.DMS_POSTAL_PROPERTY, "postal")
+        self.settings.settings.set(keys.DMS_POSTAL_SIGNER_PROPERTY, "signer")
+        client_type = self.service.CloudDmsClient
+        with patch.object(client_type, "get_mappings"):
+            client = client_type("dms.example.invalid", "key", "repository")
+        self.addCleanup(client.close)
+        normal = {"key": "archive-key", "values": ["photo-1"]}
+        no_post = {"key": "postal", "values": ["Nein"]}
+        with patch.object(client_type.__base__, "archive_file", return_value="D1") as upload:
+            for document_type, postal_value, expected_properties in (
+                ("legacy-image", {"key": "postal", "values": ["Ja"]}, [normal]),
+                ("invoice-required", no_post, [normal, no_post]),
+            ):
+                with self.subTest(document_type=document_type):
+                    client.archive_file("test.pdf", "category", [
+                        normal, postal_value, {"key": "signer", "values": ["manual_someone_else_"]},
+                    ])
+                    upload.assert_called_with("test.pdf", "category", expected_properties)
+
+    def test_dispatch_with_outdated_portal_mapping_cannot_write_the_postal_field(self):
+        keys = self.settings.SettingKeys
+        self.settings.settings.set(keys.DMS_POSTAL_PROPERTY, "current-postal")
+        self.settings.settings.set(keys.DMS_PORTAL_PROPERTY, "current-portal")
+        document = types.SimpleNamespace(entity_type="invoice", document_type="invoice")
+        dispatch = {"channel": "portal", "flag_property": "current-postal", "properties": {"current-postal": "Ja"}}
+        with self.assertRaisesRegex(self.service.DmsError, "Versandeigenschaften"):
+            self.service.validate_dispatch_properties(document, dispatch)
+
     def test_invoice_link_uses_the_archived_repository_even_after_the_connection_changes(self):
         invoice = self.models.Invoice(
             company_code=self.company, company_code_erp_id=self.company.erp_id, company_code_code=self.company.code,
@@ -367,6 +429,7 @@ class DmsContextTests(unittest.TestCase):
         self.db.session.add(invoice)
         keys = self.settings.SettingKeys
         self.settings.settings.set(keys.DMS_ENABLED, True)
+        self.settings.settings.set(keys.DMS_POSTAL_PROPERTY, "postal")
         self.db.session.commit()
         profile = {"category_id": "invoice", "schema": {"fields": []}, "mappings": {}, "key_property_id": ""}
         remote_id = "D000000123"

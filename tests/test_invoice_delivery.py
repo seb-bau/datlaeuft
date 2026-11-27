@@ -419,6 +419,17 @@ class InvoiceDeliveryTests(unittest.TestCase):
         self.assertEqual(queue.call_args.args[2:4], ("print", "portal"))
         self.assertEqual(invoice.completion_mode, "print")
 
+    def test_wizard_does_not_queue_postal_dispatch_without_checked_checkbox(self):
+        invoice = self.rendered_invoice()
+        url = f"/admin/invoices/{invoice.id}/delivery/complete"
+        with patch.object(self.dispatch, "queue_invoice_dispatch") as queue:
+            for selection in ({}, {"postal": "off"}):
+                response = self.client.post(url, data={"mode": "dms", **selection})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("Poststelle oder Mieter-App", response.json["message"])
+            self.assertEqual(self.client.post(url, data={"mode": "outlook"}).status_code, 200)
+            queue.assert_not_called()
+
     def test_paperwork_import_uses_exact_entra_ids_and_rejects_ambiguous_or_disabled_accounts(self):
         self.creator.entra_oid = str(uuid4())
         self.reviewer.entra_oid = str(uuid4())

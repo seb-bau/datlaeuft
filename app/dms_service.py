@@ -171,6 +171,17 @@ def seed_profiles():
         db.session.add(profile)
 
 
+def archive_dispatch_fields(document_type):
+    postal = settings.get(SettingKeys.DMS_POSTAL_PROPERTY)
+    flags = {postal}
+    signer_fields = {settings.get(SettingKeys.DMS_POSTAL_SIGNER_PROPERTY)} if postal else set()
+    if document_type in INVOICE_DOCUMENT_TYPES:
+        flags.add(settings.get(SettingKeys.DMS_PORTAL_PROPERTY))
+        if postal:
+            signer_fields.add(settings.get(SettingKeys.DMS_POSTAL_ALTERNATE_SIGNER_PROPERTY))
+    return flags - {""}, signer_fields - {""}
+
+
 def validate_profile(profile, schema):
     if not schema:
         raise DmsError(
@@ -178,18 +189,9 @@ def validate_profile(profile, schema):
             "und eine Kategorie auswählen."
         )
     fields = {item["id"]: item for item in schema["fields"]}
-    dispatch_flags = set()
-    if profile.document_type in INVOICE_DOCUMENT_TYPES:
-        postal_id = settings.get(SettingKeys.DMS_POSTAL_PROPERTY)
-        dispatch_flags = {postal_id, settings.get(SettingKeys.DMS_PORTAL_PROPERTY)} - {""}
-        dispatch_ids = dispatch_flags.copy()
-        if postal_id:
-            dispatch_ids.update({
-                settings.get(SettingKeys.DMS_POSTAL_SIGNER_PROPERTY),
-                settings.get(SettingKeys.DMS_POSTAL_ALTERNATE_SIGNER_PROPERTY),
-            } - {""})
-        if dispatch_ids.intersection({profile.key_property_id, *profile.mappings}):
-            raise DmsError("Die Versandeigenschaften werden im Rechnungsassistenten gesetzt. Bitte feste Zuordnungen entfernen.")
+    dispatch_flags, signer_fields = archive_dispatch_fields(profile.document_type)
+    if (dispatch_flags | signer_fields).intersection({profile.key_property_id, *profile.mappings}):
+        raise DmsError("Die Versandeigenschaften werden im Rechnungsassistenten gesetzt. Bitte feste Zuordnungen entfernen.")
     key_field = fields.get(profile.key_property_id)
     if profile.key_property_id:
         key_field = fields.get(profile.key_property_id)
@@ -462,17 +464,15 @@ def normalize_value(value, field):
 def upload_properties(document, client):
     snapshot = document.profile_snapshot
     properties = []
-    dispatch_flags = set()
-    if document.document_type in INVOICE_DOCUMENT_TYPES:
-        postal_id = settings.get(SettingKeys.DMS_POSTAL_PROPERTY)
-        portal_id = settings.get(SettingKeys.DMS_PORTAL_PROPERTY)
-        dispatch_flags = {postal_id, portal_id} - {""}
-        if dispatch_flags.intersection({snapshot.get("key_property_id"), *snapshot["mappings"]}):
-            raise DmsError("Die gespeicherte Archivzuordnung enthält eine Versandeigenschaft. Bitte die Zuordnung aktualisieren.")
+    dispatch_flags, signer_fields = archive_dispatch_fields(document.document_type)
+    if snapshot.get("key_property_id") in dispatch_flags | signer_fields:
+        raise DmsError("Der gespeicherte Archivschlüssel verwendet eine Versandeigenschaft. Bitte die Zuordnung aktualisieren.")
     for field in snapshot["schema"]["fields"]:
         property_id = field["id"]
         if property_id in dispatch_flags:
             raw_value = "Nein" if field.get("required") else None
+        elif property_id in signer_fields:
+            raw_value = None
         elif property_id == snapshot["key_property_id"]:
             raw_value = document.context["archive_key"]
         else:
@@ -932,6 +932,23 @@ def archive_invoice_version(document, client, path, version_id, previous_sha):
     client.archive_invoice_version(path, version_id)
 
 
+def validate_dispatch_properties(document, dispatch):
+    postal = settings.get(SettingKeys.DMS_POSTAL_PROPERTY)
+    signer = settings.get(SettingKeys.DMS_POSTAL_SIGNER_PROPERTY) if postal else ""
+    if dispatch["channel"] == "postal":
+        flag = postal
+        expected_fields = {postal, signer} if signer and signer != postal else set()
+    else:
+        flag = settings.get(SettingKeys.DMS_PORTAL_PROPERTY)
+        expected_fields = {flag} if dispatch["channel"] == "portal" and flag not in {postal, signer} else set()
+    if (
+        document.entity_type != "invoice" or document.document_type not in INVOICE_DOCUMENT_TYPES
+        or not flag or dispatch["flag_property"] != flag
+        or set(dispatch["properties"]) != expected_fields or dispatch["properties"].get(flag) != "Ja"
+    ):
+        raise DmsError("Die Versandeigenschaften stimmen nicht mit dem Auftrag aus dem Rechnungsassistenten überein.")
+
+
 def process_claimed_document(document_id, token):
     document = db.session.get(DmsDocument, document_id)
     client = None
@@ -1026,6 +1043,8 @@ def process_claimed_document(document_id, token):
                 db.session.commit()
                 created_in_this_attempt = False
             version_id = remote_id
+            if not document.upload_started:
+                validate_dispatch_properties(document, dispatch)
             client.apply_invoice_dispatch(
                 remote_id, dispatch["properties"], dispatch["flag_property"],
                 submission_started=document.upload_started,

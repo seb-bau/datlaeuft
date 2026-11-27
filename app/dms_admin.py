@@ -14,7 +14,7 @@ from .auth import admin_required, foreman_required
 from .dms_client import DmsError, normalize_hostname
 from .dms_context import DOCUMENT_TYPES, available_fields, template_fields
 from .dms_service import (
-    STATUS_LABELS, connection, document_path, field_name,
+    INVOICE_DOCUMENT_TYPES, STATUS_LABELS, connection, document_path, field_name,
     link_existing_document, profile_snapshot, refresh_metadata,
     remove_from_queue, repository_metadata, retry_document,
     seed_profiles, validate_profile,
@@ -146,11 +146,13 @@ def invoice_dispatch_settings():
             raise ValueError("Bitte für den Rechnungsversand unterschiedliche DMS-Eigenschaften auswählen.")
         if system_user and not PAPERWORK_ID.fullmatch(system_user):
             raise ValueError("Bitte die d.velop-ID des Paperwork-Systembenutzers prüfen.")
-        dispatch_ids = {postal, portal} - {""}
-        if postal:
-            dispatch_ids.update({signer, alternate_signer} - {""})
-        for profile in DmsProfile.query.filter(DmsProfile.document_type.in_(("invoice", "cancellation_invoice"))):
-            if dispatch_ids.intersection({profile.key_property_id, *profile.mappings}):
+        postal_ids = {postal, signer} - {""} if postal else set()
+        invoice_ids = {portal, alternate_signer if postal else ""} - {""}
+        for profile in DmsProfile.query:
+            property_ids = {profile.key_property_id, *profile.mappings}
+            if postal_ids.intersection(property_ids) or (
+                profile.document_type in INVOICE_DOCUMENT_TYPES and invoice_ids.intersection(property_ids)
+            ):
                 raise ValueError("Bitte die Versandeigenschaften aus den festen DMS-Dokumentzuordnungen entfernen.")
         for definition, value in (
             (SettingKeys.DMS_POSTAL_PROPERTY, postal),

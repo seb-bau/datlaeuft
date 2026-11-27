@@ -311,6 +311,15 @@ class CloudDmsClient(DvelopDmsPy):
                 "nicht geändert oder versioniert werden."
             )
 
+        from .settings import SettingKeys, settings
+
+        postal = settings.get(SettingKeys.DMS_POSTAL_PROPERTY)
+        if postal:
+            signer = settings.get(SettingKeys.DMS_POSTAL_SIGNER_PROPERTY)
+            properties = [
+                item for item in properties
+                if item["key"] != signer and (item["key"] != postal or item["values"] == ["Nein"])
+            ]
         return super().archive_file(
             filepath,
             category_id,
