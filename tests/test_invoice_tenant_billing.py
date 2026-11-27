@@ -36,7 +36,7 @@ class InvoiceTenantBillingTests(unittest.TestCase):
     def setUpClass(cls):
         fixtures.InvoiceDeliveryTests.setUpClass.__func__(cls)
         cls.tables.append(cls.models.InvoiceBillingRule.__table__)
-        for name in ("invoice_correspondence", "tenant_charge_letter"):
+        for name in ("invoice_correspondence", "tenant_charge_letter", "commission_tenant_charge", "commission_followup"):
             sys.modules.pop(cls.package_name + "." + name, None)
         guard = sys.modules[cls.package_name + ".auth"].invoice_required
         for endpoint in (
@@ -277,6 +277,100 @@ class InvoiceTenantBillingTests(unittest.TestCase):
         self.assertEqual(invoice.company_code_id, self.issuer.id)
         self.assertEqual(invoice.recipient_name, self.company.seller_name)
         self.assertEqual(invoice.tenant_billing_reference["agreement_erp_id"], self.agreement.erp_id)
+
+    def configure_tenant_charge_contracts(self):
+        self.settings.settings.set(self.settings.SettingKeys.COMMISSION_TENANT_CHARGE_TYPE_IDS, [100])
+        self.agreement.start_date = date(2026, 11, 1)
+        self.db.session.commit()
+        former = {**self.party, "person_id": 8101, "name": "Ehemalige Mieterin", "street": "Neue Adresse 3"}
+        agreements = {
+            9000: {"number": "MV-ALT", "start": date(2024, 1, 1), "end": date(2026, 10, 31)},
+            self.agreement.erp_id: {"number": self.agreement.id_num, "start": self.agreement.start_date, "end": None},
+            9002: {"number": "MV-KUENFTIG", "start": date(2027, 1, 1), "end": None},
+        }
+        self.remote.get_tenant_charge_agreements.side_effect = lambda unit_id, agreement_id=None: {
+            key: value for key, value in agreements.items()
+            if unit_id == self.unit.erp_id and (agreement_id is None or agreement_id == key)
+        }
+        self.remote.get_invoice_recipient_candidates.side_effect = {
+            9000: [former], self.agreement.erp_id: [self.party],
+            9002: [{**self.party, "person_id": 8102, "name": "Künftiger Mieter"}],
+        }.get
+        self.start_patch(patch.object(
+            sys.modules[self.package_name + ".wowiport"], "WowiportService", return_value=self.remote,
+        ))
+        return former
+
+    def test_commission_keeps_its_contact_and_bills_the_selected_former_tenant(self):
+        former = self.configure_tenant_charge_contracts()
+        review_service = importlib.import_module(self.package_name + ".commission_followup")
+        self.start_patch(patch.object(self.admin, "review_commission", review_service.review_commission))
+        url = "/admin/commission-objects/tenant-charge-recipients"
+        response = self.client.get(url, query_string={
+            "object_type": "license_agreement", "object_id": self.agreement.id, "commission_type_id": 100,
+        })
+        self.assertEqual(response.status_code, 200, response.data[:350])
+        self.assertTrue(response.json["current_available"])
+        self.assertEqual([item["value"] for item in response.json["items"] if item["suggested"]], ["9000:8101"])
+        self.assertTrue(any("Künftiger Mieter" in item["label"] for item in response.json["items"]))
+        self.assertTrue(all("street" not in item for item in response.json["items"]))
+
+        commission = self.post_order(self.form((), tenant_charge_current="on", notify_tenants="true"))
+        self.assertEqual(commission.license_agreement_id, self.agreement.erp_id)
+        self.assertEqual(commission.tenant_name, self.tenant.display_name)
+        self.assertTrue(commission.notify_tenants)
+        self.assertEqual(commission.tenant_charge_target["person_id"], self.party["person_id"])
+        commission.local_status = "tenant_charge_review"
+        self.db.session.commit()
+        review_url = f"/admin/commissions/{commission.id}/tenant-charge"
+        page = self.client.get(review_url)
+        self.assertEqual(page.status_code, 200, page.data[:350])
+        self.assertIn("Ehemalige Mieterin", page.get_data(as_text=True))
+        self.client.post(review_url, data={"tenant_charge_recipient": "9999:8101"})
+        self.assertEqual(commission.tenant_charge_target["person_id"], self.party["person_id"])
+        self.client.post(review_url, data={"tenant_charge_recipient": "9000:8101"})
+        self.assertEqual(commission.tenant_charge_target, {
+            "agreement_id": 9000, "agreement_number": "MV-ALT", "person_id": 8101, "name": former["name"],
+        })
+
+        with patch.dict(former, {"street": ""}):
+            with self.assertRaisesRegex(ValueError, "vollständige Postanschrift"):
+                self.invoice_service.create_commission_invoice_draft([commission], self.creator)
+        self.assertEqual(self.models.Invoice.query.count(), 0)
+        self.assertEqual(commission.local_status, "tenant_charge_review")
+        response = self.client.post("/admin/invoices/new", data={
+            "mode": "selected", "commission_ids": str(commission.id),
+        })
+        self.assertEqual(response.status_code, 302, response.data[:350])
+        invoice = self.models.Invoice.query.one()
+        self.assertEqual(invoice.company_code_id, self.issuer.id)
+        self.assertEqual(invoice.recipient_name, self.company.seller_name)
+        self.assertEqual(invoice.billing_contract_number, "MV-ALT")
+        self.assertEqual(invoice.tenant_billing_reference["tenant_address"]["street"], former["street"])
+        self.assertEqual(invoice.tenant_billing_reference["person_erp_id"], former["person_id"])
+        self.assertFalse(invoice.can_edit_agreement)
+        letter = importlib.import_module(self.package_name + ".tenant_charge_letter")
+        self.assertEqual(letter.tenant_letter_recipients(invoice, self.remote)[0]["name"], former["name"])
+        self.client.post(review_url, data={"tenant_charge_recipient": "current"})
+        self.assertEqual(commission.tenant_charge_target["person_id"], former["person_id"])
+
+    def test_offer_keeps_quoted_positions_when_tenant_charge_waits_for_office_review(self):
+        former = self.configure_tenant_charge_contracts()
+        commission = self.post_order(self.form((), tenant_charge_recipient="9000:8101"))
+        commission.local_status = "tenant_charge_review"
+        offer = self.draft("offer")
+        offer.commission = commission
+        offer.status = "in_progress"
+        self.db.session.commit()
+
+        self.offer_service.sync_offer_from_commission(commission)
+        self.assertEqual(offer.status, "review_required")
+        self.assertIsNone(offer.invoice)
+        invoice = self.invoice_service.create_commission_invoice_draft([commission], self.creator)
+        self.assertEqual(offer.invoice, invoice)
+        self.assertEqual(offer.status, "ready_for_invoice")
+        self.assertEqual(invoice.tenant_billing_reference["person_erp_id"], former["person_id"])
+        self.assertEqual(invoice.positions[0].unit_price_net, offer.positions[0].unit_price_net)
 
     def test_legacy_direct_draft_with_routed_contract_cannot_be_finalized(self):
         invoice = self.draft("invoice")

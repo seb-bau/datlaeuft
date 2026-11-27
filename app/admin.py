@@ -1246,6 +1246,7 @@ DOCUMENT_TEMPLATE_SETTING_KEYS = {
 @admin_bp.route("/admin/settings", methods=["GET", "POST"])
 @admin_required
 def settings_page() -> Any:
+    charge_type_key = SettingKeys.COMMISSION_TENANT_CHARGE_TYPE_IDS
     if request.method == "POST":
         try:
             for definition in all_definitions():
@@ -1254,6 +1255,22 @@ def settings_page() -> Any:
                     or definition.key == SettingKeys.HEALTH_RULES.key
                     or definition.key in DOCUMENT_TEMPLATE_SETTING_KEYS
                 ):
+                    continue
+                if definition.key == charge_type_key.key:
+                    try:
+                        selected_type_ids = {int(value) for value in request.form.getlist(definition.key)}
+                    except ValueError as exc:
+                        raise ValueError("Bitte gültige Auftragsarten für die Mieterbelastung auswählen.") from exc
+                    new_ids = selected_type_ids - Commission.tenant_charge_type_ids()
+                    if new_ids:
+                        available_ids = {
+                            item.erp_id for item in WowiCommissionType.query.filter(
+                                WowiCommissionType.active.is_(True), WowiCommissionType.erp_id.in_(new_ids),
+                            )
+                        }
+                        if not new_ids.issubset(available_ids):
+                            raise ValueError("Mindestens eine Auftragsart für die Mieterbelastung ist nicht verfügbar.")
+                    settings.set(definition, sorted(selected_type_ids))
                     continue
                 if definition.key == SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS.key:
                     try:
@@ -1295,6 +1312,13 @@ def settings_page() -> Any:
     for source_id in settings.get(SettingKeys.TENANT_TICKET_WRITEBACK_EXCLUDED_SOURCE_IDS):
         source_choices.setdefault(source_id, "Nicht mehr lokal vorhanden")
 
+    charge_type_choices = {
+        item.erp_id: item.code or "Auftragsart"
+        for item in WowiCommissionType.query.filter_by(active=True)
+    }
+    for type_id in Commission.tenant_charge_type_ids():
+        charge_type_choices.setdefault(type_id, "Nicht mehr lokal vorhanden")
+
     groups = {
         group: [
             item for item in definitions
@@ -1306,6 +1330,7 @@ def settings_page() -> Any:
         "admin/settings.html",
         groups={group: definitions for group, definitions in groups.items() if definitions},
         settings=settings,
+        charge_type_choices=sorted(charge_type_choices.items(), key=lambda choice: (choice[1].casefold(), choice[0])),
         tenant_ticket_source_choices=sorted(
             source_choices.items(),
             key=lambda choice: (choice[1].casefold(), choice[0]),
@@ -5695,6 +5720,7 @@ def commission_create() -> Any:
         ),
         craft_activities=craft_activities,
         commission_types=commission_types,
+        tenant_charge_type_ids=Commission.tenant_charge_type_ids(),
         craftsman_users=craftsman_users,
         company_codes=company_codes,
         position_rows=position_rows,
@@ -5960,6 +5986,24 @@ def commission_object_commissions() -> Any:
     except ValueError as exc:
         return jsonify({"message": str(exc)}), 400
     return jsonify(result)
+
+
+@admin_bp.get("/admin/commission-objects/tenant-charge-recipients")
+@commission_planning_required
+def commission_tenant_charge_recipients() -> Any:
+    from .commission_tenant_charge import tenant_charge_object_choices
+
+    try:
+        choices = tenant_charge_object_choices(
+            WowiportService(), request.args.get("object_type"), request.args.get("object_id", type=int),
+            request.args.get("commission_type_id", type=int),
+        )
+    except ValueError as exc:
+        return jsonify(message=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("commission_tenant_charge_recipients_failed")
+        return jsonify(message="Die Mietverträge konnten nicht aus Wowiport geladen werden."), 502
+    return jsonify(choices)
 
 
 @admin_bp.get(
@@ -7822,6 +7866,7 @@ def render_invoice_create(company_codes, commissions):
     return render_template(
         "admin/invoice_create.html", company_codes=company_codes, commissions=commissions,
         search_text=search_text, contract_results=invoice_contract_results(search_text), contract_selection=selection,
+        tenant_charge_type_ids=Commission.tenant_charge_type_ids(),
     )
 
 
@@ -8680,6 +8725,9 @@ def save_invoice_draft_form(item: Invoice) -> None:
         remove_invoice_agreement(item)
         if "recipient_type" in request.form:
             save_invoice_recipient_address_form(item)
+    elif item.has_commission_tenant_charge_target:
+        if not item.tenant_billing_reference:
+            save_invoice_payment_form(item)
     elif not item.tenant_billing_reference:
         save_invoice_recipient_form(item)
     elif not item.tenant_billing_to_company and "recipient_type" in request.form:
@@ -9449,7 +9497,59 @@ def commission_reviews() -> Any:
         items=items,
         selected_status=selected_status,
         status_labels=status_labels,
+        tenant_charge_type_ids=Commission.tenant_charge_type_ids(),
     )
+
+
+@admin_bp.route("/admin/commissions/<int:commission_id>/tenant-charge", methods=["GET", "POST"])
+@office_review_required
+def commission_tenant_charge(commission_id: int) -> Any:
+    from .commission_tenant_charge import resolve_tenant_charge_target, tenant_charge_choices
+
+    back_url = url_for("admin.commission_reviews", status=CommissionLocalStatus.TENANT_CHARGE_REVIEW.value)
+    try:
+        saving = request.method == "POST"
+        commission = review_commission(commission_id, current_user, lock=saving, require_open=False)
+        if (
+            commission.local_status != CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+            or commission.review_resolved_at is not None or commission.deleted_at is not None
+        ):
+            raise ValueError("Der Auftrag steht nicht mehr zur Mieterbelastung offen.")
+        invoice_query = InvoiceCommission.query.join(Invoice).filter(
+            InvoiceCommission.commission_id == commission.id, Invoice.status != InvoiceStatus.CANCELED.value,
+        )
+        if saving:
+            invoice_query = invoice_query.with_for_update()
+        has_invoice = invoice_query.first() is not None
+        service = WowiportService()
+        if saving:
+            if has_invoice:
+                raise ValueError("Für diesen Auftrag besteht bereits ein Rechnungsentwurf oder eine Rechnung.")
+            target, _ = resolve_tenant_charge_target(
+                service, commission.use_unit_id, commission.license_agreement_id,
+                request.form.get("tenant_charge_recipient"),
+            )
+            commission.tenant_charge_target = target
+            audit("commission.tenant_charge.update", "commission", commission.id, {
+                "agreement_id": target["agreement_id"], "person_id": target["person_id"],
+            })
+            db.session.commit()
+            flash("Mieterbelastung gespeichert.", "success")
+            return redirect(back_url)
+
+        choices = tenant_charge_choices(service, commission.use_unit_id, commission.license_agreement_id)
+        return render_template(
+            "admin/commission_tenant_charge.html", item=commission, choices=choices,
+            has_invoice=has_invoice, back_url=back_url,
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("commission_tenant_charge_failed commission_id=%s", commission_id)
+        flash("Die Mieterbelastung konnte nicht verarbeitet werden. Bitte die Verbindung zu Wowiport prüfen.", "danger")
+    return redirect(back_url)
 
 
 @admin_bp.post("/admin/commissions/<int:commission_id>/acknowledge")
@@ -13729,6 +13829,8 @@ def read_commission_form() -> dict[str, Any]:
             "normal",
         ),
         "notify_tenants": request.form.get("notify_tenants"),
+        "tenant_charge_current": request.form.get("tenant_charge_current"),
+        "tenant_charge_recipient": request.form.get("tenant_charge_recipient"),
         "notify_on_completion": request.form.get("notify_on_completion") == "true",
         "is_retrospective": request.form.get("is_retrospective", "false"),
     }

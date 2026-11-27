@@ -1016,7 +1016,6 @@ def commission_complete(public_id: str) -> Any:
             reason=str(
                 request.form.get("reason") or ""
             ),
-            tenant_charge=False,
             enforce_material_confirmation=False,
             external_craftsman=craftsman,
         )

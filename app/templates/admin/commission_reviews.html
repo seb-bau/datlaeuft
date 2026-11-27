@@ -70,7 +70,8 @@
             <th>Auftragsnummer</th>
             <th>Titel</th>
             <th>Adresse</th>
-            <th>Mieter</th>
+            <th>Kontakt vor Ort</th>
+            <th>Mieterbelastung</th>
             <th>Monteur</th>
             <th>Erstellt von</th>
             <th>Ausführung bis</th>
@@ -116,6 +117,18 @@
             <td>{{ item.display_title }}</td>
             <td>{{ item.apartment_address or "" }}</td>
             <td>{{ item.tenant_name or "" }}</td>
+            <td>
+              {% if item.local_status == 'tenant_charge_review' %}
+              {% if item.tenant_charge_target %}
+              <div>{{ item.tenant_charge_target.name }} · {{ item.tenant_charge_target.agreement_number }}</div>
+              {% elif item.commission_type_erp_id in tenant_charge_type_ids %}
+              <div>Auswahl erforderlich</div>
+              {% else %}
+              <div>{{ item.tenant_name or 'Kein Mieter zugeordnet' }}</div>
+              {% endif %}
+              <a href="{{ url_for('admin.commission_tenant_charge', commission_id=item.id) }}">Belastungsempfänger bearbeiten</a>
+              {% endif %}
+            </td>
 
             <td>
               {% if item.user %}

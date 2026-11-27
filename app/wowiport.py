@@ -1971,7 +1971,7 @@ class WowiportService:
 
         create_commission = self.client.create_commissioning_commission if commission.is_retrospective else self.client.create_commissioning_commission_wait_for_craftsman_feedback
         retrospective_values = {
-            "commission_status_id": 11 if commission.assignment_type == "external" else 9,
+            "commission_status_id": 11 if commission.assignment_type == "external" or commission.tenant_charge_requested else 9,
             "completion_date": ensure_utc(commission.completed_at or utc_now()).astimezone(ZoneInfo("Europe/Berlin")).date(),
         } if commission.is_retrospective else {}
         result = create_commission(
@@ -2227,6 +2227,27 @@ class WowiportService:
         contact_items = self.get_commission_contact_items(erp_id=erp_id)
         return contact_items if contact_items else None
 
+
+    def get_tenant_charge_agreements(self, use_unit_id: int, *, agreement_id: int | None = None) -> dict[int, dict]:
+        filters = {"useUnitId": use_unit_id}
+        if agreement_id is not None:
+            filters["licenseAgreementId"] = agreement_id
+        agreements = {}
+        for agreement in self.client.get_license_agreements(add_args=filters, fetch_all=True):
+            unit_id = _as_int(_attr(_attr(agreement, "use_unit"), "id_"))
+            item_id = _as_int(_attr(agreement, "id_"))
+            number = _first_text(_attr(agreement, "id_num"))
+            if (
+                unit_id != use_unit_id or not item_id or not number or _is_vacancy(agreement)
+                or (agreement_id is not None and item_id != agreement_id)
+            ):
+                continue
+            start = _contact_date(_attr(agreement, "start_contract"))
+            end = _contact_date(_attr(agreement, "end_of_contract"))
+            if start is not None and end is not None and end < start:
+                continue
+            agreements[item_id] = {"number": number, "start": start, "end": end}
+        return agreements
 
     def get_invoice_recipient_candidates(
         self,
@@ -3962,7 +3983,7 @@ def upsert_commission(
                 commission.status_id,
                 CommissionLocalStatus.OPEN.value,
             )
-            if commission.is_retrospective and commission.status_id == 11:
+            if commission.is_retrospective and commission.status_id == 11 and not commission.tenant_charge_requested:
                 commission.local_status = CommissionLocalStatus.AWAITING_INVOICE.value
 
         current_status = (

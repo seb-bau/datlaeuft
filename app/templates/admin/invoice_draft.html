@@ -143,7 +143,7 @@
             </div>
             {% endif %}
 
-            <fieldset class="row g-3" id="invoiceRecipientFields" {% if item.tenant_billing_to_company %}disabled{% endif %}>
+            <fieldset class="row g-3" id="invoiceRecipientFields" {% if item.tenant_billing_to_company or item.has_commission_tenant_charge_target %}disabled{% endif %}>
               <div class="col-md-5">
                 <label class="form-label">
                   Empfängerart

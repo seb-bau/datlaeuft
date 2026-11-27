@@ -441,7 +441,11 @@ def commissions() -> Any:
         Commission.execution_from.asc(),
         Commission.id.asc(),
     )
-    return jsonify({"items": [serialize_commission(item, viewer=user, include_creator=False) for item in query.all()]})
+    charge_type_ids = Commission.tenant_charge_type_ids()
+    return jsonify({"items": [
+        serialize_commission(item, viewer=user, include_creator=False, charge_type_ids=charge_type_ids)
+        for item in query.all()
+    ]})
 
 
 @api_bp.get("/commissions/users")
@@ -649,6 +653,7 @@ def _simple_commission_payload(data):
         "title": title,
         "contact_person": contact_person,
         "notify_tenants": data.get("notify_tenants"),
+        "tenant_charge_recipient": data.get("tenant_charge_recipient"),
         "execution_from": execution_from,
         "execution_to": None,
         "positions": [{
@@ -764,6 +769,7 @@ def simple_commission_create_options() -> Any:
             "commission_type_ids": sorted(supported_ids),
         })
 
+    charge_type_ids = Commission.tenant_charge_type_ids()
     return jsonify({
         "can_create": bool(
             craftsmen
@@ -778,7 +784,7 @@ def simple_commission_create_options() -> Any:
             else None
         ),
         "commission_types": [
-            {"id": item.erp_id, "code": item.code}
+            {"id": item.erp_id, "code": item.code, "tenant_charge": item.erp_id in charge_type_ids}
             for item in commission_types
         ],
         "craft_activities": craft_choices,
@@ -1172,6 +1178,25 @@ def commission_objects_search() -> Any:
     )
 
 
+@api_bp.get("/commission-objects/tenant-charge-recipients")
+@jwt_required()
+def commission_tenant_charge_recipients() -> Any:
+    current_api_user()
+    from .commission_tenant_charge import tenant_charge_object_choices
+
+    try:
+        choices = tenant_charge_object_choices(
+            WowiportService(), request.args.get("object_type"), request.args.get("object_id", type=int),
+            request.args.get("commission_type_id", type=int),
+        )
+    except ValueError as exc:
+        return jsonify(message=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("mobile_tenant_charge_recipients_failed")
+        return jsonify(message="Die Mietverträge konnten nicht aus Wowiport geladen werden."), 502
+    return jsonify(choices)
+
+
 @api_bp.get("/commissions/<int:commission_id>/contacts")
 @jwt_required()
 def commission_contacts(commission_id: int) -> Any:
@@ -1390,9 +1415,7 @@ def complete_commission(
         }), 400
 
     completed = data["completed"]
-    tenant_charge = bool(
-        data.get("tenant_charge", False)
-    )
+    tenant_charge = bool(data["tenant_charge"]) if "tenant_charge" in data else None
 
     try:
         reason = complete_commission_workflow(
@@ -4338,6 +4361,7 @@ def serialize_commission(
         viewer: User | None = None,
         *,
         include_creator: bool = True,
+        charge_type_ids: set[int] | None = None,
 ) -> dict[str, Any]:
     item = {
         "id": commission.id,
@@ -4385,6 +4409,7 @@ def serialize_commission(
         "display_title": commission.display_title,
         "completion_successful": commission.completion_successful,
         "tenant_charge_requested": commission.tenant_charge_requested,
+        "tenant_charge_default": commission.tenant_charge_default(charge_type_ids),
         "completion_reason": commission.completion_reason,
         "positions": [
             {

@@ -447,6 +447,7 @@
           {% for item in commission_types %}
           <option
             value="{{ item.erp_id }}"
+            data-tenant-charge="{{ 'true' if item.erp_id in tenant_charge_type_ids else 'false' }}"
             {% if form_values.get('commission_type_id')|int == item.erp_id %}selected{% endif %}
           >
             {{ item.code or "Unbenannte Auftragsart" }}
@@ -515,6 +516,23 @@
           value="{{ form_values.get('execution_to', '') }}"
         >
       </div>
+
+      <fieldset class="col-12 border-top pt-3" id="tenantChargeFields" hidden disabled
+                data-url="{{ url_for('admin.commission_tenant_charge_recipients') }}"
+                data-selection="{{ form_values.get('tenant_charge_recipient') or '' }}">
+        <legend class="fs-6 mb-2">Wer soll belastet werden?</legend>
+        <label class="form-check mb-2">
+          <input class="form-check-input" id="tenantChargeCurrent" name="tenant_charge_current" type="checkbox"
+                 {% if form_values.get('tenant_charge_current') == 'on' %}checked{% endif %}>
+          Beauftragten Mieter belasten
+        </label>
+        <label class="form-label small" for="tenantChargeRecipient">Vertragsnehmer dieser Wohnung</label>
+        <select class="form-select form-select-sm" id="tenantChargeRecipient" name="tenant_charge_recipient" required>
+          <option value="">Bitte auswählen</option>
+        </select>
+        <div class="form-text" id="tenantChargeNotice" role="status"></div>
+        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="tenantChargeRetry" hidden>Erneut laden</button>
+      </fieldset>
 
       <div class="col-12 border-top pt-3">
         <div class="d-flex justify-content-between align-items-center">
@@ -989,6 +1007,7 @@
 <script src="{{ url_for('static', filename='js/ticket_attachment_selection.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/commission_contacts.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/commission_reporter.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/commission_tenant_charge.js') }}" defer></script>
 {% include 'admin/_document_preview.html' %}
 {% endblock %}
 

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .models import (
     Invoice, InvoiceRecipientType, WowiCompanyCode, WowiEconomicUnit, WowiLicenseAgreement, WowiUseUnit,
 )
+
+
+@dataclass(frozen=True)
+class TenantBillingAgreement:
+    erp_id: int
+    id_num: str
+    use_unit: WowiUseUnit
 
 
 def tenant_billing_agreement(agreement_id: int) -> WowiLicenseAgreement:
@@ -65,7 +74,7 @@ def choose_contract_recipient(candidates: list[dict], person_id: int | None) -> 
     raise ValueError("Bitte wählen Sie einen Vertragspartner aus.")
 
 
-def apply_contract_recipient(invoice: Invoice, agreement: WowiLicenseAgreement, candidate: dict) -> None:
+def apply_contract_recipient(invoice: Invoice, agreement: WowiLicenseAgreement | TenantBillingAgreement, candidate: dict) -> None:
     invoice.recipient_license_agreement_erp_id = agreement.erp_id
     invoice.recipient_license_agreement_idnum = agreement.id_num
     invoice.recipient_person_erp_id = candidate.get("person_id")
@@ -81,12 +90,12 @@ def apply_contract_recipient(invoice: Invoice, agreement: WowiLicenseAgreement, 
 
 
 def apply_tenant_billing(
-    invoice: Invoice, agreement: WowiLicenseAgreement, company: WowiCompanyCode, candidate: dict,
+    invoice: Invoice, agreement: WowiLicenseAgreement | TenantBillingAgreement, company: WowiCompanyCode, candidate: dict,
 ) -> None:
     tenant_name = candidate.get("name")
     if not tenant_name:
         tenant_name = ", ".join(dict.fromkeys(
-            contractor.display_name for contractor in agreement.contractors
+            contractor.display_name for contractor in getattr(agreement, "contractors", ())
             if contractor.active and contractor.display_name
         ))
     unit = agreement.use_unit

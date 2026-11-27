@@ -363,9 +363,13 @@ def execute_outbox_operation(
         commission.erp_idnum = str(erp_idnum)
         if commission.is_retrospective:
             external = commission.assignment_type == "external"
-            commission.status_id = 11 if external else 9
-            commission.status_code = "AwaitInvoice" if external else "Done"
-            commission.local_status = CommissionLocalStatus.AWAITING_INVOICE.value if external else CommissionLocalStatus.DONE.value
+            awaits_invoice = external or commission.tenant_charge_requested
+            commission.status_id = 11 if awaits_invoice else 9
+            commission.status_code = "AwaitInvoice" if awaits_invoice else "Done"
+            if commission.tenant_charge_requested:
+                commission.local_status = CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+            else:
+                commission.local_status = CommissionLocalStatus.AWAITING_INVOICE.value if external else CommissionLocalStatus.DONE.value
         else:
             commission.status_id = 12
             commission.status_code = "WaitForCraftsmanFeedback"

@@ -149,7 +149,7 @@
     <div class="card-body">
       <div class="alert alert-secondary">
         Mehrere Aufträge können gemeinsam übernommen
-        werden, wenn Buchwerk und Vertrag übereinstimmen.
+        werden, wenn Buchwerk, Belastungsvertrag und zu belastende Person übereinstimmen.
       </div>
 
       <div class="table-responsive">
@@ -158,7 +158,7 @@
             <tr>
               <th data-filter="false"></th>
               <th>Auftragsnummer</th>
-              <th>Mieter</th>
+              <th>Belasteter Mieter</th>
               <th>Vertrag</th>
               <th>Buchwerk</th>
               <th>Adresse</th>
@@ -169,6 +169,7 @@
 
           <tbody>
             {% for item in commissions %}
+            {% set recipient_required = not item.tenant_charge_target and item.commission_type_erp_id in tenant_charge_type_ids %}
             <tr>
               <td>
                 <input
@@ -177,6 +178,7 @@
                   name="commission_ids"
                   value="{{ item.id }}"
                   aria-label="Auftrag auswählen"
+                  {% if recipient_required %}disabled{% endif %}
                 >
               </td>
 
@@ -185,11 +187,17 @@
               </td>
 
               <td>
-                {{ item.tenant_name or "" }}
+                {% if recipient_required %}
+                  In der Auftragsprüfung auswählen
+                {% else %}
+                  {{ item.tenant_charge_target.name if item.tenant_charge_target else item.tenant_name or "" }}
+                {% endif %}
               </td>
 
               <td>
-                {{ item.license_agreement_idnum or "" }}
+                {% if not recipient_required %}
+                  {{ item.tenant_charge_target.agreement_number if item.tenant_charge_target else item.license_agreement_idnum or "" }}
+                {% endif %}
               </td>
 
               <td>

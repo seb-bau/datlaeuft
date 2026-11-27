@@ -1131,6 +1131,12 @@ def sync_offer_from_commission(
             )
 
         item.invoiced_at = None
+    elif (
+        item.invoice is None and commission.local_status == CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+        and commission.tenant_charge_default()
+    ):
+        item.status = OfferStatus.REVIEW_REQUIRED.value
+        item.status_note = "Die Mieterbelastung ist in der Auftragsprüfung offen."
     elif commission.local_status in {
         CommissionLocalStatus.DONE.value,
         (

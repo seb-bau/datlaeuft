@@ -1804,26 +1804,17 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        const previousType = commissionType.value;
         if (compatibleTypeIds.size === 1) {
-            commissionType.value = (
-                Array.from(compatibleTypeIds)[0]
-            );
-            return;
+            commissionType.value = [...compatibleTypeIds][0];
+        } else if (compatibleTypeIds.has(defaultCommissionTypeId)) {
+            commissionType.value = defaultCommissionTypeId;
+        } else {
+            commissionType.value = "";
         }
-
-        if (
-            defaultCommissionTypeId !== "0"
-            && compatibleTypeIds.has(
-                defaultCommissionTypeId
-            )
-        ) {
-            commissionType.value = (
-                defaultCommissionTypeId
-            );
-            return;
+        if (commissionType.value !== previousType) {
+            commissionType.dispatchEvent(new Event("change"));
         }
-
-        commissionType.value = "";
     }
 
         updateRemoveButtons();
