@@ -459,7 +459,7 @@ def delivery_complete(invoice_id):
     if pending_invoice_completion(invoice):
         return invoice_response({"message": "Für die Rechnung läuft bereits ein Direktversand. Bitte den Versandstatus prüfen."}, 409)
     try:
-        channel = dispatch_channel(mode, "postal" in request.form, "portal" in request.form)
+        channel = dispatch_channel(mode, request.form.get("postal") == "on", request.form.get("portal") == "on")
         if mode == "dms" and not channel:
             raise ValueError("Bitte Poststelle oder Mieter-App für diese Rechnung auswählen.")
         if dms_dispatch and dms_dispatch.invoice_dispatch["mode"] == "dms":
