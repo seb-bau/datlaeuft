@@ -3256,7 +3256,7 @@ def invoice_document_regenerate(
         invoice_id=invoice.id,
     )
 
-    if existing_dispatch(invoice.id):
+    if existing_dispatch(invoice.id, lock=True):
         flash("Für diese Rechnung wurde bereits eine DMS-Übergabe veranlasst.", "warning")
         return redirect(redirect_url)
 
@@ -7340,7 +7340,7 @@ def invoice_cover_letter(invoice_id):
         response = jsonify(cover_letter_values(item))
         response.headers["Cache-Control"] = "private, no-store, max-age=0"
         return response
-    if pending_invoice_completion(item) or (item.status == "finalized" and existing_dispatch(item.id)):
+    if pending_invoice_completion(item) or (item.status == "finalized" and existing_dispatch(item.id, lock=True)):
         return jsonify(message="Für diese Rechnung läuft bereits ein Versand oder eine DMS-Übergabe."), 409
     try:
         if request.method == "DELETE":
@@ -7391,7 +7391,7 @@ def invoice_complete(invoice_id: int):
     if item.status != InvoiceStatus.FINALIZED.value or item.completed_at:
         return redirect(url_for("admin.invoice_edit", invoice_id=item.id))
     delivery_url = url_for("invoice_delivery.delivery_complete", invoice_id=item.id)
-    if pending_invoice_completion(item) or existing_dispatch(item.id):
+    if pending_invoice_completion(item) or existing_dispatch(item.id, lock=saving):
         return redirect(delivery_url)
     if item.tenant_billing_reference and item.invoice_kind == InvoiceKind.INVOICE.value:
         return redirect(url_for("admin.invoice_tenant_charge", invoice_id=item.id, complete=1))
@@ -7432,7 +7432,7 @@ def invoice_mark_sent(invoice_id: int):
     if invoice.status != InvoiceStatus.FINALIZED.value:
         abort(409)
     pending_delivery = pending_invoice_completion(invoice)
-    dispatch = existing_dispatch(invoice.id)
+    dispatch = existing_dispatch(invoice.id, lock=True)
     if dispatch and dispatch.invoice_dispatch["mode"] == "dms" and dispatch.status != "archived":
         flash("Die DMS-Übergabe der Rechnung ist noch ausstehend.", "warning")
     elif pending_delivery is not None and pending_delivery.state != "uncertain":
@@ -7553,7 +7553,7 @@ def invoice_tenant_charge(invoice_id: int, preview: bool = False):
         from .invoice_delivery import pending_invoice_completion
         from .invoice_dms_dispatch import existing_dispatch
 
-        if pending_invoice_completion(item) or existing_dispatch(item.id):
+        if pending_invoice_completion(item) or existing_dispatch(item.id, lock=request.method == "POST"):
             return redirect(url_for("invoice_delivery.delivery_complete", invoice_id=item.id))
     company = db.get_or_404(WowiCompanyCode, item.tenant_billing_reference["company_code_id"])
     today = letter_date()
@@ -13978,7 +13978,7 @@ def invoice_cancel(
 
     from .invoice_dms_dispatch import existing_dispatch
 
-    dispatch = existing_dispatch(original_invoice.id)
+    dispatch = existing_dispatch(original_invoice.id, lock=True)
     if dispatch and dispatch.status == "processing":
         flash("Die DMS-Übergabe läuft gerade. Bitte versuchen Sie es nach Abschluss der Übertragung erneut.", "warning")
         return redirect(url_for("admin.invoice_edit", invoice_id=invoice_id))

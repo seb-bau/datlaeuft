@@ -128,18 +128,21 @@ def dispatch_channel(mode, postal, portal):
     return "postal" if postal else "portal" if portal else None
 
 
-def existing_dispatch(invoice_id):
-    return DmsDocument.query.filter(
+def existing_dispatch(invoice_id, *, lock=False):
+    query = DmsDocument.query.filter(
         DmsDocument.entity_type == "invoice", DmsDocument.entity_id == invoice_id,
         DmsDocument.invoice_dispatch.is_not(None), DmsDocument.status != "cancelled",
-    ).order_by(DmsDocument.invoice_version.desc()).first()
+    ).order_by(DmsDocument.invoice_version.desc())
+    if lock:
+        query = query.populate_existing().with_for_update()
+    return query.first()
 
 
 def queue_invoice_dispatch(invoice, content, mode, channel, user):
     from .dms_context import invoice_context
     from .dms_service import connection, profile_snapshot, register_generated_pdf
 
-    existing = existing_dispatch(invoice.id)
+    existing = existing_dispatch(invoice.id, lock=True)
     if existing:
         if existing.invoice_dispatch["channel"] == channel:
             return existing

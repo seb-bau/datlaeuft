@@ -256,7 +256,7 @@ def delivery_send(invoice_id):
             return invoice_response({"message": "Die Rechnung wurde bereits abgeschlossen."}, 409)
         if pending_invoice_completion(invoice):
             return invoice_response({"message": "Für die Rechnung läuft bereits ein Direktversand. Bitte den Versandstatus prüfen."}, 409)
-        if completing and (dispatch := existing_dispatch(invoice.id)) and dispatch.invoice_dispatch["mode"] == "dms":
+        if completing and (dispatch := existing_dispatch(invoice.id, lock=True)) and dispatch.invoice_dispatch["mode"] == "dms":
             return invoice_response({"message": "Für die Rechnung wurde bereits ein Versand über das DMS vorgemerkt."}, 409)
         if not settings.get(SettingKeys.SMTP_HOST).strip() or not settings.get(SettingKeys.SMTP_SENDER).strip():
             raise ValueError("SMTP-Server oder Absenderadresse fehlen. Bitte die E-Mail-Einstellungen ergänzen.")
@@ -438,7 +438,7 @@ def delivery_complete(invoice_id):
         url_for("admin.invoice_tenant_charge", invoice_id=invoice.id, complete=1)
         if completing_tenant_charge else url_for("admin.invoice_complete", invoice_id=invoice.id)
     )
-    dms_dispatch = existing_dispatch(invoice.id)
+    dms_dispatch = existing_dispatch(invoice.id, lock=downloading)
     if not downloading:
         if invoice.completed_at:
             return redirect(invoice_url)
