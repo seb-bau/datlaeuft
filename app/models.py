@@ -1374,6 +1374,7 @@ class Commission(db.Model):
         server_default="0",
         nullable=False,
     )
+    tenant_charge_target: Mapped[dict[str, Any] | None] = mapped_column(db.JSON(none_as_null=True))
     completion_reason: Mapped[str | None] = mapped_column(db.Text)
     completion_submitted_by_user_id: Mapped[int | None] = mapped_column(
         db.ForeignKey("user_account.id"),
@@ -1627,6 +1628,20 @@ class Commission(db.Model):
     @property
     def requires_office_review(self) -> bool:
         return self.local_status == CommissionLocalStatus.COMPLETION_REVIEW.value and self.review_resolved_at is None
+
+    @staticmethod
+    def tenant_charge_type_ids() -> set[int]:
+        from .settings import SettingKeys, settings
+
+        ids = settings.get(SettingKeys.COMMISSION_TENANT_CHARGE_TYPE_IDS)
+        return {item for item in ids if type(item) is int and item > 0} if isinstance(ids, list) else set()
+
+    def tenant_charge_default(self, type_ids: set[int] | None = None) -> bool:
+        if self.tenant_charge_target is not None:
+            return True
+        if self.commission_type_erp_id is None:
+            return False
+        return self.commission_type_erp_id in (self.tenant_charge_type_ids() if type_ids is None else type_ids)
 
     @property
     def display_local_status(self) -> str:
@@ -4418,8 +4433,20 @@ class Invoice(db.Model):
         return self.recipient_license_agreement_erp_id
 
     @property
+    def has_commission_tenant_charge_target(self) -> bool:
+        return any(
+            link.commission is not None and link.commission.tenant_charge_target is not None
+            and (link.commission.tenant_charge_requested
+                 or link.commission.local_status == CommissionLocalStatus.TENANT_CHARGE_REVIEW.value)
+            for link in self.commission_links
+        )
+
+    @property
     def can_edit_agreement(self) -> bool:
-        return self.status == InvoiceStatus.DRAFT.value and self.invoice_kind == InvoiceKind.INVOICE.value
+        return (
+            self.status == InvoiceStatus.DRAFT.value and self.invoice_kind == InvoiceKind.INVOICE.value
+            and not self.has_commission_tenant_charge_target
+        )
 
 
 class InvoicePosition(db.Model):

@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID, uuid4
 
+from flask import current_app
+
 from .erp_sync import enqueue_erp_operation
 from .extensions import db
 from .models import (
@@ -98,6 +100,28 @@ def create_pending_commission(
         or (object_context.use_unit is not None and object_context.license_agreement is None)
     ):
         raise ValueError("Bitte eine Wirtschaftseinheit, ein Gebäude oder einen Mietvertrag auswählen.")
+
+    charge_target = None
+    charge_selection = "current" if data.get("tenant_charge_current") == "on" else data.get("tenant_charge_recipient")
+    if commission_type_id in Commission.tenant_charge_type_ids():
+        if source == CommissionSource.WEB or charge_selection is not None:
+            from .commission_tenant_charge import resolve_tenant_charge_target
+            from .wowiport import WowiportService
+
+            try:
+                charge_target, _ = resolve_tenant_charge_target(
+                    WowiportService(),
+                    object_context.use_unit.erp_id if object_context.use_unit else None,
+                    object_context.license_agreement.erp_id if object_context.license_agreement else None,
+                    charge_selection,
+                )
+            except ValueError:
+                raise
+            except Exception as exc:
+                current_app.logger.exception("commission_tenant_charge_target_failed")
+                raise ValueError("Der Belastungsempfänger konnte nicht aus Wowiport geladen werden.") from exc
+    elif charge_selection:
+        raise ValueError("Die ausgewählte Auftragsart ist nicht für eine Mieterbelastung eingerichtet.")
 
     notify_tenants = bool(
         notify_tenants
@@ -317,6 +341,8 @@ def create_pending_commission(
         ),
         apartment_location=apartment_location,
         tenant_name=object_context.tenant_name,
+        tenant_charge_target=charge_target,
+        tenant_charge_requested=is_retrospective and charge_target is not None,
         user=None,
         craftsman_erp_id=None,
         created_by=created_by_user,

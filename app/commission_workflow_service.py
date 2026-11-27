@@ -172,7 +172,7 @@ def complete_commission(
     *,
     completed: bool,
     reason: str,
-    tenant_charge: bool = False,
+    tenant_charge: bool | None = None,
     confirm_missing_material: bool = False,
     enforce_material_confirmation: bool = True,
     user: User | None = None,
@@ -220,6 +220,8 @@ def complete_commission(
                 ),
                 400,
             )
+    elif tenant_charge is None:
+        tenant_charge = commission.tenant_charge_default()
 
     now = utc_now()
     commission.completion_successful = completed

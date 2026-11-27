@@ -85,9 +85,10 @@ def already_applied_status(commission, action, body):
     completed = body["completed"]
     if (completed and status not in COMPLETED_STATUSES) or (not completed and status != CommissionLocalStatus.COMPLETION_REVIEW.value):
         return False
+    tenant_charge = bool(body["tenant_charge"]) if "tenant_charge" in body else commission.tenant_charge_default()
     return (
         commission.completion_successful is completed
-        and bool(commission.tenant_charge_requested) == (completed and bool(body.get("tenant_charge")))
+        and bool(commission.tenant_charge_requested) == (completed and tenant_charge)
         and (commission.completion_reason or "") == str(body.get("reason") or "").strip()
     )
 

@@ -1203,6 +1203,26 @@ class CommissionObjectLevelTests(unittest.TestCase):
         gateway.client.get_use_units.assert_called_once_with(building_land_idnum=None, add_args={"buildingLandId": 2002}, fetch_all=True)
         self.assertEqual(gateway.client.get_license_agreements.call_count, 2)
 
+    def test_tenant_charge_agreements_include_ended_contracts_only_for_the_same_unit(self):
+        agreements = [
+            self.contact_agreement(1, end="2026-10-31"),
+            self.contact_agreement(2, start="2027-01-01"),
+            self.contact_agreement(3, unit_id=3004),
+            self.contact_agreement(4, vacancy=True),
+        ]
+        for agreement in agreements:
+            agreement.id_num = f"MV-{agreement.id_}"
+        gateway = self.contact_service([self.contact_unit()], {3003: agreements}, {})
+
+        self.assertEqual(gateway.get_tenant_charge_agreements(3003), {
+            1: {"number": "MV-1", "start": date(2020, 1, 1), "end": date(2026, 10, 31)},
+            2: {"number": "MV-2", "start": date(2027, 1, 1), "end": None},
+        })
+        self.assertEqual(gateway.get_tenant_charge_agreements(3003, agreement_id=3), {})
+        gateway.client.get_license_agreements.assert_called_with(
+            add_args={"useUnitId": 3003, "licenseAgreementId": 3}, fetch_all=True,
+        )
+
     def test_former_contractors_and_duplicate_people_are_excluded_without_losing_other_contracts(self):
         commission = self.create_order("use_unit", self.unit.id)
         gateway = self.contact_service([self.contact_unit()], {3003: [self.contact_agreement(1), self.contact_agreement(2, start="2030-01-01")]}, {

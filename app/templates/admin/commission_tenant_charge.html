@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Mieterbelastung prüfen{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Mieterbelastung prüfen</h1>
+<form method="post" class="card card-body">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <p class="fw-semibold mb-1">{{ item.erp_idnum or item.code or item.id }} · {{ item.display_title }}</p>
+  <p class="mb-2">{{ item.apartment_address or '' }}</p>
+  <p>Kontakt vor Ort · {{ item.tenant_name or "Kein Mieter zugeordnet" }}</p>
+  {% set target = item.tenant_charge_target %}
+  {% set selected = (target.agreement_id ~ ':' ~ target.person_id) if target else '' %}
+  {% if has_invoice %}
+  <p class="mb-2">Für diesen Auftrag besteht bereits eine Rechnung oder ein Rechnungsentwurf.</p>
+  {% endif %}
+  <label class="form-label" for="tenantChargeReviewRecipient">Wer soll belastet werden?</label>
+  <select class="form-select" id="tenantChargeReviewRecipient" name="tenant_charge_recipient" required
+          {% if has_invoice %}disabled{% endif %}>
+    <option value="">Bitte auswählen</option>
+    {% if choices.current_available %}
+    <option value="current">Beauftragten Mieter belasten</option>
+    {% endif %}
+    {% for choice in choices["items"] %}
+    <option value="{{ choice.value }}" {% if choice.value == selected %}selected{% endif %}>
+      {{ choice.label }}{% if choice.suggested %} · Vorschlag Vormieter{% endif %}
+    </option>
+    {% endfor %}
+  </select>
+  <div class="d-flex gap-2 mt-3">
+    <a class="btn btn-outline-secondary" href="{{ back_url }}">Zurück zur Auftragsprüfung</a>
+    <button class="btn btn-primary" type="submit" {% if has_invoice %}disabled{% endif %}>Mieterbelastung speichern</button>
+  </div>
+</form>
+{% endblock %}

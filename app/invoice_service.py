@@ -58,6 +58,7 @@ from .models import (
 from .settings import SettingKeys, settings
 from .invoice_payments import freeze_invoice_payment_information, invoice_payment_context
 from .tenant_billing import (
+    TenantBillingAgreement,
     agreement_company_code,
     agreement_uses_tenant_billing,
     apply_contract_recipient,
@@ -212,7 +213,7 @@ def _clear_invoice_agreement(invoice: Invoice) -> None:
 
 
 def _apply_agreement_invoice_recipient(
-    invoice: Invoice, agreement: WowiLicenseAgreement, company: WowiCompanyCode, recipient: dict,
+    invoice: Invoice, agreement: WowiLicenseAgreement | TenantBillingAgreement, company: WowiCompanyCode, recipient: dict,
 ) -> None:
     if company.uses_tenant_charge_letter:
         apply_tenant_billing(invoice, agreement, company, recipient)
@@ -222,6 +223,8 @@ def _apply_agreement_invoice_recipient(
 
 def create_offer_invoice_draft(
     offer: Offer,
+    *,
+    created_by: User | None = None,
 ) -> Invoice:
     if offer.commission is None:
         raise ValueError(
@@ -233,7 +236,8 @@ def create_offer_invoice_draft(
         return offer.invoice
 
     created_by = (
-        offer.accepted_by
+        created_by
+        or offer.accepted_by
         or offer.created_by
     )
 
@@ -243,8 +247,15 @@ def create_offer_invoice_draft(
             "der zuständige Benutzer."
         )
 
-    agreement_id = offer.license_agreement_erp_id or offer.commission.license_agreement_id
-    if offer.company_code.uses_tenant_charge_letter and agreement_id is not None:
+    commission = offer.commission
+    agreement_id = offer.license_agreement_erp_id or commission.license_agreement_id
+    if commission.local_status == CommissionLocalStatus.TENANT_CHARGE_REVIEW.value and commission.tenant_charge_default():
+        agreement, company, recipient = commission_billing_recipient(commission)
+        if company.id != offer.company_code_id:
+            raise ValueError("Belastungsvertrag und Buchwerk des Angebots stimmen nicht überein.")
+        invoice = create_free_invoice_draft(tenant_billing_issuer(company), created_by)
+        _apply_agreement_invoice_recipient(invoice, agreement, company, recipient)
+    elif offer.company_code.uses_tenant_charge_letter and agreement_id is not None:
         agreement = tenant_billing_agreement(agreement_id)
         company = agreement_company_code(agreement)
         if company.id != offer.company_code_id:
@@ -355,6 +366,8 @@ def create_commission_invoice_draft(
             "muss ausgewählt werden."
         )
 
+    for commission in sorted(commissions, key=lambda item: item.id):
+        db.session.refresh(commission, with_for_update=True)
     validate_commission_selection(
         commissions
     )
@@ -377,6 +390,24 @@ def create_commission_invoice_draft(
             "ist nicht verfügbar."
         )
 
+    commission = commissions[0]
+    billing_recipient = None
+    if commission.tenant_charge_default():
+        offer = Offer.query.filter(
+            Offer.commission_id.in_([item.id for item in commissions]), Offer.invoice_id.is_(None),
+        ).with_for_update().first()
+        if offer is not None:
+            if len(commissions) != 1:
+                raise ValueError("Aufträge aus Angeboten können nur einzeln übernommen werden.")
+            invoice = create_offer_invoice_draft(offer, created_by=created_by)
+            offer.status = OfferStatus.READY_FOR_INVOICE.value
+            offer.status_note = None
+            return invoice
+        agreement, billing_company, recipient = commission_billing_recipient(commission)
+        if billing_company.id != company_code.id:
+            raise ValueError("Der Belastungsvertrag gehört zu einem anderen Buchwerk als der Auftrag.")
+        billing_recipient = (agreement, recipient)
+
     issuer = tenant_billing_issuer(company_code)
     invoice = create_invoice_draft(
         company_code=issuer,
@@ -384,8 +415,10 @@ def create_commission_invoice_draft(
         commissions=commissions,
     )
 
-    commission = commissions[0]
-    if company_code.tenant_billing_issuer_id is not None or (
+    if billing_recipient is not None:
+        agreement, recipient = billing_recipient
+        _apply_agreement_invoice_recipient(invoice, agreement, company_code, recipient)
+    elif company_code.tenant_billing_issuer_id is not None or (
         company_code.tenant_charge_letter_enabled and commission.license_agreement_id is not None
     ):
         agreement = tenant_billing_agreement(commission.license_agreement_id)
@@ -394,6 +427,14 @@ def create_commission_invoice_draft(
         apply_tenant_billing(invoice, agreement, company_code, {"name": commission.tenant_name})
 
     return invoice
+
+
+def commission_billing_recipient(commission: Commission) -> tuple[TenantBillingAgreement, WowiCompanyCode, dict]:
+    from .commission_tenant_charge import tenant_charge_invoice_recipient
+
+    if commission.tenant_charge_target is None:
+        raise ValueError("Bitte wählen Sie in der Auftragsprüfung zuerst aus, wer belastet werden soll.")
+    return tenant_charge_invoice_recipient(commission)
 
 
 def validate_commission_selection(
@@ -418,6 +459,17 @@ def validate_commission_selection(
             "ist nicht mehr zur Abrechnung verfügbar."
         )
 
+    reserved = (
+        InvoiceCommission.query.join(Invoice)
+        .filter(InvoiceCommission.commission_id.in_(selected_ids), Invoice.status != InvoiceStatus.CANCELED.value)
+        .with_for_update().first()
+    )
+    if reserved is not None or any(
+        item.deleted_at is not None or item.local_status != CommissionLocalStatus.TENANT_CHARGE_REVIEW.value
+        for item in commissions
+    ):
+        raise ValueError("Mindestens ein ausgewählter Auftrag ist nicht mehr zur Abrechnung verfügbar.")
+
     company_code_ids = {
         item.company_code_erp_id
         for item in commissions
@@ -433,20 +485,19 @@ def validate_commission_selection(
         )
 
     agreement_references = {
-        (
-            item.license_agreement_id,
-            item.license_agreement_idnum,
-        )
+        (item.tenant_charge_target["agreement_id"], None, item.tenant_charge_target["person_id"])
+        if item.tenant_charge_target is not None
+        else (item.license_agreement_id, item.license_agreement_idnum, None)
         for item in commissions
     }
 
     if len(agreement_references) != 1:
         raise ValueError(
             "Die ausgewählten Aufträge müssen "
-            "demselben Vertrag angehören."
+            "denselben Belastungsvertrag und dieselbe Person betreffen."
         )
 
-    agreement_id, agreement_idnum = next(
+    agreement_id, agreement_idnum, _ = next(
         iter(agreement_references)
     )
 

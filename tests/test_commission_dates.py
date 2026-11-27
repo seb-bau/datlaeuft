@@ -213,6 +213,20 @@ class CommissionDateTests(unittest.TestCase):
                 self.assertEqual(commission.local_status, status)
                 self.assert_status_date(commission, self.now)
 
+    def test_charge_type_defaults_to_invoice_review_and_respects_an_explicit_opt_out(self):
+        settings = self.modules[self.package_name + ".settings"].settings
+        with patch.object(settings, "get", return_value=[101]):
+            for erp_id, explicit, expected in ((101, None, "tenant_charge_review"), (102, False, "done")):
+                with self.subTest(tenant_charge=explicit):
+                    commission = self.commission(erp_id=erp_id, commission_type_erp_id=101)
+                    self.workflow.complete_commission(
+                        commission, completed=True, reason="", tenant_charge=explicit,
+                        enforce_material_confirmation=False, user=self.user,
+                    )
+                    self.db.session.commit()
+                    self.assertEqual(commission.local_status, expected)
+                    self.assertEqual(commission.tenant_charge_requested, explicit is None)
+
     def test_incomplete_completion_does_not_enqueue_a_cancellation_or_change_erp_state(self):
         for state in ("synced", "pending", "failed"):
             with self.subTest(state=state):

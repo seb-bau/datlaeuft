@@ -447,6 +447,10 @@ class SettingKeys:
         "Mieter bei Beauftragung standardmäßig informieren",
         "E-Mail",
     )
+    COMMISSION_TENANT_CHARGE_TYPE_IDS = SettingDefinition[list](
+        "commissions.tenant_charge_type_ids", SettingValueType.JSON, [],
+        "Auftragsarten mit Mieterbelastung", "Aufträge",
+    )
     SMS_ENABLED = SettingDefinition[bool](
         "sms.enabled", SettingValueType.BOOL, False,
         "SMS zusätzlich zu Mieter-E-Mails bei Beauftragung versenden", "SMS",

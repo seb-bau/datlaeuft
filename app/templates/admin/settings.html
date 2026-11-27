@@ -38,7 +38,18 @@
           Eine Bestätigung im Ticket entfällt.
           Angezeigt werden lokal synchronisierte und bereits ausgewählte Quellen.
         </div>
-                {% elif definition.key == "health.rules" %}
+        {% elif definition.key == "commissions.tenant_charge_type_ids" %}
+        {% for type_id, type_label in charge_type_choices %}
+        <label class="form-check">
+          <input class="form-check-input" type="checkbox" name="{{ definition.key }}" value="{{ type_id }}"
+                 {% if type_id in value %}checked{% endif %}>
+          {{ type_label }} ({{ type_id }})
+        </label>
+        {% else %}
+        <div class="text-muted">Noch keine Auftragsarten aus Wowiport synchronisiert.</div>
+        {% endfor %}
+        <div class="form-text">Für diese Auftragsarten wird bei der Beauftragung die zu belastende Person ausgewählt.</div>
+        {% elif definition.key == "health.rules" %}
         <div>
           <a class="btn btn-outline-primary" href="{{ url_for('admin.health_settings') }}">
             Health-Grenzen bearbeiten
