@@ -3,7 +3,7 @@ import importlib
 import sys
 import types
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -62,17 +62,18 @@ class TicketViewTests(unittest.TestCase):
         extensions.db = cls.db
         extensions.jwt = Mock()
         modules = {cls.package_name: package, extensions.__name__: extensions}
-        admin_source = ast.parse((cls.root / "app" / "admin.py").read_text())
-        for node in admin_source.body:
-            if not isinstance(node, ast.ImportFrom) or node.level != 1:
-                continue
-            if node.module in {"models", "extensions", "blacklist", "ticket_filters", "utils"}:
-                continue
-            module_name = cls.package_name + "." + node.module
-            module = modules.setdefault(module_name, types.ModuleType(module_name))
-            for item in node.names:
-                setattr(module, item.name, login_required if node.module == "auth" else Mock())
+        real_modules = {"models", "extensions", "blacklist", "ticket_filters", "ticket_service", "utils"}
+        for name in ("admin", "ticket_service"):
+            source = ast.parse((cls.root / "app" / f"{name}.py").read_text())
+            for node in source.body:
+                if not isinstance(node, ast.ImportFrom) or node.level != 1 or node.module in real_modules:
+                    continue
+                module_name = cls.package_name + "." + node.module
+                module = modules.setdefault(module_name, types.ModuleType(module_name))
+                for item in node.names:
+                    setattr(module, item.name, login_required if node.module == "auth" else Mock())
         modules[cls.package_name + ".settings"].settings.get.return_value = False
+        modules[cls.package_name + ".object_directory"].directory_today = Mock(return_value=date(2026, 11, 27))
         module_patch = patch.dict(sys.modules, modules)
         module_patch.start()
         cls.addClassCleanup(module_patch.stop)
@@ -88,6 +89,8 @@ class TicketViewTests(unittest.TestCase):
             cls.models.User, cls.models.UserJurisdictionPersonMapping,
             cls.models.WowiResponsibleOfficial, cls.models.WowiEconomicUnit,
             cls.models.WowiEconomicUnitJurisdiction, cls.models.BlacklistEntry,
+            cls.models.WowiBuilding, cls.models.WowiUseUnit,
+            cls.models.WowiLicenseAgreement, cls.models.WowiContractor,
             cls.models.Commission, cls.models.TicketMirror, cls.models.CommissionTicketLink,
             cls.models.CommissionPosition,
             cls.models.WorkflowNotification,
@@ -152,6 +155,54 @@ class TicketViewTests(unittest.TestCase):
         self.db.session.add(ticket)
         self.db.session.flush()
         return ticket
+
+    def test_ticket_card_shows_the_linked_tenant_address_and_apartment_position(self):
+        building = self.models.WowiBuilding(erp_id=201, address="Beispielweg 1, 44532 Lünen")
+        unit = self.models.WowiUseUnit(
+            erp_id=301, building=building, address="Beispielweg 3, 44532 Lünen",
+            floor_name="2. OG", position_name="links", description_of_position="Hinterhaus",
+        )
+        agreement = self.models.WowiLicenseAgreement(erp_id=401, use_unit=unit)
+        self.db.session.add_all([
+            self.models.WowiContractor(
+                erp_id=501, license_agreement_erp_id=401, license_agreement=agreement,
+                display_name="Erika & Max Muster",
+            ),
+            self.models.WowiContractor(
+                erp_id=502, license_agreement_erp_id=401, license_agreement=agreement,
+                display_name="Vorheriger Mieter", contractual_use_to=date(2026, 10, 31),
+            ),
+        ])
+        ticket = self.first_open_ticket
+        ticket.ai_state = "ready"
+        ticket.assignments = [{"assignmentEntity": {"code": "LicenseAgreement"}, "entityId": "401"}]
+        self.db.session.commit()
+
+        response = self.client.get("/admin/tickets?ai_state=ready")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Erika &amp; Max Muster · Beispielweg 3, 44532 Lünen · 2. OG, links, Hinterhaus", html)
+        self.assertNotIn("Vorschlag vorhanden", html)
+        self.assertNotIn("Vorheriger Mieter", html)
+        self.assertNotIn("Beispielweg 1", html)
+        self.assertNotIn(self.second_open_ticket.subject, html)
+
+    def test_ticket_card_shows_partial_object_details_and_omits_unknown_data(self):
+        building = self.models.WowiBuilding(erp_id=201, address="Beispielweg 1, 44532 Lünen")
+        unit = self.models.WowiUseUnit(erp_id=301, building=building, position_name="rechts")
+        self.db.session.add(unit)
+        self.first_open_ticket.assignments = [{"AssignmentEntity": {"Code": "UseUnit"}, "EntityId": 301}]
+        self.second_open_ticket.assignments = [{"AssignmentEntity": {"Code": "Gebäude"}, "EntityId": 201}]
+        missing_ticket = self.ticket(
+            subject="Ticket ohne hinterlegtes Objekt", ai_state="ready",
+            assignments=[{"AssignmentEntity": {"Code": "LicenseAgreement"}, "EntityId": 999}],
+        )
+        self.db.session.commit()
+
+        view, _ = self.get("/admin/tickets")
+        self.assertEqual(view["ticket_object_details"][self.first_open_ticket.id], (building.address, "rechts"))
+        self.assertEqual(view["ticket_object_details"][self.second_open_ticket.id], (building.address,))
+        self.assertEqual(view["ticket_object_details"][missing_ticket.id], ())
 
     def get(self, path):
         with patch.object(self.admin, "render_template", wraps=render_template) as render:
